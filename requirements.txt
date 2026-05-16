@@ -1,0 +1,8 @@
+PyQt6==6.7.1       # 6.8+ 은 Windows Anaconda 환경에서 DLL 로드 실패
+torch>=2.3.0
+torchvision>=0.18.0
+Pillow>=10.3.0
+opencv-python-headless>=4.9.0
+numpy>=1.26.0
+albumentations>=1.4.0
+matplotlib>=3.8.0

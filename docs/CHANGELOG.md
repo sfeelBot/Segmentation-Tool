@@ -1,0 +1,197 @@
+# Changelog — Segmentation Model UI
+
+버전 구분 기준: 사용자 요청 단위로 묶어 릴리즈.  
+형식: `[vX.Y.Z] YYYY-MM-DD` — Major.Minor.Patch
+
+---
+
+## [v1.6.0] 2026-05-16
+
+### 사용자 요청
+> "첫번째 도구에서 선이 연결되는걸 찾는게 어려워. 적당히 합쳐질 것 같으면 합쳐질 수 있도록 해줘. UI 상에서 원의 테두리가 흰색으로 칠해진다거나 하는 방식으로 구별해줘. RGB를 분리해서 볼 수 있도록 해줘 — 이미지 뷰어 밑에 UI를 분리해서 만들어줘. 마우스가 올라가있는 부분의 pixel 값들도 옆에다가 label로 표시해줘."
+
+### 추가
+- **폴리곤 Snap-to-Close**: 첫 꼭짓점 15px 이내 접근 시 흰 원 + 반투명 내부 표시 → 클릭으로 즉시 닫기 (더블클릭 불필요)
+- **채널 분리 뷰어**: 캔버스 하단 20px 스트립에 [원본] [R] [G] [B] 토글 버튼
+- **픽셀 값 표시**: 마우스 위치의 `x,y  R:255  G:128  B:0` 실시간 표시 (스트립 우측)
+
+### 기술
+- `annotation_canvas.py`: `_poly_snap` 상태, `_SNAP_PX=15`, `pixel_hovered` 시그널, `set_channel()`, `_apply_channel_filter()`, `_cache_pixel_image()`
+- `labeling_tab.py`: `_build_channel_strip()`, `_on_pixel_hovered()`, `QButtonGroup` 채널 뮤텍스
+
+---
+
+## [v1.5.0] 2026-05-16
+
+### 사용자 요청
+> "annotation 있는 이미지를 불러올 때 되게 느려."  
+> "annotation 처음 그릴때는 속도가 괜찮은데 하나 그리고 나서부터 되게 느려."
+
+### 수정 (성능)
+- **`rle_encode` Python 루프 → numpy 벡터화**: 2000만 픽셀 순회 제거 → `np.diff + np.where` 수 ms
+- **저장 백그라운드 스레드**: `_do_save` 에서 `rle_encode` 를 `threading.Thread(daemon=True)` 로 분리
+- **오버레이 백그라운드 빌드**: `_OverlayWorker(QThread)` — 이미지 즉시 표시, 오버레이 비동기 교체
+
+---
+
+## [v1.4.0] 2026-05-16
+
+### 사용자 요청
+> "이미지 로드할때부터 엄청 느려. 여전히 너무 느려. 어디서 병목이 생기는지 확인할 수 있도록 log 를 만들어줘."  
+> "perf log 기반으로 다시 최적화해줘."
+
+### 추가
+- **PerfProfiler** (`app/core/perf_logger.py`): 30프레임마다 단계별 avg/max ms 리포트 → `data/logs/perf.log`
+- **Bbox 기반 마스크 연산**: `_resolve_overlap_and_merge`, `_consolidate_class_region` — 전체 20MP 대신 칠한 bbox 영역만 처리 (500× 빠름)
+- **`_flood_erase` bbox 최적화**: connectedComponents 를 non-zero bbox 로 제한
+
+### 수정 (성능)
+- `_apply_eraser`: bbox 단락 평가로 빈 마스크 검사 개선
+- `change_selected_class`: 선택 어노테이션 union bbox 기준 통합
+
+---
+
+## [v1.3.0] 2026-05-04
+
+### 사용자 요청
+> "라벨링할 때 엄청 버벅이고 있어. 이미지가 20MP 카메라로 찍은 거라 5000×4000 정도야."
+
+### 추가 / 수정 (성능)
+- **Display Pixmap 캐시**: zoom 버킷별 pre-scaled pixmap → 25× 작아진 blit 비용
+- **Overlay 해상도 캡 (`MAX_OVERLAY_DIM=2048`)**: 80MB ARGB32 → 13MB (6× 감소)
+- **Pan/Zoom 30Hz 쓰로틀**: `_schedule_repaint()` — mousemove마다 update() 방지
+- **Smooth 백그라운드 스케일** (`_SmoothScaleWorker`): idle 후 고품질 보간을 비블로킹으로
+
+---
+
+## [v1.2.0] 2026-05-04
+
+### 사용자 요청
+> "추론에서 무조건 모델을 업로드해야 하는 것 같아. 체크포인트를 선택하면 학습할 때 사용했던 모델로만 돌릴 수 있게 해줘."
+
+### 수정
+- 체크포인트 선택 즉시 `config.model_source` 읽어 모델 자동 인스턴스화
+- 추론 탭 체크포인트 테이블에 "모델" 컬럼 추가
+- 체크포인트 메타에 `model_source` 저장 (trainer)
+
+### 사용자 요청
+> "학습할 때 AI 모델을 선택할 수 있도록 변경해줘. AI 모델 프리셋 부분 추가하는 건 따로 팝업을 띄우는 식으로 바꿔줘."
+
+### 추가
+- **`ModelPresetDialog`** 팝업: 7종 프리셋 목록 + 설명 + 에디터 불러오기
+- **학습 탭 모델 선택**: 큐 작업별 모델 드롭다운 (현재 로드 or 프리셋)
+
+### 사용자 요청
+> "학습 창에서 손실 그래프 크기를 키워줘. Y축으로 키우라는 이야기야. EPOCH 메트릭과 체크포인트는 최소한으로 옆에다가 작게 만들거나 삭제해."
+
+### 수정
+- 손실 그래프 / 메트릭·체크포인트 수평 분할 (QSplitter)
+- 메트릭 3열(Ep/Val/IoU), 10px 소형 폰트
+
+---
+
+## [v1.1.0] 2026-05-04
+
+### 사용자 요청
+> "학습할 때 PATCH TRAINING 이면 EPOCH 이랑 다르게 샘플링 이미지는 많아서 LOSS 들이 더 많이 나오지 않아? 이걸 시간 순서대로 TRAIN, VAL LOSS 그래프에 더 실시간으로 그려질 수 있게 하면 좋을 것 같은데."
+
+### 추가
+- **배치 레벨 실시간 Train Loss**: `training_started(total_batches)` 시그널 → 분수 epoch 좌표
+- **EMA 스무딩** (α=0.08): 노이즈 많은 배치 loss 부드럽게
+- **Step 카운터**: `Step N / M · ETA HH:MM` 스텝 기반 정확한 ETA
+- **Epoch 경계 점선**: 그래프에 epoch 구분선 자동 추가
+
+### 사용자 요청
+> "현재 이미지에서의 라벨링 데이터를 볼 수 있는 리스트창을 하나 추가해주고 그 리스트에서 선택 시 해당 라벨링 데이터가 표시될 수 있게 해줘."  
+> "같은 class라도 다른 곳에 있으면 따로 표시해줘."
+
+### 추가
+- 어노테이션 목록 패널 (오른쪽 180px): `#순번 [타입] 클래스명 @(cx,cy) · 면적px`
+- 목록↔캔버스 양방향 선택 동기화
+
+---
+
+## [v1.0.0] 2026-04-19  (초기 완성 버전)
+
+### 사용자 요청
+> "PyTorch 세그멘테이션 모델을 위한 로컬 데스크탑 GUI. 라벨링 → 학습 → 추론 전 과정."
+
+### 구현된 전체 기능
+
+#### 🗂 프로젝트 시스템
+- 시작 다이얼로그: 새 프로젝트 / 기존 열기 / 최근 목록
+- 프로젝트별 격리: images / annotations / checkpoints / user_models / classes.json
+- 전환 버튼 🔄, 폴더 열기 📁, 저장 경로 설정 (설정 탭)
+
+#### 🎨 라벨링 탭
+- 도구: 📐폴리곤 / 🖌브러시 / 🪣윤곽채우기 / 🧹지우개 / 🧲연결지우개 / 🔲선택 / ✋이동
+- 브러시 픽셀 독점성 + 같은 클래스 연결 자동 병합
+- 선택 도구: 단일클릭 / Shift다중 / 드래그범위 / 이동(드래그)
+- 이미지 목록: 리스트뷰 ●라벨됨 ✓OK ○미라벨, 다중선택 Del 삭제
+- ✅ OK 표시 / N 이전 이미지 어노테이션 복사
+- ↑↓ 이미지 이동, Tab 패널 숨김
+- 어노테이션 목록 패널 / 로그 패널
+
+#### 🎯 학습 탭
+- 다중 작업 큐 (이름 설정, 작업별 모델 선택)
+- 실시간 손실 그래프 (배치 레벨 EMA + Epoch Val)
+- Step 카운터 + 스텝 기반 ETA
+- 진행 팝업 (비모달)
+- 자동 patches_per_image 계산 버튼 🔄
+
+#### 🔍 추론 탭
+- resize / sliding_window 모드, 오버랩 설정
+- 체크포인트 선택 시 모델 자동 결정
+- 투명도 슬라이더, 클래스 범례
+
+#### 🧠 모델 탭
+- AST 샌드박스 검증 + 제한적 exec
+- 📚 프리셋 팝업 (7종: U-Net / U-Net++ / Attention U-Net / DeepLabV3 계열 / FPN-SegNet)
+
+#### ✨ 오토 라벨링
+- 빠른 학습 + 오토 라벨링 (고정 30 epochs, 결함 우선 샘플링)
+- 미리보기 팝업 → 합치기 확인 후 저장
+
+#### ⚙️ 설정
+- 언어 (한국어 / English)
+- 단축키 테이블
+- 로그 경로 (app.log / errors.log / perf.log)
+- 프로젝트 저장 경로
+
+#### 📤 내보내기
+- JSON (상대좌표) / YOLO-seg / COCO 포맷
+
+#### 🔧 성능 / 안정성
+- GPU 사용 불가 시 팝업 (CPU 진행 여부)
+- AMP CC<7.0 자동 비활성화
+- Maxwell/Pascal GPU 경고
+- 배경 overlay/smooth 스케일 (비블로킹)
+- Bbox 기반 마스크 연산
+
+---
+
+## 버전 관리 정책
+
+```
+vMAJOR.MINOR.PATCH
+  MAJOR: 핵심 아키텍처 변경 (프로젝트 시스템, 학습 파이프라인 등)
+  MINOR: 기능 추가 (새 도구, 탭, 다이얼로그)
+  PATCH: 버그 수정, 성능 개선, UI 조정
+```
+
+### 브랜치 전략 (권장)
+```
+main        — 안정 버전 (릴리즈 태그)
+dev         — 개발 통합
+feature/*   — 개별 기능
+hotfix/*    — 긴급 수정
+```
+
+### 커밋 메시지 형식
+```
+feat: 새 기능 요약
+fix:  버그 수정 요약
+perf: 성능 개선
+docs: 문서만 변경
+refactor: 기능 변경 없는 코드 정리
+```
