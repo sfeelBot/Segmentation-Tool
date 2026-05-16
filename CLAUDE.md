@@ -68,6 +68,24 @@ segmentation model/
 
 ---
 
+## Git 커밋 규칙
+
+> **코드 수정이 있을 때마다 반드시 커밋한다.**
+
+- 기능 추가, 버그 수정, 성능 개선 등 **모든 코드 변경** 후 즉시 `git commit`
+- 커밋 메시지 형식:
+  ```
+  feat: 새 기능 요약
+  fix:  버그 수정 요약
+  perf: 성능 개선
+  docs: 문서만 변경
+  refactor: 기능 변경 없는 코드 정리
+  ```
+- 버전 태그: 사용자 요청 단위 완료 시 `git tag -a vX.Y.Z`
+- CHANGELOG 갱신: `docs/CHANGELOG.md` 에 버전·요청·구현 내용 기록
+
+---
+
 ## 코딩 규칙
 
 ### Python

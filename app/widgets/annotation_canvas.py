@@ -166,6 +166,7 @@ class AnnotationCanvas(QWidget):
         self._brush_trail: list[tuple[int, int]] = []   # TOOL_BRUSH_FILL 궤적
         self._brush_bbox: list[int] | None = None       # [x0, y0, x1, y1] — 실제로 칠해진 영역
         self._is_painting = False
+        self._last_paint_pos: QPointF | None = None     # 보간용 직전 페인트 위치
 
         # 선택 도구
         self._selected_ids: set[str] = set()
@@ -537,12 +538,12 @@ class AnnotationCanvas(QWidget):
             if self._brush_np is None:
                 self._brush_np = np.zeros((self._img_h, self._img_w), dtype=np.uint8)
             else:
-                # 이전 스트로크 잔여 데이터 제거 — bbox 영역만 0으로 (전체 클리어보다 훨씬 빠름)
                 if self._brush_bbox is not None:
                     x0, y0, x1, y1 = self._brush_bbox
                     self._brush_np[y0:y1, x0:x1] = 0
             self._brush_bbox = None
             self._is_painting = True
+            self._last_paint_pos = img_pos   # 보간 기준점 초기화
             if self._tool == TOOL_BRUSH_FILL:
                 self._brush_trail = [(int(img_pos.x()), int(img_pos.y()))]
             self._paint_circle(img_pos)
@@ -616,7 +617,7 @@ class AnnotationCanvas(QWidget):
         buttons = event.buttons()
         if buttons & Qt.MouseButton.LeftButton:
             if self._is_painting:
-                self._paint_circle(img_pos)
+                self._paint_stroke(img_pos)   # 선형 보간 → 빠른 이동에도 끊김 없음
                 if self._tool == TOOL_BRUSH_FILL:
                     self._brush_trail.append((int(img_pos.x()), int(img_pos.y())))
                 self.update()
@@ -740,6 +741,34 @@ class AnnotationCanvas(QWidget):
 
     # ── 내부 — 브러시 ─────────────────────────────────────────────────────────
 
+    def _paint_stroke(self, img_pos: QPointF) -> None:
+        """이전 위치 → 현재 위치를 선형 보간해 원을 연속으로 그림.
+        마우스를 빠르게 움직여도 끊기지 않고 이어짐."""
+        if self._last_paint_pos is None:
+            self._last_paint_pos = img_pos
+            self._paint_circle(img_pos)
+            return
+
+        x0, y0 = self._last_paint_pos.x(), self._last_paint_pos.y()
+        x1, y1 = img_pos.x(), img_pos.y()
+        dx, dy = x1 - x0, y1 - y0
+        dist = (dx * dx + dy * dy) ** 0.5
+
+        # 보간 간격: 반지름의 40% — 완전히 겹쳐서 빈틈 없이
+        r = max(1, self._brush_size // 2)
+        step = max(1.0, r * 0.4)
+
+        if dist <= step:
+            self._paint_circle(img_pos)
+        else:
+            n = max(1, int(dist / step))
+            inv = 1.0 / n
+            for i in range(1, n + 1):
+                t = i * inv
+                self._paint_circle(QPointF(x0 + dx * t, y0 + dy * t))
+
+        self._last_paint_pos = img_pos
+
     def _paint_circle(self, img_pos: QPointF) -> None:
         """브러시가 지나간 위치를 self._brush_np 에 1로 기록.
         해석은 _finish_brush 에서: 브러시→새 어노테이션, 지우개→해당 픽셀 제거."""
@@ -787,6 +816,7 @@ class AnnotationCanvas(QWidget):
         self._brush_bbox = None
         self._brush_trail = []
         self._is_painting = False
+        self._last_paint_pos = None
         self._invalidate_overlay()
         if save:
             self._schedule_save()
