@@ -81,8 +81,7 @@ class PerfProfiler:
 
         lines.append(f"  ※ 가장 느린 단계가 최적화 대상입니다.")
         msg = "\n".join(lines)
-        log.info(msg)
-        # 파일 쓰기는 명시적으로 활성화한 경우에만 (기본 비활성 — I/O 절감)
+        # disk_log 활성화 시에만 기록 (기본 비활성 — 마우스 이동마다 로그 방지)
         if self.disk_log:
             try:
                 PERF_LOG.parent.mkdir(parents=True, exist_ok=True)
