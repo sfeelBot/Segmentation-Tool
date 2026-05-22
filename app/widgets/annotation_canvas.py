@@ -185,6 +185,7 @@ class AnnotationCanvas(QWidget):
         self._overlay_dirty = True
         self._overlay_scale: float = 1.0   # 실제 픽셀 vs 이미지 픽셀 비율
         self._overlay_worker: _OverlayWorker | None = None
+        self._overlay_visible: bool = True  # 어노테이션 표시/숨김 토글
 
         # ── 성능 최적화 상태 ─────────────────────────────────────────────────
         # Display pixmap 캐시 — 현재 zoom 에 맞게 미리 축소해 CPU blit 비용 감소
@@ -322,6 +323,11 @@ class AnnotationCanvas(QWidget):
         self._schedule_save()
         self.update()
 
+    def toggle_overlay_visible(self) -> None:
+        """어노테이션 오버레이 표시/숨김 토글."""
+        self._overlay_visible = not self._overlay_visible
+        self.update()
+
     def toggle_ok(self) -> None:
         if self._image_path is None:
             return
@@ -424,13 +430,11 @@ class AnnotationCanvas(QWidget):
 
         # ── 오버레이 ─────────────────────────────────────────────────────────
         if self._overlay_dirty:
-            # 워커가 아직 없으면 (selection 변경 등) 백그라운드 시작
             if not (self._overlay_worker and self._overlay_worker.isRunning()):
                 t0 = _perf.mark("overlay_rebuild")
                 self._start_overlay_worker()
                 _perf.end("overlay_rebuild", t0)
-            # 완료 전까지는 오버레이 없이 이미지만 표시 (UI 블로킹 없음)
-        if self._overlay is not None:
+        if self._overlay is not None and self._overlay_visible:
             t0 = _perf.mark("blit_overlay")
             ov_w = int(self._img_w * self._overlay_scale)
             ov_h = int(self._img_h * self._overlay_scale)

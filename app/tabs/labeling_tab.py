@@ -194,6 +194,15 @@ class LabelingTab(QWidget):
         act_clear.triggered.connect(self._on_clear_all)
         tb.addAction(act_clear)
 
+        self._act_ann_visible = QAction("👁", self)
+        self._act_ann_visible.setCheckable(True)
+        self._act_ann_visible.setChecked(True)
+        self._act_ann_visible.setToolTip("어노테이션 표시/숨김 [V]")
+        self._act_ann_visible.toggled.connect(
+            lambda checked: self._canvas.toggle_overlay_visible()
+        )
+        tb.addAction(self._act_ann_visible)
+
         tb.addSeparator()
 
         self._act_ok = QAction("✅", self)
@@ -443,6 +452,16 @@ class LabelingTab(QWidget):
             self._set_tool(TOOL_SELECT)
         elif key == Qt.Key.Key_H:
             self._set_tool(TOOL_PAN)
+        elif key == Qt.Key.Key_V:
+            self._act_ann_visible.toggle()
+        elif key == Qt.Key.Key_1:
+            self._set_channel(0)   # 원본
+        elif key == Qt.Key.Key_2:
+            self._set_channel(1)   # R
+        elif key == Qt.Key.Key_3:
+            self._set_channel(2)   # G
+        elif key == Qt.Key.Key_4:
+            self._set_channel(3)   # B
         elif key in (Qt.Key.Key_Up, Qt.Key.Key_PageUp):
             self._go_image(-1)
         elif key in (Qt.Key.Key_Down, Qt.Key.Key_PageDown):
@@ -451,6 +470,11 @@ class LabelingTab(QWidget):
             self._copy_prev_annotations()
         else:
             super().keyPressEvent(event)
+
+    def _set_channel(self, ch: int) -> None:
+        """채널 전환 — 버튼 그룹과 동기화."""
+        self._ch_group.button(ch).setChecked(True)
+        self._canvas.set_channel(ch)
 
     def _go_image(self, step: int) -> None:
         """이미지 브라우저에서 step 만큼 상대 이동 (−1: 이전, +1: 다음)."""

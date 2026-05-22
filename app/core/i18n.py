@@ -79,6 +79,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "sc.move_drag":        "선택한 어노테이션을 클릭 → 드래그로 이동",
         "sc.prev_image":       "이전 이미지로 이동",
         "sc.next_image":       "다음 이미지로 이동",
+        "sc.ann_visible":      "어노테이션 표시/숨김",
+        "sc.channel_orig":     "원본 채널 (컬러)",
+        "sc.channel_r":        "R 채널 그레이스케일",
+        "sc.channel_g":        "G 채널 그레이스케일",
+        "sc.channel_b":        "B 채널 그레이스케일",
 
         # ── 내보내기 ─────────────────────────────────────────────────────
         "export.title":                "📤  라벨링 데이터 내보내기",
@@ -187,6 +192,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "sc.move_drag":        "Click a selected annotation → drag to move",
         "sc.prev_image":       "Previous image",
         "sc.next_image":       "Next image",
+        "sc.ann_visible":      "Show/hide annotations",
+        "sc.channel_orig":     "Original (color)",
+        "sc.channel_r":        "R channel grayscale",
+        "sc.channel_g":        "G channel grayscale",
+        "sc.channel_b":        "B channel grayscale",
 
         # ── Export ───────────────────────────────────────────────────────
         "export.title":                "📤  Export labeled data",

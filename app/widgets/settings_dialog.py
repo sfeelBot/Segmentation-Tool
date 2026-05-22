@@ -46,6 +46,11 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("드래그 (선택 후)", "sc.move_drag"),
     ("↑ / Page Up",     "sc.prev_image"),
     ("↓ / Page Down",   "sc.next_image"),
+    ("V",               "sc.ann_visible"),
+    ("1",               "sc.channel_orig"),
+    ("2",               "sc.channel_r"),
+    ("3",               "sc.channel_g"),
+    ("4",               "sc.channel_b"),
 ]
 
 
