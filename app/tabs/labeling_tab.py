@@ -384,13 +384,11 @@ class LabelingTab(QWidget):
     # ── 어노테이션 목록 관리 ─────────────────────────────────────────────────
 
     def _refresh_ann_list(self) -> None:
-        import numpy as np
         self._ann_list_updating = True
         self._ann_list.clear()
         from app.core.annotation_store import load_classes
         cls_map = {c.class_id: c for c in load_classes()}
 
-        # 같은 클래스끼리 번호 매기기 (#1, #2, …)
         class_count: dict[int, int] = {}
 
         for ann in self._canvas._annotations:
@@ -401,20 +399,13 @@ class LabelingTab(QWidget):
             class_count[ann.class_id] = class_count.get(ann.class_id, 0) + 1
             idx = class_count[ann.class_id]
 
-            # 위치·크기 정보 계산 (같은 클래스 다른 위치를 구분하기 위함)
-            pos_info = ""
+            # 폴리곤만 꼭짓점 평균으로 위치 계산 (numpy 불필요, 빠름)
+            # brush_mask 는 np.where(20MP) 비용이 크므로 생략
             type_label = "Poly" if ann.type == "polygon" else "Mask"
-            if ann.type == "brush_mask" and ann.mask is not None:
-                ys, xs = np.where(ann.mask > 0)
-                if len(xs):
-                    cx, cy = int(xs.mean()), int(ys.mean())
-                    area = int(len(xs))
-                    pos_info = f"  @({cx},{cy})  ·  {area}px"
-            elif ann.type == "polygon" and ann.points:
-                xs_l = [float(p[0]) for p in ann.points]
-                ys_l = [float(p[1]) for p in ann.points]
-                cx = int(sum(xs_l) / len(xs_l))
-                cy = int(sum(ys_l) / len(ys_l))
+            pos_info = ""
+            if ann.type == "polygon" and ann.points:
+                cx = int(sum(p[0] for p in ann.points) / len(ann.points))
+                cy = int(sum(p[1] for p in ann.points) / len(ann.points))
                 pos_info = f"  @({cx},{cy})  ·  {len(ann.points)}pts"
 
             item = QListWidgetItem(

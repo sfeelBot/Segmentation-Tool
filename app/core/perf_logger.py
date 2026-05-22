@@ -23,8 +23,8 @@ class PerfProfiler:
         self._times: dict[str, list[float]] = defaultdict(list)
         self._frame = 0
         self._last_report = time.perf_counter()
-        # 컨텍스트 정보 (렌더마다 갱신)
         self.ctx: dict = {}
+        self.disk_log: bool = False   # True 로 설정하면 perf.log 에 기록
 
     # ── 타이밍 API ────────────────────────────────────────────────────────────
 
@@ -81,16 +81,16 @@ class PerfProfiler:
 
         lines.append(f"  ※ 가장 느린 단계가 최적화 대상입니다.")
         msg = "\n".join(lines)
-
         log.info(msg)
-        # perf.log 에도 기록
-        try:
-            PERF_LOG.parent.mkdir(parents=True, exist_ok=True)
-            with PERF_LOG.open("a", encoding="utf-8") as f:
-                from datetime import datetime
-                f.write(f"\n[{datetime.now().strftime('%H:%M:%S')}]\n{msg}\n")
-        except Exception:
-            pass
+        # 파일 쓰기는 명시적으로 활성화한 경우에만 (기본 비활성 — I/O 절감)
+        if self.disk_log:
+            try:
+                PERF_LOG.parent.mkdir(parents=True, exist_ok=True)
+                with PERF_LOG.open("a", encoding="utf-8") as f:
+                    from datetime import datetime
+                    f.write(f"\n[{datetime.now().strftime('%H:%M:%S')}]\n{msg}\n")
+            except Exception:
+                pass
 
         self._times.clear()
 

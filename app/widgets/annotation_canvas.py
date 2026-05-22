@@ -29,16 +29,8 @@ class _OverlayWorker(QThread):
         cls_map: dict,
     ) -> None:
         super().__init__()
-        # 마스크는 numpy copy로 스냅샷 — 스레드 안전
-        import copy as _copy
-        self._anns: list = []
-        for ann in annotations:
-            if ann.type == "brush_mask" and ann.mask is not None:
-                snap = _copy.copy(ann)
-                snap.mask = ann.mask.copy()
-                self._anns.append(snap)
-            else:
-                self._anns.append(ann)   # 폴리곤: points 리스트는 불변이므로 안전
+        # shallow 복사 — 렌더링은 읽기 전용이므로 mask 배열 복사 불필요
+        self._anns       = list(annotations)
         self._img_w      = img_w
         self._img_h      = img_h
         self._sc         = overlay_scale
@@ -1228,18 +1220,11 @@ class AnnotationCanvas(QWidget):
     def _do_save(self) -> None:
         if self._image_path is None or self._pixmap is None:
             return
-        # 저장(rle_encode 포함)을 백그라운드 스레드로 실행 — 메인 스레드 비블로킹
-        import copy as _copy
         import threading
-        # 저장할 데이터 스냅샷
+        # 리스트만 shallow 복사 — mask 배열은 rle_encode 가 읽기만 하므로 복사 불필요
         path = self._image_path
         w, h = self._img_w, self._img_h
-        anns_snap = []
-        for a in self._annotations:
-            snap = _copy.copy(a)
-            if a.type == "brush_mask" and a.mask is not None:
-                snap.mask = a.mask.copy()
-            anns_snap.append(snap)
+        anns_snap = list(self._annotations)
 
         def _save_thread():
             try:
@@ -1248,8 +1233,7 @@ class AnnotationCanvas(QWidget):
                 from app.core.logger import get_logger
                 get_logger(__name__).error(f"백그라운드 저장 실패: {exc}")
 
-        t = threading.Thread(target=_save_thread, daemon=True)
-        t.start()
+        threading.Thread(target=_save_thread, daemon=True).start()
         self.annotation_saved.emit()
 
     # ── 내부 — 렌더링 ─────────────────────────────────────────────────────────
