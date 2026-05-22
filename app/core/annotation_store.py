@@ -205,18 +205,21 @@ def set_ok(image_path: Path, ok: bool, img_w: int = 0, img_h: int = 0) -> None:
 
 def rle_encode(mask: np.ndarray) -> str:
     """numpy 벡터 연산으로 RLE 인코딩.
-    이전 방식(Python for 루프)은 20MP 마스크에서 수 초가 걸렸음.
-    numpy diff + where 로 수 ms 수준으로 개선."""
-    flat = mask.flatten().view(np.uint8).astype(np.bool_).view(np.uint8)
+    .copy() 로 스냅샷을 만들어 백그라운드 스레드 경쟁 조건 방지."""
+    flat = mask.flatten()          # 항상 복사본 → 이후 메인 스레드 수정 영향 없음
+    flat = (flat != 0).view(np.uint8)
     if not flat.any():
         return ""
-    # 0→1 전환(시작), 1→0 전환(끝) 위치를 한 번에 계산
-    diff    = np.diff(flat, prepend=np.uint8(0), append=np.uint8(0))
-    starts  = np.where(diff == 1)[0]
-    ends    = np.where(diff == -1)[0]
-    lengths = ends - starts
-    pairs   = np.empty(len(starts) * 2, dtype=np.int64)
-    pairs[0::2] = starts
+    diff   = np.diff(flat, prepend=np.uint8(0), append=np.uint8(0))
+    starts = np.where(diff == 1)[0]
+    ends   = np.where(diff == -1)[0]
+    # 경쟁 조건으로 전환 수가 불일치하는 경우 방어 처리
+    n = min(len(starts), len(ends))
+    if n == 0:
+        return ""
+    lengths = ends[:n] - starts[:n]
+    pairs   = np.empty(n * 2, dtype=np.int64)
+    pairs[0::2] = starts[:n]
     pairs[1::2] = lengths
     return " ".join(map(str, pairs.tolist()))
 
