@@ -35,6 +35,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     ("A",               "sc.select"),
     ("S",               "sc.pan"),
     # ── 뷰 ─────────────────────────────────────────────────────────────
+    ("G",               "sc.ok_toggle"),
     ("F",               "sc.ann_visible"),
     ("T",               "sc.fullscreen"),
     ("1 / 2 / 3 / 4",  "sc.channel_orig"),

@@ -92,12 +92,16 @@ def commit_results(results: list[tuple[Path, list, int, int]]) -> int:
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
 
 def collect_unlabeled(image_dir: Path | None = None) -> list[Path]:
+    """어노테이션이 없고 OK 표시도 안 된 이미지만 반환.
+    OK 이미지는 이미 검수 완료이므로 자동 라벨링 대상에서 제외."""
     if image_dir is None:
         image_dir = _project.images_dir()
-    """어노테이션이 없거나 비어 있는 이미지 경로 목록을 반환한다."""
+    from app.core.annotation_store import get_ok
     result = []
     for p in sorted(image_dir.iterdir()):
         if p.suffix.lower() not in SUPPORTED_EXTS:
+            continue
+        if get_ok(p):          # OK 표시된 이미지는 건너뜀
             continue
         existing = load(p)
         if not existing:

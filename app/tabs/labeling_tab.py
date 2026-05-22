@@ -457,6 +457,8 @@ class LabelingTab(QWidget):
             self._set_tool(TOOL_SELECT)
         elif key == Qt.Key.Key_S and no_mod:
             self._set_tool(TOOL_PAN)
+        elif key == Qt.Key.Key_G:
+            self._act_ok.trigger()
         elif key == Qt.Key.Key_F:
             self._act_ann_visible.toggle()
         elif key == Qt.Key.Key_V and no_mod:

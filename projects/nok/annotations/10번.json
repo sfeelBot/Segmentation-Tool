@@ -3,42 +3,5 @@
   "image": "10번.bmp",
   "width": 5472,
   "height": 3648,
-  "annotations": [
-    {
-      "annotation_id": "68f97d1d-e37f-4de1-93d5-754b609f2159",
-      "class_id": 1,
-      "type": "brush_mask",
-      "order": 0,
-      "width": 5472,
-      "height": 3648,
-      "rle": ""
-    },
-    {
-      "annotation_id": "6135dbc9-9a79-4b1e-9740-b0cc1385d014",
-      "class_id": 1,
-      "type": "brush_mask",
-      "order": 1,
-      "width": 5472,
-      "height": 3648,
-      "rle": ""
-    },
-    {
-      "annotation_id": "bf24cdbc-6c95-4b21-9b53-9efbadb05d50",
-      "class_id": 1,
-      "type": "brush_mask",
-      "order": 2,
-      "width": 5472,
-      "height": 3648,
-      "rle": ""
-    },
-    {
-      "annotation_id": "917f2ae1-a8bd-4566-a9f0-c7b7ae81f108",
-      "class_id": 1,
-      "type": "brush_mask",
-      "order": 3,
-      "width": 5472,
-      "height": 3648,
-      "rle": ""
-    }
-  ]
+  "annotations": []
 }

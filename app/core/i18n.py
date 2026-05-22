@@ -66,6 +66,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "sc.eraser_flood":     "연결 지우개",
         "sc.select":           "선택 / 이동 도구",
         "sc.pan":              "이동(Pan) 도구",
+        "sc.ok_toggle":        "OK 표시 / 해제 (어노테이션 없어도 검수 완료)",
         "sc.ann_visible":      "어노테이션 표시/숨김",
         "sc.copy_prev":        "이전 이미지의 어노테이션 복사",
         "sc.prev_image":       "이전 이미지로 이동",
