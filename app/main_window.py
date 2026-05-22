@@ -120,6 +120,19 @@ class MainWindow(QMainWindow):
         dlg = ExportDialog(self)
         dlg.exec()
 
+    def closeEvent(self, event) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "종료 확인",
+            "앱을 종료하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            event.accept()
+        else:
+            event.ignore()
+
     def _on_switch_project(self) -> None:
         """main() 의 while 루프로 돌아가 다이얼로그를 다시 띄운다."""
         self._switch_requested = True
