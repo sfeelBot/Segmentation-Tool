@@ -223,7 +223,7 @@ class LabelingTab(QWidget):
         self._act_fullscreen = QAction("🔳", self)
         self._act_fullscreen.setCheckable(True)
         self._act_fullscreen.setToolTip(t("tool.fullscreen.tip"))
-        self._act_fullscreen.setShortcut(QKeySequence(Qt.Key.Key_Tab))
+        self._act_fullscreen.setShortcut(QKeySequence(Qt.Key.Key_T))
         self._act_fullscreen.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._act_fullscreen.toggled.connect(self._on_toggle_fullscreen)
         tb.addAction(self._act_fullscreen)
@@ -438,36 +438,45 @@ class LabelingTab(QWidget):
     # ── 키보드 단축키 (탭 레벨) ───────────────────────────────────────────────
 
     def keyPressEvent(self, event) -> None:
-        key = event.key()
+        key  = event.key()
         mods = event.modifiers()
-        if key == Qt.Key.Key_P:
+        no_mod = not (mods & (Qt.KeyboardModifier.ControlModifier |
+                              Qt.KeyboardModifier.AltModifier |
+                              Qt.KeyboardModifier.ShiftModifier))
+        if key == Qt.Key.Key_Q:
             self._set_tool(TOOL_POLYGON)
-        elif key == Qt.Key.Key_B:
+        elif key == Qt.Key.Key_W:
             self._set_tool(TOOL_BRUSH)
-        elif key == Qt.Key.Key_F:
-            self._set_tool(TOOL_BRUSH_FILL)
         elif key == Qt.Key.Key_E:
+            self._set_tool(TOOL_BRUSH_FILL)
+        elif key == Qt.Key.Key_R:
             self._set_tool(TOOL_ERASER)
-        elif key == Qt.Key.Key_S:
+        elif key == Qt.Key.Key_D:
+            self._set_tool(TOOL_ERASER_FLOOD)
+        elif key == Qt.Key.Key_A:
             self._set_tool(TOOL_SELECT)
-        elif key == Qt.Key.Key_H:
+        elif key == Qt.Key.Key_S and no_mod:
             self._set_tool(TOOL_PAN)
-        elif key == Qt.Key.Key_V:
+        elif key == Qt.Key.Key_F:
             self._act_ann_visible.toggle()
-        elif key == Qt.Key.Key_1:
-            self._set_channel(0)   # 원본
-        elif key == Qt.Key.Key_2:
-            self._set_channel(1)   # R
-        elif key == Qt.Key.Key_3:
-            self._set_channel(2)   # G
-        elif key == Qt.Key.Key_4:
-            self._set_channel(3)   # B
+        elif key == Qt.Key.Key_V and no_mod:
+            self._copy_prev_annotations()
+        elif key == Qt.Key.Key_Z and no_mod:
+            self._go_image(-1)
+        elif key == Qt.Key.Key_X and no_mod:
+            self._go_image(+1)
         elif key in (Qt.Key.Key_Up, Qt.Key.Key_PageUp):
             self._go_image(-1)
         elif key in (Qt.Key.Key_Down, Qt.Key.Key_PageDown):
             self._go_image(+1)
-        elif key == Qt.Key.Key_N:
-            self._copy_prev_annotations()
+        elif key == Qt.Key.Key_1:
+            self._set_channel(0)
+        elif key == Qt.Key.Key_2:
+            self._set_channel(1)
+        elif key == Qt.Key.Key_3:
+            self._set_channel(2)
+        elif key == Qt.Key.Key_4:
+            self._set_channel(3)
         else:
             super().keyPressEvent(event)
 

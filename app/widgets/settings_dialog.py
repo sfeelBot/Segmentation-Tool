@@ -26,31 +26,34 @@ LANG_DISPLAY = {
 }
 
 SHORTCUTS: list[tuple[str, str]] = [
-    ("P",               "sc.polygon"),
-    ("B",               "sc.brush"),
-    ("F",               "sc.brush_fill"),
-    ("E",               "sc.eraser"),
-    ("S",               "sc.select"),
-    ("H",               "sc.pan"),
-    ("Tab",             "sc.fullscreen"),
+    # ── 도구 (왼손 QWER 배치) ────────────────────────────────────────────
+    ("Q",               "sc.polygon"),
+    ("W",               "sc.brush"),
+    ("E",               "sc.brush_fill"),
+    ("R",               "sc.eraser"),
+    ("D",               "sc.eraser_flood"),
+    ("A",               "sc.select"),
+    ("S",               "sc.pan"),
+    # ── 뷰 ─────────────────────────────────────────────────────────────
+    ("F",               "sc.ann_visible"),
+    ("T",               "sc.fullscreen"),
+    ("1 / 2 / 3 / 4",  "sc.channel_orig"),
+    # ── 이미지 이동 ─────────────────────────────────────────────────────
+    ("Z",               "sc.prev_image"),
+    ("X",               "sc.next_image"),
+    # ── 액션 ────────────────────────────────────────────────────────────
+    ("V",               "sc.copy_prev"),
     ("Ctrl + Z",        "sc.undo"),
-    ("N",               "sc.copy_prev"),
     ("Del",             "sc.delete"),
+    ("Esc",             "sc.cancel"),
+    # ── 캔버스 조작 ─────────────────────────────────────────────────────
     ("Space + drag",    "sc.space_pan"),
     ("우클릭 + drag",   "sc.rmb_pan"),
     ("🖱 휠",           "sc.wheel_zoom"),
     ("[  /  -",         "sc.brush_smaller"),
     ("]  /  +",         "sc.brush_bigger"),
     ("더블클릭",        "sc.polygon_close"),
-    ("Esc",             "sc.cancel"),
     ("드래그 (선택 후)", "sc.move_drag"),
-    ("↑ / Page Up",     "sc.prev_image"),
-    ("↓ / Page Down",   "sc.next_image"),
-    ("V",               "sc.ann_visible"),
-    ("1",               "sc.channel_orig"),
-    ("2",               "sc.channel_r"),
-    ("3",               "sc.channel_g"),
-    ("4",               "sc.channel_b"),
 ]
 
 
