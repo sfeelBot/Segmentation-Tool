@@ -1403,11 +1403,15 @@ class AnnotationCanvas(QWidget):
         """channel 채널만 남기고 나머지 0으로 (1=R, 2=G, 3=B)."""
         qimg = pixmap.toImage().convertToFormat(QImage.Format.Format_RGB888)
         w, h = qimg.width(), qimg.height()
-        # PyQt6: bits() 는 sip.voidptr — setsize() 로 크기 지정 후 numpy 변환
+        # PyQt6: bits() → sip.voidptr, setsize() 필요
+        # bytesPerLine() 으로 Qt 행 패딩(4바이트 정렬) 처리
         ptr = qimg.bits()
         ptr.setsize(qimg.sizeInBytes())
-        arr = np.frombuffer(ptr, dtype=np.uint8).reshape(h, w, 3).copy()
-        ch = channel - 1  # R=0, G=1, B=2 (Format_RGB888 순서)
+        stride = qimg.bytesPerLine()
+        arr = (np.frombuffer(ptr, dtype=np.uint8)
+               .reshape(h, stride)[:, :w * 3]   # 패딩 제거
+               .reshape(h, w, 3).copy())
+        ch = channel - 1  # R=0, G=1, B=2
         result = np.zeros_like(arr)
         result[:, :, ch] = arr[:, :, ch]
         out = QImage(result.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888)
