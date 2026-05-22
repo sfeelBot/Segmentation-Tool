@@ -89,12 +89,34 @@ def setup_logging() -> None:
     uh.setFormatter(ui_fmt)
     root.addHandler(uh)
 
-    # 잡히지 않은 예외 로깅
+    # 잡히지 않은 예외 로깅 + 팝업
     def _excepthook(exc_type, exc_value, exc_tb):
         logging.getLogger("uncaught").error(
             "잡히지 않은 예외",
             exc_info=(exc_type, exc_value, exc_tb),
         )
+        # GUI 팝업 (QApplication 이 살아있을 때만)
+        try:
+            import traceback
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+            app = QApplication.instance()
+            if app is not None:
+                msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+                # paintEvent 등 GUI 이벤트 중에 모달을 직접 열면 위험 → 큐에 예약
+                from PyQt6.QtCore import QTimer
+                def _show():
+                    dlg = QMessageBox()
+                    dlg.setWindowTitle("❌  예기치 않은 오류 — 앱이 종료될 수 있습니다")
+                    dlg.setText(
+                        f"<b>{exc_type.__name__}: {exc_value}</b><br><br>"
+                        "자세한 내용은 아래 또는 <code>data/logs/errors.log</code> 를 확인하세요."
+                    )
+                    dlg.setDetailedText(msg)
+                    dlg.setIcon(QMessageBox.Icon.Critical)
+                    dlg.exec()
+                QTimer.singleShot(0, _show)
+        except Exception:
+            pass
         sys.__excepthook__(exc_type, exc_value, exc_tb)
     sys.excepthook = _excepthook
 
