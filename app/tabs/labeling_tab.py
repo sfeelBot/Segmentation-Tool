@@ -69,7 +69,7 @@ class LabelingTab(QWidget):
         right_layout.setContentsMargins(4, 4, 4, 4)
         right_layout.setSpacing(4)
 
-        ann_box = QGroupBox("어노테이션 목록")
+        ann_box = QGroupBox(t("labeling.ann_list"))
         ann_box_layout = QVBoxLayout(ann_box)
         ann_box_layout.setContentsMargins(4, 4, 4, 4)
 
@@ -77,7 +77,7 @@ class LabelingTab(QWidget):
         self._ann_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         ann_box_layout.addWidget(self._ann_list)
 
-        self._lbl_sel_hint = QLabel("선택 후 클래스 패널에서\n클래스 변경 가능")
+        self._lbl_sel_hint = QLabel(t("labeling.sel_hint"))
         self._lbl_sel_hint.setStyleSheet("color:#888; font-size:10px;")
         self._lbl_sel_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_sel_hint.hide()
@@ -113,10 +113,10 @@ class LabelingTab(QWidget):
         self._ch_group = QButtonGroup(self)
         self._ch_group.setExclusive(True)
         for label, ch, tip in [
-            ("원본", 0, "원본 이미지"),
-            ("R",   1, "Red 채널만 표시"),
-            ("G",   2, "Green 채널만 표시"),
-            ("B",   3, "Blue 채널만 표시"),
+            (t("labeling.ch_orig"), 0, t("labeling.ch_orig.tip")),
+            (t("labeling.ch_r"),    1, t("labeling.ch_r.tip")),
+            (t("labeling.ch_g"),    2, t("labeling.ch_g.tip")),
+            (t("labeling.ch_b"),    3, t("labeling.ch_b.tip")),
         ]:
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -197,7 +197,7 @@ class LabelingTab(QWidget):
         self._act_ann_visible = QAction("👁", self)
         self._act_ann_visible.setCheckable(True)
         self._act_ann_visible.setChecked(True)
-        self._act_ann_visible.setToolTip("어노테이션 표시/숨김 [V]")
+        self._act_ann_visible.setToolTip(t("sc.ann_visible") + " [F]")
         self._act_ann_visible.toggled.connect(
             lambda checked: self._canvas.toggle_overlay_visible()
         )
@@ -350,8 +350,8 @@ class LabelingTab(QWidget):
         if self._canvas._image_path is None:
             return
         reply = QMessageBox.question(
-            self, "전체 삭제",
-            "현재 이미지의 모든 어노테이션을 삭제하시겠습니까?",
+            self, t("labeling.clear_title"),
+            t("labeling.clear_msg"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:

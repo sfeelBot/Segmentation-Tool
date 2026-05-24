@@ -186,6 +186,8 @@ class AnnotationCanvas(QWidget):
         self._overlay_scale: float = 1.0   # 실제 픽셀 vs 이미지 픽셀 비율
         self._overlay_worker: _OverlayWorker | None = None
         self._overlay_visible: bool = True  # 어노테이션 표시/숨김 토글
+        # 종료 중인 워커 Python 참조 보관 — GC가 실행 중 QThread를 파괴하는 크래시 방지
+        self._dying_workers: list = []
 
         # ── 성능 최적화 상태 ─────────────────────────────────────────────────
         # Display pixmap 캐시 — 현재 zoom 에 맞게 미리 축소해 CPU blit 비용 감소
@@ -225,6 +227,14 @@ class AnnotationCanvas(QWidget):
     _MAX_OVERLAY_DIM = 2048
 
     def load_image(self, path: Path) -> None:
+        # 이전 이미지의 미저장 변경 즉시 저장
+        if self._save_timer.isActive() and self._image_path is not None:
+            self._save_timer.stop()
+            self._do_save()
+        # smooth 스케일 워커/타이머 취소 — 구 이미지 작업이 새 이미지 상태를 덮어쓰는 크래시 방지
+        self._smooth_timer.stop()
+        self._retire_worker(self._smooth_worker, interrupt=False)
+        self._smooth_worker = None
         self._cancel_polygon()
         self._finish_brush()
         self._image_path = path
@@ -272,14 +282,10 @@ class AnnotationCanvas(QWidget):
         self._display_pixmap = None
         self._display_pixmap_key = (-1.0, 0)
         self._pixel_image = None
-        if self._overlay_worker and self._overlay_worker.isRunning():
-            self._overlay_worker.requestInterruption()
-            self._overlay_worker.done.disconnect()
-            self._overlay_worker = None
-        if self._smooth_worker and self._smooth_worker.isRunning():
-            self._smooth_worker.done.disconnect()
-            self._smooth_worker.quit()
-            self._smooth_worker = None
+        self._retire_worker(self._overlay_worker, interrupt=True)
+        self._overlay_worker = None
+        self._retire_worker(self._smooth_worker, interrupt=False)
+        self._smooth_worker = None
         self.update()
 
     def set_tool(self, tool: str) -> None:
@@ -1242,12 +1248,25 @@ class AnnotationCanvas(QWidget):
 
     # ── 내부 — 렌더링 ─────────────────────────────────────────────────────────
 
+    def _retire_worker(self, worker, *, interrupt: bool) -> None:
+        """실행 중인 워커를 안전하게 은퇴시킨다.
+        Python 참조를 _dying_workers 에 보관해 QThread가 실행 중인 채로 GC 되지 않도록 한다."""
+        if worker is None or not worker.isRunning():
+            return
+        if interrupt:
+            worker.requestInterruption()
+        try:
+            worker.done.disconnect()
+        except (RuntimeError, TypeError):
+            pass  # 이미 disconnect 되었거나 signal 없는 타입
+        self._dying_workers.append(worker)
+        worker.finished.connect(lambda _w=worker: self._dying_workers.remove(_w)
+                                if _w in self._dying_workers else None)
+
     def _invalidate_overlay(self) -> None:
-        # 진행 중인 워커가 있으면 취소
-        if self._overlay_worker and self._overlay_worker.isRunning():
-            self._overlay_worker.requestInterruption()
-            self._overlay_worker.done.disconnect()
-            self._overlay_worker = None
+        # 진행 중인 워커가 있으면 안전하게 은퇴 (GC 크래시 방지)
+        self._retire_worker(self._overlay_worker, interrupt=True)
+        self._overlay_worker = None
         self._overlay = None
         self._overlay_dirty = True
         # 어노테이션 있으면 백그라운드로 즉시 빌드 시작
@@ -1458,11 +1477,9 @@ class AnnotationCanvas(QWidget):
         bucket = round(self._zoom * 10) / 10
         if bucket >= 0.9:
             return
-        # 이전 워커가 아직 실행 중이면 취소
-        if self._smooth_worker and self._smooth_worker.isRunning():
-            self._smooth_worker.done.disconnect()
-            self._smooth_worker.quit()
-            self._smooth_worker = None
+        # 이전 워커가 아직 실행 중이면 안전하게 은퇴
+        self._retire_worker(self._smooth_worker, interrupt=False)
+        self._smooth_worker = None
 
         dw = max(1, int(self._img_w * bucket))
         dh = max(1, int(self._img_h * bucket))
@@ -1474,6 +1491,11 @@ class AnnotationCanvas(QWidget):
 
     def _on_smooth_done(self, scaled_image: QImage, bucket: float) -> None:
         """백그라운드 스케일 완료 — 메인 스레드에서 QPixmap 으로 변환 후 적용."""
+        # self.sender()로 방출한 워커 확인 — 구 워커가 새 워커 참조를 덮어쓰는 버그 방지
+        sender = self.sender()
+        if sender is not self._smooth_worker:
+            # 이미 은퇴한 구 워커의 결과 — 무시
+            return
         current_bucket = round(self._zoom * 10) / 10
         if abs(bucket - current_bucket) < 0.05:
             base = QPixmap.fromImage(scaled_image)

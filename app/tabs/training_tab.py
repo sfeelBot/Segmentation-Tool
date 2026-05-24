@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt
 from app.core.trainer import TrainerWorker, TrainingConfig
 from app.core.annotation_store import load_classes
 from app.core.logger import get_logger
+from app.core.i18n import t
 from app.core.model_loader import load_from_code
 from app.core.device_info import prompt_gpu_availability
 from app.model_presets import PRESETS, preset_by_key, load_preset_code
@@ -107,18 +108,18 @@ class TrainingTab(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         # ── 큐 관리 그룹 ─────────────────────────────────────────────────────
-        queue_box = QGroupBox("📋  학습 큐")
+        queue_box = QGroupBox(t("train.queue"))
         queue_layout = QVBoxLayout(queue_box)
 
         # 이름 + 모델 + 추가 행
         add_row = QHBoxLayout()
-        add_row.addWidget(QLabel("작업 이름:"))
+        add_row.addWidget(QLabel(t("train.job_name")))
         self._name_input = QLineEdit()
         self._name_input.setPlaceholderText("예: 학습1")
         self._name_input.setFixedWidth(150)
         add_row.addWidget(self._name_input)
 
-        add_row.addWidget(QLabel("🧠 모델:"))
+        add_row.addWidget(QLabel(t("train.model_label")))
         self._model_combo = QComboBox()
         self._model_combo.setMinimumWidth(220)
         self._model_combo.addItem("🧠 현재 로드된 모델", "loaded")
@@ -126,7 +127,7 @@ class TrainingTab(QWidget):
             self._model_combo.addItem(p.title, f"preset:{p.key}")
         add_row.addWidget(self._model_combo, stretch=1)
 
-        self._btn_add_job = QPushButton("➕  큐에 추가")
+        self._btn_add_job = QPushButton(t("train.add"))
         self._btn_add_job.setStyleSheet(
             "background:#1e3a5f; font-weight:bold; padding:4px 12px;"
         )
@@ -142,15 +143,15 @@ class TrainingTab(QWidget):
 
         # 큐 제어 버튼
         ctrl_row = QHBoxLayout()
-        self._btn_start_all = QPushButton("▶  모두 실행")
+        self._btn_start_all = QPushButton(t("train.run_all"))
         self._btn_start_all.setStyleSheet(
             "background:#065f46; font-weight:bold; padding:6px 14px;"
         )
-        self._btn_stop      = QPushButton("■  중지")
+        self._btn_stop      = QPushButton(t("train.stop"))
         self._btn_stop.setEnabled(False)
-        self._btn_show_dlg  = QPushButton("🎯  진행 창")
-        self._btn_remove    = QPushButton("🗑  삭제")
-        self._btn_clear     = QPushButton("🔄  전체 초기화")
+        self._btn_show_dlg  = QPushButton(t("train.progress_window"))
+        self._btn_remove    = QPushButton(t("train.remove"))
+        self._btn_clear     = QPushButton(t("train.clear_queue"))
         self._btn_start_all.clicked.connect(self._on_start_queue)
         self._btn_stop.clicked.connect(self._on_stop)
         self._btn_show_dlg.clicked.connect(self._on_show_dialog)
@@ -166,7 +167,7 @@ class TrainingTab(QWidget):
         queue_layout.addLayout(ctrl_row)
 
         # 전체 ETA
-        self._lbl_total_eta = QLabel("⏱️  전체 예상 시간: —")
+        self._lbl_total_eta = QLabel(t("train.total_eta"))
         self._lbl_total_eta.setStyleSheet("color:#93c5fd; font-weight:bold;")
         queue_layout.addWidget(self._lbl_total_eta)
 
@@ -182,7 +183,7 @@ class TrainingTab(QWidget):
 
         # 상태 + Step 카운터 행
         status_row = QHBoxLayout()
-        self._lbl_status = QLabel("대기 중")
+        self._lbl_status = QLabel(t("train.waiting"))
         self._lbl_status.setStyleSheet("color:#cbd5e1; font-size:12px;")
         self._lbl_step = QLabel("")
         self._lbl_step.setStyleSheet(
@@ -197,7 +198,7 @@ class TrainingTab(QWidget):
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # 좌: 손실 그래프 (Y축 최대 활용)
-        chart_box = QGroupBox("📈  손실 그래프")
+        chart_box = QGroupBox(t("train.chart_title"))
         chart_layout = QVBoxLayout(chart_box)
         chart_layout.setContentsMargins(4, 4, 4, 4)
         self._chart = LossChart()
@@ -214,7 +215,7 @@ class TrainingTab(QWidget):
         side_layout.setSpacing(4)
 
         # 메트릭 (3열 — Epoch / Val / IoU)
-        side_layout.addWidget(QLabel("📊 메트릭"))
+        side_layout.addWidget(QLabel(t("train.metrics_title")))
         self._metrics_table = QTableWidget(0, 3)
         self._metrics_table.setHorizontalHeaderLabels(["Ep", "Val", "IoU"])
         self._metrics_table.setStyleSheet("font-size:10px;")
@@ -226,7 +227,7 @@ class TrainingTab(QWidget):
         side_layout.addWidget(self._metrics_table, stretch=1)
 
         # 체크포인트
-        side_layout.addWidget(QLabel("💾 체크포인트"))
+        side_layout.addWidget(QLabel(t("train.ckpt_title")))
         self._ckpt_list = QListWidget()
         self._ckpt_list.setStyleSheet("font-size:10px;")
         side_layout.addWidget(self._ckpt_list, stretch=1)

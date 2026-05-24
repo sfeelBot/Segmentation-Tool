@@ -123,8 +123,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
-            self, "종료 확인",
-            "앱을 종료하시겠습니까?",
+            self, t("ui.close_confirm_title"),
+            t("ui.close_confirm_msg"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

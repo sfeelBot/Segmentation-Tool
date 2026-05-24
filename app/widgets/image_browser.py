@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
+from app.core.i18n import t
 
 from app.core.annotation_store import get_label_status
 from app.core import project as _project
@@ -67,14 +68,14 @@ class ImageBrowser(QWidget):
         layout.setSpacing(4)
 
         top = QHBoxLayout()
-        top.addWidget(QLabel("이미지"))
+        top.addWidget(QLabel(t("ui.image_browser")))
         top.addStretch()
-        self._btn_add        = QPushButton("파일")
-        self._btn_add_folder = QPushButton("폴더")
-        self._btn_del        = QPushButton("삭제")
-        self._btn_add.setToolTip("이미지 파일 선택해서 추가")
-        self._btn_add_folder.setToolTip("폴더 내 이미지 전체 추가")
-        self._btn_del.setToolTip("선택 이미지 삭제")
+        self._btn_add        = QPushButton(t("ui.add_file"))
+        self._btn_add_folder = QPushButton(t("ui.add_folder"))
+        self._btn_del        = QPushButton(t("ui.delete"))
+        self._btn_add.setToolTip(t("ui.add_file.tip"))
+        self._btn_add_folder.setToolTip(t("ui.add_folder.tip"))
+        self._btn_del.setToolTip(t("ui.delete.tip"))
         top.addWidget(self._btn_add)
         top.addWidget(self._btn_add_folder)
         top.addWidget(self._btn_del)

@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from app.core.trainer import TrainingConfig
+from app.core.i18n import t
 
 
 class ConfigForm(QWidget):
@@ -20,7 +21,7 @@ class ConfigForm(QWidget):
         root.setSpacing(8)
 
         # ── 🔲 이미지 샘플링 (최상단 — 데이터보다 먼저) ─────────────────────────
-        patch_box = QGroupBox("🔲 이미지 샘플링")
+        patch_box = QGroupBox(t("cfg.sampling"))
         patch_form = QFormLayout(patch_box)
 
         self._sample_mode = QComboBox()
@@ -35,7 +36,7 @@ class ConfigForm(QWidget):
             "             → IMG SIZE = 다운스케일 해상도\n"
             "center_crop: 이미지 중앙에서 IMG SIZE 크기만큼 잘라냄"
         )
-        patch_form.addRow("샘플링 모드", self._sample_mode)
+        patch_form.addRow(t("cfg.sampling_mode"), self._sample_mode)
 
         self._patches_per_img = QSpinBox()
         self._patches_per_img.setRange(1, 500)
@@ -48,7 +49,7 @@ class ConfigForm(QWidget):
             "50~100 이 대형 이미지(50MB급)에 적합."
         )
 
-        self._btn_auto_patches = QPushButton("🔄 자동 계산")
+        self._btn_auto_patches = QPushButton(t("cfg.auto_calc"))
         self._btn_auto_patches.setFixedWidth(90)
         self._btn_auto_patches.setToolTip(
             "프로젝트 이미지 최대 5장을 샘플링해서\n"
@@ -64,7 +65,7 @@ class ConfigForm(QWidget):
         patches_hl.addWidget(self._patches_per_img)
         patches_hl.addWidget(self._btn_auto_patches)
 
-        patch_form.addRow("이미지당 패치 수", patches_row)
+        patch_form.addRow(t("cfg.patches_per_img"), patches_row)
 
         self._defect_prob = QDoubleSpinBox()
         self._defect_prob.setRange(0.0, 1.0)
@@ -75,11 +76,11 @@ class ConfigForm(QWidget):
             "random_crop 시 결함 중심으로 패치를 뽑는 확률.\n"
             "0.7 = 70% 는 결함 근처에서, 30% 는 전체 랜덤."
         )
-        patch_form.addRow("결함 우선 확률", self._defect_prob)
+        patch_form.addRow(t("cfg.defect_prob"), self._defect_prob)
         root.addWidget(patch_box)
 
         # ── 데이터 ────────────────────────────────────────────────────────────
-        data_box = QGroupBox("데이터")
+        data_box = QGroupBox(t("cfg.data"))
         data_form = QFormLayout(data_box)
 
         self._img_w = QSpinBox()
@@ -104,14 +105,14 @@ class ConfigForm(QWidget):
             "2~4 = GPU 대기 시간 줄임 (Mac/Linux 권장)"
         )
 
-        data_form.addRow("이미지 너비 (px)", self._img_w)
-        data_form.addRow("이미지 높이 (px)", self._img_h)
-        data_form.addRow("Val 비율", self._val_split)
-        data_form.addRow("DataLoader Workers", self._num_workers)
+        data_form.addRow(t("cfg.img_w"),   self._img_w)
+        data_form.addRow(t("cfg.img_h"),   self._img_h)
+        data_form.addRow(t("cfg.val_split"), self._val_split)
+        data_form.addRow(t("cfg.workers"), self._num_workers)
         root.addWidget(data_box)
 
         # ── 학습 ──────────────────────────────────────────────────────────────
-        train_box = QGroupBox("학습")
+        train_box = QGroupBox(t("cfg.training"))
         train_form = QFormLayout(train_box)
 
         self._epochs = QSpinBox(); self._epochs.setRange(1, 9999); self._epochs.setValue(50)
@@ -124,11 +125,11 @@ class ConfigForm(QWidget):
         train_form.addRow("Epochs", self._epochs)
         train_form.addRow("Batch Size", self._batch)
         train_form.addRow("Learning Rate", self._lr)
-        train_form.addRow("체크포인트 주기 (epoch)", self._ckpt_every)
+        train_form.addRow(t("cfg.ckpt_every"), self._ckpt_every)
         root.addWidget(train_box)
 
         # ── 옵티마이저 ────────────────────────────────────────────────────────
-        opt_box = QGroupBox("옵티마이저")
+        opt_box = QGroupBox(t("cfg.optimizer_group"))
         opt_form = QFormLayout(opt_box)
 
         self._optimizer = QComboBox()
@@ -152,11 +153,11 @@ class ConfigForm(QWidget):
 
         opt_form.addRow("Optimizer", self._optimizer)
         opt_form.addRow("Weight Decay", self._weight_decay)
-        opt_form.addRow("Momentum (SGD only)", self._momentum)
+        opt_form.addRow(t("cfg.momentum_label"), self._momentum)
         root.addWidget(opt_box)
 
         # ── 손실 함수 / 장치 ──────────────────────────────────────────────────
-        misc_box = QGroupBox("손실 함수 / 장치")
+        misc_box = QGroupBox(t("cfg.misc"))
         misc_form = QFormLayout(misc_box)
 
         self._loss_fn = QComboBox()
