@@ -41,6 +41,8 @@ class AutoLabelDialog(QDialog):
         self._quick_trained_ckpt: Path | None = None
         self._quick_trained_model = None
         self._ckpt_metas: list[CheckpointMeta] = []
+        # 종료 중인 워커 Python 참조 보관 — GC가 실행 중 QThread를 파괴하는 크래시 방지
+        self._dying_workers: list = []
         self.setWindowTitle("✨ 오토 라벨링")
         self.setMinimumSize(620, 500)
         self._build_ui()
@@ -278,7 +280,18 @@ class AutoLabelDialog(QDialog):
         self._quick_trained_ckpt = Path(path)
         log.info(f"[빠른 학습] 체크포인트 저장: {path}")
 
+    def _retire_worker(self, worker) -> None:
+        """실행 중 QThread를 _dying_workers 에 보관해 GC 크래시 방지."""
+        if worker is None or not worker.isRunning():
+            return
+        self._dying_workers.append(worker)
+        worker.finished.connect(
+            lambda _w=worker: self._dying_workers.remove(_w)
+            if _w in self._dying_workers else None
+        )
+
     def _on_quick_trained(self) -> None:
+        self._retire_worker(self._trainer)
         self._trainer = None
         if self._quick_trained_ckpt is None:
             QMessageBox.warning(self, "체크포인트 없음",
@@ -310,6 +323,7 @@ class AutoLabelDialog(QDialog):
         self._worker.start()
 
     def _on_quick_train_error(self, msg: str) -> None:
+        self._retire_worker(self._trainer)
         self._trainer = None
         self._btn_start.setEnabled(True)
         self._btn_cancel.setEnabled(False)
@@ -363,6 +377,8 @@ class AutoLabelDialog(QDialog):
         self._lbl_status.setText(f"🏷 {done} / {total}  {name}")
 
     def _on_finished(self, count: int, results: list) -> None:
+        self._retire_worker(self._worker)
+        self._worker = None
         self._progress.setValue(self._progress.maximum())
         self._lbl_status.setText(f"🔎 {count}개 생성됨 — 미리보기로 확인하세요.")
         log.info(f"오토 라벨링 생성 완료: {count}개 (미리보기 대기)")
@@ -388,6 +404,8 @@ class AutoLabelDialog(QDialog):
             self._btn_cancel.setEnabled(False)
 
     def _on_error(self, msg: str) -> None:
+        self._retire_worker(self._worker)
+        self._worker = None
         self._btn_start.setEnabled(True)
         self._btn_cancel.setEnabled(False)
         log.error(f"오토 라벨링 실패: {msg}")

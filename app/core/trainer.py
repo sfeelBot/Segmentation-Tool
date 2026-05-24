@@ -137,23 +137,33 @@ class TrainerWorker(QThread):
                 "이미지를 추가하고 라벨링 탭에서 어노테이션하세요."
             )
 
-        val_n   = max(1, int(len(dataset) * cfg.val_split))
-        train_n = len(dataset) - val_n
-        if train_n == 0:
+        # ── 이미지 단위 Train/Val 분할 ─────────────────────────────────────────
+        # random_split(dataset, ...) 은 패치 단위로 분할 → 동일 이미지가 train/val
+        # 양쪽에 등장해 val 이 training 이미지의 다른 크롭이 됨 (overfitting 감지 불가).
+        # 이미지 인덱스 자체를 셔플해서 이미지 단위로 분할한다.
+        import random as _rnd
+        num_images = dataset.num_pairs
+        val_n_img  = max(1, int(num_images * cfg.val_split))
+        train_n_img = num_images - val_n_img
+        if train_n_img == 0:
             raise RuntimeError("train 데이터가 부족합니다 (val_split 을 줄이세요).")
-        log.info(f"Train/Val 분할: {train_n} (×{cfg.patches_per_image}패치) / {val_n}")
-        train_ds, val_ds_raw = random_split(dataset, [train_n, val_n])
-        # Validation 은 항상 resize — 패치 랜덤성으로 인한 손실 변동 방지
-        if cfg.sample_mode != "resize":
-            val_ds = SegmentationDataset(
-                image_size=(cfg.image_w, cfg.image_h),
-                mode="resize",
-            )
-            # val_ds_raw 의 인덱스만 사용하는 서브셋으로 교체
-            val_indices = list(val_ds_raw.indices)
-            val_ds = _IndexedSubset(val_ds, val_indices)
-        else:
-            val_ds = val_ds_raw
+
+        all_img_idx = list(range(num_images))
+        _rnd.shuffle(all_img_idx)
+        val_img_idx   = sorted(all_img_idx[:val_n_img])
+        train_img_idx = sorted(all_img_idx[val_n_img:])
+        log.info(f"Train/Val 이미지 단위 분할: {train_n_img} / {val_n_img}  "
+                 f"(×{cfg.patches_per_image} 패치/epoch)")
+
+        # Training: 학습 이미지만 패치 샘플링
+        train_ds = _TrainImageSubset(dataset, train_img_idx)
+
+        # Validation: 검증 이미지만 resize 로 일관되게 평가
+        val_ds_resize = SegmentationDataset(
+            image_size=(cfg.image_w, cfg.image_h),
+            mode="resize",
+        )
+        val_ds = _IndexedSubset(val_ds_resize, val_img_idx)
 
         pin = device.type == "cuda"
         train_loader = DataLoader(
@@ -266,7 +276,7 @@ class TrainerWorker(QThread):
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
 
 class _IndexedSubset(torch.utils.data.Dataset):
-    """SegmentationDataset 에서 특정 인덱스만 뽑는 래퍼 (val resize 용)."""
+    """SegmentationDataset 에서 특정 이미지 인덱스만 뽑는 래퍼 (val resize 용)."""
     def __init__(self, dataset: SegmentationDataset, indices: list[int]) -> None:
         self._ds = dataset
         self._idx = indices
@@ -274,6 +284,21 @@ class _IndexedSubset(torch.utils.data.Dataset):
         return len(self._idx)
     def __getitem__(self, i: int):
         return self._ds[self._idx[i]]
+
+
+class _TrainImageSubset(torch.utils.data.Dataset):
+    """학습 이미지 서브셋에서 패치를 샘플링하는 래퍼.
+    random_crop 모드에서 dataset.__getitem__이 같은 idx 를 호출해도
+    내부 random.randint 로 매번 다른 크롭 위치를 반환한다."""
+    def __init__(self, dataset: SegmentationDataset, image_indices: list[int]) -> None:
+        self._ds  = dataset
+        self._idx = image_indices
+        self._p   = dataset._patches_per_img
+    def __len__(self) -> int:
+        return len(self._idx) * self._p
+    def __getitem__(self, i: int):
+        img_in_subset = i % len(self._idx)
+        return self._ds[self._idx[img_in_subset]]
 
 
 def _build_optimizer(model: nn.Module, cfg: TrainingConfig):
