@@ -169,10 +169,12 @@ def check_gpu_available() -> tuple[bool, str]:
 
 
 def prompt_gpu_availability(parent, context: str = "작업") -> bool:
-    """GPU 를 사용할 수 없으면 팝업으로 CPU 로 계속할지 물어본다.
+    """GPU 를 사용할 수 없으면 상세 진단 팝업을 띄우고 CPU 로 계속할지 물어본다.
     True = 진행해도 좋음 (GPU 사용 가능 or 사용자가 CPU 수락),
     False = 사용자가 취소."""
-    from PyQt6.QtWidgets import QMessageBox
+    from PyQt6.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+    from app.core.cuda_diag import run_cuda_diagnostics
+    from app.widgets.cuda_diag_dialog import CudaDiagDialog
 
     ok, reason = check_gpu_available()
     if ok:
@@ -180,25 +182,49 @@ def prompt_gpu_availability(parent, context: str = "작업") -> bool:
         return True
 
     log.warning(f"[{context}] GPU 사용 불가: {reason}")
-    msg = (
-        f"❌  GPU(CUDA) 를 사용할 수 없습니다.\n\n"
-        f"원인: {reason}\n\n"
-        f"가능한 해결책:\n"
-        f"  • NVIDIA 드라이버 최신 버전 설치\n"
-        f"  • CUDA 빌드 PyTorch 재설치\n"
-        f"    pip install torch torchvision --index-url\n"
-        f"    https://download.pytorch.org/whl/cu121\n"
-        f"  • nvidia-smi 로 GPU 점유 프로그램 확인\n\n"
-        f"💡 CPU 로 진행하시겠습니까?\n"
-        f"(학습/추론이 매우 느릴 수 있습니다)"
-    )
-    reply = QMessageBox.question(
-        parent, f"GPU 사용 불가 — {context}",
-        msg,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-    )
-    if reply == QMessageBox.StandardButton.Yes:
+
+    # 진단 실행 (nvidia-smi 등 subprocess 포함 — 짧은 지연 있음)
+    diag = run_cuda_diagnostics()
+
+    # GPU 사용 불가 + 자세한 진단 + CPU 진행 여부 묻는 커스텀 다이얼로그
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(f"GPU 사용 불가 — {context}")
+    dlg.setMinimumSize(680, 560)
+    dlg.resize(720, 580)
+
+    outer = QVBoxLayout(dlg)
+    outer.setSpacing(10)
+    outer.setContentsMargins(12, 12, 12, 12)
+
+    # 상단 안내
+    from PyQt6.QtWidgets import QTextBrowser
+    from app.widgets.cuda_diag_dialog import _build_html
+    browser = QTextBrowser()
+    browser.setOpenExternalLinks(False)
+    browser.setStyleSheet("background:#111827;border:1px solid #374151;border-radius:6px;")
+    browser.setHtml(_build_html(diag))
+    outer.addWidget(browser)
+
+    # 하단 버튼 행
+    btn_row = QHBoxLayout()
+    lbl_q = QLabel(f"CPU 로 {context}을(를) 진행하시겠습니까?  (매우 느릴 수 있습니다)")
+    lbl_q.setStyleSheet("color:#fbbf24;font-size:12px;")
+    btn_row.addWidget(lbl_q)
+    btn_row.addStretch()
+
+    btn_yes = QPushButton("CPU 로 진행")
+    btn_yes.setStyleSheet("background:#065f46;color:white;font-weight:bold;padding:6px 14px;")
+    btn_no  = QPushButton("취소")
+    btn_no.setStyleSheet("padding:6px 14px;")
+    btn_yes.clicked.connect(dlg.accept)
+    btn_no.clicked.connect(dlg.reject)
+    btn_row.addWidget(btn_yes)
+    btn_row.addWidget(btn_no)
+    outer.addLayout(btn_row)
+
+    accepted = dlg.exec() == QDialog.DialogCode.Accepted
+    if accepted:
         log.info(f"[{context}] 사용자가 CPU 로 진행을 선택")
-        return True
-    log.info(f"[{context}] 사용자가 취소")
-    return False
+    else:
+        log.info(f"[{context}] 사용자가 취소")
+    return accepted
