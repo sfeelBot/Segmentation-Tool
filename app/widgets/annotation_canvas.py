@@ -1288,8 +1288,14 @@ class AnnotationCanvas(QWidget):
 
     def _on_overlay_done(self, img: QImage) -> None:
         """백그라운드 오버레이 빌드 완료 — QPixmap 변환 후 교체."""
+        # sender 가드: 이미 은퇴한 구 워커의 queued 시그널 무시
+        if self.sender() is not self._overlay_worker:
+            return
         self._overlay       = QPixmap.fromImage(img)
         self._overlay_dirty = False
+        # done.emit() 직후 run()이 리턴하지만 QThread.finished 는 아직 미발송일 수 있다.
+        # _retire_worker 로 Python 참조를 _dying_workers 에 이관 → finished 후 GC 허용.
+        self._retire_worker(self._overlay_worker, interrupt=False)
         self._overlay_worker = None
         self.update()
 
@@ -1505,6 +1511,8 @@ class AnnotationCanvas(QWidget):
             )
             self._display_pixmap_key = (bucket, self._display_channel)
             self.update()
+        # run()이 리턴했어도 QThread.finished 미발송 가능 → retire 후 None
+        self._retire_worker(self._smooth_worker, interrupt=False)
         self._smooth_worker = None
 
     def _schedule_repaint(self) -> None:

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QLineEdit, QGroupBox, QComboBox,
 )
 from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from app.core.trainer import TrainerWorker, TrainingConfig
 from app.core.annotation_store import load_classes
@@ -18,7 +18,7 @@ from app.core.logger import get_logger
 from app.core.i18n import t
 from app.core.model_loader import load_from_code
 from app.core.device_info import prompt_gpu_availability
-from app.core.cuda_diag import run_cuda_diagnostics, DiagStatus
+from app.core.cuda_diag import run_cuda_diagnostics, CudaDiagResult, DiagStatus
 from app.widgets.cuda_diag_dialog import show_cuda_diag
 from app.model_presets import PRESETS, preset_by_key, load_preset_code
 from app.widgets.config_form import ConfigForm
@@ -28,6 +28,14 @@ from app.widgets.training_progress_dialog import (
 )
 
 log = get_logger(__name__)
+
+
+class _CudaDiagWorker(QThread):
+    """nvidia-smi 등 subprocess를 백그라운드에서 실행 — UI 블로킹 방지."""
+    finished_diag = pyqtSignal(object)   # CudaDiagResult
+
+    def run(self) -> None:
+        self.finished_diag.emit(run_cuda_diagnostics())
 
 
 def _fmt_step_eta(seconds: float) -> str:
@@ -86,44 +94,64 @@ class TrainingTab(QWidget):
         self._total_steps: int = 1
         self._current_step: int = 0
         self._train_start_time: float = 0.0
-        self._cuda_diag_result = run_cuda_diagnostics()   # 탭 초기화 시 1회 진단
+        self._cuda_diag_result: CudaDiagResult | None = None  # 백그라운드 진단 완료 후 채워짐
+        self._cuda_diag_worker: _CudaDiagWorker | None = None
         self._build_ui()
+        self._start_cuda_diag()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
     def _build_cuda_banner(self) -> QWidget:
-        """CUDA 가용 여부를 한 줄로 표시하는 배너. 클릭 시 상세 진단 팝업."""
-        r = self._cuda_diag_result
+        """CUDA 상태 배너 골격 — 진단 완료 전엔 '확인 중...' 표시."""
         banner = QWidget()
         banner.setFixedHeight(32)
         row = QHBoxLayout(banner)
         row.setContentsMargins(10, 0, 4, 0)
         row.setSpacing(8)
 
-        if r.cuda_available:
-            # 사용 가능한 GPU 이름 수집
-            gpu_items = [it for it in r.items if it.name.startswith("GPU [")]
-            gpu_str = "  |  ".join(it.value.split("—")[0].strip() for it in gpu_items) or "GPU"
-            lbl = QLabel(f"CUDA  {gpu_str}")
-            lbl.setStyleSheet("color:#6ddf6d; font-size:11px; font-weight:bold;")
-            banner.setStyleSheet("background:#0d1f0d; border-radius:4px;")
-        else:
-            lbl = QLabel(f"CUDA 사용 불가  |  {r.root_cause}")
-            lbl.setStyleSheet("color:#f87171; font-size:11px; font-weight:bold;")
-            banner.setStyleSheet("background:#1f0d0d; border-radius:4px;")
+        self._cuda_lbl = QLabel("CUDA 환경 확인 중...")
+        self._cuda_lbl.setStyleSheet("color:#9ca3af; font-size:11px; font-weight:bold;")
+        banner.setStyleSheet("background:#1f2329; border-radius:4px;")
+        row.addWidget(self._cuda_lbl, stretch=1)
 
-        row.addWidget(lbl, stretch=1)
-
-        btn_diag = QPushButton("진단 보기")
-        btn_diag.setFixedHeight(22)
-        btn_diag.setStyleSheet(
+        self._btn_diag = QPushButton("진단 보기")
+        self._btn_diag.setFixedHeight(22)
+        self._btn_diag.setEnabled(False)
+        self._btn_diag.setStyleSheet(
             "font-size:11px; padding:0 8px; border:1px solid #4b5563; border-radius:3px;"
         )
-        btn_diag.setToolTip("CUDA / GPU 환경 진단 결과를 봅니다")
-        btn_diag.clicked.connect(lambda: show_cuda_diag(self, self._cuda_diag_result))
-        row.addWidget(btn_diag)
+        self._btn_diag.setToolTip("CUDA / GPU 환경 진단 결과를 봅니다")
+        self._btn_diag.clicked.connect(lambda: show_cuda_diag(self, self._cuda_diag_result))
+        row.addWidget(self._btn_diag)
 
+        self._cuda_banner = banner
         return banner
+
+    def _start_cuda_diag(self) -> None:
+        """nvidia-smi 를 백그라운드에서 실행해 UI 블로킹 없이 진단한다."""
+        self._cuda_diag_worker = _CudaDiagWorker(self)
+        self._cuda_diag_worker.finished_diag.connect(self._on_cuda_diag_done)
+        self._cuda_diag_worker.start()
+
+    def _on_cuda_diag_done(self, result: CudaDiagResult) -> None:
+        """백그라운드 진단 완료 → 배너 업데이트."""
+        self._cuda_diag_result = result
+        self._cuda_diag_worker = None   # 스레드가 이미 finished 상태이므로 안전
+
+        if result.cuda_available:
+            gpu_items = [it for it in result.items if it.name.startswith("GPU [")]
+            gpu_str = "  |  ".join(
+                it.value.split("—")[0].strip() for it in gpu_items
+            ) or "GPU"
+            self._cuda_lbl.setText(f"CUDA  {gpu_str}")
+            self._cuda_lbl.setStyleSheet("color:#6ddf6d; font-size:11px; font-weight:bold;")
+            self._cuda_banner.setStyleSheet("background:#0d1f0d; border-radius:4px;")
+        else:
+            self._cuda_lbl.setText(f"CUDA 사용 불가  |  {result.root_cause}")
+            self._cuda_lbl.setStyleSheet("color:#f87171; font-size:11px; font-weight:bold;")
+            self._cuda_banner.setStyleSheet("background:#1f0d0d; border-radius:4px;")
+
+        self._btn_diag.setEnabled(True)
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -144,9 +172,8 @@ class TrainingTab(QWidget):
         right_layout.setSpacing(8)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
-        # ── CUDA 상태 배너 ────────────────────────────────────────────────────
-        self._cuda_banner = self._build_cuda_banner()
-        right_layout.addWidget(self._cuda_banner)
+        # ── CUDA 상태 배너 (진단은 백그라운드 _start_cuda_diag 에서 실행) ────
+        right_layout.addWidget(self._build_cuda_banner())
 
         # ── 큐 관리 그룹 ─────────────────────────────────────────────────────
         queue_box = QGroupBox(t("train.queue"))
