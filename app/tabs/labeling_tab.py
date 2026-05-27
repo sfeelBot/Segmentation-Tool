@@ -309,7 +309,7 @@ class LabelingTab(QWidget):
         · 이미지 목록에 포커스 → 선택된 이미지 일괄 삭제
         · 그 외(캔버스, 어노테이션 목록 등) → 선택된 어노테이션 삭제"""
         try:
-            if self._image_browser._list.hasFocus():
+            if self._image_browser.has_list_focus():
                 self._image_browser._on_delete()
                 return
         except Exception:
@@ -401,11 +401,11 @@ class LabelingTab(QWidget):
         """이전 이미지의 어노테이션을 현재 이미지에 복사 (Ctrl+Shift+C)."""
         if self._canvas._image_path is None:
             return
-        row = self._image_browser._list.currentRow()
-        if row <= 0:
+        idx = self._image_browser.current_display_index()
+        if idx <= 0:
             log.warning("이전 이미지가 없어 복사를 건너뜁니다.")
             return
-        prev_path = self._image_browser._paths[row - 1]
+        prev_path = self._image_browser._paths[idx - 1]
         from app.core import annotation_store as store
         prev_anns = store.load(prev_path)
         if not prev_anns:
@@ -513,10 +513,4 @@ class LabelingTab(QWidget):
 
     def _go_image(self, step: int) -> None:
         """이미지 브라우저에서 step 만큼 상대 이동 (−1: 이전, +1: 다음)."""
-        lst = self._image_browser._list
-        cnt = lst.count()
-        if cnt == 0:
-            return
-        row = max(0, min(lst.currentRow() + step, cnt - 1))
-        if row != lst.currentRow():
-            lst.setCurrentRow(row)
+        self._image_browser.navigate(step)
