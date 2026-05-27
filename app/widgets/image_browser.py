@@ -4,6 +4,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QFileDialog, QMessageBox, QProgressBar,
+    QComboBox, QLineEdit,
 )
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
@@ -21,6 +22,18 @@ _STATUS_STYLE = {
     "ok":        ("✓", "#5ba8ff"),
     "unlabeled": ("○", "#999999"),
 }
+
+# 정렬 기준 (mode_key, 표시 레이블)
+_SORT_MODES = [
+    ("name_asc",    "파일명 ↑"),
+    ("name_desc",   "파일명 ↓"),
+    ("folder",      "폴더"),
+    ("status_done", "완료↑"),
+    ("status_todo", "미완료↑"),
+]
+
+# 라벨링 상태 → 정렬용 키 (숫자 클수록 "완료")
+_STATUS_KEY = {"labeled": 2, "ok": 1, "unlabeled": 0}
 
 
 class _FolderImportWorker(QThread):
@@ -55,7 +68,10 @@ class ImageBrowser(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._paths: list[Path] = []
+        self._all_paths: list[Path] = []    # 전체 이미지 (필터·정렬 전)
+        self._paths: list[Path] = []        # 현재 표시 중인 이미지 (필터+정렬 후)
+        self._sort_mode: str = "name_asc"
+        self._filter_text: str = ""
         self._import_worker: _FolderImportWorker | None = None
         self._build_ui()
         self.reload()
@@ -67,6 +83,7 @@ class ImageBrowser(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
+        # ── 상단 버튼 행 ──────────────────────────────────────────────────────
         top = QHBoxLayout()
         top.addWidget(QLabel(t("ui.image_browser")))
         top.addStretch()
@@ -81,12 +98,37 @@ class ImageBrowser(QWidget):
         top.addWidget(self._btn_del)
         layout.addLayout(top)
 
+        # ── 검색 바 ───────────────────────────────────────────────────────────
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("🔍 파일명 검색...")
+        self._search_edit.setClearButtonEnabled(True)
+        self._search_edit.setStyleSheet(
+            "QLineEdit { background:#111418; border:1px solid #374151; "
+            "border-radius:4px; padding:3px 6px; color:#e5e7eb; font-size:11px; }"
+        )
+        self._search_edit.textChanged.connect(self._on_search_changed)
+        layout.addWidget(self._search_edit)
+
+        # ── 정렬 콤보 ─────────────────────────────────────────────────────────
+        sort_row = QHBoxLayout()
+        sort_lbl = QLabel("정렬:")
+        sort_lbl.setStyleSheet("font-size:11px; color:#9ca3af;")
+        sort_row.addWidget(sort_lbl)
+        self._sort_combo = QComboBox()
+        self._sort_combo.setStyleSheet("font-size:11px;")
+        for _, label in _SORT_MODES:
+            self._sort_combo.addItem(label)
+        self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        sort_row.addWidget(self._sort_combo, stretch=1)
+        layout.addLayout(sort_row)
+
+        # ── 이미지 목록 ───────────────────────────────────────────────────────
         self._list = QListWidget()
         self._list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self._list.currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self._list)
 
-        # 범례
+        # ── 범례 ──────────────────────────────────────────────────────────────
         legend = QHBoxLayout()
         for sym, color, label in [("●", "#6ddf6d", "라벨링됨"),
                                    ("✓", "#5ba8ff", "OK"),
@@ -114,30 +156,23 @@ class ImageBrowser(QWidget):
         self._btn_add_folder.clicked.connect(self._on_add_folder)
         self._btn_del.clicked.connect(self._on_delete)
 
-    # ── 공개 ──────────────────────────────────────────────────────────────────
+    # ── 공개 API ──────────────────────────────────────────────────────────────
 
     def reload(self) -> None:
+        """images_dir 를 (재귀적으로) 스캔해 전체 목록 갱신 후 표시 재적용."""
         _project.images_dir().mkdir(parents=True, exist_ok=True)
-        prev_path = self._paths[self._list.currentRow()] \
-            if 0 <= self._list.currentRow() < len(self._paths) else None
-
-        self._paths = sorted(
-            p for pat in SUPPORTED
-            for p in _project.images_dir().glob(pat)
+        self._all_paths = sorted(
+            p for p in _project.images_dir().rglob("*")
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
         )
-        self._list.clear()
-        for p in self._paths:
-            self._list.addItem(self._make_item(p))
-
-        # 선택 복원
-        if prev_path and prev_path in self._paths:
-            self._list.setCurrentRow(self._paths.index(prev_path))
-        elif self._paths:
-            row = min(max(self._list.currentRow(), 0), len(self._paths) - 1)
-            self._list.setCurrentRow(row)
+        self._apply_display()
 
     def refresh_item(self, path: Path) -> None:
         """어노테이션 저장 후 해당 항목의 상태 표시만 갱신."""
+        if self._sort_mode in ("status_done", "status_todo"):
+            # 상태 기반 정렬 중이면 순서가 바뀔 수 있으므로 전체 재표시
+            self._apply_display()
+            return
         try:
             idx = self._paths.index(path)
         except ValueError:
@@ -147,7 +182,7 @@ class ImageBrowser(QWidget):
             return
         status = get_label_status(path)
         sym, color = _STATUS_STYLE[status]
-        item.setText(f"{sym}  {path.name}")
+        item.setText(f"{sym}  {self._rel_name(path)}")
         item.setForeground(QColor(color))
 
     def current_path(self) -> Path | None:
@@ -161,6 +196,14 @@ class ImageBrowser(QWidget):
     def _on_row_changed(self, row: int) -> None:
         if 0 <= row < len(self._paths):
             self.image_selected.emit(self._paths[row])
+
+    def _on_search_changed(self, text: str) -> None:
+        self._filter_text = text.strip()
+        self._apply_display()
+
+    def _on_sort_changed(self, idx: int) -> None:
+        self._sort_mode = _SORT_MODES[idx][0]
+        self._apply_display()
 
     def _on_add(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
@@ -212,7 +255,7 @@ class ImageBrowser(QWidget):
         n = len(paths)
         if n == 1:
             msg = (f"'{paths[0].name}' 을 삭제하시겠습니까?\n"
-                   f"(어노테이션도 함께 삭제됩니다)")
+                   "(어노테이션도 함께 삭제됩니다)")
         else:
             preview = ", ".join(p.name for p in paths[:3])
             if n > 3:
@@ -236,7 +279,6 @@ class ImageBrowser(QWidget):
                 self.image_deleted.emit(p)
                 p.unlink()
             except Exception:
-                # 파일이 잠겨있거나 권한 문제 — 개별 실패는 무시하고 계속
                 continue
         self.reload()
 
@@ -256,14 +298,80 @@ class ImageBrowser(QWidget):
             msg += f"  ({skipped}개 중복 건너뜀)"
         QMessageBox.information(self, "추가 완료", msg)
 
-    # ── 내부 ─────────────────────────────────────────────────────────────────
+    # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
+
+    def _rel_name(self, path: Path) -> str:
+        """images_dir 기준 상대 경로 문자열 (하위 폴더가 없으면 파일명만)."""
+        try:
+            rel = path.relative_to(_project.images_dir())
+            return str(rel)
+        except ValueError:
+            return path.name
 
     def _make_item(self, path: Path) -> QListWidgetItem:
         status = get_label_status(path)
         sym, color = _STATUS_STYLE[status]
-        item = QListWidgetItem(f"{sym}  {path.name}")
+        item = QListWidgetItem(f"{sym}  {self._rel_name(path)}")
         item.setForeground(QColor(color))
         return item
+
+    def _apply_display(self) -> None:
+        """_all_paths 에 필터·정렬을 적용해 _paths 와 리스트 위젯을 갱신."""
+        # 현재 선택 경로 기억 (정렬/필터 후 복원용)
+        cur_row = self._list.currentRow()
+        cur_path: Path | None = (
+            self._paths[cur_row] if 0 <= cur_row < len(self._paths) else None
+        )
+
+        # ── 필터 ─────────────────────────────────────────────────────────────
+        text = self._filter_text.lower()
+        filtered = [
+            p for p in self._all_paths
+            if not text or text in p.name.lower()
+        ]
+
+        # ── 정렬 ─────────────────────────────────────────────────────────────
+        if self._sort_mode == "name_asc":
+            filtered.sort(key=lambda p: p.name.lower())
+        elif self._sort_mode == "name_desc":
+            filtered.sort(key=lambda p: p.name.lower(), reverse=True)
+        elif self._sort_mode == "folder":
+            filtered.sort(key=lambda p: (
+                p.parent.name.lower(), p.name.lower()
+            ))
+        elif self._sort_mode == "status_done":
+            filtered.sort(key=lambda p: (
+                -_STATUS_KEY.get(get_label_status(p), 0), p.name.lower()
+            ))
+        elif self._sort_mode == "status_todo":
+            filtered.sort(key=lambda p: (
+                _STATUS_KEY.get(get_label_status(p), 0), p.name.lower()
+            ))
+
+        self._paths = filtered
+
+        # ── 리스트 위젯 갱신 (시그널 차단) ──────────────────────────────────
+        self._list.blockSignals(True)
+        self._list.clear()
+        for p in filtered:
+            self._list.addItem(self._make_item(p))
+
+        # 선택 복원
+        new_row = -1
+        if cur_path and cur_path in self._paths:
+            new_row = self._paths.index(cur_path)
+        elif self._paths:
+            new_row = 0
+
+        if new_row >= 0:
+            self._list.setCurrentRow(new_row)
+        self._list.blockSignals(False)
+
+        # 선택 경로가 바뀐 경우에만 image_selected 발행
+        if new_row >= 0:
+            new_path = self._paths[new_row]
+            if new_path != cur_path:
+                self.image_selected.emit(new_path)
 
     def _set_buttons_enabled(self, enabled: bool) -> None:
         self._btn_add.setEnabled(enabled)

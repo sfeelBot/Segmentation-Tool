@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QScrollArea,
     QPushButton, QLabel, QProgressBar, QTableWidget,
     QTableWidgetItem, QSizePolicy, QMessageBox, QListWidget,
-    QListWidgetItem, QLineEdit, QGroupBox, QComboBox,
+    QListWidgetItem, QLineEdit, QGroupBox, QComboBox, QSplitter,
 )
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -156,21 +156,30 @@ class TrainingTab(QWidget):
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(8)
+        root.setSpacing(0)
+
+        # ── 좌/우 메인 스플리터 ───────────────────────────────────────────────
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setHandleWidth(5)
+        self._main_splitter.setStyleSheet(
+            "QSplitter::handle { background:#374151; }"
+            "QSplitter::handle:hover { background:#60a5fa; }"
+        )
+        root.addWidget(self._main_splitter)
 
         # ── 왼쪽: 설정 폼 ─────────────────────────────────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFixedWidth(300)
+        scroll.setMinimumWidth(200)
         self._config_form = ConfigForm()
         scroll.setWidget(self._config_form)
-        root.addWidget(scroll)
+        self._main_splitter.addWidget(scroll)
 
         # ── 오른쪽: 큐 + 모니터링 ────────────────────────────────────────────
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setSpacing(8)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(8, 0, 0, 0)
 
         # ── CUDA 상태 배너 (진단은 백그라운드 _start_cuda_diag 에서 실행) ────
         right_layout.addWidget(self._build_cuda_banner())
@@ -262,7 +271,6 @@ class TrainingTab(QWidget):
         right_layout.addLayout(status_row)
 
         # ── 그래프 (좌) + 메트릭·체크포인트 (우) 수평 분할 ─────────────────
-        from PyQt6.QtWidgets import QSplitter
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # 좌: 손실 그래프 (Y축 최대 활용)
@@ -307,7 +315,10 @@ class TrainingTab(QWidget):
 
         right_layout.addWidget(h_splitter, stretch=1)
 
-        root.addWidget(right, stretch=1)
+        self._main_splitter.addWidget(right)
+        self._main_splitter.setSizes([320, 10000])
+        self._main_splitter.setStretchFactor(0, 0)
+        self._main_splitter.setStretchFactor(1, 1)
 
     # ── 큐 관리 슬롯 ──────────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QToolBar, QLabel, QSpinBox, QMessageBox,
     QListWidget, QListWidgetItem, QGroupBox,
-    QPushButton, QButtonGroup,
+    QPushButton, QButtonGroup, QSplitter,
 )
 from PyQt6.QtGui import QAction, QColor, QKeySequence, QShortcut, QFont
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -34,13 +34,22 @@ class LabelingTab(QWidget):
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # ── 왼쪽: 이미지 브라우저 + 클래스 패널 (200px) ──────────────────────
+        # ── 좌/우 스플리터 ────────────────────────────────────────────────────
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setHandleWidth(5)
+        self._splitter.setStyleSheet(
+            "QSplitter::handle { background:#374151; }"
+            "QSplitter::handle:hover { background:#60a5fa; }"
+        )
+        outer.addWidget(self._splitter)
+
+        # ── 왼쪽: 이미지 브라우저 + 클래스 패널 ─────────────────────────────
         self._left_panel = QWidget()
-        self._left_panel.setFixedWidth(200)
+        self._left_panel.setMinimumWidth(150)
         left_layout = QVBoxLayout(self._left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
         left_layout.setSpacing(6)
@@ -51,7 +60,7 @@ class LabelingTab(QWidget):
         left_layout.addWidget(self._image_browser, stretch=3)
         left_layout.addWidget(self._class_panel, stretch=2)
 
-        # ── 가운데: 툴바 + 캔버스 + 상태바 (stretch) ─────────────────────────
+        # ── 가운데: 툴바 + 캔버스 + 상태바 ──────────────────────────────────
         center = QWidget()
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
@@ -62,9 +71,9 @@ class LabelingTab(QWidget):
         center_layout.addWidget(self._canvas)
         center_layout.addWidget(self._build_channel_strip())
 
-        # ── 오른쪽: 어노테이션 목록 (180px) ─────────────────────────────────
+        # ── 오른쪽: 어노테이션 목록 + 로그 패널 ─────────────────────────────
         self._right_panel = QWidget()
-        self._right_panel.setFixedWidth(180)
+        self._right_panel.setMinimumWidth(130)
         right_layout = QVBoxLayout(self._right_panel)
         right_layout.setContentsMargins(4, 4, 4, 4)
         right_layout.setSpacing(4)
@@ -89,9 +98,14 @@ class LabelingTab(QWidget):
         self._log_panel = LogPanel()
         right_layout.addWidget(self._log_panel, stretch=3)
 
-        root.addWidget(self._left_panel)
-        root.addWidget(center, stretch=1)
-        root.addWidget(self._right_panel)
+        # 스플리터에 추가 (좌 · 가운데 · 우)
+        self._splitter.addWidget(self._left_panel)
+        self._splitter.addWidget(center)
+        self._splitter.addWidget(self._right_panel)
+        self._splitter.setSizes([230, 10000, 200])
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setStretchFactor(2, 0)
 
     def _build_channel_strip(self) -> QWidget:
         """캔버스 하단 — 채널 토글 + 픽셀 값 표시 (초소형 스트립)."""
@@ -274,8 +288,17 @@ class LabelingTab(QWidget):
         self._lbl_sel_hint.setVisible(tool == TOOL_SELECT)
 
     def _on_toggle_fullscreen(self, checked: bool) -> None:
-        self._left_panel.setVisible(not checked)
-        self._right_panel.setVisible(not checked)
+        if checked:
+            # 패널 크기 저장 후 숨김
+            self._pre_fs_sizes: list[int] = self._splitter.sizes()
+            self._left_panel.setVisible(False)
+            self._right_panel.setVisible(False)
+        else:
+            # 복원
+            self._left_panel.setVisible(True)
+            self._right_panel.setVisible(True)
+            sizes = getattr(self, "_pre_fs_sizes", [230, 10000, 200])
+            self._splitter.setSizes(sizes)
 
     def _on_pixel_hovered(self, x: int, y: int, r: int, g: int, b: int) -> None:
         self._lbl_pixel.setText(f"{x},{y}  R:{r}  G:{g}  B:{b}")
