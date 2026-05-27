@@ -274,7 +274,8 @@ class LabelingTab(QWidget):
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 
     def _set_tool(self, tool: str) -> None:
-        for act, t in [
+        # 루프 변수를 _t 로 명명 — 모듈 레벨 i18n t() 함수와의 이름 충돌 방지
+        for act, _t in [
             (self._act_polygon,      TOOL_POLYGON),
             (self._act_brush,        TOOL_BRUSH),
             (self._act_brush_fill,   TOOL_BRUSH_FILL),
@@ -283,7 +284,7 @@ class LabelingTab(QWidget):
             (self._act_select,       TOOL_SELECT),
             (self._act_pan,          TOOL_PAN),
         ]:
-            act.setChecked(t == tool)
+            act.setChecked(_t == tool)
         self._canvas.set_tool(tool)
         self._lbl_sel_hint.setVisible(tool == TOOL_SELECT)
 

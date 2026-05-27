@@ -159,20 +159,20 @@ class ImageBrowser(QWidget):
     # ── 공개 API ──────────────────────────────────────────────────────────────
 
     def reload(self) -> None:
-        """images_dir 를 (재귀적으로) 스캔해 전체 목록 갱신 후 표시 재적용."""
+        """images_dir 를 스캔해 전체 목록 갱신 후 표시 재적용.
+        dataset.py 의 _collect_pairs 와 동일하게 flat 스캔 — 하위폴더 이미지는 학습 대상
+        에서 제외되므로 브라우저에서도 보이지 않도록 일관성을 유지한다."""
         _project.images_dir().mkdir(parents=True, exist_ok=True)
         self._all_paths = sorted(
-            p for p in _project.images_dir().rglob("*")
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+            p for pat in SUPPORTED
+            for p in _project.images_dir().glob(pat)
         )
         self._apply_display()
 
     def refresh_item(self, path: Path) -> None:
-        """어노테이션 저장 후 해당 항목의 상태 표시만 갱신."""
-        if self._sort_mode in ("status_done", "status_todo"):
-            # 상태 기반 정렬 중이면 순서가 바뀔 수 있으므로 전체 재표시
-            self._apply_display()
-            return
+        """어노테이션 저장 후 해당 항목의 상태 아이콘·색상만 갱신.
+        상태 기반 정렬 중이라도 아이콘만 업데이트하고 순서 재정렬은 하지 않는다.
+        (어노테이션 저장마다 전체 JSON 재읽기 방지 — 이미지 수가 많을 때 성능 보호)"""
         try:
             idx = self._paths.index(path)
         except ValueError:

@@ -96,6 +96,8 @@ class TrainingTab(QWidget):
         self._train_start_time: float = 0.0
         self._cuda_diag_result: CudaDiagResult | None = None  # 백그라운드 진단 완료 후 채워짐
         self._cuda_diag_worker: _CudaDiagWorker | None = None
+        # 종료 중인 TrainerWorker Python 참조 보관 — GC가 실행 중 QThread를 파괴하는 크래시 방지
+        self._dying_workers: list = []
         self._build_ui()
         self._start_cuda_diag()
 
@@ -591,6 +593,28 @@ class TrainingTab(QWidget):
         self._ckpt_list.addItem(Path(path).name)
         self._ckpt_list.scrollToBottom()
 
+    def _retire_trainer(self, worker: TrainerWorker | None) -> None:
+        """실행 중인 TrainerWorker를 안전하게 은퇴.
+        Python 참조를 _dying_workers 에 보관해 QThread가 실행 중인 채로 GC 되지 않도록 한다.
+        (CPU 환경에서 training_finished emit 후 OS 스레드 종료까지 틈이 있어 크래시 발생 가능)"""
+        if worker is None or not worker.isRunning():
+            return
+        # stale queued signal 이 새 worker 슬롯을 덮어쓰는 버그 방지
+        for sig in (
+            worker.training_started, worker.batch_done,
+            worker.epoch_done, worker.checkpoint_saved,
+            worker.training_finished, worker.training_error,
+        ):
+            try:
+                sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        self._dying_workers.append(worker)
+        worker.finished.connect(
+            lambda _w=worker: self._dying_workers.remove(_w)
+            if _w in self._dying_workers else None
+        )
+
     def _on_job_finished(self) -> None:
         if self._running_idx is not None:
             job = self._jobs[self._running_idx]
@@ -599,6 +623,7 @@ class TrainingTab(QWidget):
                 job.status = "stopped"
             else:
                 job.status = "done"
+        self._retire_trainer(self._worker)
         self._worker = None
         self._refresh_queue_list()
         self._run_next_job()
@@ -608,6 +633,7 @@ class TrainingTab(QWidget):
         log.error(f"학습 오류 — job='{name}': {msg}")
         if self._running_idx is not None:
             self._jobs[self._running_idx].status = "error"
+        self._retire_trainer(self._worker)
         self._worker = None
         self._refresh_queue_list()
         QMessageBox.critical(self, "학습 오류",
