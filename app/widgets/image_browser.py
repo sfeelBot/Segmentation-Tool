@@ -57,8 +57,22 @@ QTreeWidget::branch {
 }
 """
 
-_FOLDER_FONT = QFont()
-_FOLDER_FONT.setBold(True)
+# NOTE: QFont()은 QApplication 생성 후에만 안전하게 만들 수 있음.
+# 모듈 레벨 생성 금지 → _make_folder_item() 안에서 지연 생성.
+_folder_font: QFont | None = None
+
+
+def _get_folder_font() -> QFont:
+    """폴더 헤더용 굵은 폰트 — 최초 호출 시 생성 (QApplication 생성 후)."""
+    global _folder_font
+    if _folder_font is None:
+        _folder_font = QFont()
+        _folder_font.setBold(True)
+    return _folder_font
+
+
+# UserRole — QTreeWidgetItem 에 Path 를 직접 저장 (dict 키 대신)
+_PATH_ROLE = Qt.ItemDataRole.UserRole
 
 
 class _FolderImportWorker(QThread):
@@ -95,8 +109,8 @@ class ImageBrowser(QWidget):
         super().__init__(parent)
         self._all_paths: list[Path] = []      # 전체 이미지 (필터·정렬 전)
         self._paths: list[Path] = []          # 현재 표시 중인 이미지 (필터+정렬 후)
-        self._item_to_path: dict = {}         # QTreeWidgetItem → Path (이미지만)
-        self._path_to_item: dict = {}         # Path → QTreeWidgetItem
+        # Path → QTreeWidgetItem (역방향 룩업용; QTreeWidgetItem→Path 는 UserRole 사용)
+        self._path_to_item: dict[Path, QTreeWidgetItem] = {}
         self._sort_mode: str = "name_asc"
         self._filter_text: str = ""
         self._import_worker: _FolderImportWorker | None = None
@@ -208,21 +222,18 @@ class ImageBrowser(QWidget):
             return
         status = get_label_status(path)
         sym, color = _STATUS_STYLE[status]
-        item.setText(0, f"{sym}  {self._rel_name(path)}")
+        # 폴더 헤더 아래 자식이면 파일명만, 최상위면 상대경로
+        display = path.name if item.parent() is not None else self._rel_name(path)
+        item.setText(0, f"{sym}  {display}")
         item.setForeground(0, QColor(color))
 
     def current_path(self) -> Path | None:
-        item = self._tree.currentItem()
-        if item is None:
-            return None
-        return self._item_to_path.get(item)
+        """현재 선택된 이미지 경로. 폴더 헤더 선택 시 None."""
+        return self._get_item_path(self._tree.currentItem())
 
     def current_display_index(self) -> int:
         """현재 선택된 이미지의 _paths 인덱스. 없으면 -1."""
-        item = self._tree.currentItem()
-        if item is None:
-            return -1
-        path = self._item_to_path.get(item)
+        path = self._get_item_path(self._tree.currentItem())
         if path is None:
             return -1
         try:
@@ -252,7 +263,7 @@ class ImageBrowser(QWidget):
                                  _previous) -> None:
         if current is None:
             return
-        path = self._item_to_path.get(current)
+        path = self._get_item_path(current)
         if path is not None:
             self.image_selected.emit(path)
 
@@ -307,9 +318,9 @@ class ImageBrowser(QWidget):
     def _on_delete(self) -> None:
         """선택된 이미지(들) 삭제. 폴더 헤더는 제외하고 이미지 항목만."""
         selected_paths = [
-            self._item_to_path[item]
+            self._get_item_path(item)
             for item in self._tree.selectedItems()
-            if item in self._item_to_path   # 폴더 헤더 제외
+            if self._get_item_path(item) is not None   # 폴더 헤더 제외
         ]
         if not selected_paths:
             return
@@ -362,6 +373,14 @@ class ImageBrowser(QWidget):
 
     # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
 
+    def _get_item_path(self, item: QTreeWidgetItem | None) -> Path | None:
+        """아이템의 UserRole 데이터로 Path 반환.
+        폴더 헤더 아이템이면 None (UserRole 미설정)."""
+        if item is None:
+            return None
+        data = item.data(0, _PATH_ROLE)
+        return data if isinstance(data, Path) else None
+
     def _rel_name(self, path: Path) -> str:
         """images_dir 기준 상대 경로 문자열."""
         try:
@@ -369,22 +388,32 @@ class ImageBrowser(QWidget):
         except ValueError:
             return path.name
 
-    def _make_tree_item(self, path: Path) -> QTreeWidgetItem:
-        """이미지 경로로 QTreeWidgetItem 생성 (상태 아이콘 + 색상 적용)."""
+    def _make_tree_item(self, path: Path,
+                        display_name: str | None = None) -> QTreeWidgetItem:
+        """이미지 경로로 QTreeWidgetItem 생성 (상태 아이콘 + 색상 적용).
+
+        display_name: 표시할 이름. None이면 images_dir 기준 상대경로 사용.
+        Path는 UserRole에 직접 저장 (dict 키로 사용하지 않음).
+        """
         status = get_label_status(path)
         sym, color = _STATUS_STYLE[status]
+        label = display_name if display_name is not None else self._rel_name(path)
         item = QTreeWidgetItem()
-        item.setText(0, f"{sym}  {self._rel_name(path)}")
+        item.setText(0, f"{sym}  {label}")
         item.setForeground(0, QColor(color))
+        item.setData(0, _PATH_ROLE, path)   # ← Path 를 아이템에 직접 저장
         return item
 
     def _make_folder_item(self, folder_name: str, count: int) -> QTreeWidgetItem:
-        """폴더 헤더 QTreeWidgetItem 생성 — 선택 불가, 펼침만 가능."""
+        """폴더 헤더 QTreeWidgetItem 생성 — 선택 불가, 펼침만 가능.
+
+        UserRole 을 설정하지 않아 _get_item_path() 가 None 을 반환함.
+        """
         item = QTreeWidgetItem()
         item.setText(0, f"📁  {folder_name}  ({count})")
         item.setForeground(0, QColor("#60a5fa"))
         item.setBackground(0, QColor("#1a2235"))
-        item.setFont(0, _FOLDER_FONT)
+        item.setFont(0, _get_folder_font())
         # ItemIsEnabled 만 설정 → 클릭해도 선택 안 됨, 펼침은 동작
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         return item
@@ -425,7 +454,6 @@ class ImageBrowser(QWidget):
         for p in root_paths:
             item = self._make_tree_item(p)
             self._tree.addTopLevelItem(item)
-            self._item_to_path[item] = p
             self._path_to_item[p] = item
 
         # 하위폴더 그룹 (알파벳 순)
@@ -435,9 +463,9 @@ class ImageBrowser(QWidget):
             self._tree.addTopLevelItem(folder_item)
             folder_item.setExpanded(True)   # 기본 펼침
             for p in imgs:
-                child = self._make_tree_item(p)
+                # 폴더 헤더 아래에서는 파일명만 표시 (상위 헤더와 중복 방지)
+                child = self._make_tree_item(p, display_name=p.name)
                 folder_item.addChild(child)
-                self._item_to_path[child] = p
                 self._path_to_item[p] = child
 
     def _apply_display(self) -> None:
@@ -478,7 +506,6 @@ class ImageBrowser(QWidget):
         # ── 트리 재구성 (시그널 차단) ─────────────────────────────────────────
         self._tree.blockSignals(True)
         self._tree.clear()
-        self._item_to_path.clear()
         self._path_to_item.clear()
 
         if self._sort_mode == "folder":
@@ -487,7 +514,6 @@ class ImageBrowser(QWidget):
             for p in filtered:
                 item = self._make_tree_item(p)
                 self._tree.addTopLevelItem(item)
-                self._item_to_path[item] = p
                 self._path_to_item[p] = item
 
         # ── 선택 복원 ─────────────────────────────────────────────────────────
@@ -503,7 +529,7 @@ class ImageBrowser(QWidget):
 
         # 선택 경로가 바뀐 경우에만 image_selected 발행
         if new_item is not None:
-            new_path = self._item_to_path.get(new_item)
+            new_path = self._get_item_path(new_item)
             if new_path is not None and new_path != cur_path:
                 self.image_selected.emit(new_path)
 
