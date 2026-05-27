@@ -1,4 +1,5 @@
 """QThread 기반 학습 루프 + TrainingConfig."""
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -42,6 +43,29 @@ class TrainingConfig:
     sample_mode: str          = "random_crop"   # "resize" | "random_crop" | "center_crop"
     defect_sample_prob: float = 0.7             # 결함 중심 샘플링 확률 (random_crop 모드)
     patches_per_image: int    = 50              # epoch당 이미지 1장에서 추출할 패치 수
+    # ── LR 스케쥴러 ─────────────────────────────────────────────────────────
+    # 종류: none | step | exp | cosine | cosine_restart | plateau |
+    #       onecycle | warmup_cosine | poly
+    scheduler: str           = "none"
+    # StepLR / ExponentialLR 공통
+    sched_step_size: int     = 10    # StepLR: N 에폭마다 감소
+    sched_gamma: float       = 0.5   # StepLR/Exp: 감소 배율
+    # CosineAnnealingLR / WarmRestarts / WarmupCosine 공통
+    sched_T_max: int         = 0     # Cosine: 0 = auto(=epochs), 주기 에폭 수
+    sched_T_0: int           = 10    # WarmRestarts: 첫 재시작 주기
+    sched_T_mult: int        = 2     # WarmRestarts: 재시작마다 주기 배율
+    sched_eta_min: float     = 1e-6  # Cosine 계열: 최소 LR
+    # ReduceLROnPlateau
+    sched_patience: int      = 5     # Plateau: 개선 없으면 몇 에폭 대기
+    sched_factor: float      = 0.5   # Plateau/OneCycle: 감소 배율
+    sched_min_lr: float      = 1e-7  # Plateau: 최솟값 LR
+    # OneCycleLR
+    sched_max_lr: float      = 0.0   # OneCycle: 피크 LR (0 = lr×10 자동)
+    sched_pct_start: float   = 0.3   # OneCycle: 웜업 비율 (전체 스텝)
+    # WarmupCosine
+    sched_warmup_epochs: int = 5     # WarmupCosine: 선형 웜업 에폭 수
+    # PolynomialLR
+    sched_power: float       = 0.9   # Poly: 지수
 
 
 # ── Worker ────────────────────────────────────────────────────────────────────
@@ -191,8 +215,15 @@ class TrainerWorker(QThread):
         try:
             scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         except (AttributeError, TypeError):
-            # 구 PyTorch 호환
             scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+        scheduler      = _build_scheduler(optimizer, cfg, len(train_loader))
+        _is_onecycle   = cfg.scheduler == "onecycle"    # 배치마다 step
+        _is_plateau    = cfg.scheduler == "plateau"     # val_loss 기반 step
+        if scheduler:
+            log.info(f"LR 스케쥴러: {cfg.scheduler}  (초기 LR: {cfg.lr:.2e})")
+        else:
+            log.info(f"LR 스케쥴러: 없음 (고정 {cfg.lr:.2e})")
 
         _project.checkpoints_dir().mkdir(parents=True, exist_ok=True)
         self.training_started.emit(len(train_loader), cfg.epochs)
@@ -220,6 +251,9 @@ class TrainerWorker(QThread):
                 scaler.update()
                 train_loss += loss.item()
                 self.batch_done.emit(epoch, batch_idx, loss.item())
+                # OneCycleLR: 배치마다 step
+                if _is_onecycle and scheduler is not None:
+                    scheduler.step()
 
             if len(train_loader) > 0:
                 train_loss /= len(train_loader)
@@ -242,6 +276,15 @@ class TrainerWorker(QThread):
             if len(val_loader) > 0:
                 val_loss /= len(val_loader)
 
+            # ── 에폭 단위 스케쥴러 step ───────────────────────────────────────
+            if scheduler is not None and not _is_onecycle:
+                if _is_plateau:
+                    scheduler.step(val_loss)   # ReduceLROnPlateau: val_loss 기반
+                else:
+                    scheduler.step()
+
+            current_lr = optimizer.param_groups[0]["lr"]
+
             metrics = compute_metrics(
                 torch.cat(all_preds),
                 torch.cat(all_masks),
@@ -249,7 +292,10 @@ class TrainerWorker(QThread):
             ) if all_preds else {"mean_iou": 0.0, "mean_dice": 0.0}
 
             metrics["epoch_time"] = time.time() - epoch_start
+            metrics["current_lr"] = current_lr   # UI·체크포인트에 기록
             self.epoch_done.emit(epoch, train_loss, val_loss, metrics)
+            log.debug(f"epoch {epoch}  train={train_loss:.4f}  val={val_loss:.4f}"
+                      f"  LR={current_lr:.3e}")
 
             # ── Checkpoint ────────────────────────────────────────────────────
             if epoch % cfg.checkpoint_every == 0:
@@ -259,13 +305,16 @@ class TrainerWorker(QThread):
                     "epoch":                epoch,
                     "model_state_dict":     model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
                     "train_loss":           train_loss,
                     "val_loss":             val_loss,
                     "metrics":              metrics,
                     "config":               {
-                        "image_w": cfg.image_w, "image_h": cfg.image_h,
-                        "sample_mode": cfg.sample_mode,
+                        "image_w":      cfg.image_w,
+                        "image_h":      cfg.image_h,
+                        "sample_mode":  cfg.sample_mode,
                         "model_source": self._model_source,
+                        "scheduler":    cfg.scheduler,
                     },
                 }, path)
                 self.checkpoint_saved.emit(str(path))
@@ -299,6 +348,98 @@ class _TrainImageSubset(torch.utils.data.Dataset):
     def __getitem__(self, i: int):
         img_in_subset = i % len(self._idx)
         return self._ds[self._idx[img_in_subset]]
+
+
+def _build_scheduler(optimizer, cfg: TrainingConfig, steps_per_epoch: int):
+    """cfg.scheduler 에 따라 PyTorch LR 스케쥴러를 생성해 반환한다.
+    스케쥴러가 없으면 None 반환.
+
+    steps_per_epoch : OneCycleLR 전용 — 에폭당 배치 수.
+    """
+    s = cfg.scheduler
+    if s == "none":
+        return None
+
+    # ── StepLR: N 에폭마다 LR × gamma ───────────────────────────────────────
+    if s == "step":
+        return torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=max(1, cfg.sched_step_size),
+            gamma=cfg.sched_gamma,
+        )
+
+    # ── ExponentialLR: 매 에폭 LR × gamma ───────────────────────────────────
+    if s == "exp":
+        return torch.optim.lr_scheduler.ExponentialLR(
+            optimizer,
+            gamma=cfg.sched_gamma,
+        )
+
+    # ── CosineAnnealingLR: 코사인 감쇠 (재시작 없음) ─────────────────────────
+    if s == "cosine":
+        T_max = cfg.sched_T_max if cfg.sched_T_max > 0 else cfg.epochs
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=T_max,
+            eta_min=cfg.sched_eta_min,
+        )
+
+    # ── CosineAnnealingWarmRestarts: SGDR 방식 주기 재시작 ───────────────────
+    if s == "cosine_restart":
+        return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=max(1, cfg.sched_T_0),
+            T_mult=max(1, cfg.sched_T_mult),
+            eta_min=cfg.sched_eta_min,
+        )
+
+    # ── ReduceLROnPlateau: val_loss 정체 시 LR 감소 ──────────────────────────
+    if s == "plateau":
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            patience=max(1, cfg.sched_patience),
+            factor=cfg.sched_factor,
+            min_lr=cfg.sched_min_lr,
+        )
+
+    # ── OneCycleLR: 웜업 → 피크 → 코사인 감쇠 (배치 단위 step) ─────────────
+    if s == "onecycle":
+        max_lr      = cfg.sched_max_lr if cfg.sched_max_lr > 0 else cfg.lr * 10
+        total_steps = cfg.epochs * max(1, steps_per_epoch)
+        return torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=max_lr,
+            total_steps=total_steps,
+            pct_start=cfg.sched_pct_start,
+        )
+
+    # ── WarmupCosine: 선형 웜업 → 코사인 감쇠 (커스텀 LambdaLR) ────────────
+    if s == "warmup_cosine":
+        warmup  = max(1, cfg.sched_warmup_epochs)
+        total   = cfg.epochs
+        eta_min = cfg.sched_eta_min
+        base_lr = max(cfg.lr, 1e-12)   # ZeroDivision 방지
+
+        def _lr_lambda(epoch: int) -> float:
+            if epoch < warmup:
+                return (epoch + 1) / warmup            # 선형 웜업
+            progress = (epoch - warmup) / max(1, total - warmup)
+            cosine   = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return eta_min / base_lr + (1.0 - eta_min / base_lr) * cosine
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
+
+    # ── PolynomialLR: 다항식 감쇠 (DeepLab 계열 표준) ───────────────────────
+    if s == "poly":
+        return torch.optim.lr_scheduler.PolynomialLR(
+            optimizer,
+            total_iters=max(1, cfg.epochs),
+            power=cfg.sched_power,
+        )
+
+    log.warning(f"알 수 없는 scheduler '{s}' → 스케쥴러 없음으로 처리")
+    return None
 
 
 def _build_optimizer(model: nn.Module, cfg: TrainingConfig):
