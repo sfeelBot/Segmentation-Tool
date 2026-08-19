@@ -382,3 +382,75 @@ diff를 검토하고 남은 검증(컴파일 확인 + 캐시/멀티프로세싱 
 - **완료 보고 아님** — 독립 검증(Verification) 에이전트 확인 필요. 특히 위 "미검증" 2건
   (워커 예외 전파, config_form.py 실제 런타임 동작 — 이번엔 위 DLL 이슈 회피 방법을 찾아서)
   + 실제 학습 탭 UI에서 육안 확인.
+
+---
+
+## 2026-08-20 — R5: 추론 결과 컬러화/블렌딩 다운스케일 (`perf-improvement-plan-2026-08-19.md` #5)
+
+### 배경
+`app/core/inference_engine.py::_colorize_and_blend()`가 `class_map.shape`(원본 해상도) 그대로
+컬러화+블렌딩을 수행해 5472×3648 같은 대형 이미지에서 ~992ms 소요(스펙 실측치). 사용자 결정에
+따라 **화면 미리보기만** `annotation_canvas.py`의 `_MAX_OVERLAY_DIM=2048`과 동일한 상한으로
+다운스케일하고, **저장/`class_map`은 원본 해상도 유지**해야 함.
+
+### 변경 — `app/core/inference_engine.py`
+- 모듈 레벨 상수 `_MAX_OVERLAY_DIM = 2048` 추가(`annotation_canvas.py`와 동일 값, 별도 상수로
+  독립 — import 결합도를 늘리지 않기 위해 공유 임포트 대신 값만 맞춤).
+- `_colorize_and_blend(orig, class_map, cls_map, opacity)` 내부에서 `max(h, w) > 2048`이면:
+  - `class_map`을 **로컬 변수 `class_map_work`로 새로 생성**(`Image.fromarray(...).resize(...,
+    Image.NEAREST)`, 정수 클래스 ID이므로 보간 없이 최근접 — 기존 `run()`의 74~79번째 줄과
+    동일 패턴)해서 컬러화에 사용. 호출자가 들고 있는 원본 `class_map` 배열은 **절대
+    mutate하지 않음**(새 배열 생성만, in-place 연산 없음).
+  - 원본 이미지(`orig`)는 축소된 `(w, h)`로 `Image.BILINEAR` 리사이즈(부드러운 배경).
+  - 최종 `QPixmap`도 이 축소된 크기로 반환.
+  - 2048 이하 이미지는 분기를 타지 않아 기존 동작과 완전히 동일(회귀 없음).
+- `run()`/`run_sliding_window()`가 반환하는 `InferenceResult.class_map`, `class_stats`(86~92번째
+  줄, 원본 해상도 `class_map`으로 계산)는 **일절 손대지 않음** — 앱에 "추론 결과 저장/내보내기"
+  기능 자체가 없어(`inference_tab.py`/`export_dialog.py`에 `class_map`을 디스크에 쓰는 코드
+  없음, `overlay_pixmap`은 화면 표시에만 쓰임) "저장은 원본 유지" 요구사항은 `class_map`을
+  건드리지 않는 것만으로 자동 충족됨.
+
+### 검증 (직접 실행, `C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`,
+스크래치 스크립트 2종, 프로젝트에는 추가 안 함)
+
+1. **성능 실측** (`verify_r5.py`) — 합성 5472×3648 RGB 이미지 + 3클래스 랜덤 `class_map`으로
+   `_colorize_and_blend()` 직접 호출: **194.0ms** (스펙 기준선 992ms 대비 **약 5.1배** 단축).
+2. **다운스케일 크기/비율 확인** — 반환된 `overlay_pixmap` 크기 **2048×1365**
+   (`max(2048,1365) <= _MAX_OVERLAY_DIM` 통과), 원본 비율 1.5000 vs 축소 후 1.5004
+   (반올림 오차만, 비율 유지 확인).
+3. **`class_map` 무결성** — 함수 호출 전 `class_map.copy()`로 스냅샷 후, 호출 후
+   `np.array_equal(class_map, class_map_before)` **True** 확인 — 다운스케일이 원본 배열을
+   전혀 오염시키지 않음(호출자 소유 배열은 그대로 원본 해상도·원본 값 유지).
+4. **회귀 없음 확인(소형 이미지)** — 1024×768(2048 이하) 합성 이미지로 동일 호출: 반환
+   `overlay_pixmap` 크기가 **1024×768로 불변**(분기 미발동), `class_map` 무결성도 동일하게
+   `np.array_equal` True — 기존 경로와 완전히 동일하게 동작함을 확인.
+5. **`class_stats` 정확도** — `class_stats`는 `run()`/`run_sliding_window()`에서 `_colorize_
+   and_blend()` 호출과 **별도로**, 원본 해상도 `class_map`을 대상으로 계산됨(코드 위치상
+   `_colorize_and_blend()` 반환값과 무관). 위 3, 4에서 `class_map` 원본 무결성을 직접 확인했으므로
+   `class_stats` 퍼센티지는 다운스케일 적용 여부와 무관하게 항상 원본 해상도 기준으로 동일하게
+   나옴을 간접 확인(코드 리딩 + 무결성 확인으로 충분, `run()` 자체를 실제 체크포인트로 end-to-end
+   실행하지는 않음 — 실제 체크포인트/모델이 이 환경에 없어 스펙 지시대로 `_colorize_and_blend()`
+   직접 호출 방식을 사용).
+6. **앱 기동 확인** (`verify_boot_r5.py`) — `PyQt6.QtWidgets` import를 `app.core.project`보다
+   먼저 배치(R4 검증 로그의 DLL 이슈 회피 패턴 준수) → `QApplication` → `projects/nok` 오픈
+   (`project.open_existing()` + `set_current()`) → `MainWindow()` 생성 → `show()` →
+   `inference_engine._MAX_OVERLAY_DIM` 임포트 확인까지 `STEP1~4_OK` 전부 예외 없이 통과.
+   (프로세스 종료 시 exit code 127은 이전 라운드들과 동일하게 `app.exec()` 이벤트 루프 없이
+   비대화형 셸에서 강제 종료되며 나는 노이즈로, R1~R4 검증 로그에서도 같은 패턴 확인됨.)
+
+### 변경 파일
+`app/core/inference_engine.py`만 변경. `docs/agents/implementation-log.md`(이 항목)만 별도 추가.
+`docs/agents/leader-log.md`, `docs/agents/verification-log.md`는 다른 에이전트가 동시에 수정
+중인 것으로 확인되어 이번 커밋 범위에서 제외(`git status`로 확인 후 `inference_engine.py` +
+이 로그 파일만 스테이징).
+
+### 커밋
+`perf: 추론 결과 화면 미리보기 다운스케일 (2048 상한, 저장/class_map은 원본 유지)`
+(커밋 해시는 이 항목 아래 리더/후속 기록 참고 — 커밋 직후 `git log -1` 결과를 실행 셸에서 확인)
+
+### 다음 단계
+- **완료 보고 아님** — 검증(Verification) 에이전트의 별도 확인이 필요하다. 특히: (a) 실제
+  체크포인트로 `run()`/`run_sliding_window()`를 end-to-end 실행해 `overlay_pixmap`이 실제
+  추론 탭 UI에서 축소된 크기로 정상 표시되는지 육안 확인, (b) `class_stats` 퍼센티지가 실제
+  체크포인트 기준으로도 다운스케일과 무관하게 동일한지 재확인, (c) 이 자동화 셸과 다른 환경
+  조합에서 성능 개선치 재현 여부.

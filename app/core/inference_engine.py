@@ -302,6 +302,12 @@ def _infer_size_from_ckpt(ckpt: dict) -> tuple[int, int]:
     return (int(w), int(h))
 
 
+# 화면 미리보기 오버레이 최대 크기 (annotation_canvas.py의 _MAX_OVERLAY_DIM과 동일 기준).
+# class_map(원본 해상도, InferenceResult.class_map으로 반환/저장에 쓰임)은 절대 건드리지 않고
+# 컬러화+블렌딩용 작업 배열만 여기서 로컬로 축소한다.
+_MAX_OVERLAY_DIM = 2048
+
+
 def _colorize_and_blend(
     orig: Image.Image,
     class_map: np.ndarray,
@@ -309,13 +315,26 @@ def _colorize_and_blend(
     opacity: float,
 ) -> QPixmap:
     h, w = class_map.shape
-    color_img = np.zeros((h, w, 3), dtype=np.uint8)
 
+    max_dim = max(h, w)
+    if max_dim > _MAX_OVERLAY_DIM:
+        scale = _MAX_OVERLAY_DIM / max_dim
+        w, h = max(1, round(class_map.shape[1] * scale)), max(1, round(class_map.shape[0] * scale))
+        # class_map은 정수 클래스 ID이므로 NEAREST로만 축소 (보간 시 클래스 ID가 오염됨).
+        # 원본 class_map 배열(호출자 소유)은 mutate하지 않고 새 배열을 만든다.
+        class_map_work = np.array(
+            Image.fromarray(class_map.astype(np.uint8)).resize((w, h), Image.NEAREST),
+            dtype=np.int64,
+        )
+    else:
+        class_map_work = class_map
+
+    color_img = np.zeros((h, w, 3), dtype=np.uint8)
     for cid, cls in cls_map.items():
-        mask = class_map == cid
+        mask = class_map_work == cid
         color_img[mask] = cls.color
 
-    # PIL blend
+    # PIL blend — 원본 이미지는 부드러운 축소를 위해 BILINEAR
     orig_np    = np.array(orig.resize((w, h), Image.BILINEAR), dtype=np.uint8)
     blended    = (orig_np * (1 - opacity) + color_img * opacity).clip(0, 255).astype(np.uint8)
 
