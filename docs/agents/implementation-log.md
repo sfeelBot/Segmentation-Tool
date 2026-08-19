@@ -563,3 +563,50 @@ MainWindow` import(내부적으로 `labeling_tab.py` → `image_browser.py` 로�
   갱신되는지 육안 확인, (c) 폴더 그룹핑·정렬 4종·삭제/추가 흐름이 실제 UI 조작으로도
   회귀 없는지, (d) **이 라운드로 R1~R6 계획 전체가 구현 완료** — 종합 회귀(전체 라운드
   누적 상호작용 여부)를 확인할 마지막 검증이 필요하다.
+
+---
+
+## 2026-08-20 — UI/UX 재편 라운드 1 (제약값 조정 + 스타일 통일)
+
+`docs/specs/ui-redesign-plan-2026-08-19.md`의 라운드 1 범위(순수 상수/스타일시트 조정,
+새 위젯·레이아웃 구조 변경 없음)만 구현. 성능개선 R1~R6과는 무관한 별도 트랙.
+
+### 변경
+1. `app/tabs/inference_tab.py` — 메인 `QSplitter`(이미지 목록/뷰어/범례)에 `training_tab.py`,
+   `labeling_tab.py`와 동일한 `QSplitter::handle:hover { background:#60a5fa; }` 스타일 추가
+   (`setHandleWidth(5)` 도 함께 맞춤).
+2. `app/tabs/training_tab.py` — `side_panel`(메트릭·체크포인트 패널)의 `setMaximumWidth(220)`
+   제거. `setMinimumWidth(150)`은 유지 — 사용자 확정: 리사이즈 상한 완전 무제한.
+3. `app/tabs/inference_tab.py` — 우측 범례 패널의 `setFixedWidth(190)`을
+   `setMinimumWidth(160)`으로 교체(최대값 없음).
+4. `app/tabs/inference_tab.py` — 좌측 이미지 목록 패널(`_list_panel`)의
+   `setMaximumWidth(180)` 제거. `setMinimumWidth(140)`은 유지.
+
+### 검증 (직접 수행)
+- 인터프리터: `C:\Users\Feel\anaconda3\python.exe` (Anaconda, 이 프로젝트의 실제 실행 환경 —
+  Bash 툴 기본 `python`은 Windows Store 스텁이라 즉시 종료됨, 주의 필요).
+- `QT_QPA_PLATFORM=offscreen` + PyQt6를 `app.core.project`보다 먼저 import하는 순서로
+  DLL 로드 함정 회피.
+- `TrainingTab`, `InferenceTab`을 오프스크린 `QApplication`에서 직접 인스턴스화해 속성 조회:
+  - `side_panel.minimumWidth()=150`, `maximumWidth()=16777215`(QWIDGETSIZE_MAX, 즉 무제한) 확인.
+  - `_list_panel.minimumWidth()=140`, `maximumWidth()=16777215` 확인.
+  - 범례 위젯 `minimumWidth()=160`, `maximumWidth()=16777215` 확인.
+  - 추론 탭 메인 스플리터 `styleSheet()`에 `"hover"` 포함 확인.
+- `MainWindow()`를 직접 생성해 `python main.py` 방식 전체 기동(4개 탭 모두 로드) 예외 없이
+  성공 확인 (`MainWindow created OK`).
+- 코드 흐름 재확인: 4개 지점 모두 상수/스타일 값만 바뀌었고 다른 위젯의 `stretch factor`,
+  레이아웃 구조는 그대로 유지 — 다른 회귀 없음.
+
+### 변경 파일
+`app/tabs/inference_tab.py`, `app/tabs/training_tab.py`만 변경. 세션 시작 시점에 이미
+`git status`에 있던 `app/core/dataset.py`, `app/core/trainer.py`, `app/widgets/config_form.py`,
+`docs/agents/leader-log.md`는 다른 작업 범위이므로 이번 커밋에서 제외.
+
+### 커밋
+`6355096` — `feat: UI 재편 라운드1 -- 리사이즈 상한 제거 + 스플리터 hover 통일`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증(Verification) 에이전트가 실제 UI 조작(스플리터 핸들 드래그로
+  4개 패널이 상한 없이 늘어나는지, hover 시 색이 바뀌는지)까지 확인해야 한다. 이번 라운드는
+  라운드 2·3(디자인 목업이 필요한 구조 변경) 범위 밖.
