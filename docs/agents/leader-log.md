@@ -45,8 +45,13 @@
 > 범례·이미지목록 폭 상한 제거) 전부 수정, `minimumWidth`/`maximumWidth` 속성 조회로 무제한
 > 확인, 앱 기동 정상. 커밋 `6355096`(feat)+`b567336`(docs), push 안 함. **독립 검증 통과**
 > — 다른 방식(`findChildren` 순회)으로 재조회, 회귀 없음(side_panel stretch factor 0으로
-> 고정돼 손실그래프 영역 영향 없음) 확인. `docs/roadmap.md` 라운드 1 체크 완료. **라운드 2
-> 디자인 목업은 아직 진행 중** — 완료되면 사용자 승인 받고 라운드 2 구현 착수.
+> 고정돼 손실그래프 영역 영향 없음) 확인. `docs/roadmap.md` 라운드 1 체크 완료.
+>
+> **라운드 2 목업 완료** — Artifact: https://claude.ai/code/artifact/5df2af11-0642-4e69-8ddc-f545333eebca
+> (3탭 Before/After + 추론 탭 썸네일그리드 vs 트리 확대비교). `docs/agents/design-log.md`에
+> 구현 시 주의사항 기록(QTreeWidgetItem 패턴, 서브스플리터 setSizes 비율 유지, 상한제거는
+> 스플리터 전환과 같은 라운드에서 함께 처리). **사용자 승인 대기 중** — 승인 시 라운드 2
+> 구현 착수, 반려/수정요청 시 디자인 에이전트에게 재작업 위임.
 >
 > **미해결 결정 대기 없음**(`docs/decisions-needed.md` 비어있음). 커밋은 전부 로컬에만 있고
 > `git push` 안 함(사용자가 "push는 진행하지 말고" 확인한 상태 — origin/main은 여전히
