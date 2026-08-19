@@ -454,3 +454,112 @@ diff를 검토하고 남은 검증(컴파일 확인 + 캐시/멀티프로세싱 
   추론 탭 UI에서 축소된 크기로 정상 표시되는지 육안 확인, (b) `class_stats` 퍼센티지가 실제
   체크포인트 기준으로도 다운스케일과 무관하게 동일한지 재확인, (c) 이 자동화 셸과 다른 환경
   조합에서 성능 개선치 재현 여부.
+
+## 2026-08-20 — R6: image_browser 검색 디바운스+상태 캐시(#6) + auto_labeler 중복 read 제거(#8)
+(`perf-improvement-plan-2026-08-19.md` — **R1~R6 중 마지막 라운드**)
+
+### 배경
+`perf-improvement-plan-2026-08-19.md` #6/#8. `image_browser.py::_on_search_changed()`가
+검색창 keystroke마다 즉시 `_apply_display()`를 호출하고, `_apply_display()` → `_make_tree_item()`
+및 `status_done`/`status_todo` 정렬 키가 이미지마다 `get_label_status()`(JSON open+parse)를
+매번 재호출해 keystroke당 전체 이미지 수만큼 JSON을 재읽었다. `auto_labeler.collect_unlabeled()`도
+이미지마다 `get_ok(p)` + `load(p)`로 같은 JSON을 2회 읽었다.
+
+### 변경 1 — `app/widgets/image_browser.py` (#6)
+- `_SEARCH_DEBOUNCE_MS = 200` 상수 추가. `__init__`에서 `QTimer(self)`(`setSingleShot(True)`,
+  `setInterval(200)`, `timeout.connect(self._apply_display)`)를 `_search_debounce`로 생성.
+  `_on_search_changed(text)`는 이제 `self._filter_text` 저장 후 `self._search_debounce.start()`만
+  호출 — keystroke마다 타이머가 리셋되고, 입력이 200ms 멈춘 뒤에만 `_apply_display()` 1회 실행.
+- `self._status_cache: dict[Path, str] = {}` 추가. `reload()`에서 `_all_paths` 스캔 직후
+  `{p: get_label_status(p) for p in self._all_paths}`로 전체 재구축(이미지당 1회 read).
+  `_make_tree_item()`과 `status_done`/`status_todo` 정렬 키는 `get_label_status(path)` 직접 호출
+  대신 `self._status_cache.get(path)`(폴백: 캐시 미스 시에만 직접 조회/`"unlabeled"` 기본값)로 조회.
+- **캐시 무효화**: `refresh_item(path)`(어노테이션 저장 시 `labeling_tab.py:343`에서 호출, OK
+  토글도 `annotation_canvas.toggle_ok()` → `annotation_saved` 시그널 → 동일 훅 경유)에서
+  `get_label_status(path)` 재호출 시 `self._status_cache[path] = status`로 캐시도 갱신.
+  `_on_add`/`_on_add_folder`(워커 완료 콜백)/`_on_delete`는 모두 마지막에 `self.reload()`를
+  호출하므로 캐시가 전체 재구축돼 별도 무효화 코드가 필요 없었음(기존 훅만 재사용, 신규
+  무효화 시스템 추가 안 함).
+
+### 변경 2 — `app/core/auto_labeler.py::collect_unlabeled()` (#8)
+`get_ok(p)` + `load(p)` 2회 read를 `get_label_status(p)` 1회 read로 통합:
+`status = get_label_status(p); if status != "unlabeled": continue`.
+`annotation_store.get_label_status()`를 직접 읽고 기존 로직과의 동치성을 확인함 — `get_ok()`는
+JSON의 `ok` 필드만 보고, `get_label_status()`도 `ok` 필드를 `annotations` 존재 여부보다 먼저
+검사(158~171번째 줄)하므로 OK 우선순위 동일. `load(p)`가 반환하는 `existing` 리스트는 JSON의
+`annotations` 배열 원소마다 1:1로 `AnnotationItem`을 만들므로(빈 배열 → 빈 리스트, 비어있지
+않은 배열 → 비어있지 않은 리스트) `existing`이 falsy인지 여부는 `get_label_status()`가
+`"labeled"`를 반환하는지 여부와 정확히 일치. JSON 파싱 예외 시에도 양쪽 모두 "미라벨로 간주,
+포함" 방향으로 동일하게 fallback. `load` import는 더 이상 쓰이지 않아 제거.
+
+### 검증 — 소규모 회귀 (`projects/nok`, 5장, 읽기 전용 오픈만, 파일 변경 없음)
+스크래치 스크립트(`test_r6.py`, `C:\Users\Feel\anaconda3\python.exe`, PyQt6를
+`app.core.project`보다 먼저 import):
+- `_status_cache`가 5개 이미지 전부에 대해 `get_label_status()` 직접 호출 결과와 **완전 일치**
+  (mismatches 0건).
+- 정렬 모드 `name_asc`/`name_desc`/`status_done`/`status_todo` 4종 모두, 캐시 기반 결과가
+  `get_label_status()`를 직접 호출해 계산한 기대 순서와 **정확히 일치**(`match=True`).
+  `folder` 모드도 실행 확인(nok은 하위폴더가 없어 순서 비교 대상 없음, 예외 없이 동작만 확인).
+- 디바운스: 검색창에 텍스트 입력 직후(펌프 전) `_paths`가 아직 안 바뀜(`immediate_unchanged=True`)
+  → 200ms 초과 대기 후에만 필터가 반영됨(`after_filter=['10번.bmp']`, "10" 검색 시 예상대로
+  1건 매칭) 확인.
+- `refresh_item()`을 파일 변경 없이 재호출해도 캐시 값이 그대로 유지됨(no-op 시 안정성) 확인.
+
+### 검증 — 대규모 합성 프로젝트 (스크래치, `big_project`, 1000장, `projects/nok`과 무관)
+빈 PNG 헤더 더미 파일 1000장 + unlabeled/ok/labeled 약 1:1:1 분포로 어노테이션 JSON 생성
+(`i % 3`으로 분기: unlabeled는 JSON 없음, ok는 `{"ok": true}`, labeled는 polygon 1개 포함).
+
+- **`_apply_display()` 1회 호출**(캐시 사용, status_done 아닌 정렬): **19.91ms**.
+  status_done 정렬 포함: **21.01ms**. 두 값이 거의 같다는 것은 정렬 자체 비용이 아니라
+  트리 재구성(1000개 `QTreeWidgetItem` 생성)이 지배적 비용이고, 캐시 사용 시 상태 조회
+  비용은 거의 0에 수렴함을 뒷받침.
+- **[구버전 시뮬레이션]** `_apply_display()`가 매번 하던 것과 동등하게, 캐시 없이
+  1000개 이미지에 대해 `get_label_status()`를 직접 순회 호출: **78.87ms** — 이게 캐시 미적용
+  시 매 keystroke마다 추가로 들었을 순수 JSON read 비용. 캐시 적용으로 이 78.87ms가 사실상
+  제거됨(캐시 조회는 dict lookup이므로 무시 가능한 수준).
+- **디바운스 실측**: 5글자를 30ms 간격으로 연속 입력(각 입력 사이는 200ms 디바운스 간격보다
+  짧아 계속 리셋됨) 후 250ms 대기 — `_apply_display` **실제 실행 횟수 = 1회**(타이머
+  `timeout` 시그널에 별도 카운터를 연결해 직접 계측, 기대값 1과 일치). 디바운스 미적용 가정
+  시뮬레이션(5회 연속 즉시 `_apply_display()` 호출)은 **106.5ms** — 즉 디바운스가 없었다면
+  같은 5키 입력에 대해 `_apply_display()`가 5회 실행돼 총 ~100ms+ 이 소요됐을 것을, 디바운스로
+  1회(~20ms)로 줄임. **개선 폭이 스펙 우려(nok 5장으로는 안 드러남)와 달리 대규모(1000장)에서
+  뚜렷하게 실측됨** — keystroke당 처리 비용이 정성적으로도(로그 순회 대신 dict lookup) 실측
+  수치로도 감소.
+- **`collect_unlabeled()`**: 신버전(1회 read) **88.98ms**, 결과 334개(기대 ~333개, `i%3==0`
+  분기 개수와 일치). 구버전 시뮬레이션(`get_ok()`+`load()` 2회 read 동등 로직) **127.92ms**,
+  결과 334개(동일). **약 30% 단축**(127.92ms → 88.98ms), 결과 집합도 `sorted(name)` 기준
+  완전 일치 확인. 절대 개선폭(약 39ms)은 `_apply_display()` 캐시 효과(78.87ms 절감)보다는
+  작지만, 방향성은 스펙 예측과 일치하며 미미하지 않음 — "정적 추정과 실측 불일치"로 기록할
+  사안은 아님.
+- 참고: `ImageBrowser()` 최초 생성+`reload()` 전체 시간은 3173.1ms로 다소 크게 나왔으나, 이는
+  1000개 `QTreeWidgetItem` 최초 생성(Qt 위젯 트리 구성)과 `pump(50)` 대기가 지배적이고 이번
+  캐시/디바운스 최적화 범위(keystroke당 반복 비용) 밖의 1회성 비용이라 별도 조치하지 않음
+  (스펙 범위 밖, 필요 시 별도 라운드로 논의 대상).
+
+### 앱 기동 확인
+`C:\Users\Feel\anaconda3\python.exe`로 `QApplication` 생성 후 `from app.main_window import
+MainWindow` import(내부적으로 `labeling_tab.py` → `image_browser.py` 로드 경로 포함) —
+예외 없이 `MainWindow import OK` 확인.
+
+### 코드 흐름 재확인 (실행 없이 리딩)
+- 폴더 그룹핑(`_build_folder_tree`), 정렬 모드 4종, OK 상태 아이콘(`_STATUS_STYLE`) 로직 자체는
+  변경하지 않고 `get_label_status()` 호출 지점만 캐시 조회로 치환했으므로 표시 로직 자체의
+  회귀 없음. `_apply_display()`의 트리 재구성/선택 복원 흐름도 그대로 유지.
+
+### 변경 파일
+`app/core/auto_labeler.py`, `app/widgets/image_browser.py`만 변경. `docs/agents/leader-log.md`,
+`docs/agents/verification-log.md`는 세션 시작 시점부터 다른 프로세스가 동시에 수정 중인 것으로
+확인되어 이번 커밋 범위에서 제외(`git status`로 확인 후 위 2개 파일만 스테이징). `projects/nok/`
+은 읽기 전용으로만 열었고 `git status`/`git diff --stat`으로 변경 없음을 확인.
+
+### 커밋
+`e7066b0bc16f96664ce7868f1d6d00ee79865a76` —
+`perf: 이미지 브라우저 검색 디바운스+상태 캐시 + auto_labeler 중복 read 제거 (R6)`
+
+### 다음 단계
+- **완료 보고 아님** — 검증(Verification) 에이전트의 별도 확인이 필요하다. 특히: (a) 이
+  자동화 셸과 다른 대화형 세션에서 `python main.py`를 실제로 띄워 검색창 타이핑 시 체감
+  지연이 없는지, (b) 라벨링 탭에서 이미지 저장/OK 토글 후 브라우저 아이콘이 실제로 즉시
+  갱신되는지 육안 확인, (c) 폴더 그룹핑·정렬 4종·삭제/추가 흐름이 실제 UI 조작으로도
+  회귀 없는지, (d) **이 라운드로 R1~R6 계획 전체가 구현 완료** — 종합 회귀(전체 라운드
+  누적 상호작용 여부)를 확인할 마지막 검증이 필요하다.
