@@ -1,4 +1,6 @@
 """하이퍼파라미터 설정 폼 위젯."""
+import os
+
 from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QHBoxLayout, QSpinBox, QDoubleSpinBox,
     QComboBox, QCheckBox, QLabel, QGroupBox, QVBoxLayout,
@@ -8,6 +10,18 @@ from PyQt6.QtCore import Qt
 
 from app.core.trainer import TrainingConfig
 from app.core.i18n import t
+
+# num_workers 기본값 자동 감지 (CPU 코어 수 기반, 상한 2).
+# R4 실측(2026-08-19, Windows/Anaconda, 12코어/32GB RAM/pagefile 2GB 환경):
+#   persistent_workers=True 기준 num_workers=2 는 안정적으로 동작(워밍업 후
+#   9~13ms/batch, 20~30배 개선). num_workers=3~4 는 "OSError: 페이징 파일이
+#   너무 작습니다"(WinError 1455) 또는 워커 프로세스 MemoryError로 재현성 있게
+#   실패 — CPU 코어 수와 무관하게 torch/CUDA 워커 프로세스별 커밋 메모리
+#   요구량이 Windows 시스템 페이징 파일 크기를 초과하는 문제로 확인됨.
+#   cpu_count 기반 상한(min(4, cpu_count-1) 등)은 이 환경급(작은 pagefile +
+#   대형 원본 이미지) 사용자에게 안전하지 않다고 판단해 상한을 2로 보수적으로
+#   설정. 사용자는 UI에서 언제든 수동으로 상향(최대 8) 가능.
+_RECOMMENDED_NUM_WORKERS = min(2, max(0, (os.cpu_count() or 1) - 1))
 
 
 class ConfigForm(QWidget):
@@ -98,11 +112,17 @@ class ConfigForm(QWidget):
         self._val_split = QDoubleSpinBox()
         self._val_split.setRange(0.05, 0.5); self._val_split.setSingleStep(0.05); self._val_split.setValue(0.2)
         self._num_workers = QSpinBox()
-        self._num_workers.setRange(0, 8); self._num_workers.setValue(0)
+        self._num_workers.setRange(0, 8)
+        self._num_workers.setValue(_RECOMMENDED_NUM_WORKERS)
         self._num_workers.setToolTip(
-            "이미지 로딩 병렬 프로세스 수.\n"
-            "0 = 메인 프로세스 (Windows 에서 안전)\n"
-            "2~4 = GPU 대기 시간 줄임 (Mac/Linux 권장)"
+            "이미지 로딩 병렬 프로세스 수 (persistent_workers 적용 — 워커는\n"
+            "학습 내내 재사용되며 최초 epoch에만 기동 비용 발생).\n"
+            f"기본값 {_RECOMMENDED_NUM_WORKERS} = CPU 코어 수 기반 자동 감지"
+            f" (상한 2, 이 PC 코어 수: {os.cpu_count()}).\n"
+            "0 = 메인 프로세스만 사용 (가장 안전, 가장 느림)\n"
+            "3 이상은 직접 실험 후 사용 권장 — 시스템(특히 Windows) 페이징 파일이\n"
+            "작으면 워커 프로세스가 OSError/MemoryError 로 실패할 수 있음\n"
+            "(가상 메모리 크기를 늘리면 완화 가능)."
         )
 
         data_form.addRow(t("cfg.img_w"),   self._img_w)

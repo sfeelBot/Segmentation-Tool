@@ -190,13 +190,22 @@ class TrainerWorker(QThread):
         val_ds = _IndexedSubset(val_ds_resize, val_img_idx)
 
         pin = device.type == "cuda"
+        # persistent_workers=True: num_workers>0 일 때 필수 — 없으면 매 epoch마다
+        # 워커 프로세스를 재생성(재spawn)해 torch/CUDA 재임포트 비용을 반복 지불한다.
+        # 실측(2026-08-19, R4): num_workers=2, persistent_workers=False 는 오히려
+        # num_workers=0 보다 느림(328ms/batch vs 125ms/batch, 매 epoch 재spawn 비용).
+        # persistent_workers=True 로 두면 최초 epoch만 워커 기동 비용을 내고 이후
+        # epoch은 9~13ms/batch로 20~30배 개선(디코딩 캐시 워밍업 효과 포함).
+        persist = cfg.num_workers > 0
         train_loader = DataLoader(
             train_ds, batch_size=cfg.batch_size, shuffle=True,
             num_workers=cfg.num_workers, pin_memory=pin,
+            persistent_workers=persist,
         )
         val_loader = DataLoader(
             val_ds, batch_size=cfg.batch_size, shuffle=False,
             num_workers=cfg.num_workers,
+            persistent_workers=persist,
         )
 
         try:

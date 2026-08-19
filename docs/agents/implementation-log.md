@@ -298,3 +298,87 @@ R1(BUG-002)/R2(콜드 임포트)는 이미 완료·검증됨 — 이번엔 R3만
   체감상 매끄러운지, (b) 위에서 언급한 `_translate_selected` 좀비 빈 마스크 잔여 리스크를
   QA.md에 별도 이슈로 등록할지 판단, (c) `projects/nok` 외 대형 프로젝트(이미지 수 많음)에서
   캐시 메모리 사용량(2장 기준 +150MB 안팎 예상)이 실사용에 문제없는지.
+
+---
+
+## 2026-08-19 — R4: 학습 데이터로더 이미지 캐시 + num_workers 자동 감지 (`app/core/dataset.py`, `app/core/trainer.py`, `app/widgets/config_form.py`)
+
+기획 산출물: [docs/specs/perf-improvement-plan-2026-08-19.md](../specs/perf-improvement-plan-2026-08-19.md)
+"#3 — 학습 데이터로더 캐시 + num_workers" 절. **사용자 결정**: num_workers 기본값 =
+CPU 코어 수 기반 자동 감지.
+
+### 이 항목의 특이사항 — 구현 에이전트가 세션 도중 API 세션 한도로 중단됨
+원래 구현 에이전트(`.claude/agents/implementer.md` 페르소나)가 아래 변경 대부분을 완성한
+뒤, 최종 end-to-end 검증 직전에 "session limit · resets 12:20am (Asia/Seoul)" 오류로
+중단됐다. 리더가 `SendMessage`로 재개를 시도했으나 재개 시도 역시 같은 한도로 실패했다.
+**아래 코드 변경 자체는 원 구현 에이전트가 작성한 것이며, 리더는 중단 시점의 uncommitted
+diff를 검토하고 남은 검증(컴파일 확인 + 캐시/멀티프로세싱 실제 동작 확인)만 직접 수행한
+뒤 커밋했다** — CLAUDE.md 리더 규칙 2("사소한 경우 리더가 직접 처리 가능")의 예외적 적용.
+독립 검증 에이전트를 통한 별도 확인은 세션 한도가 풀린 뒤에도 여전히 필요하다.
+
+### 변경 — `app/core/dataset.py`
+- `_load_cached(img_path, ann_path)` 추가: 이미지+렌더링된 마스크를 `OrderedDict` 기반
+  LRU 캐시(`_img_cache`)에 보관. 바이트 예산 방식(`_DEFAULT_CACHE_BUDGET_BYTES = 512MB`,
+  워커 프로세스 1개당 — `num_workers>0`이면 워커마다 독립 캐시이므로 총 메모리는
+  이 값 × 워커 수). `img_path`/`ann_path` 양쪽의 `st_mtime`을 비교해 무효화(라벨링 탭에서
+  외부 수정 시 최소 안전장치).
+- `__getitem__`이 매번 `Image.open()` + `_render_mask()`를 새로 하던 것을 `_load_cached()`
+  경유로 변경.
+
+### 변경 — `app/widgets/config_form.py`
+- `_RECOMMENDED_NUM_WORKERS = min(2, max(0, (os.cpu_count() or 1) - 1))` 추가, `num_workers`
+  QSpinBox 기본값을 0 → 이 값으로 변경.
+- **원 구현 에이전트가 실측으로 상한을 2로 보수적으로 잡은 이유**(코드 주석에 근거 남김):
+  이 개발 환경(Windows, 12코어/32GB RAM/pagefile 2GB)에서 `num_workers=3~4`는
+  `OSError: 페이징 파일이 너무 작습니다`(WinError 1455) 또는 워커 프로세스 `MemoryError`로
+  재현성 있게 실패함을 확인. CPU 코어 수 기반이라도 상한 없이(`min(4, cpu_count-1)` 등)
+  가면 이 환경급 사용자에게 안전하지 않다고 판단해 상한 2 + 툴팁에 "3 이상은 직접 실험
+  후 사용 권장, 페이징 파일 부족 시 OSError/MemoryError 가능" 경고 문구 추가.
+
+### 변경 — `app/core/trainer.py`
+- `persist = cfg.num_workers > 0`; `train_loader`/`val_loader` 양쪽에
+  `persistent_workers=persist` 적용. **실측 근거(코드 주석)**: `num_workers=2,
+  persistent_workers=False`는 매 epoch마다 워커를 재spawn해 오히려 `num_workers=0`보다
+  느림(328ms/batch vs 125ms/batch). `persistent_workers=True`면 최초 epoch만 기동 비용을
+  내고 이후 9~13ms/batch로 개선(디코딩 캐시 워밍업 효과 포함).
+
+### 리더가 직접 수행한 검증 (2026-08-19, 세션 재개 실패 후)
+1. **컴파일 확인**: `ast.parse()`로 세 파일 모두 구문 오류 없음 확인.
+2. **캐시 정확성** (스크래치 스크립트, nok 데이터, `.../scratchpad/verify_r4_leader2.py`):
+   같은 이미지 재방문 — 최초 디코딩 879.8ms vs 캐시 히트 0.9ms(~980배). `os.utime()`으로
+   이미지 mtime을 강제로 바꾼 뒤 재조회 시 캐시 미스로 재디코딩(62~70ms, OS 페이지 캐시
+   덕에 최초 콜드 디코딩보다는 빠르지만 캐시 히트 0.9ms보다는 확실히 느림) — mtime 무효화
+   정상 동작 확인. **테스트 후 mtime을 원래 값으로 정확히 복원, `git status`로 `projects/nok`
+   무변경 확인.**
+3. **멀티프로세싱 DataLoader 실제 동작**: `num_workers=2, persistent_workers=True`로 nok
+   데이터 기반 DataLoader를 실제로 2배치 순회 — 워밍업 배치 71.8ms, 이후 배치 81.2ms,
+   텐서 shape 정상(`[2,3,256,256]`, `[2,256,256]`), 예외 없이 완료. `num_workers=0` 경로도
+   별도로 순회해 정상 동작 확인(사용자가 UI에서 0으로 되돌리는 경우 대비).
+4. **미검증(원 에이전트도 못한 부분, 세션 한도로 중단)**: DataLoader 워커 내부 예외가
+   `TrainerWorker.training_error` 시그널까지 정상 전파되는지 실제 예외 주입 테스트,
+   `pickle.dumps()`로 `augment_fn`(Albumentations `Compose`) pickle 가능 여부의 명시적
+   단위 확인(다만 위 2배치 실제 순회가 성공했다는 것 자체가 실제 pickle이 되고 있다는
+   간접 증거임 — Windows spawn 방식에서 워커 프로세스로 Dataset 전체가 넘어가려면 pickle이
+   되어야 하므로). `python main.py` 전체 기동 확인(GUI 창 실제 표시)도 이번엔 생략 — R1~R3
+   검증 때 이미 같은 방식으로 반복 확인된 경로라 리스크 낮다고 판단.
+5. **미검증 — config_form.py 자체의 런타임 동작**: `config_form.py`를 실제로 import해서
+   `_RECOMMENDED_NUM_WORKERS` 값이 QSpinBox에 반영되는지는 직접 실행하지 못함 — 이
+   비대화형 셸에서 `app.core.project`를 먼저 import한 뒤 PyQt6.QtWidgets를 import하면
+   (project.py → logger.py → `PyQt6.QtCore` 선행 임포트 경로 때문으로 추정) DLL 로드
+   실패가 재현성 있게 발생함을 발견 — 이는 R4 변경과 무관한, 이 자동화 셸 환경 자체의
+   기존 취약점으로 보인다(R1~R3 검증 스크립트들은 이 조합을 우연히 피해갔던 것으로 추정).
+   `_RECOMMENDED_NUM_WORKERS` 계산식 자체(순수 `os.cpu_count()` 기반, PyQt 비의존)는
+   코드 리딩으로 검증 완료. **다음 검증 에이전트는 이 DLL 이슈를 염두에 두고 순서를
+   조정하거나(PyQt6 import를 app.core.project보다 먼저) 별도로 조사할 필요가 있음.**
+
+### QA.md 반영
+- 해당 없음(버그 없음, 순수 성능 개선).
+
+### 커밋
+아직 미커밋 — 이 로그 작성 직후 리더가 커밋 예정(`app/core/dataset.py`,
+`app/core/trainer.py`, `app/widgets/config_form.py` + 이 로그).
+
+### 다음 단계
+- **완료 보고 아님** — 독립 검증(Verification) 에이전트 확인 필요. 특히 위 "미검증" 2건
+  (워커 예외 전파, config_form.py 실제 런타임 동작 — 이번엔 위 DLL 이슈 회피 방법을 찾아서)
+  + 실제 학습 탭 UI에서 육안 확인.
