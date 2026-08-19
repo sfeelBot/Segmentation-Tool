@@ -58,15 +58,72 @@ segmentation model/
 │   ├── checkpoints/
 │   └── user_models/
 │
-└── docs/
-    ├── AI_MODEL.md
-    ├── GUI.md
-    ├── PROCESS.md
-    ├── SECURITY.md
-    └── ANNOTATION_FORMAT.md
+├── docs/
+│   ├── AI_MODEL.md
+│   ├── GUI.md
+│   ├── PROCESS.md
+│   ├── SECURITY.md
+│   ├── ANNOTATION_FORMAT.md
+│   ├── CHANGELOG.md
+│   ├── roadmap.md          # 탭/기능별 진행 상태 (살아있는 문서)
+│   ├── decisions-needed.md # 사용자 결정 대기 목록 (살아있는 문서)
+│   └── agents/              # 역할별 append-only 작업 로그 (leader/planning/design/implementation/verification-log.md)
+│
+└── .claude/
+    └── agents/               # 서브에이전트 정의 (planner/designer/implementer/verifier/deployer.md)
 ```
 
 ---
+
+## 운영 방식: Harness Engineering
+
+이 프로젝트는 리더(메인 세션) + 서브에이전트 체계로 운영한다. 리더는 사용자와의 대화 창구이자
+오케스트레이터이며, 실제 작업은 서브에이전트에 위임하는 것을 원칙으로 한다.
+
+### 리더 규칙
+
+1. 사용자가 요구사항을 말하면, **먼저 이해한 내용을 요약해 사용자에게 확인받은 뒤에만** 서브에이전트에 작업을 분배한다.
+2. 리더는 기획/디자인/구현/검증/배포 작업을 가능한 한 직접 수행하지 않고 해당 서브에이전트(Agent 도구, `subagent_type`)를 호출한다. 사소한 1~2줄 수정이나 조사성 질문 답변처럼 위임이 과한 경우는 리더가 직접 처리해도 된다.
+3. 세션 시작 시 `git fetch`로 `origin/main` 변경 여부를 확인한다. 새 커밋이 있으면 사용자에게 알리고 pull 여부를 확인한다.
+4. `git push` 등 외부로 나가는 액션은 사용자의 명시적 확인 후에만 진행한다 (자동 push 금지). 커밋 자체는 아래 "Git 커밋 규칙"대로 즉시 수행한다.
+5. 리더도 서브에이전트와 동일하게 `docs/agents/leader-log.md`에 로그를 남긴다. 기록 대상은 서브에이전트 산출물 자체가 아니라 **오케스트레이션 흐름**이다: 사용자 요청 → 어떤 서브에이전트에 무엇을 언제·왜 맡겼는지 → 결과 → 커밋/푸시 등 외부 액션. `leader-log.md` 맨 위 "현재 상황 요약" 절은 append가 아니라 매번 덮어쓰는 살아있는 요약이다 — 그 아래 날짜별 로그는 append-only.
+6. 사용자 결정이 필요한 지점을 발견하면 `docs/decisions-needed.md`에 추가한다. 실제 결정이 나면 즉시 삭제한다(근거는 관련 문서·`leader-log.md`에 남으므로 이력은 보존). "추후 논의"로만 답한 경우는 삭제하지 않고 "보류된 항목" 절로 옮긴다.
+7. `docs/roadmap.md`(탭/기능별 진행 상태)는 `decisions-needed.md`와 같은 살아있는 문서다 — 상태가 바뀔 때마다 리더가 직접 갱신한다(체크박스 토글, 완료 항목 정리). append-only가 아니므로 과거 상태를 지우고 최신으로 덮어써도 된다 — 상세 이력은 `docs/agents/*-log.md`, `QA.md`, `docs/CHANGELOG.md`에 이미 남는다.
+
+### 워크플로우 순서
+
+```
+리더 → 기획(Planning) → 구현(Implementation) + 디자인(Design) 병행 → 검증(Verification) → 배포(Deployment)
+```
+
+- 각 단계 전환 시 리더가 이전 단계 산출물을 확인하고 다음 에이전트에게 컨텍스트를 전달한다.
+- **구현 완료 후 검증 필수**: 구현 에이전트가 끝났다고 보고해도, 검증 에이전트가 실제로 앱을 구동(`python main.py` 또는 `run` 스킬)해 확인하기 전까지는 "완료"로 간주하지 않는다.
+- **스파이크(선행검증)는 필요할 때만 끼워 넣는다**: 기술 선택지(라이브러리, 아키텍처) 사이에 실측 근거가 필요하면 결정을 미룬 채 진행하는 대신 스파이크 에이전트를 호출해 장단점을 정리시킨 뒤 사용자 결정을 받는다. 스파이크는 구현 이전에 수행하며 스스로 결정을 내리지 않는다.
+- **검증 수준**: 기본은 정적 검토(코드 리뷰) + 실행 확인이다. 리더가 "주요 기능 추가"로 판단한 라운드는 검증 에이전트에게 라벨링/학습/추론 각 탭의 실제 UI 조작(골든 패스)까지 명시적으로 요청한다 — 사소한 버그 수정·문서 정정은 실행 확인만으로 충분.
+
+### 로그 규칙 (리더 + 서브에이전트)
+
+각 서브에이전트는 작업 시작/종료 시 `docs/agents/<role>-log.md`에 날짜, 작업 요약, 상태(진행중/완료/블로커)를 **추가**한다 — append-only, 기존 내용은 삭제하지 않는다. 리더도 같은 규칙으로 `docs/agents/leader-log.md`에 오케스트레이션 흐름을 기록한다.
+
+| 역할 | 정의 파일 | 로그 파일 | 산출물 위치 |
+|---|---|---|---|
+| 리더 (Leader) | (메인 세션, 정의 파일 없음) | `docs/agents/leader-log.md` | — (오케스트레이션 기록) |
+| 기획 (Planning) | `.claude/agents/planner.md` | `docs/agents/planning-log.md` | `docs/roadmap.md` |
+| 스파이크 (Spike, 선행검증·필요 시에만) | `.claude/agents/spiker.md` | `docs/agents/spike-log.md` (필요 시 생성) | 관련 조사 문서 |
+| 디자인 (Design) | `.claude/agents/designer.md` | `docs/agents/design-log.md` | UI 목업 / Artifact |
+| 구현 (Implementation) | `.claude/agents/implementer.md` | `docs/agents/implementation-log.md` | (코드) |
+| 검증 (Verification) | `.claude/agents/verifier.md` | `docs/agents/verification-log.md` | `QA.md` |
+| 배포 (Deployment) | `.claude/agents/deployer.md` | `docs/agents/deployment-log.md` (필요 시 생성) | `docs/CHANGELOG.md`, git tag |
+
+---
+
+## Git / GitHub 연동
+
+- 원격 저장소: `https://github.com/sfeelBot/Segmentation-Tool.git` (public, 기본 브랜치 `main`)
+- 커밋은 의미 단위로 나눈다.
+- **push는 사용자가 명시적으로 요청할 때만** 수행한다.
+- 검증 단계 범위: 현재는 체크리스트 기반 수동 검증(`QA.md`). CI 자동화는 프로젝트가 안정화된 뒤 추가한다.
+- 배포 에이전트 범위: 버전 태깅, CHANGELOG 갱신까지만 담당. PyInstaller 등 실행파일 패키징/배포는 범위 밖 (별도 논의).
 
 ## Git 커밋 규칙
 
@@ -110,13 +167,9 @@ segmentation model/
 
 ## 구현 단계
 
-| Phase | 내용 | 상태 |
-|-------|------|------|
-| 1 | 뼈대: 디렉토리, main.py, 4개 탭 stub, 문서 | ✅ 완료 |
-| 2 | 모델 로더 탭: AST 검증 + 제한적 exec + UI | ✅ 완료 |
-| 3 | 라벨링 탭: 캔버스, 클래스 패널, JSON 저장 | ✅ 완료 |
-| 4 | 학습 탭: Dataset, QThread 학습, 실시간 그래프 | ✅ 완료 |
-| 5 | 추론 탭: 체크포인트 로드, 오버레이 뷰어 | ✅ 완료 |
+Phase 1~5(뼈대, 모델 로더, 라벨링, 학습, 추론)는 모두 완료됐고 이후로도 기능이 계속
+추가되고 있다. 정적 표 대신 살아있는 문서인 [docs/roadmap.md](docs/roadmap.md)에서
+탭/기능별 현재 상태를 관리한다.
 
 ---
 
@@ -138,3 +191,6 @@ segmentation model/
 - [docs/PROCESS.md](docs/PROCESS.md) — 이미지 처리 파이프라인
 - [docs/SECURITY.md](docs/SECURITY.md) — 모델 코드 샌드박스
 - [docs/ANNOTATION_FORMAT.md](docs/ANNOTATION_FORMAT.md) — JSON 스키마
+- [docs/roadmap.md](docs/roadmap.md) — 탭/기능별 진행 상태 (살아있는 문서)
+- [docs/decisions-needed.md](docs/decisions-needed.md) — 사용자 결정 대기 목록 (살아있는 문서)
+- [docs/agents/README.md](docs/agents/README.md) — 리더·기획·디자인·구현·검증·배포 역할별 작업 로그 워크플로우
