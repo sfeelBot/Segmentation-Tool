@@ -287,7 +287,6 @@ class TrainingTab(QWidget):
         # 우: 컴팩트 메트릭 + 체크포인트 (좁은 패널)
         side_panel = QWidget()
         side_panel.setMinimumWidth(150)
-        side_panel.setMaximumWidth(220)
         side_layout = QVBoxLayout(side_panel)
         side_layout.setContentsMargins(4, 0, 0, 0)
         side_layout.setSpacing(4)

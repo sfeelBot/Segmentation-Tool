@@ -119,6 +119,11 @@ class InferenceTab(QWidget):
 
         # ── 메인 영역 ─────────────────────────────────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(5)
+        splitter.setStyleSheet(
+            "QSplitter::handle { background:#374151; }"
+            "QSplitter::handle:hover { background:#60a5fa; }"
+        )
 
         # 이미지 목록 (폴더 선택 시 표시)
         self._list_panel = QWidget()
@@ -145,7 +150,6 @@ class InferenceTab(QWidget):
         list_layout.addLayout(nav)
 
         self._list_panel.setMinimumWidth(140)
-        self._list_panel.setMaximumWidth(180)
         self._list_panel.hide()   # 단일 파일 모드에선 숨김
         splitter.addWidget(self._list_panel)
 
@@ -162,7 +166,7 @@ class InferenceTab(QWidget):
 
         # 범례
         right = QWidget()
-        right.setFixedWidth(190)
+        right.setMinimumWidth(160)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(4, 0, 4, 0)
         legend_box = QGroupBox("클래스 범례")
