@@ -11,12 +11,13 @@ ASPP(Atrous Spatial Pyramid Pooling)를 얹어 다양한 크기의 구조를 인
 """
 import torch
 import torch.nn as nn
-from torchvision.models.segmentation import deeplabv3_mobilenet_v3_large
 
 
 class DeepLabV3_MobileNet(nn.Module):
     def __init__(self, num_classes: int = 2, pretrained: bool = False) -> None:
         super().__init__()
+        from torchvision.models.segmentation import deeplabv3_mobilenet_v3_large  # 지연 임포트
+
         weights = "DEFAULT" if pretrained else None
         self.model = deeplabv3_mobilenet_v3_large(
             weights=weights, num_classes=num_classes

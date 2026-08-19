@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.transforms.functional as TF
 from PIL import Image
 from PyQt6.QtGui import QImage, QPixmap
 
@@ -54,6 +53,8 @@ def run(
     # ── 이미지 전처리 ──────────────────────────────────────────────────────────
     pil_img = Image.open(str(image_path)).convert("RGB")
     orig_w, orig_h = pil_img.size
+
+    import torchvision.transforms.functional as TF  # 지연 임포트 — 콜드 기동 단축
 
     # 학습 시와 같은 크기로 resize (체크포인트 config 없으면 512×512)
     infer_size = _infer_size_from_ckpt(ckpt)
@@ -183,6 +184,8 @@ def run_sliding_window(
 
 def _preprocess_patch(patch: Image.Image) -> torch.Tensor:
     """PIL 패치 → 정규화된 (1, 3, H, W) 텐서."""
+    import torchvision.transforms.functional as TF  # 지연 임포트 — 콜드 기동 단축
+
     img_np = np.array(patch, dtype=np.uint8)
     t = TF.to_tensor(img_np)
     t = TF.normalize(t, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225])

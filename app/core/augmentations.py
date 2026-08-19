@@ -1,7 +1,10 @@
 """Albumentations 파이프라인 빌더."""
 from __future__ import annotations
 
-import albumentations as A
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import albumentations as A
 
 
 def build_pipeline(steps: list[dict]) -> A.Compose:
@@ -9,6 +12,8 @@ def build_pipeline(steps: list[dict]) -> A.Compose:
 
     step format: {"type": "HorizontalFlip", "params": {"p": 0.5}}
     """
+    import albumentations as A  # 지연 임포트 — 콜드 기동 단축
+
     transforms: list[A.BasicTransform] = []
     for step in steps:
         cls_name = step.get("type", "")

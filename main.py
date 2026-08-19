@@ -5,27 +5,33 @@ from pathlib import Path
 # ── 무거운 라이브러리 선행 import ──────────────────────────────────────────────
 # 일부 환경에서 DLL 로딩 순서·PATH 문제로 나중에 import 하면 에러가 날 수 있어서
 # QApplication 생성 전에 미리 로드한다.
+#
+# torchvision·albumentations는 여기서 빼고 실제 사용 시점(학습/추론/오토라벨 등,
+# app/core/dataset.py·inference_engine.py·auto_labeler.py·augmentations.py·
+# app/model_presets/*.py)에 지역 임포트로 지연 로드한다 — 콜드 기동 ~3.3초 중
+# 대부분(albumentations 1.9s + torchvision 0.8s)을 절감. 단, torch는 항상 상시
+# 사용되고 torchvision이 torch 확장이라 torch가 먼저 로드돼 있어야 안전하므로
+# 계속 즉시 로드한다.
 
 def _preload_libs() -> None:
     """핵심 라이브러리를 앱 시작 시점에 미리 로드.
     importlib.import_module() 로 로컬 변수 없이 로드 → 린터 경고 없음."""
     import importlib
 
-    for pkg in ("numpy", "cv2", "PIL.Image", "albumentations"):
+    for pkg in ("numpy", "cv2", "PIL.Image"):
         try:
             importlib.import_module(pkg)
         except ImportError as e:
             _die(pkg, e)
 
-    # PyTorch / torchvision — DLL 로드 실패(OSError) 별도 처리
+    # PyTorch — DLL 로드 실패(OSError) 별도 처리. torchvision은 지연 로드하되,
+    # torch는 그 전제(확장 모듈이 링크하는 베이스)이므로 항상 먼저 로드해 둔다.
     try:
         importlib.import_module("torch")
-        importlib.import_module("torchvision")
-        importlib.import_module("torchvision.transforms.functional")
     except OSError as e:
         _die_dll(e)
     except ImportError as e:
-        _die("torch / torchvision", e)
+        _die("torch", e)
 
     # matplotlib — Agg 백엔드 강제 (Qt 스레드 충돌 방지)
     try:

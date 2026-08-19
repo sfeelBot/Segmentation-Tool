@@ -11,12 +11,13 @@ MobileNetV3 전용의 초경량 세그멘테이션 헤드. 추론 속도가 최�
 """
 import torch
 import torch.nn as nn
-from torchvision.models.segmentation import lraspp_mobilenet_v3_large
 
 
 class LRASPP_MobileNet(nn.Module):
     def __init__(self, num_classes: int = 2, pretrained: bool = False) -> None:
         super().__init__()
+        from torchvision.models.segmentation import lraspp_mobilenet_v3_large  # 지연 임포트
+
         weights = "DEFAULT" if pretrained else None
         self.model = lraspp_mobilenet_v3_large(
             weights=weights, num_classes=num_classes

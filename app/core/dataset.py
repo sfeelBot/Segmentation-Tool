@@ -15,7 +15,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from PIL import Image, ImageDraw
-import torchvision.transforms.functional as TF
 
 from app.core.annotation_store import rle_decode
 from app.core import project as _project
@@ -88,6 +87,8 @@ class SegmentationDataset(Dataset):
             aug     = self._augment(image=img_np, mask=mask_np)
             img_np  = aug["image"]
             mask_np = aug["mask"]
+
+        import torchvision.transforms.functional as TF  # 지연 임포트 — 콜드 기동 단축
 
         img_tensor  = TF.to_tensor(img_np)
         img_tensor  = TF.normalize(img_tensor, IMAGENET_MEAN, IMAGENET_STD)

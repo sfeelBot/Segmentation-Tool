@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.transforms.functional as TF
 from PIL import Image
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -125,6 +124,8 @@ def _infer_to_annotations(
     device: torch.device,
     classes: list[ClassDef],
 ) -> list[AnnotationItem]:
+    import torchvision.transforms.functional as TF  # 지연 임포트 — 콜드 기동 단축
+
     pil_img = Image.open(str(img_path)).convert("RGB")
     orig_w, orig_h = pil_img.size
 

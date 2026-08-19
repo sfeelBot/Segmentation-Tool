@@ -11,12 +11,13 @@ ASPP 모듈로 넓은 수용영역과 다중스케일 특징 추출이 가능하
 """
 import torch
 import torch.nn as nn
-from torchvision.models.segmentation import deeplabv3_resnet50
 
 
 class DeepLabV3_ResNet50(nn.Module):
     def __init__(self, num_classes: int = 2, pretrained: bool = False) -> None:
         super().__init__()
+        from torchvision.models.segmentation import deeplabv3_resnet50  # 지연 임포트
+
         weights = "DEFAULT" if pretrained else None
         self.model = deeplabv3_resnet50(
             weights=weights, num_classes=num_classes
