@@ -40,12 +40,14 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 상세 계획: [docs/specs/perf-improvement-plan-2026-08-19.md](specs/perf-improvement-plan-2026-08-19.md).
 원본 벤치마크: [docs/agents/verification-log.md](agents/verification-log.md).
 
-- [ ] R1 — BUG-002: `annotation_store.rle_encode()` uint8 언더플로우로 brush_mask 전량 유실 (P0, 구현 대기)
-- [ ] R2 — #2: `main.py` 콜드 임포트 지연로딩 (기동 ~3.3초, P1, 구현 대기 — DLL 리스크 감수하고 진행 결정됨)
-- [ ] R3 — #4 + #7: `annotation_canvas.py` 이미지 캐시 + bbox fallback 스캔 축소 (P2/P3, 구현 대기)
-- [ ] R4 — #3: 학습 데이터로더 캐시 + `num_workers` 기본값 (P1, 구현 대기 — 기본값을 CPU 코어 수 기반 자동 감지로 결정됨)
-- [ ] R5 — #5: `inference_engine._colorize_and_blend()` 다운스케일 (P2, 구현 대기 — 화면 미리보기만 2048 상한, 저장/내보내기는 원본 해상도 유지로 결정됨)
-- [ ] R6 — #6 + #8: `image_browser` 검색 디바운스 + `auto_labeler` 중복 read 제거 (P2/P3, 정적 분석만 — 구현 대기, 재검증 조건부)
+- [x] R1 — BUG-002: `annotation_store.rle_encode()` uint8 언더플로우로 brush_mask 전량 유실 (P0) — 구현+독립검증 통과, 커밋 `3ce4dc9`
+- [x] R2 — #2: `main.py` 콜드 임포트 지연로딩 (기동 ~3.3초→~1.85초, P1) — 구현+독립검증 통과, 커밋 `eee9b9c`
+- [x] R3 — #4 + #7: `annotation_canvas.py` 이미지 캐시(~10~15배) + bbox fallback 스캔 축소(~5배) (P2/P3) — 구현+독립검증 통과, 커밋 `194430b`. 부수 발견: BUG-003(P3, Open)
+- [x] R4 — #3: 학습 데이터로더 캐시 + `num_workers` 자동 감지(상한 2) + persistent_workers (P1) — 구현+독립검증 통과, 커밋 `5ed34e9`
+- [x] R5 — #5: `inference_engine._colorize_and_blend()` 다운스케일(992ms→194ms, 화면 미리보기만·저장은 원본 유지) (P2) — 구현+독립검증 통과, 커밋 `20bb3d0`
+- [x] R6 — #6 + #8: `image_browser` 검색 디바운스+상태캐시 + `auto_labeler` 중복 read 제거(~30~46% 단축, 대규모 합성 프로젝트로 재검증 완료) (P2/P3) — 구현+독립검증 통과, 커밋 `e7066b0`. 부수 발견: BUG-004(P3, Open)
+
+**R1~R6 전체 완료** (2026-08-19). 남은 Open 이슈는 [QA.md](../QA.md)의 BUG-003·BUG-004(둘 다 P3, 정상 사용 흐름에서는 발현되지 않는 경미한 항목) — 별도 라운드 불필요, 후속 작업 시 참고.
 
 ## UI/UX 재편 — 학습·추론·라벨링 탭 (2026-08-19 요청, 성능 개선 완료 후 착수)
 
@@ -56,7 +58,8 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   디자인 에이전트가 코드 + 기존 기능 목록을 감사해 자체 제안.
 - **성능 개선(R3~R6)과 대상 파일이 겹쳐 순서를 성능 먼저로 결정** — R3~R6 전부 완료·검증
   통과한 뒤 착수한다 (파일 충돌 방지).
-- [ ] 착수 대기 (블로커: R3~R6 완료)
+- [x] 블로커 해소 — R1~R6 전체 완료·검증 통과 (2026-08-19). **착수 가능 상태.**
+- [ ] 착수 대기 (사용자 확인 후 디자인 에이전트 위임)
 
 ## 다음 후보
 - 위 UI/UX 재편 외 추가 신규 기능 요청 없음 (2026-08-19 기준). 새 요청은

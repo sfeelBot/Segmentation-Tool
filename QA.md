@@ -5,6 +5,7 @@
 | ID | 우선순위 | 설명 | 보고자 | 상태 |
 |----|----------|------|--------|------|
 | BUG-003 | P3 | `AnnotationCanvas._translate_selected()`(Select 도구로 어노테이션을 캔버스 밖까지 드래그) 후 마스크가 전량 0이 되어도 정리(cleanup)가 없어 `self._annotations`에 빈 brush_mask가 세션 동안 남을 수 있음. 저장 시 `annotation_store.save()`가 `a.mask.any()`로 걸러내 디스크에는 저장되지 않지만(데이터 유실·오염 없음), 라벨링 탭 어노테이션 목록 패널(`labeling_tab.py:_refresh_ann_list()`)에 렌더링되지 않는 유령 항목("#N [Mask] ...")이 다음 이미지 전환 전까지 표시될 수 있음 | R3 검증(verifier) | Open |
+| BUG-004 | P3 | `auto_labeler.collect_unlabeled()`의 `get_label_status()` 1회 read 통합(R6)이 `get_ok()+load()` 2회 read 구버전과 100% 동치는 아님 — `annotations` 배열에 앱이 절대 생성하지 않는(=`save()`가 쓰지 않는) 미인식 `type` 값의 원소만 있는 손상/외부편집 JSON의 경우, 구버전은 `load()`가 해당 원소를 조용히 건너뛰어 결과 리스트가 비므로 "unlabeled"로 간주(자동 라벨링 대상에 포함)했지만 신버전은 `annotations` 배열 자체가 non-empty이므로 "labeled"로 간주(대상에서 제외). 정상 사용(앱이 직접 저장한 JSON)에서는 재현 불가 — 손으로 편집했거나 외부 도구가 만든 손상 파일에서만 발생. 부수 관찰: 최상위가 dict가 아닌(JSON 배열 등) 손상 파일에서는 구버전(`load()`가 `AttributeError`로 크래시)과 달리 신버전은 크래시 없이 "unlabeled"로 안전 처리 — 이 케이스는 오히려 신버전이 더 견고함 | R6 검증(verifier) | Open |
 
 ---
 

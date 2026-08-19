@@ -317,3 +317,242 @@
 - 검증 시작 시점에 이미 `docs/agents/leader-log.md`, `planning-log.md`,
   `decisions-needed.md`, `roadmap.md`, `docs/specs/` 등이 미커밋 상태로 존재(다른
   에이전트의 동시 작업 산출물) — 이번 R3 검증 세션에서 발생시킨 변경이 아니며 그대로 유지함.
+
+---
+
+## 2026-08-20 — R4: 학습 데이터로더 이미지 캐시 + num_workers 자동 감지 독립 검증
+
+기획 산출물: [docs/specs/perf-improvement-plan-2026-08-19.md](../specs/perf-improvement-plan-2026-08-19.md)
+"#3 — 학습 데이터로더 캐시 + num_workers" 절. 커밋 `5ed34e9`(R4). 원 구현 에이전트가 세션
+한도로 중단되어 리더가 대신 최소 검증 후 커밋한 라운드 — 리더가 못한 2건(워커 예외 전파,
+config_form.py 런타임)을 포함해 전체를 독립 재검증. 리더 스크립트는 재사용하지 않고 전부
+새로 작성(스크래치 디렉토리, 프로젝트에 커밋 안 함).
+
+### 실행 환경
+`C:\Users\Feel\anaconda3\python.exe`(PyTorch 설치 인터프리터), `os.cpu_count()=12`.
+DLL 함정(리더가 보고한 `app.core.project` → `PyQt6.QtWidgets` 순서 문제) 회피를 위해
+모든 스크립트에서 `PyQt6.QtWidgets`(QApplication 생성)를 `app.core.project`/`dataset`보다
+먼저 import — 전 스크립트에서 문제 재현되지 않음(즉 순서 문제이지 근본적 DLL 파손은 아님을
+재확인).
+
+### 확인 결과
+1. **변경 범위**: `git show --stat 5ed34e9` — `app/core/dataset.py`, `app/core/trainer.py`,
+   `app/widgets/config_form.py`, `docs/agents/implementation-log.md` 4개만. 스펙 범위 일치.
+2. **코드 리딩**: `_load_cached()`(mtime 기반 LRU, 워커별 독립 캐시), `trainer.py`의
+   `persist = cfg.num_workers > 0`, `config_form.py`의
+   `_RECOMMENDED_NUM_WORKERS = min(2, max(0, (os.cpu_count() or 1) - 1))` 모두 로그 설명과
+   일치.
+3. **캐시 재현 (독립, 리더와 다른 이미지/인덱스 사용)**: `pair_idx=3`(8번.bmp), `idx=3`과
+   `idx=8`(둘 다 `%5==3`)로 재방문 테스트 — cold 893.13ms → cache-hit 0.63ms(1408배).
+   `os.utime()`으로 이미지 mtime +5초 조작 후 재조회 시 68.70ms로 재로드(무효화 정상 동작,
+   히트보다 확실히 느림). **mtime을 정확히 원복(`os.utime` 원래 값 재적용) 후
+   `img_path.stat().st_mtime` 값 일치 확인, `git status --short projects/nok` 무변경 확인**.
+   `num_workers=0` 경로도 배치 형태(`[2,3,256,256]`) 정상 확인.
+4. **워커 예외 전파 — 리더 미검증 항목, 이번에 검증**: 모듈 최상위에 `BrokenDataset`(idx==3에서
+   `FileNotFoundError` 발생)을 정의하고 `num_workers=2, persistent_workers=True`로 순회 —
+   워커 프로세스의 예외가 메인 프로세스로 정상 전파됨(`FileNotFoundError: Caught
+   FileNotFoundError in DataLoader worker process 1. Original Traceback: ...`). `trainer.py
+   TrainerWorker.run()`의 try/except 구조를 그대로 복제해 테스트한 결과, 이 예외는
+   `except RuntimeError`(OOM 분기)가 아니라 `except Exception as exc`에 걸려
+   `self.training_error.emit(f"{type(exc).__name__}: {exc}")` 경로에 정상 도달함을 확인 —
+   즉 워커 예외가 `training_error` 시그널까지 끊기지 않고 전달되는 구조가 맞다.
+   `num_workers=0` 비교군도 동일 예외가 동일 분기로 전파됨을 확인.
+5. **config_form.py 런타임 — 리더 미검증 항목, 이번에 검증**: DLL 함정을 피해 QApplication을
+   먼저 생성한 뒤 `ConfigForm()`을 실제로 인스턴스화 — `_num_workers` QSpinBox 초기값이
+   `2`(= `_RECOMMENDED_NUM_WORKERS`, `os.cpu_count()=12` 기반 계산값과 일치)로 정상 반영됨을
+   확인. `get_config().num_workers`도 동일하게 2로 전달됨을 확인.
+6. **`python main.py` 방식 전체 기동**: `QApplication` → `app.core.project` import →
+   `open_existing`/`set_current(nok)` → `app.main_window` import → `MainWindow()` → `show()`
+   까지 STEP1~5 전부 예외 없이 통과. 프로세스 종료 코드 127은 R1~R3 검증 때와 동일한
+   비대화형 offscreen 환경 특성(이벤트 루프 없는 조기 종료)으로, STEP5까지 전부 성공한 뒤
+   발생해 R4 변경으로 인한 회귀로 보지 않음(R3 검증 로그에 이미 동일 현상 기록됨).
+7. **`num_workers=0` 기존 경로**: 위 3, 6에서 재확인 — 정상 동작.
+8. **`persistent_workers` 가드**: PyTorch가 `num_workers=0` + `persistent_workers=True`
+   조합에 `ValueError: persistent_workers option needs num_workers > 0`을 던지는 것을 직접
+   재현 확인. `trainer.py`의 `persist = cfg.num_workers > 0`는 `num_workers=0`일 때
+   `persist=False`가 되어 이 조합을 만들지 않음 — 코드로 안전함을 확인.
+
+### 판정
+- 구현 로그의 설명과 코드가 전부 일치, 리더가 명시한 미검증 2건(워커 예외 전파,
+  config_form.py 런타임)도 이번에 통과. 새로운 버그 없음.
+- **R4 검증 통과, R5 착수 가능.**
+- 코드는 건드리지 않음 — `git status --short` 확인 결과 세션 시작 시점부터 있던
+  `docs/agents/leader-log.md` 변경 외 추가 diff 없음(`projects/nok` 포함 무변경).
+  QA.md 신규 등록 없음(버그 미발견).
+
+### 비고
+- 검증 스크립트 3개(`verify_r4_cache.py`, `verify_r4_worker_exc.py`,
+  `verify_r4_config_form.py`, `verify_r4_boot.py`)는 스크래치 디렉토리에만 작성, 프로젝트에
+  커밋하지 않음.
+
+---
+
+## 2026-08-20 — R5: 추론 결과 컬러화/블렌딩 다운스케일 독립 검증 (커밋 `20bb3d0`)
+
+기획 산출물: `docs/specs/perf-improvement-plan-2026-08-19.md` #5. 구현 로그(`implementation-log.md`
+"R5" 항목)의 주장을 그대로 신뢰하지 않고, 구현자와 다른 해상도/클래스 수 조합으로 별도 스크래치
+스크립트(`.../scratchpad/verify_r5_independent.py`, `verify_boot_r5_independent.py` — 구현자
+스크립트 재사용 안 함, 프로젝트에 추가 안 함)로 독립 재현.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위 확인** — `git show --stat 20bb3d0`: `app/core/inference_engine.py`(+22/-3),
+   `docs/agents/implementation-log.md`(+72) 2개 파일만 변경. 구현자 주장과 일치. `projects/nok`,
+   다른 코드 파일 변경 없음.
+2. **코드 판단** — `_colorize_and_blend()`(inference_engine.py:311-346)를 직접 읽음.
+   `_MAX_OVERLAY_DIM=2048` 모듈 상수, `max(h,w) > 2048`일 때만 `class_map_work`를 새 배열로
+   생성(`class_map.astype(np.uint8)` → `Image.fromarray().resize(..., NEAREST)` →
+   `np.array(..., dtype=np.int64)`, 원본 `class_map`을 in-place로 건드리는 연산 없음)해 컬러화에
+   사용하고, `orig`는 BILINEAR로 별도 리사이즈함을 확인 — 구현 로그 설명과 코드가 정확히 일치.
+   `run()`(86~92행)/`run_sliding_window()`의 `class_stats` 계산이 `_colorize_and_blend()` 호출과
+   무관하게 원본 `class_map` 변수를 그대로 참조함도 코드 흐름으로 확인(다운스케일된 값을 쓰는
+   경로 없음).
+3. **독립 재현 — 다른 해상도/클래스 수** (`verify_r5_independent.py`):
+   - **Case A** 6000×3000(2:1), 7클래스(구현자는 5472×3648, 3클래스) — `_colorize_and_blend()`
+     직접 호출 160.5ms vs 다운스케일 없는 legacy 재현 로직 813.4ms → **약 5.06배** 단축
+     (구현자 실측 ~5.1배와 방향·크기 모두 일치). 반환 `overlay_pixmap` 2048×1024,
+     `max(w,h) <= 2048` 충족, 종횡비 orig=2.0000 vs new=2.0000(오차 없음).
+   - `class_map` 무결성: 호출 전 스냅샷과 `np.array_equal` True, `id()` 동일(원본 객체 자체를
+     재할당하지 않음), dtype/shape 불변 — 원본 오염 없음 확인.
+   - **Case B** 1920×1080(16:9), 5클래스, 2048 이하 — 반환 크기 1920×1080 그대로(분기 미발동),
+     `class_map` 무결성 유지 — 기존 동작과 동일.
+   - **Case C** 2049×100(극단적 종횡비, 가로만 threshold 살짝 초과) — 반환 2048×100, 비율
+     orig=20.4900 vs new=20.4800(반올림 오차만) — 왜곡 없음.
+   - **Case D** 정확히 2048×2048(경계값) — 반환 2048×2048 그대로, `>` 조건이라 경계값에서
+     다운스케일 미발동함을 확인(off-by-one 없음).
+4. **앱 기동 확인** (`verify_boot_r5_independent.py`) — PyQt6를 `app.core.project`보다 먼저
+   import(R4 검증 로그의 DLL 함정 회피 패턴 준수) → `QApplication` → `projects/nok` 오픈
+   (`open_existing`+`set_current`) → `MainWindow()` → `show()` → `inference_engine._MAX_OVERLAY_DIM`
+   임포트까지 예외 없이 전부 성공(결과 파일에 `BOOT_OK MAX_OVERLAY_DIM=2048` 기록됨). 프로세스
+   종료 코드 127은 R1~R4 검증 때와 동일한 비대화형 offscreen 환경 특성(이벤트 루프 없는 조기
+   종료)으로, 회귀 아님.
+5. **실제 체크포인트 재확인** — `find projects/nok/checkpoints -type f` 결과 파일 없음(디렉토리만
+   존재) — 구현자 주장대로 이 환경에 실제 체크포인트 없음을 재확인. 따라서 `run()`을 실제
+   체크포인트로 end-to-end 실행하는 검증은 이번에도 불가능했고, 구현자와 동일하게
+   `_colorize_and_blend()` 직접 호출 + 코드 흐름 확인으로 대체함 — **한계로 명시**.
+
+### 판정
+- 구현자 주장과 결과 전부 일치 — 구현자와 다른 해상도(6000×3000 등)·클래스 수(7클래스)·경계값
+  케이스(정확히 2048)로도 다운스케일 발동/미발동, 속도 개선(~5배), 종횡비 유지, `class_map` 원본
+  무결성, `class_stats` 원본 기준 계산 모두 재현 성공. 새로운 버그 없음. **R5 검증 통과.**
+- 리더에게: **R5 검증 통과, R6 착수 가능.** `perf-improvement-plan-2026-08-19.md` 기준 R5는
+  스펙상 마지막에서 두 번째 라운드 — 통과했으므로 남은 건 R6뿐.
+- **한계**: 이 환경(`projects/nok/checkpoints`)에 실제 체크포인트가 없어 실제 모델 forward →
+  `run()`/`run_sliding_window()` → 추론 탭 UI 렌더링까지 이어지는 end-to-end 검증은 R5 구현·검증
+  양쪽 모두 못 함. `_colorize_and_blend()` 단위 호출 + `run()`의 `class_stats` 계산 코드 흐름
+  검토로 대체했음을 명시. 실제 체크포인트가 생기면 추론 탭에서 대형 이미지 오버레이가 축소되어
+  표시되는지 육안 확인을 별도로 권장.
+- 코드는 건드리지 않음 — `git status --short` 확인 결과 세션 시작 시점부터 있던
+  `docs/agents/leader-log.md` 변경 외 추가 diff 없음(`projects/nok`, `app/core/inference_engine.py`
+  포함 무변경). QA.md 신규 등록 없음(버그 미발견).
+
+### 비고
+- 검증 스크립트 2개(`verify_r5_independent.py`, `verify_boot_r5_independent.py`)는 스크래치
+  디렉토리에만 작성, 프로젝트에 커밋하지 않음.
+
+---
+
+## 2026-08-20 — R6: image_browser 검색 디바운스+상태 캐시(#6) + auto_labeler 중복 read 제거(#8) 독립 검증 (커밋 `e7066b0`) — R1~R6 전체 완료
+
+기획 산출물: `docs/specs/perf-improvement-plan-2026-08-19.md` #6/#8, **R1~R6 중 마지막 라운드**.
+구현 로그(`implementation-log.md` "R6" 항목)의 주장을 그대로 신뢰하지 않고, 구현자와 다른
+규모(2000장, 다른 상태 분포)로 별도 스크래치 스크립트(`.../scratchpad/r6_verify/gen_project.py`,
+`test_r6.py` — 구현자 스크립트 재사용 안 함, 프로젝트에 추가 안 함)로 독립 재현.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위 확인** — `git show --stat e7066b0`: `app/core/auto_labeler.py`(+5/-6),
+   `app/widgets/image_browser.py`(+19/-6) 2개 파일만 변경(구현 로그의 `implementation-log.md`
+   자체 추가는 별도 커밋 확인 대상 아님, 로그 텍스트상 이 항목이 포함됐는지는 무관 — 실제
+   diff는 코드 2개 파일 범위와 정확히 일치). 의도치 않은 다른 파일 변경 없음.
+2. **코드 판단** — `image_browser.py`의 `_SEARCH_DEBOUNCE_MS=200` 타이머(singleShot,
+   `_on_search_changed`→`start()`만), `_status_cache` 전체 재구축(`reload()`), 단건 갱신
+   (`refresh_item()`), `_make_tree_item()`/`status_done`/`status_todo` 정렬 키의 캐시 조회
+   전환을 직접 읽고 로그 설명과 일치함을 확인. `auto_labeler.collect_unlabeled()`의
+   `get_ok()+load()` → `get_label_status()` 통합도 코드와 일치.
+3. **동치성 정밀 분석(annotation_store.py `load()`/`get_ok()`/`get_label_status()` 직접
+   대조)** — 정상 사용(앱이 `save()`/`set_ok()`로 직접 쓴 JSON) 범위에서는 완전히 동치임을
+   코드로 확인(둘 다 `ok` 우선, 그 다음 `annotations` 존재 여부, 예외 시 양쪽 다 미라벨
+   취급). **단, 손상/외부편집 JSON에 대해서는 2건의 실제 divergence를 코드 리딩만이 아니라
+   직접 실행으로 재현**:
+   - `annotations` 배열에 앱이 절대 쓰지 않는 미인식 `type`(예: `"rect"`) 값만 있는 경우 —
+     구버전(`load()`가 인식 못하는 타입을 조용히 skip)은 결과 리스트가 비어 "unlabeled"로
+     처리(자동 라벨링 대상 포함), 신버전(`get_label_status()`는 `annotations` 배열 자체의
+     truthy 여부만 봄)은 "labeled"로 처리(대상 제외) — **실제 재현됨(MATCH=False)**.
+   - JSON 최상위가 dict가 아닌 경우(예: `[]`) — 구버전 `load()`는 `data.get("annotations",
+     [])`가 `try/except` 밖에 있어 `AttributeError`로 **크래시**(collect_unlabeled 전체가
+     죽음), 신버전은 `get_label_status()`의 try가 `.get()` 호출까지 포괄해 크래시 없이
+     "unlabeled" 반환 — **실제 재현됨**, 다만 이 방향은 신버전이 더 견고함(회귀 아님).
+   - 이 두 케이스 모두 `save()`/`set_ok()`가 절대 만들지 않는 스키마이므로 정상 사용 흐름
+     에서는 도달 불가 — **`QA.md` `BUG-004`(P3, Open)로 등록**, 재작업 요구 아님.
+   - 그 외 엣지케이스(annotations 명시적 빈 배열, annotations 키 없음, malformed JSON 문법
+     오류, ok=true+annotations 동시 존재, brush_mask rle="" 잔존 데이터) 5종은 신/구버전
+     완전 일치(MATCH=True) 확인.
+4. **대규모 독립 재현 프로젝트** (`gen_project.py`, `.../scratchpad/r6_verify/big_project2`,
+   구현자와 다른 규모·분포) — 이미지 2000장, 분포 60%/25%/15%(unlabeled/labeled/ok, 구현자는
+   1000장 약 1:1:1) + 위 7개 엣지케이스 파일 별도 생성:
+   - `_status_cache` 2000장 전부 `get_label_status()` 직접 호출 결과와 **완전 일치**(mismatch 0).
+   - 4개 정렬 모드(`name_asc`/`name_desc`/`status_done`/`status_todo`) 전부 캐시 기반 결과가
+     기대 정렬과 **정확히 일치**.
+   - `refresh_item()` 실제 시나리오 재현 — `store.save()`로 실제 어노테이션 1개를 저장한 뒤
+     `refresh_item(path)` 호출 시 캐시가 `unlabeled → labeled`로 정확히 갱신되고, 트리 아이템
+     텍스트/아이콘도 갱신됨을 확인(콘솔 출력 시 유니코드 기호가 깨져 보이는 것은 로컬 콘솔
+     코드페이지 문제일 뿐, 위젯 내부 상태 자체는 정상 갱신 확인).
+   - 디바운스 — 200ms 간격보다 짧은(30ms) 연속 입력 5회 후 `_apply_display` 실제 실행 횟수
+     = **1회**(타이머 `timeout`에 별도 카운터 연결해 직접 계측) — 구현자 결과와 일치. 별도로
+     선택적 문자열("img_00042")로 필터를 걸어 실제 매칭 개수가 1건으로 정확히 줄어드는 것도
+     확인(디바운스 후 필터 로직 자체의 정확성도 함께 확인).
+   - `collect_unlabeled()` — 신버전 **120.92ms**, 구버전(동등 로직 재구현) **224.67ms** —
+     **약 46% 단축**, 결과 집합(1200개, `unlabeled` 비율과 정확히 일치) 완전 일치. 구현자
+     수치(127.92→88.98ms, ~30%)와 절대치는 다르지만(환경·데이터 분포·N 차이) 방향·유의미한
+     감소폭은 동일하게 재현됨.
+   - `reload()`가 추가/삭제 후 캐시를 실제로 재구축하는지 직접 검증 — 새 이미지 파일 생성 후
+     `reload()` → 캐시에 반영됨, 파일 삭제 후 `reload()` → 캐시에서 제거됨 확인(`_on_add`/
+     `_on_add_folder`/`_on_delete`가 전부 `reload()`로 끝난다는 구현 로그 주장과 일치하는
+     동작 확인).
+5. **캐시 무효화 사각지대 — 전체 호출부 추적** — `refresh_item`/`annotation_saved`/`toggle_ok`/
+   `annotation_store.save`/`set_ok` 전수 grep: 실제 UI 저장 경로는 `annotation_canvas.py`의
+   `_do_save()`(디바운스 자동 저장) → `annotation_saved.emit()` → `labeling_tab.py:
+   _on_annotation_saved()` → `image_browser.refresh_item(path)` 1곳뿐이고, `toggle_ok()`도
+   동일 시그널을 타 같은 경로로 캐시가 갱신됨을 확인. **참고(회귀 아님, 사전 존재 이슈)**:
+   `_do_save()`는 `threading.Thread`로 `store.save()`를 비동기 실행하면서 스레드 시작
+   직후(파일 쓰기 완료 전) `annotation_saved.emit()`를 호출한다(`git log -S` 확인 결과 이
+   비동기 저장 자체가 커밋 `43fad19`부터 있던 기존 구조, R6가 만든 게 아님) — 이론상
+   `refresh_item()`이 디스크 쓰기 완료 전에 `get_label_status()`를 읽어 stale 값을 캐싱할
+   race window가 존재하나, 이는 R6 이전부터(구버전 `get_label_status()` 직접 호출 방식에서도)
+   동일하게 존재하던 레이스이므로 R6가 새로 만든 문제는 아님 — QA.md에 별도 신규 등록하지
+   않음(범위 밖, 필요시 향후 별도 검토 대상으로만 기록). 그 외 `saige_converter.py`의
+   `set_ok()` 호출은 `app/` 어디에서도 import되지 않는 미사용/독립 도구 코드로 확인 — 현재
+   image_browser 워크플로우와 무관.
+6. **`python main.py` 방식 앱 기동 확인** — PyQt6를 `app.core.project`보다 먼저 import(R4
+   검증 로그의 DLL 함정 회피 패턴 준수) → `QApplication` → `projects/nok` 오픈(`open_existing`+
+   `set_current`) → `app.main_window` import → `MainWindow()` → `show()`까지 STEP0~8 전부
+   예외 없이 통과(stdout 파일 리다이렉트로 전 단계 로그 확인). 최초 시도에서 `> file 2>&1`
+   redirection이 이유 불명으로 빈 파일을 만든 해프닝이 있었으나 `print(..., flush=True)`로
+   단계별 재확인해 실제로는 전 단계 정상 통과함을 재확인 — 앱 코드 자체의 문제 아님(자동화
+   셸의 출력 캡처 이슈로 판단).
+7. **기존 다른 기능 회귀 확인** — `_build_folder_tree`(폴더 그룹핑), 4개 정렬 모드, OK 상태
+   아이콘(`_STATUS_STYLE`) 로직 자체는 R6에서 변경되지 않고 `get_label_status()` 호출 지점만
+   캐시 조회로 치환됐음을 코드 리딩 + 위 4번 대규모 재현(정렬 4종 전부 일치)으로 확인 —
+   회귀 없음.
+
+### 판정
+- 구현자 주장과 실측 방향·핵심 결론 모두 일치 — 디바운스 1회 실행, 캐시 정확성(0 mismatch),
+  정렬 4종 무회귀, `refresh_item()` 실시간 갱신, `collect_unlabeled()` 유의미한 개선 모두
+  독립 재현 성공. 다만 정밀 동치성 검증에서 구현자가 "동치"라고 주장한 부분에 **손상/외부편집
+  JSON이라는 좁은 엣지케이스에 한해 실제 divergence 2건**을 직접 실행으로 발견함 — 정상 사용
+  경로에서는 도달 불가능하고 심각도가 낮아(자동 라벨링 대상 집합에 극히 드문 오차 가능성,
+  크래시 없음, 데이터 유실 없음) `QA.md` `BUG-004`(P3, Open)로 등록하고 **재작업 요구는
+  아님**으로 판단. **R6 검증 통과.**
+- **R1~R6 전체 완료.** `perf-improvement-plan-2026-08-19.md`의 6개 항목(#2, #3, #4, #6, #7,
+  #8) + BUG-002 수정까지 전 라운드가 독립 검증을 통과했다. 남은 Open 항목은 QA.md
+  `BUG-003`(R3, `_translate_selected` 좀비 마스크 UI 잔상)과 `BUG-004`(R6, 손상 JSON
+  엣지케이스) 2건 — 둘 다 P3, 정상 사용 흐름에서는 발현되지 않거나 순수 UI 잔상 수준으로
+  향후 별도 라운드 판단 대상.
+- 코드는 건드리지 않음 — `git status --short` 확인 결과 `docs/agents/leader-log.md`,
+  `docs/agents/verification-log.md`(이 항목), `QA.md`(BUG-004 등록) 외 추가 diff 없음.
+  `git status --porcelain -- projects/nok` 공백(무변경) 확인.
+
+### 비고
+- 검증 스크립트는 `.../scratchpad/r6_verify/gen_project.py`, `test_r6.py`(+보조 1회성 확인
+  커맨드 몇 개)로 스크래치 디렉토리에만 작성, 프로젝트에 커밋하지 않음.
