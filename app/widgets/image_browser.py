@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QLineEdit,
 )
 from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtCore import Qt, pyqtSignal, QThread
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from app.core.i18n import t
 
 from app.core.annotation_store import get_label_status
@@ -16,6 +16,8 @@ from app.core import project as _project
 
 SUPPORTED = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.tif")
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+
+_SEARCH_DEBOUNCE_MS = 200
 
 # sym, text color
 _STATUS_STYLE = {
@@ -111,9 +113,16 @@ class ImageBrowser(QWidget):
         self._paths: list[Path] = []          # 현재 표시 중인 이미지 (필터+정렬 후)
         # Path → QTreeWidgetItem (역방향 룩업용; QTreeWidgetItem→Path 는 UserRole 사용)
         self._path_to_item: dict[Path, QTreeWidgetItem] = {}
+        # Path → label status ("labeled"/"ok"/"unlabeled") — reload() 시 전체 재구축,
+        # refresh_item() 시 단건 갱신. get_label_status() 의 JSON 재파싱 비용을 줄이기 위한 캐시.
+        self._status_cache: dict[Path, str] = {}
         self._sort_mode: str = "name_asc"
         self._filter_text: str = ""
         self._import_worker: _FolderImportWorker | None = None
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(_SEARCH_DEBOUNCE_MS)
+        self._search_debounce.timeout.connect(self._apply_display)
         self._build_ui()
         self.reload()
 
@@ -213,14 +222,17 @@ class ImageBrowser(QWidget):
             p for pat in SUPPORTED
             for p in _project.images_dir().glob(pat)
         )
+        # 상태 캐시 전체 재구축 — 이미지당 get_label_status() 1회만 호출
+        self._status_cache = {p: get_label_status(p) for p in self._all_paths}
         self._apply_display()
 
     def refresh_item(self, path: Path) -> None:
         """어노테이션 저장 후 해당 항목의 상태 아이콘·색상만 갱신."""
+        status = get_label_status(path)
+        self._status_cache[path] = status
         item = self._path_to_item.get(path)
         if item is None:
             return
-        status = get_label_status(path)
         sym, color = _STATUS_STYLE[status]
         # 폴더 헤더 아래 자식이면 파일명만, 최상위면 상대경로
         display = path.name if item.parent() is not None else self._rel_name(path)
@@ -269,7 +281,8 @@ class ImageBrowser(QWidget):
 
     def _on_search_changed(self, text: str) -> None:
         self._filter_text = text.strip()
-        self._apply_display()
+        # 디바운스 — keystroke마다 즉시 재적용하지 않고, 입력이 멈춘 뒤에만 _apply_display() 실행
+        self._search_debounce.start()
 
     def _on_sort_changed(self, idx: int) -> None:
         self._sort_mode = _SORT_MODES[idx][0]
@@ -395,7 +408,7 @@ class ImageBrowser(QWidget):
         display_name: 표시할 이름. None이면 images_dir 기준 상대경로 사용.
         Path는 UserRole에 직접 저장 (dict 키로 사용하지 않음).
         """
-        status = get_label_status(path)
+        status = self._status_cache.get(path) or get_label_status(path)
         sym, color = _STATUS_STYLE[status]
         label = display_name if display_name is not None else self._rel_name(path)
         item = QTreeWidgetItem()
@@ -494,11 +507,11 @@ class ImageBrowser(QWidget):
             ))
         elif self._sort_mode == "status_done":
             filtered.sort(key=lambda p: (
-                -_STATUS_KEY.get(get_label_status(p), 0), p.name.lower()
+                -_STATUS_KEY.get(self._status_cache.get(p, "unlabeled"), 0), p.name.lower()
             ))
         elif self._sort_mode == "status_todo":
             filtered.sort(key=lambda p: (
-                _STATUS_KEY.get(get_label_status(p), 0), p.name.lower()
+                _STATUS_KEY.get(self._status_cache.get(p, "unlabeled"), 0), p.name.lower()
             ))
 
         self._paths = filtered

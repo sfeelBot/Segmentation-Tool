@@ -9,7 +9,7 @@ from PIL import Image
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from app.core.annotation_store import (
-    AnnotationItem, ClassDef, new_id, save, load, load_classes,
+    AnnotationItem, ClassDef, new_id, save, load_classes, get_label_status,
 )
 from app.core.dataset import IMAGENET_MEAN, IMAGENET_STD
 from app.core.inference_engine import _infer_size_from_ckpt
@@ -95,16 +95,15 @@ def collect_unlabeled(image_dir: Path | None = None) -> list[Path]:
     OK 이미지는 이미 검수 완료이므로 자동 라벨링 대상에서 제외."""
     if image_dir is None:
         image_dir = _project.images_dir()
-    from app.core.annotation_store import get_ok
     result = []
     for p in sorted(image_dir.iterdir()):
         if p.suffix.lower() not in SUPPORTED_EXTS:
             continue
-        if get_ok(p):          # OK 표시된 이미지는 건너뜀
+        # get_label_status() 1회 read로 OK/라벨 존재 여부를 함께 판별
+        # (기존: get_ok() + load() 2회 read와 동치 — "unlabeled"만 자동 라벨링 대상)
+        if get_label_status(p) != "unlabeled":
             continue
-        existing = load(p)
-        if not existing:
-            result.append(p)
+        result.append(p)
     return result
 
 
