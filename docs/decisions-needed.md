@@ -6,7 +6,9 @@
 
 ## 결정 대기
 
-*(현재 없음)*
+*(현재 없음 — 성능개선 R2/R4/R5 트레이드오프는 2026-08-19 사용자 확인 완료,
+[docs/specs/perf-improvement-plan-2026-08-19.md](specs/perf-improvement-plan-2026-08-19.md)
+"트레이드오프 결정" 절에 결과 기록됨)*
 
 ## 보류된 항목
 

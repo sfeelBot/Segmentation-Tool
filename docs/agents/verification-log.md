@@ -16,3 +16,304 @@
 
 ### 비고
 - `projects/nok/annotations/*.json`, `classes.json` 변경은 버그 아님 — 정상 라벨링 데이터 (기획 로그 참고).
+
+---
+
+## 2026-08-19 — 전체 병목(Perf) 검증 — projects/nok 실데이터 기반 실측 + 정적 분석
+
+### 배경 · 방법
+- 범위: "여러 항목에서 병목" 보고에 따라 특정 탭이 아닌 전체(앱 기동, 프로젝트/이미지 목록 포함).
+- GUI 자동클릭 불가 전제 → `app/core/` Qt 비의존 로직을 실제 `projects/nok/` 데이터(이미지 5장, 각 57.11MB BMP 5472×3648; 어노테이션 5개 중 4개가 polygon 포함, brush_mask 없음; 체크포인트 없음)로 직접 호출해 `time.perf_counter()` 로 단계별 실측.
+- 벤치마크 스크립트: `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\56a2e70d-4430-40c3-96ed-f10c2f90fcf9\scratchpad\bench_perf.py` (읽기 전용 — `projects/nok/` 무수정 확인, 실행 결과 원본은 같은 폴더 `bench_stdout.txt`/`bench_result.txt`).
+- 실행 환경: Windows 11, Anaconda Python 3.13.9 (`/c/Users/Feel/anaconda3/python.exe`, 프로젝트 `requirements.txt` 와 별개로 이 환경에 실제 설치된 인터프리터), PyTorch 2.11.0+cu128, CUDA 사용 가능(RTX 5060). `QT_QPA_PLATFORM=offscreen` 으로 QApplication 을 오프스크린 생성해 QPixmap 디코딩만 측정(실제 창 표시·클릭 없음).
+- `project.set_current()` 대신 `project._current` 를 직접 대입해 `data/settings.json`(recent_projects/last_project) 부작용을 피함 — nok 데이터 및 전역 설정 모두 실행 전후 무변경 확인(`git status` clean, 파일 mtime 불변).
+- 기존 `data/logs/perf.log`(실사용 중 캔버스 렌더링 프로파일, `app/core/perf_logger.py`)도 함께 검토해 브러시 도구 관련 실사용 스파이크를 교차 확인.
+
+### 병목 리스트 (심각도 순, P0~P3)
+
+| # | 심각도 | 위치 | 내용 | 근거 | 근본 원인 | 체감 영향 |
+|---|---|---|---|---|---|---|
+| 1 | P0(버그) | `app/core/annotation_store.py` `rle_encode()` | brush_mask 어노테이션이 저장 시 항상 빈 RLE(`""`)가 되어 전량 데이터 유실 | 실측 재현 (100px, 170만px 마스크 모두 재현) | `np.diff(flat_uint8,...)` 가 uint8 dtype 유지 → 1→0 하강엣지가 언더플로우로 255가 되어 `diff==-1` 매칭 실패 | 브러시 도구로 라벨링한 모든 마스크가 저장 후 사라짐. **QA.md BUG-002 로 별도 등록** (성능 항목 아님) |
+| 2 | P1 | `main.py` `_preload_libs()` | 앱 기동 시 QApplication 생성 전 콜드 임포트 비용 합계 ≈3.3초 (albumentations 1888ms, torchvision 833ms, PyQt6 110ms, numpy/cv2/PIL/matplotlib ~200ms, `app.*` 모듈 그래프 193ms) | 실측 | 무거운 라이브러리 동기 로드, 특히 albumentations·torchvision 이 압도적 | 앱을 켤 때마다 스플래시 없이 3초+ 정지 — "전체 공통 부분" 병목의 핵심 |
+| 3 | P1 | `app/core/dataset.py:59` `SegmentationDataset.__getitem__` + `app/widgets/config_form.py:101` `num_workers` 기본값 0 | 학습 시 patch 마다 원본 이미지를 캐시 없이 매번 재디코딩(57MB BMP), DataLoader 배치 1개(batch=4, num_workers=0) 505ms vs 동일 배치 GPU forward 60ms / 학습 스텝 165ms | 실측 (`__getitem__` 65~140ms/회, batch fetch 505ms, CUDA step 165ms) | 이미지 디코딩 캐시 부재 + `patches_per_image=50` 인 random_crop 모드에서 같은 이미지를 패치마다 처음부터 재decode + 기본 num_workers=0(UI 기본값)로 오버랩 로딩 없음 | GPU가 대부분 유휴 상태로 대기 — 학습 속도가 이론상 가능한 것보다 3~8배 느림. nok 같은 대형 원본 이미지 프로젝트에서 특히 심각 |
+| 4 | P2 | `app/widgets/annotation_canvas.py:245` `load_image()` | 이미지 전환마다 `QPixmap(str(path))` 재디코딩, LRU 캐시·프리페치 없음 | 실측 (1장 디코딩 70~95ms, warm 상태도 68~81ms — I/O 아닌 디코딩 자체 비용, 순수 `os.read()` warm 은 15ms에 불과; 5장 연속 전환 366ms) | 디코딩/스케일 결과를 전혀 캐시하지 않음, 인접 이미지 프리로드 로직 부재 | PageDown/X 로 이미지 넘길 때마다 70~90ms 프리즈. 코디네이터가 제기한 "50MB 이미지 I/O" 우려는 디스크 I/O 자체보다 **QPixmap 디코딩**이 주 원인으로 확인됨(I/O vs 디코딩 구분됨) |
+| 5 | P2 | `app/core/inference_engine.py:302` `_colorize_and_blend()` | 원본 해상도(5472×3648, nok 기준) 그대로 컬러화+블렌딩 | 실측 (합성 class_map 사용, 실제 체크포인트 없어 end-to-end는 아님) — 992ms/회, 클래스 수 비례 증가 | 다운스케일 없이 항상 원본 해상도로 처리 | "추론 실행" 클릭 후 결과 표시까지 체크포인트 로드+forward 와 별개로 ~1초 추가 지연 |
+| 6 | P2(정적) | `app/widgets/image_browser.py:270-272, 398, 497, 501` `_on_search_changed → _apply_display` | 검색창 keystroke 마다 전체 이미지에 대해 `get_label_status()`(JSON open+parse) 재실행 + QTreeWidget 전체 clear/rebuild | 정적 분석 + nok(5장) 소규모 실측 외삽(5장 10회 keystroke 시뮬레이션 5ms, 파일당 0.13ms — 이미지 수에 선형 비례) | 캐시/디바운스 없이 매 keystroke 마다 전체 스캔 | 5장에서는 무해하지만 수백~수천 장 프로젝트에서는 타이핑마다 메인 스레드 수백ms 블로킹 가능성 (미실측 — nok 데이터로는 재현 규모 안 됨) |
+| 7 | P3(실측 혼합) | `app/widgets/annotation_canvas.py:996-1002` `_resolve_overlap_and_merge._has_pixels` | bbox 안에 새 픽셀이 없는 예외 케이스에서 전체 해상도(20MP) `mask.any()` fallback | 과거 실사용 `data/logs/perf.log`(09:34 기록) 에서 `resolve_bbox_overlap avg=43.4ms max=43.4ms n=1` 스파이크 실측 확인 | bbox 최적화가 대부분 케이스는 커버하지만 fallback 경로는 여전히 전체 배열 스캔 | 브러시 스트로크 중 드물게 40ms대 프레임 드랍 — 이미 대부분 최적화되어 있어 영향 작음 |
+| 8 | P3(정적) | `app/core/auto_labeler.py:104-106` `collect_unlabeled()` | 이미지마다 `get_ok()` + `load()` 로 동일 JSON 을 2회 중복 read+parse | 정적 분석 | `get_label_status()` 로 통합하면 1회로 축소 가능 | 오토라벨 대상 수집 시 1회성 비용, 영향 미미 |
+
+### 실측 vs 정적 분석 구분
+- **실측**: #1(버그), #2, #3, #4, #5, #7(과거 perf.log) — 모두 `bench_perf.py` 로 nok 실데이터 직접 호출 또는 기존 perf.log 기록 기반.
+- **정적 분석(코드 리뷰만, 미실측)**: #6, #8 — nok 프로젝트 규모(5장)로는 스케일 문제가 드러나지 않아 코드 흐름과 API 시맨틱스 근거로 추정.
+- 추가 참고(버그 아님, 성능 아님): `image_browser.reload()` 는 `images_dir().glob(pat)` 비재귀 스캔이라 하위폴더 이미지를 찾지 못하는데 `_build_folder_tree()` 는 하위폴더 그룹핑을 전제로 함 — 코드 주석상 "flat 스캔 의도적" 이라 되어 있어 버그로 단정하지 않고 참고만 기재.
+
+### 메모리
+- nok 이미지 5장(QPixmap+PIL RGB) 동시 보유 시뮬레이션: RSS 델타 +761.6MB (장당 ~152MB, 5472×3648 RGB 이론값 57.1MB 대비 약 2.7배 — QPixmap 내부 포맷 변환·Qt 네이티브 버퍼·중복 보유 등 누적 추정). tracemalloc 은 Python 힙만 추적해 대부분 안 잡힘(peak 0.2MB) — Qt 네이티브 메모리는 RSS로만 확인 가능. `psutil` 은 이미 설치돼 있어 추가 설치 없이 사용.
+- 실제 라벨링 탭은 평소 이미지 1장만 보유하므로 이 시나리오 자체가 즉시 발생하진 않으나, 오토라벨 미리보기 등 여러 이미지를 동시에 들고 있을 수 있는 기능에서 메모리 압박 가능성 있음 (정적 우려, 미실측).
+
+### 결론 / 다음 단계 참고
+- BUG-002(P0)는 즉시 수정이 필요한 데이터 유실 버그 — 성능 튜닝과 별개로 최우선 처리 권장.
+- 성능 개선 우선순위는 #2(기동 임포트) → #3(학습 데이터로더) → #4(이미지 전환 캐시) 순으로 사용자 체감/개발 난이도 대비 효과가 클 것으로 판단되나, 실제 개선 계획 수립은 이번 임무 범위 밖(기획 단계에서 결정).
+- `projects/nok/`, `data/settings.json` 모두 실행 전후 무변경 확인 (`git status` clean, 파일 mtime 불변). 코드 수정 없음.
+
+---
+
+## 2026-08-19 — R1: BUG-002 수정 독립 재검증 (커밋 `3ce4dc9`, `304c7b6`)
+
+구현 로그([implementation-log.md](implementation-log.md) "R1: BUG-002 brush_mask RLE 인코딩
+언더플로우 수정")의 자체 회귀 확인을 구현자 주장 그대로 신뢰하지 않고 독립적으로 재실행.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위 확인** — `git show --stat 3ce4dc9`: `QA.md`, `app/core/annotation_store.py` 2개
+   파일만 변경(+4/-2 in annotation_store.py). `git show --stat 304c7b6`: `docs/agents/
+   implementation-log.md`만 변경. 구현 로그의 "annotation_store.py만(그리고 관련 문서)" 주장과
+   일치. 의도치 않은 다른 파일 변경 없음.
+2. **코드 판단** — `app/core/annotation_store.py:206-226` `rle_encode()` 직접 읽음. 수정 전
+   `np.diff(flat_uint8, prepend=0, append=0)`는 dtype이 uint8로 유지되어 1→0 하강엣지가
+   `-1` → `255`로 언더플로우되는 것이 맞고, 수정 후 `flat.astype(np.int8)`(prepend/append도
+   `np.int8(0)`)로 캐스팅하면 `-1`이 부호 있는 정수로 정상 표현되어 `np.where(diff == -1)`이
+   정상 동작함을 코드 레벨에서 확인. 기존 `n = min(len(starts), len(ends))` 경쟁조건 방어
+   코드는 그대로 유지되어 있고 이번 수정과 독립적인 안전장치임도 확인.
+3. **독립 재현 스크립트** — 구현자 스크립트를 재사용하지 않고 별도 작성
+   (`.../scratchpad/verify_r1.py`, 프로젝트에는 추가 안 함). `d:\segmentation model`을
+   `sys.path`에 넣고 `app.core.annotation_store`의 `rle_encode`/`rle_decode`를 직접 import해
+   9개 케이스 라운드트립 검증:
+   - 100px 블록(100×100) — PASS
+   - ~1.8Mpx 마스크(1000×1800, 두 블록 + 5만px 랜덤 토글 스캐터, 최종 nonzero 495,840px,
+     구현자와 다른 크기·시드·패턴으로 독립 구성) — PASS, encode+decode 37.7ms
+   - 빈 마스크 → `""` 반환 정상 — PASS
+   - 전체 1인 마스크(30×30) — PASS
+   - 배열 끝까지 이어지는 run(마지막 15픽셀) — PASS
+   - 단일 픽셀 마스크 — PASS
+   - 체스판 패턴(다수의 매우 짧은 run, diff 부호 스트레스 테스트) — PASS **(구현자 케이스에
+     없던 추가 엣지케이스)**
+   - 배열 첫 픽셀부터 시작하는 run(prepend 경계) — PASS **(추가 엣지케이스)**
+   - bool dtype 입력 마스크 — PASS **(추가 엣지케이스, mask가 bool로 들어올 가능성 대비)**
+   → 9/9 전부 원본과 100% 일치. 언더플로우 재발 없음.
+4. **앱 기동 확인** — `.../scratchpad/verify_app_boot.py` 작성해 `main.py`와 동일한 순서
+   (QApplication 생성 → `projects/nok` 오픈 → `MainWindow()` 생성 → `show()`)로 실행.
+   `numpy/cv2/PIL/albumentations/torch/torchvision` 프리로드부터 `MainWindow` 생성(라벨링
+   탭 포함 — annotation_store를 사용하는 경로)까지 예외 없이 "STEP3_OK" 도달 확인. 단,
+   `app.exec()` 이벤트 루프는 이 비대화형 자동화 셸(Windows Session 0류 격리로 추정,
+   대화형 데스크톱 세션 아님)에서 `QTimer.singleShot`으로 예약한 자동 종료가 트리거되지
+   않고 계속 대기 상태로 남아 타임아웃 처리(`TaskStop`)함. 이는 GUI 자동화가 불가능한 이
+   환경 자체의 제약으로 판단되며 — 윈도우 생성 자체(`show()`)는 예외 없이 성공했고, R1
+   변경분은 `annotation_store.py`의 순수 함수 2개뿐으로 이벤트 루프/메시지 펌프 동작과
+   무관함 — R1 코드 변경으로 인한 회귀로 보지 않음. `python main.py` 자체를 대화형 세션에서
+   최종 눈으로 띄워보는 것은 리더/사용자 환경에서 재확인 권장.
+5. **polygon 미영향 확인** — `load()`/`save()`의 `a.type == "polygon"` 분기가 `rle_encode`/
+   `rle_decode`를 전혀 호출하지 않음을 코드로 확인. `projects/nok/annotations/*.json` 5개
+   파일 전부 `grep '"type":'` 결과 `"polygon"`만 존재(brush_mask 없음) — 실피해 없음 재확인.
+   추가로 `.../scratchpad/verify_nok_load.py`(읽기 전용)로 `annotation_store.load()`를
+   nok 프로젝트에 실제로 열어 5개 파일 모두 로드: `10번.json`(0건, 원본이 빈 배열이라 정상),
+   `11번/8번/9번.json`(각 1건 polygon), `7번.json`(2건 polygon) — 전부 예외 없이 로드되고
+   전량 `type='polygon'`으로 확인. `projects/nok/` 원본 파일은 읽기만 하고 수정하지 않음.
+
+### 판정
+- 구현자 주장과 결과 일치 — 재현 실패나 회귀 없음. R1(BUG-002) 검증 **통과**.
+- QA.md의 BUG-002 Closed 처리, R1 표기 그대로 유효.
+- 이 검증 세션에서 프로젝트 코드는 전혀 수정하지 않음(`git status` 로 annotation_store.py
+  등 코드 파일 변경 없음 확인, 검증 로그 파일 자체의 append만 예외).
+
+### 비고
+- `git status` 상 `docs/agents/leader-log.md`, `planning-log.md`, `decisions-needed.md`,
+  `roadmap.md`, `docs/specs/` 미추적 변경이 함께 보이나 이번 검증 세션에서 발생시킨 변경이
+  아님(다른 에이전트의 동시 작업 산출물로 추정) — 참고로만 기재.
+
+---
+
+## 2026-08-19 — R2: 콜드 임포트 지연로딩 독립 재검증 (커밋 `eee9b9c`)
+
+구현 로그(`implementation-log.md` "R2" 항목)의 주장을 그대로 신뢰하지 않고, 별도 스크래치
+스크립트(`.../scratchpad/verify_r2_cold_import.py`, `verify_r2_functional.py`,
+`verify_r2_boot.py` — 구현자 스크립트 재사용 안 함, 프로젝트에 추가 안 함)로 독립 재현.
+리스크 등급은 "중~상"(BUG-001 계열 DLL 순서 재발 우려)으로 사전 평가되어 있었음.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위 확인** — `git show --stat eee9b9c`: `app/core/augmentations.py`,
+   `app/core/auto_labeler.py`, `app/core/dataset.py`, `app/core/inference_engine.py`,
+   `app/model_presets/{deeplab_mobilenet,deeplab_resnet,lraspp_mobilenet}.py`, `main.py`,
+   `docs/agents/implementation-log.md` 총 9개 파일 — 구현자 주장(9개 파일, 이 중 8개가
+   코드)과 일치. 의도치 않은 다른 파일 변경 없음. 각 파일 diff를 `git show`로 직접 읽어
+   지역 import 삽입 위치가 실제 사용 지점(함수/메서드 본문, 사용 직전)과 일치함을 확인 —
+   `main.py`는 `_preload_libs()`에서 `torchvision`/`torchvision.transforms.functional`
+   두 줄만 제거, `torch`는 그대로 유지됨을 확인.
+2. **핵심 재현(콜드 임포트)** — `verify_r2_cold_import.py`: `sys.path`에 프로젝트 루트만
+   추가한 새 프로세스에서 `import app.main_window` 직후 `sys.modules` 검사.
+   결과: `torch_in_sys_modules=True`, `torchvision_in_sys_modules=False`,
+   `albumentations_in_sys_modules=False` — 구현자 주장과 일치. import 시간 `1.736s`
+   (구현자 주장 1.852s와 대략 일치, 대화형 세션마다 수백ms 편차는 정상 범위).
+3. **9개 파일 직접 열람 + 전수 grep** — `grep -rn "torchvision|albumentations" app/ main.py`
+   결과, 남은 매치는 전부 (a) 함수/메서드 본문 내부 지역 import, (b) 문자열(에러 메시지·
+   docstring·`pip install` 안내문), (c) `model_validator.py`의 `ALLOWED_MODULES` 문자열
+   집합(실제 import 아님) 뿐. 타입 힌트·모듈 상수·클래스 속성 기본값 등에 남은 top-level
+   참조 없음. `augmentations.py`는 `from __future__ import annotations` +
+   `TYPE_CHECKING` 블록으로 반환 타입힌트(`A.Compose`)를 처리해 런타임 import 불필요 —
+   정상 패턴.
+4. **기능 회귀 확인(구현자와 다른 입력값 사용)**:
+   - `SegmentationDataset(image_size=(128,128), mode="center_crop")` (구현자는
+     `mode="resize"`, index 0 사용) — nok 5쌍 확인 후 **마지막 인덱스**로 `ds[len(ds)-1]`
+     호출 → `torch.Size([3,128,128])` / `torch.Size([128,128])` 정상 반환, 호출 후
+     `torchvision`이 그제서야 `sys.modules`에 로드됨을 확인.
+   - `augmentations.build_pipeline()` — 구현자와 다른 조합(`VerticalFlip`,
+     `RandomRotate90`, `RandomBrightnessContrast`) + 96×96 더미 이미지/마스크 → 정상 적용,
+     `albumentations` 지연 로드 확인.
+   - `inference_engine._preprocess_patch()` — 64×64 더미 패치(구현자는 32×32) →
+     `(1,3,64,64)` 정상 텐서 반환.
+   - `model_loader.load_from_code()` + `load_preset_code("lraspp_mobilenet")` —
+     소스 텍스트의 `num_classes` 기본값을 5로 치환해(구현자는 기본값 2 그대로 사용)
+     exec 후 인스턴스화 성공 확인(`num_params=3,218,818`).
+   → 4개 지점 모두 다른 입력값으로 독립 재현 성공, 회귀 없음.
+5. **기동 시간 재측정** — 위 2번 스크립트에서 재측정한 `1.736s`가 별도 스크립트
+   (`verify_r2_boot.py`)에서도 `1.740s`로 일관되게 재현됨. 구현자 주장(1.852s)과 큰 차이
+   없음(환경 변동 범위 내).
+6. **앱 기동 확인** — `verify_r2_boot.py`로 `QApplication` 생성 → `app.main_window` import
+   → `projects/nok` 오픈(`project.set_current()`) → `MainWindow()` 생성 → `window.show()`
+   까지 예외 없이 전부 성공(STEP1~STEP6 전부 OK). **R1 검증 때보다 한 단계 더 나아가
+   `MainWindow()` 생성과 `show()`까지 도달**했고, 그 시점까지도 `torchvision`/
+   `albumentations`는 여전히 `sys.modules`에 없음을 재확인(지연 로드가 라벨링 탭 등 UI
+   구성 단계에서 불필요하게 트리거되지 않음을 의미). `app.exec()` 이벤트 루프는 R1 검증과
+   동일한 비대화형 자동화 셸 제약으로 미실행(GUI 자동화 불가 환경) — 최종 대화형 눈확인은
+   사용자 환경에서 권장.
+7. **DLL 순서 리스크 — 구조적 검증**: `torch`가 `torchvision`보다 먼저 로드됨이 우연이
+   아니라 구조적으로 보장되는지 확인. `main.py`의 `_preload_libs()`가 `app.main_window`
+   import(66행) 전(62행)에 `torch`를 먼저 로드하는 것과는 별개로, 지연 import가 들어간
+   4개 실질 파일(`dataset.py`, `auto_labeler.py`, `inference_engine.py`,
+   `model_presets/*.py`) **전부가 자기 자신의 모듈 top-level에 `import torch`(and/or
+   `import torch.nn as nn`)를 여전히 갖고 있음**을 확인 — 즉 `main.py`를 거치지 않고 이
+   모듈들을 단독으로 import하더라도(예: 테스트 스크립트, 다른 진입점) Python의 모듈 로드
+   순서상 해당 파일의 top-level `import torch`가 함수 본문의 지역 `import torchvision...`
+   보다 항상 먼저 실행된다 — 이중으로 안전. `torch`를 거치지 않고 바로 `torchvision`만
+   import하는 코드 경로는 grep 전수 검사 결과 없음. `augmentations.py`(albumentations)는
+   torch 확장이 아니므로 이 순서 제약 대상이 아님 — 별도 문제 없음.
+8. **model_presets exec() 구조 주장 검증** — `app/model_presets/__init__.py:91-93`
+   `load_preset_code()`가 `path.read_text()`로 프리셋 파일을 **원시 텍스트로만** 읽고,
+   `app/core/model_loader.py:77` `load_from_code()`가 그 텍스트를 `exec(code,
+   safe_globals)`로 실행함을 확인 — Python의 일반 `import` 메커니즘을 전혀 거치지 않는다.
+   `grep -rn "from app.model_presets\.|import app.model_presets\."` 전수 검사 결과
+   프로젝트 어디에서도 `deeplab_resnet.py` 등 프리셋 서브모듈을 직접 `import`하는 코드가
+   없음을 확인 — 즉 프리셋 파일의 top-level import는 애초에 `app.main_window` import
+   체인에서 실행된 적이 없었고(exec 시점에만 실행), 이번 라운드의 프리셋 3개 수정은
+   R2의 "콜드 임포트 단축" 목표에는 불필요했지만(원래도 영향 없었음) 방어적 일관성
+   차원에서는 무해함 — 구현자 주장("exec 구조라 영향 없다")은 정확함. 추가로
+   `model_validator.py`의 `_check_imports()`가 `ast.walk(tree)`로 전체 트리를 순회함을
+   확인해, 함수 본문 내부로 옮긴 지역 import도 top-level import와 동일하게 검증되어
+   `ALLOWED_MODULES`(`torchvision`, `torchvision.models` 포함) 화이트리스트 통과에
+   지장 없음을 확인.
+
+### 판정
+- 구현자 주장과 결과 전부 일치 — 재현 실패, 빠뜨린 top-level import, DLL 순서 리스크,
+  앱 기동 실패 어느 것도 발견되지 않음. **R2 검증 통과**.
+- 리더에게: **R2 검증 통과, R3 착수 가능.**
+- 이 검증 세션에서 프로젝트 코드는 수정하지 않음(`git status` 로 확인 — 아래 비고 참고).
+
+### 비고
+- 검증 시작 시점에 이미 `docs/agents/leader-log.md`, `planning-log.md`,
+  `decisions-needed.md`, `roadmap.md`, `docs/agents/verification-log.md`(R1 항목),
+  `docs/specs/` 등이 미커밋 상태로 존재(다른 에이전트의 동시 작업 산출물) — 이번 R2
+  검증 세션에서 발생시킨 변경이 아니며 그대로 유지함. 이번 세션이 만든 변경은 이 파일에
+  R2 항목을 append한 것 하나뿐.
+
+---
+
+## 2026-08-19 — R3: annotation_canvas 이미지 LRU 캐시(#4) + bbox fallback 스캔 범위
+축소(#7) 독립 재검증 (커밋 `194430b`)
+
+구현 로그(`implementation-log.md` "R3" 항목)의 주장을 그대로 신뢰하지 않고, 별도 스크래치
+스크립트(`.../scratchpad/verify_cache_lru.py`, `verify_mtime_invalidation.py`,
+`verify_bbox_fallback.py`, `verify_regression_save_load.py`, `verify_translate_zombie.py`,
+`verify_startup.py` — 구현자 스크립트 재사용 안 함, 프로젝트에 추가 안 함)로 독립 재현.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위 확인** — `git show --stat 194430b`: `app/widgets/annotation_canvas.py`
+   (+107/-15), `docs/agents/implementation-log.md`(+108) 2개 파일만 변경. 구현자 주장과
+   일치. 의도치 않은 다른 파일 변경 없음.
+2. **코드 판단** — `app/widgets/annotation_canvas.py`를 직접 읽고 `_ImageCacheEntry`(126-141행),
+   `_store_current_into_cache`/`load_image`(250-335행), `_resolve_overlap_and_merge`의
+   `had_bbox_pixels`/`_has_pixels`(1038-1082행)를 확인. 캐시 히트 조건(`cached.mtime == mtime`),
+   LRU 크기 제한(`_IMAGE_CACHE_SIZE=2`, `popitem(last=False)`), `stat()` 실패 시 캐시 미사용
+   폴백, bbox fallback의 "zero-out 이전 겹침 여부"에 따른 조건부 전체 스캔 로직 모두 구현
+   로그 설명과 코드가 정확히 일치함을 확인. `git show 194430b`의 diff에서 구버전 fallback이
+   `return bool(a.mask.any())`(무조건 전체 스캔)였음을 대조해 변경 전/후 의미 차이도 직접 확인.
+3. **이미지 캐시 재현** (`verify_cache_lru.py`, `projects/nok` 실제 이미지 5장, 읽기 전용) —
+   A→B→A(hit)→C→B(evict 후 재로드) 순서로 `AnnotationCanvas.load_image()` 직접 호출:
+   A cold 101.26ms → A hit 6.64ms(15.2배), C 로드 후 캐시 `{A, C}`만 유지(B evict, LRU 정상),
+   evict된 B 재방문 시 107.17ms로 다시 느려짐(재디코딩 확인, cold 시간과 유사). 구현자 실측치
+   (79.97ms/7.49ms, 10.7배)와 다른 이미지 순서·측정으로도 같은 방향(10배 이상 가속, LRU 정상
+   evict)의 결과 재현.
+4. **mtime 무효화 재현** (`verify_mtime_invalidation.py`, `projects/nok/images/9번.bmp`
+   대상) — (a) mtime 불변 시 재방문 → `canvas._pixmap is` 동일 객체(캐시 히트) 확인,
+   (b) `os.utime()`으로 mtime +120초 이동 → 재방문 시 `canvas._pixmap is not` (새 객체, 캐시
+   미스) 확인, (c) `finally` 블록에서 원래 `(atime, mtime)`으로 정확히 복구,
+   `abs(st.st_mtime - 원본) < 1e-6` assert 통과. `git status --porcelain -- projects/nok`
+   결과 공백(변경 없음) 재확인.
+5. **bbox fallback 결과 일치 + 성능** (`verify_bbox_fallback.py`, 2000×1500 합성 배열,
+   구현자와 다른 크기·좌표로 독립 구성) — 스크립트 안에 구버전 로직(무조건
+   `return bool(a.mask.any())`)을 별도로 재구현해 참조로 사용, 실제
+   `_resolve_overlap_and_merge()` 결과와 비교: far(안 겹침)/partial(bbox 안팎 걸침, 잔여
+   생존)/consumed(bbox 안에서 완전 소멸) 3케이스에서 `consumed` 생존 여부가 참조 구현과
+   완전 일치(둘 다 제거). 추가로 안 겹치는 어노테이션 20개 시나리오에서 참조 42.28ms vs
+   실제 0.16ms(263배, 구현자 수치 5.1배보다 훨씬 크게 나온 것은 합성 크기·개수 차이 때문 —
+   방향성은 동일하게 확인).
+6. **회귀 확인 — 브러시/폴리곤 저장·로드 왕복** (`verify_regression_save_load.py`) — 스크래치
+   임시 프로젝트(`project.set_current()`로 격리, nok과 무관)에서 실제
+   `AnnotationCanvas._paint_stroke`/`_finish_brush`/`_close_polygon`을 직접 호출해 브러시 2개
+   (다른 클래스·비중첩, 899px/705px) + 폴리곤 1개 생성 → `store.save()`/`store.load()`
+   (R1이 고친 `rle_encode` 경유) 왕복 — 재로드 결과 `np.array_equal` 완전 일치, 폴리곤 4점
+   보존. R1/R3 상호작용 문제 없음.
+7. **`_translate_selected()` 잔여 우려 — 직접 재현 및 심각도 판단** (`verify_translate_zombie.py`):
+   - **(a) 재현 가능 여부**: 재현됨. `_translate_selected(-500, -500)` 한 번 호출만으로
+     원래 non-empty였던 brush_mask가 `mask.any() == False`(전량 0)가 되고, 이후 정리 호출이
+     전혀 없어 `self._annotations`에 그대로 남음을 확인. `mousePressEvent`/`mouseMoveEvent`의
+     `_move_active` 분기(715-727행)에서 Select 도구로 어노테이션을 드래그할 때마다 호출되므로,
+     사용자가 화면을 확대해 캔버스 여백 밖까지 빠르게 드래그하면 실사용에서도 발생 가능한
+     경로임을 코드로 확인(클램핑 없음, `warpAffine`의 `borderValue=0`으로 이미지 밖으로 밀려난
+     픽셀은 그대로 소실).
+   - **(b) 실제 심각도**: `_resolve_overlap_and_merge`에 동일 시나리오(zombie + 안 겹치는
+     새 stroke)를 재현해 신버전은 zombie를 제거하지 못하고 남기는 반면, 스크립트 내
+     참조(구버전) 로직은 무조건 전체 스캔으로 우연히 제거함을 직접 비교로 확인 — 구현자
+     주장과 정확히 일치. 다만 `app/core/annotation_store.py:123`
+     `save()`가 `a.type == "brush_mask" and a.mask is not None and a.mask.any()`로 브러시
+     저장 전 non-empty 여부를 다시 필터링하는 것을 코드로 확인했고, 이는 R1이 만지지 않은
+     기존 방어 코드다 — 즉 zombie가 실제로 디스크에 저장되는 일은 없다(데이터 유실/오염
+     없음). `labeling_tab.py:427 _refresh_ann_list()`가 `canvas._annotations`를 그대로
+     순회해 목록 패널에 항목을 그리므로, zombie는 캔버스에는 아무것도 그려지지 않지만
+     (mask 전량 0) 어노테이션 목록 패널에는 빈 "[Mask]" 항목으로 보일 수 있음 — 순수 UI
+     잔상이며, 다음 `load_image()`가 `self._annotations = store.load(path)`로 통째로
+     교체하므로 이미지 전환 즉시 사라진다. `_consolidate_class_region`의 OR 병합에도 전량
+     0인 마스크는 부작용이 없음(no-op).
+   - **(c) 판정**: **R3가 새로 만든 버그가 아니라, 기존부터 있던 `_translate_selected()`의
+     cleanup 누락 갭을 R3가 "우연히 가려주던" 구버전의 전체 스캔 부작용이 사라지면서 드러낸
+     것**이다(구현자 자체 평가와 동일 결론). 영향 범위가 (i) 디스크에 저장되지 않고(save()의
+     기존 필터), (ii) 렌더링에 영향 없고(빈 마스크는 그릴 게 없음), (iii) 세션 내 이미지
+     전환 시 자동 소멸하는 순수 일시적 UI 잔상(목록 패널의 유령 항목)으로 한정됨을 코드와
+     재현으로 확인 — **P0/P1 수준 아님**. **P3로 QA.md `BUG-003`에 등록**(Open, 근본 원인은
+     `_translate_selected()`, 이번 R3 라운드 범위 밖이라 별도 수정 없이 이슈만 등록).
+8. **앱 기동 확인** (`verify_startup.py`) — `QApplication` → `project.open_existing`/
+   `set_current(nok)` → `MainWindow()` → `show()` → 라벨링 탭 존재 확인까지 STEP1~4 전부 예외
+   없이 통과("ALL_OK" 출력). 비대화형 자동화 셸의 프로세스 종료 코드 이상(127)은 R1/R2 검증
+   때와 동일한 환경 제약(이벤트 루프 없는 offscreen 조기 종료)으로 판단, 코드 상 STEP4까지
+   전부 성공한 이후 발생해 R3 변경으로 인한 회귀로 보지 않음.
+
+### 부수 정리
+- 검증 스크립트 실행 중 `AnnotationCanvas.load_image()`가 프로젝트 미설정 상태에서 fallback
+  경로(`data/annotations/`)로 5개 빈 JSON을 생성한 것을 발견 — 검증 스크립트 자체가 만든
+  부산물(코드 결함 아님)이라 검증 종료 후 즉시 삭제해 원상 복구함(`git status` 클린 재확인).
+  `projects/nok/`은 이번 세션 내내 무수정.
+
+### 판정
+- 구현자 주장과 결과 전부 일치 — 캐시/무효화/bbox fallback/저장-로드 회귀 모두 재현 성공,
+  새로운 회귀 없음. `_translate_selected()` 우려는 재현되지만 P3 수준으로 판단해 QA.md
+  `BUG-003`으로 등록 완료. **R3 검증 통과**.
+- 리더에게: **R3 검증 통과, R4 착수 가능.** `_translate_selected()` 건은 QA.md `BUG-003`
+  (P3, Open)으로 등록 완료 — 재작업 요구 아님, 추후 별도 라운드에서 처리 여부 판단 필요.
+- 이 검증 세션에서 프로젝트 코드는 수정하지 않음(`app/widgets/annotation_canvas.py` 등 코드
+  파일 변경 없음). `QA.md`(BUG-003 등록)와 이 파일(append)만 변경.
+
+### 비고
+- 검증 시작 시점에 이미 `docs/agents/leader-log.md`, `planning-log.md`,
+  `decisions-needed.md`, `roadmap.md`, `docs/specs/` 등이 미커밋 상태로 존재(다른
+  에이전트의 동시 작업 산출물) — 이번 R3 검증 세션에서 발생시킨 변경이 아니며 그대로 유지함.
