@@ -1,5 +1,7 @@
 """어노테이션 캔버스 — QPainter 기반 Polygon / Brush / Eraser / Select / Pan 도구."""
 import copy
+from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -122,6 +124,22 @@ MIN_ZOOM = 0.05
 MAX_ZOOM = 20.0
 _SNAP_PX  = 15            # 스냅-투-클로즈 판정 거리 (화면 픽셀)
 
+_IMAGE_CACHE_SIZE = 2      # 최근 방문 이미지 LRU 캐시 최대 장수 (대형 원본 메모리 고려, 확장 금지)
+
+
+@dataclass
+class _ImageCacheEntry:
+    """load_image() 재방문 시 재사용할 이미지별 파생 상태 묶음.
+    QPixmap 하나만 캐시하면 display_pixmap/pixel_image 재계산 비용이 남으므로 함께 묶는다."""
+    pixmap: QPixmap
+    img_w: int
+    img_h: int
+    overlay_scale: float
+    mtime: float                              # 캐시 무효화 판정용 (파일 외부 교체 감지)
+    pixel_image: QImage | None = None
+    display_pixmap: QPixmap | None = None
+    display_pixmap_key: tuple = (-1.0, 0)
+
 
 class AnnotationCanvas(QWidget):
     annotation_saved   = pyqtSignal()
@@ -198,6 +216,9 @@ class AnnotationCanvas(QWidget):
         # 픽셀 값 읽기용 QImage 캐시
         self._pixel_image: QImage | None = None
 
+        # 이미지 전환 LRU 캐시 — 최근 방문 이미지의 QPixmap + 파생 상태 재사용
+        self._image_cache: OrderedDict[Path, _ImageCacheEntry] = OrderedDict()
+
         # Pan/zoom 중 repaint 30Hz 쓰로틀 (mousemove 마다 update() 방지)
         self._repaint_timer = QTimer(self)
         self._repaint_timer.setSingleShot(True)
@@ -226,11 +247,25 @@ class AnnotationCanvas(QWidget):
     # overlay 를 최대 이 크기로 제한 (20MP 이미지에서 80MB → 13MB 로 감소)
     _MAX_OVERLAY_DIM = 2048
 
+    def _store_current_into_cache(self) -> None:
+        """현재 이미지의 최신 파생 상태(display_pixmap/pixel_image)를 캐시 엔트리에 반영.
+        load_image() 가 다른 이미지로 전환하기 직전에 호출 — 재방문 시 그대로 재사용."""
+        if self._image_path is None:
+            return
+        entry = self._image_cache.get(self._image_path)
+        if entry is None:
+            return
+        entry.display_pixmap = self._display_pixmap
+        entry.display_pixmap_key = self._display_pixmap_key
+        entry.pixel_image = self._pixel_image
+
     def load_image(self, path: Path) -> None:
         # 이전 이미지의 미저장 변경 즉시 저장
         if self._save_timer.isActive() and self._image_path is not None:
             self._save_timer.stop()
             self._do_save()
+        # 이전 이미지의 파생 상태(display_pixmap/pixel_image)를 캐시에 반영 — 재방문 대비
+        self._store_current_into_cache()
         # smooth 스케일 워커/타이머 취소 — 구 이미지 작업이 새 이미지 상태를 덮어쓰는 크래시 방지
         self._smooth_timer.stop()
         self._retire_worker(self._smooth_worker, interrupt=False)
@@ -241,18 +276,48 @@ class AnnotationCanvas(QWidget):
 
         t_total = _perf.mark("load_image_total")
 
-        t0 = _perf.mark("load_image_pixmap")
-        self._pixmap = QPixmap(str(path))
-        _perf.end("load_image_pixmap", t0)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = None
 
-        self._img_w = self._pixmap.width()
-        self._img_h = self._pixmap.height()
-        max_dim = max(self._img_w, self._img_h, 1)
-        self._overlay_scale = min(1.0, self._MAX_OVERLAY_DIM / max_dim)
-        self._display_pixmap = None
-        self._display_pixmap_key = (-1.0, 0)
-        self._pixel_image = None
-        QTimer.singleShot(150, self._cache_pixel_image)
+        cached = self._image_cache.get(path)
+        if cached is not None and mtime is not None and cached.mtime == mtime:
+            # 캐시 히트 — 재디코딩·파생 상태 재계산 생략
+            t0 = _perf.mark("load_image_pixmap")
+            self._pixmap = cached.pixmap
+            _perf.end("load_image_pixmap", t0)
+            self._img_w = cached.img_w
+            self._img_h = cached.img_h
+            self._overlay_scale = cached.overlay_scale
+            self._display_pixmap = cached.display_pixmap
+            self._display_pixmap_key = cached.display_pixmap_key
+            self._pixel_image = cached.pixel_image
+            self._image_cache.move_to_end(path)
+            if self._pixel_image is None:
+                QTimer.singleShot(150, self._cache_pixel_image)
+        else:
+            t0 = _perf.mark("load_image_pixmap")
+            self._pixmap = QPixmap(str(path))
+            _perf.end("load_image_pixmap", t0)
+
+            self._img_w = self._pixmap.width()
+            self._img_h = self._pixmap.height()
+            max_dim = max(self._img_w, self._img_h, 1)
+            self._overlay_scale = min(1.0, self._MAX_OVERLAY_DIM / max_dim)
+            self._display_pixmap = None
+            self._display_pixmap_key = (-1.0, 0)
+            self._pixel_image = None
+            QTimer.singleShot(150, self._cache_pixel_image)
+
+            if mtime is not None:
+                self._image_cache[path] = _ImageCacheEntry(
+                    pixmap=self._pixmap, img_w=self._img_w, img_h=self._img_h,
+                    overlay_scale=self._overlay_scale, mtime=mtime,
+                )
+                self._image_cache.move_to_end(path)
+                while len(self._image_cache) > _IMAGE_CACHE_SIZE:
+                    self._image_cache.popitem(last=False)
 
         t0 = _perf.mark("load_image_annotations")
         self._annotations = store.load(path)
@@ -988,18 +1053,30 @@ class AnnotationCanvas(QWidget):
 
         t0 = _perf.mark("resolve_bbox_overlap")
         # ── 1. 픽셀 독점성 — bbox 영역만 처리 (전체 20MP 대신 수천 픽셀) ──────
+        # zero-out 이전 bbox 안에 픽셀이 있었는지 함께 기록 — 아래 _has_pixels 에서
+        # "정말 필요한 경우"에만 전체 스캔으로 폴백하도록 좁히는 데 사용.
+        had_bbox_pixels: dict[str, bool] = {}
         for ann in self._annotations:
             if ann is not new_ann and ann.type == "brush_mask" and ann.mask is not None:
-                ann.mask[y0:y1, x0:x1][new_bool] = 0
+                sub = ann.mask[y0:y1, x0:x1]
+                had_bbox_pixels[ann.annotation_id] = bool(sub.any())
+                sub[new_bool] = 0
 
-        # ── 2. 빈 마스크 제거 — bbox 로 단락 평가 ─────────────────────────────
+        # ── 2. 빈 마스크 제거 — bbox 로 단락 평가, 예외적인 경우만 전체 스캔 ────
         def _has_pixels(a: AnnotationItem) -> bool:
             if a.type != "brush_mask" or a.mask is None:
                 return True
             sub = a.mask[y0:y1, x0:x1]
             if sub.any():          # bbox에 픽셀 있으면 즉시 True (fast path)
                 return True
-            return bool(a.mask.any())  # bbox 비어있을 때만 전체 검사
+            # bbox 안이 비어 있음. zero-out 이전에도 비어 있었다면(=겹침 없었음)
+            # 저장된 어노테이션은 항상 non-empty 라는 불변식에 의해 bbox 밖 어딘가에
+            # 픽셀이 있다는 것이 보장되므로 전체 스캔 없이 non-empty 로 단정한다.
+            if not had_bbox_pixels.get(a.annotation_id, True):
+                return True
+            # 겹침이 있었고 zero-out 으로 bbox 안이 완전히 비워진 예외적인 경우에만
+            # bbox 밖에 남은 픽셀이 있는지 전체 스캔으로 확인 (20MP fallback, 드묾).
+            return bool(a.mask.any())
 
         self._annotations = [a for a in self._annotations if _has_pixels(a)]
         _perf.end("resolve_bbox_overlap", t0)
