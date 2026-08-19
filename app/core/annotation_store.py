@@ -210,7 +210,9 @@ def rle_encode(mask: np.ndarray) -> str:
     flat = (flat != 0).view(np.uint8)
     if not flat.any():
         return ""
-    diff   = np.diff(flat, prepend=np.uint8(0), append=np.uint8(0))
+    # int8로 캐스팅 후 diff — uint8 그대로 diff하면 1→0 하강엣지(-1)가
+    # 부호없는 정수 언더플로우로 255가 되어 diff==-1 매칭이 항상 실패한다 (BUG-002).
+    diff   = np.diff(flat.astype(np.int8), prepend=np.int8(0), append=np.int8(0))
     starts = np.where(diff == 1)[0]
     ends   = np.where(diff == -1)[0]
     # 경쟁 조건으로 전환 수가 불일치하는 경우 방어 처리
