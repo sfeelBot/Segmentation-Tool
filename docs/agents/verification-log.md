@@ -1502,3 +1502,106 @@ importing QtSvg`가 회피됨, R4/R5 검증 로그의 기존 회피 패턴과 �
   단축키, 무라벨 OK 토글, 이미지 전환 시 디바운스 flush 전부 정상).
 - **종합 판정: 통과(Pass)** — 별도 블로커 없음. 이번 라운드로 GitHub 이슈 라운드2에서
   발견된 3개 버그(BUG-011/012/013)가 모두 해소된 것으로 확인.
+
+---
+
+## 2026-08-20 — GitHub #6-B 검증: 어노테이션 개수 증가 시 로딩 지연 최적화 (최우선, 사용자 명시)
+
+`docs/agents/implementation-log.md` "GitHub #6-B" 항목(커밋 `574fb33` perf + `5f13df4` docs)
+검증. 대상: `app/tabs/labeling_tab.py::_refresh_ann_list()`(diff 기반 갱신),
+`app/widgets/annotation_canvas.py::_OverlayWorker.run()`(brush_mask bbox-crop 렌더링).
+사용자가 "반드시 필요"로 직접 명시한 최우선 항목이라 실행 확인을 꼼꼼히 수행.
+
+### 정적 검토
+- `_refresh_ann_list()` — 위치 기반 diff(`min(n_old, n_new)`까지 텍스트/UserRole 비교 후
+  변경분만 `setText`/`setData`, 초과분 `addItem`, 부족분 꼬리부터 `takeItem`) 로직을 코드
+  리딩으로 확인. 선택 상태 유지 메커니즘(`_ann_list_updating` 재진입 방지 플래그 +
+  `_on_canvas_selection_changed`가 삭제/undo 등 위치가 바뀌는 모든 경로에서 `selection_changed`
+  를 **동기적으로 먼저** emit해 리스트 선택을 클리어한 뒤에야 디바운스된 저장이 `_refresh_
+  ann_list()`를 호출)를 캔버스 쪽 삭제/undo 코드(`_delete_selected_or_last` 등 8곳의
+  `_selected_ids.clear()`+`selection_changed.emit(...)` 동기 호출부)까지 추적해, diff 갱신이
+  중간 삭제로 인덱스가 밀려도 "유령 선택"(엉뚱한 위치의 아이템이 과거 선택 상태를 그대로
+  유지하는 문제)이 발생하지 않는 구조임을 확인.
+- `_OverlayWorker.run()` — `_mask_bbox()`(`cv2.boundingRect` + margin=1 클리핑)로 자른
+  서브영역만 `cv2.resize`/`_draw_mask_on_painter`/`cv2.dilate`. sc<0.99(다운스케일) 분기는
+  `p.resetTransform()` 후 `ox=round(x0*sc)` 방식으로 절대 좌표 합성 — 좌표 변환 로직 확인.
+  `_draw_mask_on_painter()`의 `np.empty(...)` → `QImage(argb.data, ...)` → `p.drawImage()`
+  패턴은 이 라운드가 새로 만든 게 아니라 기존에도 브러시 레이어 그리기에서 쓰이던 재사용
+  패턴이며, `drawImage()`가 동기 호출로 즉시 픽셀을 대상 이미지에 복사하므로 `argb`가
+  함수 종료 후 GC돼도 문제없음을 확인(버퍼 수명 문제 아님).
+- GitHub #6-A(`_invalidate_overlay()`의 stale-overlay 유지)와 BUG-011/012(`mouseDoubleClickEvent`
+  의 `undo()`, `_do_save(sync=True)`) 로직은 `git show 574fb33`으로 diff 라인을 직접 대조해
+  이번 커밋이 건드리지 않았음을 재확인.
+
+### 실행 확인 — 앱 기동
+- `C:\Users\Feel\anaconda3\python.exe main.py`를 대화형으로 직접 실행 — **QtSvg DLL 로딩
+  이슈 이번 세션에서는 재현되지 않음**, `MainWindow`가 정상 기동해 이벤트 루프까지 진입
+  확인(로그 인코딩 관련 `UnicodeEncodeError`만 콘솔에 출력됨 — cp949 콘솔이 `—`(em dash)를
+  못 그려서 나는 기존 로깅 이슈이며 이번 라운드와 무관, 앱 동작 자체엔 영향 없음). 프로세스
+  실제 기동 후 `tasklist`로 587MB 메모리 사용 중인 살아있는 프로세스임을 확인 후 정상 종료.
+
+### 실행 확인 — 골든패스 (QTest 기반 실제 Qt 이벤트, projects/nok 이미지 2장 사용한 임시
+프로젝트, `D:\_scratch_verify_6b`, 검증 후 삭제 — nok 원본은 이미지 2장 읽기 전용 복사만
+했고 `git status --porcelain -- projects/nok` 공백으로 무변경 확인)
+스크래치 스크립트(`verify_6b.py`, 프로젝트에 추가 안 함) — `QT_QPA_PLATFORM=offscreen` +
+실제 `QApplication`/`LabelingTab`/`AnnotationCanvas` 생성 + `QTest`로 진짜 Qt 이벤트 전달.
+총 30개 assertion **전부 PASS**:
+
+1. **폴리곤/브러시/지우개/영역지우개/선택 도구** — 각각 실제 위젯 메서드
+   (`_close_polygon`/`_paint_circle`+`_paint_stroke`+`_finish_brush`/`_flood_erase`)로
+   골든패스 수행, 전부 정상 커밋·삭제.
+2. **브러시 bbox-crop 정확성** — 알려진 위치(이미지좌표 1000,1000~1050,1050)에 L자 스트로크
+   → `brush_ann.mask[1000,1000]==True` 확인, `_mask_bbox()` 반환값이 예상 범위(989~1062)
+   내 확인. 오버레이 워커 완료 대기 후 **오버레이 QImage를 실제로 numpy 배열로 읽어**
+   스트로크 시작점에 해당하는 오버레이 픽셀(스케일 변환 `ox=round(1000*sc)` 적용,
+   sc=0.374)의 alpha 채널이 0보다 큼(=140, `OVERLAY_ALPHA`와 정확히 일치)을 확인, 먼 지점
+   (5,5)은 alpha=0 확인 — bbox-crop 합성이 실제로 올바른 위치에 그려짐을 픽셀 단위로 검증.
+   (첫 시도에서 스트로크 경로 밖의 "L자 안쪽 코너"를 검증 지점으로 잘못 골라 FAIL이
+   났었는데, 브러시 반경(10px) 밖이라 애초에 칠해지지 않는 지점이었음을 확인하고 스트로크
+   시작점으로 교체 — 앱 버그 아니라 검증 스크립트 자체의 좌표 선정 오류였음.)
+3. **어노테이션 목록 diff 정확성** — 5개 중 인덱스 2(가운데) 삭제 후: 목록 개수 4로 정확히
+   감소, 삭제된 ID 완전히 사라짐, 나머지 항목 순번(`#1~#4`)이 정확히 재계산되어 텍스트
+   갱신됨, **유령 선택 없음**(선택 안 한 상태에서 삭제 후 `selectedItems()` 빈 배열).
+4. **선택 도구 ↔ 목록 동기화** — 캔버스에서 선택 → `selection_changed` emit →
+   `_refresh_ann_list()` 후에도 목록 패널의 `selectedItems()`가 정확히 일치.
+5. **undo** — 정상 동작(카운트 변화 확인).
+6. **BUG-011 회귀** — `QTest.mouseDClick()`으로 실제 press→release→press→doubleClick→release
+   시퀀스 재현(OK 케이스 + Cancel 케이스 각 1회) — **두 경우 모두 stray 어노테이션 0건**.
+   일반 단일 클릭(press→move→release, 더블클릭 아님)은 정상적으로 스트로크 1개 커밋되는
+   회귀 확인도 별도로 통과.
+7. **BUG-012 회귀** — 어노테이션 있는 이미지에서 OK "예" 토글 → 다른 이미지로 전환 →
+   되돌아옴 → `refresh_item()` 후에도 `get_ok()` 결과가 토글 직후 값과 완전히 일치(stale
+   없음).
+8. **대규모 어노테이션(n=200, 5472×3648, polygon+brush_mask 혼합) 체감 성능** —
+   `_refresh_ann_list()` 1회 3.5ms(리스트 200개 채움), `_OverlayWorker.run()` 1회 691.5ms
+   (구현 에이전트의 n=500 기준 ~1600ms와 비례 스케일 일치 — 200/500 비율 적용 시 예상
+   640ms 대 실측 691.5ms로 근접, 별도 벤치마크 신뢰성 뒷받침). 연속 20회 append(list-only,
+   n~200→220)는 12.2ms — 실제 위젯 기반 반복 편집에서도 크래시·행 없이 매끄럽게 동작.
+9. **GitHub #6-A 회귀** — 연속 브러시 스트로크 5회(각 스트로크마다 `_invalidate_overlay()`
+   호출) 동안 `canvas._overlay`가 단 한 번도 `None`이 되지 않음(stale-overlay 유지 로직
+   정상 — 깜빡임 재발 없음).
+
+### 발견 — BUG-014 (P3, QA.md 등록, 이번 라운드 회귀 아님)
+대규모 스트레스 테스트 중, n=200 대형 brush_mask(19MB/개, 5472×3648)가 있는 상태에서 실제
+브러시 스트로크 1개를 추가로 그리면(`mousePressEvent`가 항상 먼저 호출하는 `_push_undo()`
+경유) `copy.deepcopy(self._annotations)`가 이 세션 환경(Windows, 페이징 파일 2GB — R4 구현
+로그에 동일 제약 기록됨)에서 `numpy._core._exceptions._ArrayMemoryError`로 크래시 재현(물리
+RAM 16GB+ 여유 있었음에도 재현 — 커밋/페이징 한도 문제로 추정). `_push_undo()`는 이번
+#6-B 라운드가 건드린 함수(`_refresh_ann_list`/`_OverlayWorker.run`)와 다른, 그 이전부터
+존재하던 전체 deepcopy 구조라 이번 라운드의 회귀는 아니지만, #6-B로 대량 어노테이션에서의
+목록/오버레이 체감이 좋아진 직후라 이 한계가 상대적으로 더 두드러질 수 있어 함께 기록.
+상세: `QA.md` BUG-014.
+
+### 정리
+스크래치 스크립트(`verify_6b.py`, `debug_overlay.py`)는 scratchpad에만 작성, 프로젝트에
+추가 안 함. C: 드라이브 여유공간 부족(~25MB 실측)으로 임시 프로젝트를 scratchpad(C:) 대신
+`D:\_scratch_verify_6b`에 생성했고, 검증 종료 후 `rm -rf`로 완전히 삭제함. `projects/nok`은
+이미지 2장만 읽기 전용으로 복사해 사용, `git status --porcelain -- projects/nok` 공백으로
+원본 무변경 확인. `git status --porcelain` 결과 `QA.md`(BUG-014 추가)만 수정됨.
+
+### 판정
+**통과(Pass)** — GitHub #6-B(어노테이션 개수 증가 시 로딩 지연) 구현이 실제 UI 조작
+기준으로 정상 동작함을 확인. 정확성(오버레이 픽셀 단위 위치 검증, 목록 diff 순번/유령선택
+없음), #6-A/BUG-011/BUG-012 회귀 없음, 대규모(n=200) 체감 성능 개선(구현자 벤치마크와
+스케일 일치) 모두 확인됨. 별도 블로커 없음. 부수 발견 BUG-014(P3, 이번 라운드 무관 기존
+`_push_undo()` deepcopy 메모리 리스크)는 QA.md에 등록, 후속 라운드 판단 대상.
