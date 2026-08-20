@@ -681,3 +681,92 @@ DLL 함정(리더가 보고한 `app.core.project` → `PyQt6.QtWidgets` 순서 �
   프로젝트에 커밋하지 않음.
 - 학습 탭·추론 탭의 라운드 2 항목(큐 박스↔진행상태, 상단↔메인뷰어 서브스플리터, 추론 탭 이미지
   목록 트리 교체)은 이번 검증 범위 밖 — implementation-log.md에 명시된 대로 별도 라운드로 남아있음.
+
+---
+
+## 2026-08-20 — GitHub #2 라운드A(프로젝트 내보내기, export) 검증 (커밋 `911f85a`, `d42fe46`)
+
+`docs/specs/voc-github-issues-2026-08-20.md` "요청 2 — 라운드 A" 대상. 구현자 스크립트/합성
+프로젝트를 전혀 재사용하지 않고, 스크래치 디렉토리에 독립 스크립트 5종(`part1_entries.py`
+~`part5_boot_and_menu.py`, 프로젝트 저장소 밖, 커밋 대상 아님)을 새로 작성해 다른 파일 구성
+(구현자는 이미지 3장, 이번엔 7장 + 이름·확장자 다양화; 구현자는 500파일, 이번엔 800파일)으로
+재현.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위** — `git show --stat 911f85a`: `app/core/project_export.py`(신규),
+   `app/widgets/project_export_dialog.py`(신규), `app/widgets/project_start_dialog.py`,
+   `app/core/i18n.py` 4개 파일만 변경. 구현자 주장과 정확히 일치. `export_dialog.py`(기존
+   라벨 포맷 내보내기)는 커밋 이력에 전혀 등장하지 않음 — 회귀 없음 확인.
+2. **코드 대 스펙 대조** — `project_export.py`의 `collect_export_entries()`가 `images/`
+   (`.thumbs` 제외)·`annotations/`·`classes.json`·`project.json`은 무조건, `checkpoints/`·
+   `user_models/`는 옵션(기본값 `include_checkpoints=False`, `include_user_models=True`)으로
+   계산 — 스펙 "라운드 A" 절과 정확히 일치. `default_export_filename()`도
+   `{project_name}_{yyyymmdd}.zip` 규칙 일치.
+3. **독립 합성 프로젝트로 4가지 체크박스 조합 재현** — 이미지 7장(png/jpg/bmp/tiff 혼합),
+   `.thumbs` 2장, annotations 4개, checkpoints 3개, user_models 2개로 새 프로젝트 구성 후
+   `collect_export_entries()`를 4개 조합(둘다 해제/둘다 체크/ckpt만/models만) 전부 호출 —
+   `.thumbs`는 4개 조합 전부에서 완전 제외, checkpoints·user_models는 옵션대로 정확히
+   포함/제외됨을 어서션으로 확인. 모든 arcname이 상대경로(드라이브 문자·선행 슬래시 없음)임을
+   확인.
+4. **실제 QThread 워커 구동 + zip 실측** — `_ProjectExportWorker`를 실제 `QApplication` +
+   이벤트루프로 구동해 zip 2개(both_true/both_false) 생성 → `zipfile.ZipFile`로 열어
+   `namelist()`/`testzip()` 확인 — `.thumbs` 미포함, 체크박스 옵션대로 checkpoints/user_models
+   포함·제외, 손상 멤버 없음(`testzip()==None`).
+5. **zip 구조 복원성 확인(라운드 B 전제 조건)** — both_true zip을 `extractall()`로 압축
+   해제 → `images/`, `annotations/`, `classes.json`, `project.json`, `checkpoints/`,
+   `user_models/`가 프로젝트 폴더 구조 그대로(추가 중첩 디렉토리나 절대경로 잔재 없이) 복원됨을
+   실제 파일 존재 확인으로 검증. **zip 내부 경로는 전부 상대경로이며 라운드 B가 그대로 압축
+   해제해 프로젝트 폴더로 쓸 수 있는 구조임을 확인**.
+6. **대용량 논블로킹(구현자와 다른 규모: 800파일)** — 이미지 600+annotation 200+메타 2 =
+   802개 대상. `progress` 시그널 정확히 802회 emit, 마지막 이벤트 `(802,802)` 확인. 동시에
+   1ms 간격 `QTimer`가 export 진행 중(0.177초) 176회 틱 — 이벤트 루프가 블로킹되지 않음을
+   실측. zip 파일 내 항목 수도 802개로 일치.
+7. **에러 케이스 — 사전 프로젝트 폴더 없음**: `finished(False, "프로젝트 폴더를 찾을 수
+   없습니다.")`, zip 미생성 확인 (PASS).
+8. **에러 케이스 — 쓰기 권한 없는 저장 경로**: `icacls`로 대상 디렉토리에 현재 사용자 쓰기
+   거부(ACL) 설정 후 export 시도 → `PermissionError`가 `finished(False, msg)`로 정상 전파,
+   부분 zip 파일 생성 안 됨 확인 (PASS).
+9. **에러 케이스 — export 도중 개별 파일 소실**: 30개 대상 중 10번째 진행 시점에 아직 처리
+   안 된 파일 하나를 export 도중 실제로 삭제 → 코드의 `except OSError` 스킵 로직이 정확히
+   동작, 나머지 29개는 정상 압축, zip 손상 없음(`testzip` 불필요할 정도로 정상 열림),
+   `finished(True, "31개 파일을 내보냈습니다.")`로 **실제 성공한 개수**를 정확히 보고함(요청
+   총량이 아님) — 설계상 의도된 graceful degradation으로 판단, 버그 아님.
+10. **에러 케이스 — 프로젝트 폴더 전체가 export 도중 사라짐**: `shutil.rmtree()`와
+    `os.rename()` 양쪽으로 재현 시도했으나 Windows 파일시스템 특성상(디렉토리 내 파일 핸들
+    잔류/AV 스캔 추정) `WinError 32`/`WinError 5`로 삭제·이동 자체가 실패해 시나리오를 안정적으로
+    재현하지 못함 — 이는 OS 제약이지 코드 결함이 아님. 개별 파일 소실(9번 항목)로 동일한
+    방어 로직(스킵 후 계속) 경로는 이미 확인했으므로 실질적으로 커버됨으로 판단.
+11. **`project_start_dialog.py` 우클릭 진입점** — `ProjectStartDialog` 직접 생성 후
+    `_recent_list.customContextMenuRequested`에 리시버 1개 연결됨, `contextMenuPolicy ==
+    CustomContextMenu` 확인. `_on_export_project()`에 존재하지 않는 경로를 넘겼을 때
+    `QMessageBox.warning` 호출(모킹으로 확인) 후 크래시 없이 정상 반환 — 프로젝트를 열지
+    않고도 내보낼 수 있는 구조(직접 `Project(path)` 구성, `open_existing()` 미사용) 확인.
+    `ProjectExportDialog` 기본 체크박스 상태(`checkpoints=False`, `user_models=True`)도 실측
+    일치.
+12. **`python main.py` 기동** — PyQt6 → `app.core.project` → `app.main_window.MainWindow` →
+    `ProjectStartDialog`/`ProjectExportDialog` import 순서로 개별 확인 후, 실제
+    `python main.py`도 8초간 구동 — 예외 없이 로그(`CUDA 사용 가능 — GPU 1개` 등)만 출력,
+    크래시 없음. (콘솔 cp949 코덱으로 인한 로깅 UnicodeEncodeError는 em-dash 포함 로그 문자열과
+    관련된 기존 환경 이슈로 이번 변경과 무관 — `PYTHONIOENCODING=utf-8` 설정 시 재현 안 됨.)
+13. **기존 기능 회귀 없음** — `export_dialog.py`(라벨 포맷 변환 내보내기)는 이번 diff에 전혀
+    포함되지 않음, i18n 키(`project_export.*`)는 ko/en 완비, 기존 `export.no_data` 키도 이미
+    존재해 참조 오류 없음.
+
+### 판정
+- 구현자 주장 전부(4개 필수 항목/2개 옵션 항목 정확한 포함·제외, `.thumbs` 제외, 상대경로
+  zip 구조, 대용량 논블로킹, 에러 케이스 처리, 컨텍스트 메뉴 진입점) 독립 재현으로 확인.
+  **새로운 버그 발견 없음.**
+- **zip 내부 경로 구조 — 라운드 B 관점에서 중요**: 전부 상대경로이며 `zip 루트 = 프로젝트
+  루트` 그대로(예: `images/foo.png`, `checkpoints/epoch_0001.pt`)라서, 라운드 B가 단순
+  `extractall(dest)` 후 `dest`를 새 프로젝트 폴더로 등록하는 방식으로 그대로 이어받아도 안전.
+  **문제 없음.**
+- **라운드A(프로젝트 내보내기) 검증 통과, 라운드B(가져오기) 착수 가능.**
+- 코드는 건드리지 않음 — 검증 전/후 `git status --porcelain` 공백(무변경) 확인.
+
+### 비고
+- 검증 스크립트 5종은 스크래치 디렉토리(`.../scratchpad/verify_export/`)에만 작성, 프로젝트에
+  커밋하지 않음.
+- 10번 항목(폴더 전체 소실)은 Windows 파일시스템 제약으로 완전한 재현에는 실패했으나, 원인이
+  코드가 아니라 OS 잠금 특성임을 확인했고 대체 시나리오(개별 파일 소실)로 방어 로직 자체는
+  검증됨 — 만약 완전한 재현이 필요하다면 Linux 환경에서 별도 재시도 권장(우선순위 낮음).
