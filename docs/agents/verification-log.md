@@ -556,3 +556,50 @@ DLL 함정(리더가 보고한 `app.core.project` → `PyQt6.QtWidgets` 순서 �
 ### 비고
 - 검증 스크립트는 `.../scratchpad/r6_verify/gen_project.py`, `test_r6.py`(+보조 1회성 확인
   커맨드 몇 개)로 스크래치 디렉토리에만 작성, 프로젝트에 커밋하지 않음.
+
+---
+
+## 2026-08-20 — UI 재편 라운드 1 검증 (제약값 조정 + 스타일 통일)
+
+`docs/specs/ui-redesign-plan-2026-08-19.md` 라운드 1 구현(커밋 `6355096`) 독립 재검증.
+성능개선 R1~R6과 무관한 별도 트랙.
+
+### 확인 절차
+1. `git show --stat 6355096` — 변경 범위 `app/tabs/inference_tab.py`(8줄, +6/-2),
+   `app/tabs/training_tab.py`(1줄, -1)만 확인. 구현자 주장과 일치.
+2. `git show 6355096` 전체 diff 직접 읽음 — 4개 지점(스플리터 hover 스타일+handleWidth(5),
+   `_list_panel.setMaximumWidth(180)` 제거, 범례 `setFixedWidth(190)`→`setMinimumWidth(160)`,
+   `training_tab.py`의 `side_panel.setMaximumWidth(220)` 제거) 모두 설명과 정확히 일치.
+3. `TrainingTab`/`InferenceTab`을 오프스크린 `QApplication`에서 직접 인스턴스화(PyQt6를
+   `app.core.project`보다 먼저 import, R4 검증 로그의 DLL 함정 회피 패턴 준수)해
+   `findChildren(QWidget)`으로 구현자와 다른 방식(속성 직접 접근 대신 위젯 트리 순회)으로
+   재조회:
+   - `TrainingTab` — `minimumWidth()==150`인 `QWidget`(side_panel) 1개, `maximumWidth()==
+     16777215`(무제한) 확인. main_splitter(`sizes=[200,435]`) 스타일시트에 `"hover"` 포함(기존
+     것, 이번 라운드 변경 대상 아님) / h_splitter(`sizes=[486,150]`)는 hover 스타일 없음(스펙
+     범위 밖, 정상).
+   - `InferenceTab` — `_list_panel`(minW=140, maxW=16777215), 범례(minW=160, maxW=16777215)
+     각각 1개씩 확인. 메인 스플리터(3-way) `handleWidth()==5`, 스타일시트에 `"#60a5fa"`와
+     `"hover"` 모두 포함 확인.
+4. `python main.py`와 동등한 절차(`QApplication` → `projects/nok` 오픈 → `MainWindow()` 생성
+   → `show()`)로 전체 기동 확인 — STEP1~5 전부 예외 없이 통과, `QTabWidget.count()==4`(모델/
+   라벨링/학습/추론 탭 전부 로드) 확인.
+5. 회귀 확인 — `side_panel`은 `h_splitter`에서 `setStretchFactor(1, 0)`으로 자동 확장하지
+   않도록 고정돼 있고 초기 `setSizes([10000, 180])`도 그대로라, 상한 제거는 "수동 드래그로
+   더 넓힐 수 있게" 하는 것 외에 초기 레이아웃(손실 그래프 영역 크기)에는 영향이 없음을 코드로
+   확인. `_list_panel`/범례도 마찬가지로 `splitter.setStretchFactor(1, 1)`(가운데 뷰어만
+   자동 확장) 구조가 그대로라 초기 배치 회귀 없음.
+6. `git status --porcelain` — 검증 전/후 모두 공백(코드 미변경) 확인.
+
+### 판정
+- 구현자 주장 4개 지점 전부 독립 재현 성공, DOM/속성 조회 결과 완전 일치. 앱 기동도 정상.
+- 스플리터 핸들 hover 시 실제 마우스 오버로 색이 바뀌는지는 오프스크린 환경 특성상 육안(대화형
+  마우스 이벤트) 확인은 불가 — 스타일시트 문자열 자체가 정확히 적용됐음은 확인했으므로 Qt
+  렌더링 신뢰. 스플리터 핸들 드래그로 상한 없이 늘어나는지도 동일한 이유로 좌표 이벤트 시뮬
+  대신 `maximumWidth()==16777215`(Qt의 "제한 없음" 센티널 값) 직접 확인으로 대체 — 충분한
+  근거로 판단.
+- **라운드 1 검증 통과.** 코드는 건드리지 않음, `git status` 무변경 확인.
+
+### 비고
+- 검증 스크립트 2종(`verify_ui_r1.py`, `verify_boot_r1_ui.py`)은 스크래치 디렉토리에만 작성,
+  프로젝트에 커밋하지 않음.
