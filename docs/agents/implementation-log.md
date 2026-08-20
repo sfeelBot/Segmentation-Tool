@@ -610,3 +610,68 @@ MainWindow` import(내부적으로 `labeling_tab.py` → `image_browser.py` 로�
 - **완료 보고 아님** — 검증(Verification) 에이전트가 실제 UI 조작(스플리터 핸들 드래그로
   4개 패널이 상한 없이 늘어나는지, hover 시 색이 바뀌는지)까지 확인해야 한다. 이번 라운드는
   라운드 2·3(디자인 목업이 필요한 구조 변경) 범위 밖.
+
+---
+
+## 2026-08-20 — UI/UX 재편 라운드 2 (라벨링 탭만)
+
+`docs/specs/ui-redesign-plan-2026-08-19.md` 라운드 2 대상 중 사용자가 범위를 라벨링 탭으로
+명시적으로 좁힌 지시에 따라 구현. 디자인 목업(`docs/agents/design-log.md` 2026-08-20 항목,
+Artifact `5df2af11-0642-4e69-8ddc-f545333eebca`)의 라벨링 탭 부분 + "구현 시 참고 — 주의사항"을
+전제로 작업. 학습 탭·추론 탭의 라운드 2 항목은 이번에 손대지 않음.
+
+### 무엇을 바꿨나
+- `app/tabs/labeling_tab.py`
+  - 좌 패널: `ImageBrowser`↔`ClassPanel`을 감싸던 `QVBoxLayout`(stretch 3/2 고정)을
+    `QSplitter(Qt.Orientation.Vertical)`(`self._left_splitter`)로 교체. 각 위젯에
+    `setMinimumHeight(80)` 부여, `setSizes([300, 200])`로 기존 3:2 비율 재현, 메인 좌우
+    스플리터와 동일한 hover 스타일(`QSplitter::handle:hover { background:#60a5fa; }`) 적용.
+  - 우 패널: 어노테이션목록 `QGroupBox`↔`LogPanel`을 감싸던 `QVBoxLayout`(stretch 2/3 고정)을
+    `QSplitter(Qt.Orientation.Vertical)`(`self._right_splitter`)로 교체. 동일하게
+    `setMinimumHeight(80)`, `setSizes([200, 300])`(2:3 재현), hover 스타일 적용.
+  - 바깥쪽 좌/우 메인 스플리터(`self._splitter`)와 전체화면 토글(`_on_toggle_fullscreen`)
+    로직은 건드리지 않음 — 서브스플리터는 `_left_panel`/`_right_panel` *내부*에만 추가됐고,
+    전체화면 토글은 그 바깥쪽 패널 자체를 `setVisible()`로 숨기고 메인 스플리터 크기만
+    저장/복원하므로 구조적으로 서로 간섭하지 않음.
+- `app/widgets/class_panel.py`: 내부 `QListWidget`의 `setMaximumHeight(200)` 상한 제거.
+  design-log 주의사항대로 위 좌 패널 서브스플리터 전환과 **같은 커밋**에 포함.
+
+### 검증 (직접 수행)
+- 스크립트: `verify_labeling_tab.py`(스크래치 디렉토리) — `QT_QPA_PLATFORM=offscreen`,
+  `PyQt6.QtWidgets`를 `app.core.project`보다 먼저 import(R4 검증 로그의 DLL 함정 회피 패턴
+  준수). **주의**: Bash 툴 기본 `python`은 Windows Store 스텁이라 즉시 종료(exit 49,
+  출력 "Python"만) — 반드시 `C:\Users\Feel\anaconda3\python.exe` 절대경로로 실행해야 함.
+- `LabelingTab`을 오프스크린 `QApplication`에서 직접 생성해 확인:
+  - `_left_splitter`/`_right_splitter` 모두 `QSplitter` 인스턴스, `orientation()`이
+    `Qt.Orientation.Vertical` 확인.
+  - `_left_splitter.sizes()` = `[532, 355]` → 비율 1.499 (목표 3:2=1.5, 오차 무시 가능).
+  - `_right_splitter.sizes()` = `[355, 532]` → 비율 0.667 (목표 2:3=0.667, 정확히 일치).
+  - `class_panel._list.maximumHeight()` = `16777215`(`QWIDGETSIZE_MAX`, 무제한) 확인 —
+    상한 제거 성공.
+  - **전체화면 토글 회귀 확인**: `_act_fullscreen.setChecked(True)` → `_left_panel`/
+    `_right_panel` 모두 `isVisible()=False`. `setChecked(False)`로 복귀 → 둘 다
+    `isVisible()=True`, 바깥쪽 메인 스플리터 `sizes()`가 토글 전후 `[230, 960, 200]`으로
+    동일(정상 복원), **좌/우 서브스플리터의 `sizes()`도 토글 전후 완전히 동일**
+    (`[532, 355]` / `[355, 532]`) — 서브스플리터가 전체화면 토글에 영향받지 않음을 확인.
+- `python main.py` 방식 전체 기동 확인: `MainWindow()`를 오프스크린으로 직접 생성 →
+  `MAIN_WINDOW_OK`(예외 없음, 라벨링 탭 포함 4개 탭 모두 로드 성공). 비대화형 셸에서
+  `app.exec()` 이벤트 루프 없이 종료되며 발생하는 exit code 127은 R4/R5 검증 로그에서도
+  동일하게 관찰된 노이즈로 판단, 실제 stdout 로그(`MAIN_WINDOW_OK`)로 성공 확인.
+- 다른 라벨링 탭 기능(이미지 브라우저 검색/정렬, 클래스 추가/삭제, 캔버스 도구, 로그패널,
+  단축키)은 코드 흐름상 이번 변경(레이아웃 컨테이너 교체)과 무관 — `_connect_signals()`,
+  시그널 배선, `keyPressEvent` 등 로직 코드는 전혀 수정하지 않았으므로 회귀 없음 확인.
+
+### 변경 파일
+`app/tabs/labeling_tab.py`, `app/widgets/class_panel.py`만 변경. `git status`로 이 2개
+파일 외 다른 변경 없음 확인(세션 시작 시점의 `dataset.py`/`trainer.py`/`config_form.py`/
+`leader-log.md`는 이 세션 시작 전 이미 다른 경로로 커밋 완료된 상태였음 — 이번 작업과 무관).
+
+### 커밋
+`f086636` — `feat: UI 재편 라운드2 — 라벨링 탭 좌/우 서브스플리터 전환`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증(Verification) 에이전트가 실제 UI 조작(스플리터 핸들 드래그,
+  8개 클래스 스크롤 없이 표시 등 목업 대비 육안 확인)까지 확인해야 한다.
+- 학습 탭·추론 탭의 라운드 2 항목(큐 박스↔진행상태 서브스플리터, 상단↔메인뷰어 서브스플리터,
+  추론 탭 이미지 목록 트리 교체)은 이번 범위 밖 — 별도 라운드로 남아있음.
