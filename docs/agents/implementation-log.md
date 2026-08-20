@@ -1140,4 +1140,84 @@ matplotlib은 Qt 스타일시트를 상속받지 못하므로 색상은 Python �
 - **완료 보고 아님** — 검증 에이전트의 실제 UI 조작 확인 필요 (리사이즈 동작, 초기 비율).
   통과 시 Artifact `7876ed3e` 5단계의 나머지 부분(추론 탭 서브스플리터·이미지 트리, 별도
   구현 에이전트 작업)과 합쳐 5단계 전체 완료 여부 판단.
+
+---
+
+## 2026-08-20 — 추론 탭 상단↔뷰어 서브스플리터 + 이미지 목록 신규 컴포넌트
+
+Artifact `7876ed3e`(4탭 디자인 톤 홀리스틱 재검토) 5단계 실행안 중 추론 탭 부분 담당.
+학습 탭(다른 구현 에이전트, 커밋 `a32a8b5`)과 동시 작업이라 `training_tab.py`는 건드리지
+않음.
+
+### 변경
+1. **`app/tabs/inference_tab.py`**
+   - 상단 영역(파일 컨트롤+추론 방식+체크포인트 테이블)을 `top_widget`으로 묶고, 기존
+     가로 스플리터(목록|뷰어|범례)와 함께 `outer_splitter`(세로 `QSplitter`)에 배치.
+     hover 색상은 라벨링 탭 서브스플리터(커밋 `f086636`)와 동일한 `#374151`→`#60a5fa`
+     패턴(`_SPLITTER_STYLE` 상수로 통일).
+   - `self._ckpt_table.setMaximumHeight(120)` 제거 — 서브스플리터 전환과 같은 커밋에서
+     함께 처리(분리 시 레이아웃 붕괴 위험, 디자인 로그 "구현 시 참고" 절 지시대로).
+   - `outer_splitter.setSizes([300, 10000])` — 라벨링 탭의 "230, 10000, 200" stretch
+     트릭과 동일한 방식으로 메인 뷰어 영역이 대부분의 공간을 차지하도록 초기 비율 지정.
+   - 기존 `QListWidget` 기반 `_img_list`(검색/정렬/폴더 기능 전무, 64px 썸네일 그리드)를
+     `InferenceImageList`로 교체. `_load_paths`/`_on_list_row_changed`/`_make_thumb_icon`
+     등 관련 로직을 `_on_select_file`/`_on_select_folder`/`_after_load`/
+     `_on_image_selected`/`_update_nav_label`로 재작성, `navigate()` API로 이전/다음
+     버튼 위임.
+2. **신규 `app/widgets/inference_image_list.py` (`InferenceImageList`)**
+   - `image_browser.py`의 `_make_tree_item`/`_make_folder_item` 패턴을 참고(재사용
+     아님) — 추론 탭엔 라벨 상태 개념이 없어 상태 아이콘(●/✓/○) 없이 `UserRole`엔
+     `Path`만 저장, 텍스트는 파일명만 표시. 미니 썸네일 절충안은 스코프를 최소로 유지하기
+     위해 이번 라운드에서 보류(디자인 로그가 "가능한 절충"으로만 언급, 필수 아님).
+   - 검색(`QLineEdit` + 200ms 디바운스), 정렬 콤보(파일명↑/파일명↓/최근 수정순/오래된
+     수정순/폴더 — image_browser 참고하되 상태 정렬 2종은 대상이 없어 제외, 대신 날짜
+     정렬 2종 추가), 폴더 트리(`QTreeWidget`, 접기/펼치기, hover `#1f2937`/선택
+     `#1e3a5f` — image_browser와 동일 스타일시트 `_TREE_STYLE`).
+   - **`load_folder(root)`**: `root.rglob("*")`로 하위 폴더를 **재귀적으로** 스캔해
+     `SUPPORTED_EXTS` 이미지를 모두 수집. 정렬 모드가 "폴더"일 때 `_build_nested_tree()`가
+     `path.relative_to(root).parts`의 다단계 구조를 그대로 재현(2단계 이상 중첩 폴더도
+     각 레벨이 폴더 헤더 아이템으로 중첩 표시됨) — `image_browser.py`의 기존 폴더
+     그룹핑(`reload()`가 `images_dir().glob(pat)` 비재귀 스캔만 하고 폴더 추가 경로도
+     평탄 복사라 실제로는 트리거되지 않는 죽은 코드, QA.md BUG-005)과 달리 **실제
+     추론 탭이 스캔하는 이미지 디렉터리(사용자가 "폴더 선택…"으로 지정한 임의의 폴더 —
+     `project.images_dir()`와 무관)의 진짜 하위 폴더 구조가 트리에 반영됨을 재귀 스캔
+     테스트로 직접 검증**(아래 검증 절 참고).
+   - `load_files(paths)`: 파일 대화상자로 개별 선택된, 공통 루트가 없는 파일들 — 폴더
+     그룹핑은 직속 부모 폴더명 기준 1단계만 적용(`_build_flat_group_tree`).
+   - `navigate(step)`/`current_display_index()`/`current_path()`/`count()` 공개 API로
+     `image_browser.ImageBrowser`와 유사한 인터페이스 제공, `image_selected` 시그널로
+     선택 변경 통지.
+
+### 검증 (구현 에이전트 자체 확인 — 검증 에이전트의 실제 UI 조작 확인 별도 필요)
+- `ast.parse()` 문법 확인 통과 (두 파일).
+- `QApplication` 하에서 `InferenceTab()`, `MainWindow()` 헤드리스 인스턴스화 성공 —
+  예외 없음.
+- `tempfile`로 `a.jpg`(루트) / `sub1/b.jpg` / `sub1/sub2/c.jpg`(2단계 중첩) /
+  `sub3/d.png`를 만들고 `InferenceImageList.load_folder()` 호출 → 폴더 정렬 모드에서
+  트리를 재귀 순회한 결과 `sub1(2)` 아래 `b.jpg`와 `sub2(1)` 아래 `c.jpg`, `sub3(1)`
+  아래 `d.png`가 모두 나타남을 확인. `_path_to_item` 키 집합이 `_all_paths` 전체와
+  정확히 일치함을 assert로 확인 — **4개 이미지 전부가 실제로 트리에서 도달 가능**
+  (BUG-005 재발 없음).
+- 검색 필터("app" 입력 시 2개 중 1개만 표시)와 `load_files()`(공통 루트 없는 2개
+  파일 → flat-group 모드)와 `navigate(1)`(인덱스 0→1 이동) 각각 별도 스크립트로 확인.
+
+### 검증 에이전트가 추가로 확인해야 할 지점
+1. `python main.py`로 추론 탭을 열어 서브스플리터 핸들 드래그(상단↔메인 영역 리사이즈)가
+   실제로 동작하는지, 앱 시작 직후 비율이 기존과 체감상 동일한지.
+2. "폴더 선택…"으로 하위 폴더가 있는 실제 폴더를 선택 → 정렬 콤보를 "폴더"로 바꿔 트리
+   접기/펼치기·이미지 선택이 실제 GUI에서 동작하는지.
+3. 검색창에 파일명 일부 입력 시 실시간 필터링, 정렬 콤보 5종 전환, 이전/다음 버튼과
+   트리 클릭 선택이 뷰어에 정확히 반영되는지.
+4. 이미지 목록 패널 리사이즈(140px 이하로 줄지 않는지, 상한 없이 넓힐 수 있는지).
+
+### 변경 파일
+`app/tabs/inference_tab.py`, `app/widgets/inference_image_list.py` (신규)
+
+### 커밋
+`b09fb83` — `feat: 추론 탭 상단↔뷰어 서브스플리터 + 이미지 목록 검색/정렬/트리형 폴더`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증 에이전트의 실제 UI 조작 확인 필요. 통과 시 학습 탭 작업
+  (커밋 `a32a8b5`)과 합쳐 Artifact `7876ed3e` 5단계 전체 완료 여부 판단.
   실행안의 3단계 완료 처리, `docs/roadmap.md` 갱신.
