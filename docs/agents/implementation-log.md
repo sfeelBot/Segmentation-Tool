@@ -1374,3 +1374,79 @@ Artifact `7876ed3e`(4탭 디자인 톤 홀리스틱 재검토) 5단계 실행안
      도구에서 캔버스 더블클릭 시 크기 입력 다이얼로그가 뜨고 값 변경이 스핀박스에도 반영되는지.
   4. 동시 작업된 #6-A(flicker) 수정과의 회귀 여부(같은 파일이므로 브러시 스트로크 연속 편집 시
      더블클릭 다이얼로그 도입이 flicker 수정에 영향 없는지 함께 확인 권장).
+
+---
+
+## 2026-08-20 — BUG-012(P2)/BUG-013(P3) 수정
+
+BUG-011(P1, 더블클릭 stray 어노테이션, `mouseDoubleClickEvent()`의 `self.undo()`)은 리더가
+이미 수정 완료한 상태였고 이번 작업에서는 건드리지 않음(코드 확인만: `annotation_canvas.py:665`
+에 `self.undo()` 존재).
+
+### BUG-013 — 브러시 크기 다이얼로그 i18n 누락
+- 근본 원인: `annotation_canvas.py`의 `mouseDoubleClickEvent()`가 `QInputDialog.getInt()`
+  제목/라벨을 `t()`를 거치지 않고 한국어로 하드코딩. 같은 파일이 `app.core.i18n`을 아예
+  import하지 않고 있었음.
+- 수정:
+  - `app/core/i18n.py` — ko/en 양쪽에 `tool.brush_size_dialog.title`/
+    `tool.brush_size_dialog.label` 키 추가(기존 `tool.brush_size` 네이밍 컨벤션에 맞춤).
+  - `app/widgets/annotation_canvas.py` — `from app.core.i18n import t` 추가, 다이얼로그
+    호출부를 `t("tool.brush_size_dialog.title")`/`t("tool.brush_size_dialog.label")`로 교체.
+
+### BUG-012 — OK 처리 후 사이드바 아이콘 stale
+- 정확한 근본 원인(코드 라인 레벨): `app/tabs/labeling_tab.py`의 `_on_toggle_ok()`가
+  "라벨 삭제→즉시 flush→OK 처리" 경로에서 **같은 어노테이션 JSON 파일에 두 개의 독립적인
+  동시 writer**를 만듦.
+  1. `clear_all_annotations()` 이후 `self._canvas._do_save()`(수정 전, 인자 없음) 호출 —
+     `annotation_canvas.py`의 구 `_do_save()`(옛 1324행)가 **매번 새 daemon 스레드**로
+     `store.save(path, [], w, h)`를 비동기 실행하고, 스레드 시작 직후 곧바로(스레드 완료를
+     기다리지 않고) `annotation_saved.emit()`을 동기 발행.
+  2. 그 직후 같은 함수 안에서 `self._canvas.toggle_ok()` 호출 — 이건 메인 스레드에서
+     동기적으로 `store.get_ok()` → `store.set_ok()`(같은 JSON 파일 read-modify-write)를
+     실행하고 다시 `annotation_saved.emit()`.
+  - 두 writer(1의 백그라운드 스레드 vs 2의 메인 스레드)가 같은 파일에 순서 보장 없이 경쟁:
+    OS 스레드 스케줄링에 따라 1의 백그라운드 쓰기가 2의 `set_ok()` 쓰기보다 **나중에** 끝나면,
+    1이 자신이 스레드 시작 시점에 캡처했던(2의 `ok=True` 쓰기 이전일 수 있는) 상태로 파일을
+    덮어써 최종 디스크 상태가 뒤바뀔 수 있음. `image_browser.refresh_item()`은
+    `annotation_saved` 시그널을 받을 때만 `get_label_status()`로 디스크를 재조회해
+    `_status_cache`에 캐싱하는데(코드 자체는 정상 — 매번 fresh read), 1·2 두 번의 emit 중
+    **어느 시점의 디스크 상태를 읽었는지가 스레드 타이밍에 좌우**되어 최종 캐시가 실제
+    최종 디스크 상태와 다르게 고정될 수 있음. 이후 다른 이미지로 전환했다가 복귀해도
+    `refresh_item()`이 재호출되지 않아(재조회 트리거가 `annotation_saved` 뿐) stale 캐시가
+    그대로 남음 — 검증 에이전트가 관찰한 증상(사이드바만 stale, 디스크/툴바는 항상 정확)과
+    일치.
+  - `image_browser.py`의 `refresh_item()`/`_status_cache` 자체는 디스크를 재조회하므로
+    범인이 아님(검증 에이전트의 두 번째 가설은 기각) — 진짜 원인은 `annotation_canvas.py`
+    `_do_save()`의 백그라운드 스레드와 `toggle_ok()`의 동기 쓰기가 같은 파일에 대해
+    **동기화 없이 경쟁**하는 구조.
+- 수정(가장 단순한 방법 — 새 스레드/락 없이 순서만 보장):
+  - `app/widgets/annotation_canvas.py`의 `_do_save()`에 `sync: bool = False` 파라미터 추가.
+    `sync=True`면 `threading.Thread` 없이 `store.save()`를 직접 동기 호출 — 이 호출이
+    끝난 뒤에야 함수가 반환되므로 이어지는 `toggle_ok()`의 파일 접근과 순서가 보장됨.
+    `sync=False`(기존 디바운스 저장·`load_image()`의 flush 등 다른 모든 호출부)는 기존과
+    동일하게 비동기 유지 — 그쪽은 같은 파일에 대한 즉각적인 2차 writer가 없어 경쟁이 없음.
+  - `app/tabs/labeling_tab.py`의 `_on_toggle_ok()`에서 `self._canvas._do_save()` →
+    `self._canvas._do_save(sync=True)`로 변경.
+  - `load_image()`(`annotation_canvas.py:268`)의 flush 호출은 손대지 않음 — 다른 이미지로
+    전환하기 직전 1회성 flush라 동시 2차 writer가 없어 이 버그와 무관.
+
+### 검증
+- `python -m py_compile app/widgets/annotation_canvas.py app/tabs/labeling_tab.py app/core/i18n.py`
+  통과.
+- 커밋: `fix: BUG-012 사이드바 아이콘 stale 경쟁조건 수정 + BUG-013 브러시 크기 다이얼로그 i18n`
+  (해시는 커밋 후 리더 보고에 기재)
+- `git push`는 수행하지 않음
+
+### 다음 단계 — 완료 보고 아님, 검증 에이전트 확인 필요
+1. **BUG-012 재현 시나리오**: `python main.py` → 라벨 있는 이미지에서 OK 토글 → "예" →
+   사이드바 체크마크 확인 → 다른 이미지 클릭 → 원래 이미지로 복귀 → 사이드바가 여전히
+   체크마크인지(회귀분 빈 원으로 안 바뀌는지) 확인. 이 경쟁 조건은 타이밍 의존적이라 기존
+   버그도 100% 매번 재현되진 않았을 수 있음 — 여러 번(5회 이상) 반복 토글/전환해서 확인 권장.
+   동시에 `projects/*/annotations/*.json`의 `ok`/`annotations` 필드가 항상 정확한지도 함께
+   확인.
+2. **BUG-013 재현 시나리오**: 설정에서 언어를 English로 변경 후 재시작 → 라벨링 탭에서
+   브러시/지우개 도구로 캔버스 더블클릭 → 다이얼로그 제목이 "Brush Size", 라벨이
+   "Brush size (1~200)"로 뜨는지 확인(한국어 잔존 없음). 한국어 설정에서는 기존과 동일한
+   한국어 문구인지도 함께 확인.
+3. 두 수정 모두 `annotation_canvas.py`를 공유하므로 기존 골든 패스(브러시 페인트, undo,
+   OK 토글, 더블클릭 브러시 크기 변경)에 회귀가 없는지 가볍게 스모크 확인 권장.

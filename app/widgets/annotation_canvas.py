@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QThread, pyqtSignal
 
 from app.core import annotation_store as store
 from app.core.annotation_store import AnnotationItem
+from app.core.i18n import t
 from app.core.perf_logger import profiler as _perf
 
 
@@ -663,7 +664,7 @@ class AnnotationCanvas(QWidget):
             # 원치 않는 미세 스트로크를 어노테이션으로 커밋했으므로 되돌린다.
             self.undo()
             size, ok = QInputDialog.getInt(
-                self, "브러시 크기", "브러시 크기 (1~200)",
+                self, t("tool.brush_size_dialog.title"), t("tool.brush_size_dialog.label"),
                 self._brush_size, 1, 200,
             )
             if ok:
@@ -1321,23 +1322,29 @@ class AnnotationCanvas(QWidget):
     def _schedule_save(self) -> None:
         self._save_timer.start()
 
-    def _do_save(self) -> None:
+    def _do_save(self, sync: bool = False) -> None:
         if self._image_path is None or self._pixmap is None:
             return
-        import threading
         # 리스트만 shallow 복사 — mask 배열은 rle_encode 가 읽기만 하므로 복사 불필요
         path = self._image_path
         w, h = self._img_w, self._img_h
         anns_snap = list(self._annotations)
 
-        def _save_thread():
+        def _save() -> None:
             try:
                 store.save(path, anns_snap, w, h)
             except Exception as exc:
                 from app.core.logger import get_logger
-                get_logger(__name__).error(f"백그라운드 저장 실패: {exc}")
+                get_logger(__name__).error(f"저장 실패: {exc}")
 
-        threading.Thread(target=_save_thread, daemon=True).start()
+        if sync:
+            # 이 저장 직후 같은 파일을 또 건드리는 호출(예: toggle_ok())이 있는 경우
+            # 백그라운드 스레드와 경쟁하면 나중에 끝나는 쪽이 먼저 쪽을 덮어써
+            # 사이드바 상태 캐시가 stale해질 수 있다(BUG-012) — 동기 실행으로 순서를 보장한다.
+            _save()
+        else:
+            import threading
+            threading.Thread(target=_save, daemon=True).start()
         self.annotation_saved.emit()
 
     # ── 내부 — 렌더링 ─────────────────────────────────────────────────────────

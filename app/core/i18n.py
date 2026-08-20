@@ -146,6 +146,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # ── 라벨링 기타 ────────────────────────────────────────────────────
         "tool.brush_size":   "브러시 크기:",
+        "tool.brush_size_dialog.title": "브러시 크기",
+        "tool.brush_size_dialog.label": "브러시 크기 (1~200)",
         "tool.undo.tip":      "↶ 실행 취소 (Ctrl+Z)",
         "tool.clear.tip":     "현재 이미지의 모든 어노테이션 삭제",
         "tool.ok.tip":         "어노테이션이 없어도 검수 완료(OK) 로 표시\n다시 클릭하면 해제",
@@ -384,6 +386,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
         # ── Labeling misc ─────────────────────────────────────────────────
         "tool.brush_size":   "Brush size:",
+        "tool.brush_size_dialog.title": "Brush Size",
+        "tool.brush_size_dialog.label": "Brush size (1~200)",
         "tool.undo.tip":      "↶ Undo (Ctrl+Z)",
         "tool.clear.tip":     "Delete all annotations on the current image",
         "tool.ok.tip":         "Mark as reviewed (OK) even without annotations\nClick again to unmark",

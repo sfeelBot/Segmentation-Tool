@@ -454,10 +454,12 @@ class LabelingTab(QWidget):
                 self._act_ok.setChecked(False)
                 return
             self._canvas.clear_all_annotations()
-            # 삭제를 즉시 디스크에 반영한 뒤 OK 플래그를 써야 잔여 라벨과 섞이지 않음
+            # 삭제를 동기적으로 디스크에 반영한 뒤 OK 플래그를 써야 함 — 비동기(스레드)로
+            # 저장하면 뒤이은 toggle_ok() 의 동기 쓰기와 같은 파일에 경쟁 상태가 생겨
+            # 사이드바 상태 캐시가 stale해진다 (BUG-012)
             if self._canvas._save_timer.isActive():
                 self._canvas._save_timer.stop()
-                self._canvas._do_save()
+                self._canvas._do_save(sync=True)
         self._canvas.toggle_ok()
 
     def _on_auto_label(self) -> None:
