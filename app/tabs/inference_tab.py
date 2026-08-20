@@ -4,11 +4,10 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QComboBox, QSpinBox,
     QFileDialog, QMessageBox, QTableWidget,
-    QTableWidgetItem, QGroupBox, QListWidget,
-    QListWidgetItem, QSplitter, QHeaderView,
+    QTableWidgetItem, QGroupBox, QSplitter, QHeaderView,
 )
-from PyQt6.QtGui import QColor, QIcon, QPixmap
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt
 
 from app.core import inference_engine as engine
 from app.core.inference_engine import (
@@ -18,17 +17,19 @@ from app.core.inference_engine import (
 from app.core.logger import get_logger
 from app.core.device_info import prompt_gpu_availability
 from app.widgets.overlay_viewer import OverlayViewerPanel
+from app.widgets.inference_image_list import InferenceImageList
 
 log = get_logger(__name__)
 
-SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
-THUMB = 64
+_SPLITTER_STYLE = (
+    "QSplitter::handle { background:#374151; }"
+    "QSplitter::handle:hover { background:#60a5fa; }"
+)
 
 
 class InferenceTab(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._image_paths: list[Path] = []
         self._image_path: Path | None = None
         self._last_result: InferenceResult | None = None
         self._ckpt_metas: list[CheckpointMeta] = []
@@ -42,16 +43,26 @@ class InferenceTab(QWidget):
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(6)
 
-        # ── 상단 제어 행 ──────────────────────────────────────────────────────
-        ctrl = QHBoxLayout()
+        # ── 상단↔뷰어 서브스플리터 ────────────────────────────────────────────
+        outer_splitter = QSplitter(Qt.Orientation.Vertical)
+        outer_splitter.setHandleWidth(5)
+        outer_splitter.setStyleSheet(_SPLITTER_STYLE)
 
+        # ── 상단 영역 (파일 컨트롤 + 추론 방식 + 체크포인트 테이블) ────────────
+        top_widget = QWidget()
+        top_widget.setMinimumHeight(140)
+        top_layout = QVBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(6)
+
+        ctrl = QHBoxLayout()
         self._btn_file = QPushButton("파일 선택…")
         self._btn_folder = QPushButton("폴더 선택…")
         ctrl.addWidget(self._btn_file)
         ctrl.addWidget(self._btn_folder)
 
         self._lbl_count = QLabel("")
-        self._lbl_count.setStyleSheet("color:#888; min-width:80px;")
+        self._lbl_count.setStyleSheet("color:#9ca3af; min-width:80px;")
         ctrl.addWidget(self._lbl_count)
 
         ctrl.addStretch()
@@ -59,8 +70,7 @@ class InferenceTab(QWidget):
         self._btn_run = QPushButton("▶  추론 실행")
         self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
         ctrl.addWidget(self._btn_run)
-
-        root.addLayout(ctrl)
+        top_layout.addLayout(ctrl)
 
         # ── 추론 방식 ─────────────────────────────────────────────────────────
         infer_mode_row = QHBoxLayout()
@@ -82,7 +92,7 @@ class InferenceTab(QWidget):
         self._overlap_spin.setFixedWidth(80)
         self._overlap_spin.setToolTip("패치 간 겹치는 픽셀 수 (sliding_window 모드)")
         infer_mode_row.addWidget(self._overlap_spin)
-        root.addLayout(infer_mode_row)
+        top_layout.addLayout(infer_mode_row)
 
         # ── 체크포인트 테이블 ──────────────────────────────────────────────────
         ckpt_header = QHBoxLayout()
@@ -91,7 +101,7 @@ class InferenceTab(QWidget):
         self._btn_refresh = QPushButton("↺ 새로고침")
         self._btn_refresh.setFixedWidth(80)
         ckpt_header.addWidget(self._btn_refresh)
-        root.addLayout(ckpt_header)
+        top_layout.addLayout(ckpt_header)
 
         self._ckpt_table = QTableWidget(0, 5)
         self._ckpt_table.setHorizontalHeaderLabels(
@@ -100,14 +110,13 @@ class InferenceTab(QWidget):
         self._ckpt_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._ckpt_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._ckpt_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._ckpt_table.setMaximumHeight(120)
         hdr = self._ckpt_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        root.addWidget(self._ckpt_table)
+        top_layout.addWidget(self._ckpt_table, stretch=1)
 
         # 선택된 체크포인트의 모델 정보 표시
         self._lbl_model_info = QLabel("— 체크포인트를 선택하세요")
@@ -115,28 +124,22 @@ class InferenceTab(QWidget):
             "color:#9ca3af; font-size:11px; padding:2px 4px;"
             "background:#1a1d23; border-radius:3px;"
         )
-        root.addWidget(self._lbl_model_info)
+        top_layout.addWidget(self._lbl_model_info)
 
-        # ── 메인 영역 ─────────────────────────────────────────────────────────
+        outer_splitter.addWidget(top_widget)
+
+        # ── 메인 영역 (이미지 목록 | 뷰어 | 범례) ────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(5)
-        splitter.setStyleSheet(
-            "QSplitter::handle { background:#374151; }"
-            "QSplitter::handle:hover { background:#60a5fa; }"
-        )
+        splitter.setStyleSheet(_SPLITTER_STYLE)
+        splitter.setMinimumHeight(200)
 
         # 이미지 목록 (폴더 선택 시 표시)
         self._list_panel = QWidget()
         list_layout = QVBoxLayout(self._list_panel)
         list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.addWidget(QLabel("이미지 목록"))
-        self._img_list = QListWidget()
-        self._img_list.setIconSize(QSize(THUMB, THUMB))
-        self._img_list.setGridSize(QSize(THUMB + 8, THUMB + 20))
-        self._img_list.setViewMode(QListWidget.ViewMode.IconMode)
-        self._img_list.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self._img_list.setWordWrap(True)
-        list_layout.addWidget(self._img_list)
+        self._img_list = InferenceImageList()
+        list_layout.addWidget(self._img_list, stretch=1)
 
         # 이동 버튼
         nav = QHBoxLayout()
@@ -158,7 +161,7 @@ class InferenceTab(QWidget):
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
         self._lbl_filename = QLabel("선택된 이미지 없음")
-        self._lbl_filename.setStyleSheet("color:#888; padding:2px 4px;")
+        self._lbl_filename.setStyleSheet("color:#9ca3af; padding:2px 4px;")
         center_layout.addWidget(self._lbl_filename)
         self._viewer_panel = OverlayViewerPanel()
         center_layout.addWidget(self._viewer_panel, stretch=1)
@@ -183,7 +186,12 @@ class InferenceTab(QWidget):
         splitter.addWidget(right)
 
         splitter.setStretchFactor(1, 1)
-        root.addWidget(splitter, stretch=1)
+        outer_splitter.addWidget(splitter)
+
+        outer_splitter.setSizes([300, 10000])   # 기존 stretch 비율 재현(상단 고정폭 상당, 메인 영역 우선)
+        outer_splitter.setStretchFactor(0, 0)
+        outer_splitter.setStretchFactor(1, 1)
+        root.addWidget(outer_splitter, stretch=1)
 
         # ── 시그널 연결 ───────────────────────────────────────────────────────
         self._btn_refresh.clicked.connect(self._refresh_checkpoints)
@@ -192,7 +200,7 @@ class InferenceTab(QWidget):
         self._btn_run.clicked.connect(self._on_run)
         self._btn_prev.clicked.connect(self._on_prev)
         self._btn_next.clicked.connect(self._on_next)
-        self._img_list.currentRowChanged.connect(self._on_list_row_changed)
+        self._img_list.image_selected.connect(self._on_image_selected)
         self._viewer_panel.opacity_changed.connect(self._on_opacity_changed)
         self._ckpt_table.doubleClicked.connect(lambda: self._on_run())
         # 체크포인트 선택 → 즉시 모델 결정
@@ -211,54 +219,42 @@ class InferenceTab(QWidget):
         )
         if not paths:
             return
-        self._load_paths([Path(p) for p in paths])
+        self._img_list.load_files([Path(p) for p in paths])
+        self._after_load()
 
     def _on_select_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if not folder:
             return
-        paths = sorted(
-            p for p in Path(folder).iterdir()
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
-        )
-        if not paths:
+        self._img_list.load_folder(Path(folder))
+        if self._img_list.count() == 0:
             QMessageBox.information(self, "이미지 없음",
-                "선택한 폴더에 지원되는 이미지가 없습니다.")
+                "선택한 폴더(하위 폴더 포함)에 지원되는 이미지가 없습니다.")
             return
-        self._load_paths(paths)
+        self._after_load()
 
-    def _load_paths(self, paths: list[Path]) -> None:
-        self._image_paths = paths
-        self._img_list.clear()
-        for p in paths:
-            icon = _make_thumb_icon(p)
-            item = QListWidgetItem(icon, p.name)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-            self._img_list.addItem(item)
+    def _after_load(self) -> None:
+        count = self._img_list.count()
+        self._list_panel.setVisible(count > 1)
+        self._lbl_count.setText(f"{count}개 이미지")
+        self._update_nav_label()
 
-        multi = len(paths) > 1
-        self._list_panel.setVisible(multi)
+    def _on_image_selected(self, path: Path) -> None:
+        self._image_path = path
+        self._lbl_filename.setText(path.name)
+        self._lbl_filename.setStyleSheet("color:#e5e7eb; padding:2px 4px;")
+        self._update_nav_label()
 
-        self._lbl_count.setText(f"{len(paths)}개 이미지")
-        self._img_list.setCurrentRow(0)   # → _on_list_row_changed 트리거
-
-    def _on_list_row_changed(self, row: int) -> None:
-        if 0 <= row < len(self._image_paths):
-            self._image_path = self._image_paths[row]
-            self._lbl_filename.setText(self._image_path.name)
-            self._lbl_filename.setStyleSheet("color:#ccc; padding:2px 4px;")
-            total = len(self._image_paths)
-            self._lbl_nav.setText(f"{row + 1} / {total}")
+    def _update_nav_label(self) -> None:
+        idx = self._img_list.current_display_index()
+        total = self._img_list.count()
+        self._lbl_nav.setText(f"{idx + 1} / {total}" if idx >= 0 else f"0 / {total}")
 
     def _on_prev(self) -> None:
-        row = self._img_list.currentRow()
-        if row > 0:
-            self._img_list.setCurrentRow(row - 1)
+        self._img_list.navigate(-1)
 
     def _on_next(self) -> None:
-        row = self._img_list.currentRow()
-        if row < self._img_list.count() - 1:
-            self._img_list.setCurrentRow(row + 1)
+        self._img_list.navigate(1)
 
     # ── 슬롯 — 체크포인트 선택 ──────────────────────────────────────────────
 
@@ -436,17 +432,3 @@ class InferenceTab(QWidget):
         if hasattr(win, "_model_tab"):
             return win._model_tab.loaded_model
         return None
-
-
-# ── 헬퍼 ─────────────────────────────────────────────────────────────────────
-
-def _make_thumb_icon(path: Path) -> QIcon:
-    px = QPixmap(str(path))
-    if px.isNull():
-        px = QPixmap(THUMB, THUMB)
-        px.fill()
-    else:
-        px = px.scaled(THUMB, THUMB,
-                       Qt.AspectRatioMode.KeepAspectRatio,
-                       Qt.TransformationMode.SmoothTransformation)
-    return QIcon(px)
