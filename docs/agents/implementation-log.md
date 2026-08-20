@@ -741,3 +741,86 @@ Artifact `5df2af11-0642-4e69-8ddc-f545333eebca`)의 라벨링 탭 부분 + "구�
   → 저장 경로 선택 → 실행 → 진행률/완료 메시지 육안 확인) 확인이 남아있음. "주요 기능 추가"
   라운드이므로 골든 패스 수준 검증 필요.
 - 검증 통과 시 스펙에 명시된 대로 라운드 B(프로젝트 가져오기, import)로 곧바로 이어짐.
+
+---
+
+## 2026-08-20 — 프로젝트 가져오기(import) 추가 — GitHub #2 라운드B (요청2 마지막 라운드)
+
+`docs/specs/voc-github-issues-2026-08-20.md` "요청 2 · 라운드 B" 구현. **이 라운드가
+GitHub #2 요청2(프로젝트 export/import)의 마지막 라운드다** — 라운드 A(export, 커밋
+`911f85a`, 검증 통과 `d42fe46`) 다음 순서로 이어서 진행.
+
+### 변경
+- `app/core/project_export.py` (기존 export 로직에 이어 확장, 같은 파일 — export/import가
+  같은 zip 포맷을 알아야 하므로 자연스럽게 한 파일에 배치):
+  - `ProjectZipError`, `ProjectImportCancelled` 예외, `ProjectImportResult` 데이터클래스 추가.
+  - `validate_project_zip(zf)` — `images/`, `annotations/`, `classes.json` 존재 확인
+    (`project.json`은 `open_existing()`이 없어도 자동 생성 가능해 필수에서 제외).
+  - `resolve_import_dir_name(dest_root, base_name)` — 충돌 시 `_imported`, `_imported_2`…
+    순 증가, 기존 폴더 절대 덮어쓰지 않음(사용자 확정 정책 그대로 구현).
+  - `_resolve_member_target(dest_dir, arcname)` — zip slip 방지: 절대경로/드라이브 문자/`..`
+    상위 이동을 포함한 arcname을 `None`으로 판정해 호출측이 해당 항목만 건너뛰게 함(전체
+    거부가 아니라 항목 단위 스킵 — 스펙이 허용한 두 방식 중 항목 스킵을 선택, `skipped` 카운트로
+    사용자에게 안내).
+  - `collect_import_plan(zf, dest_dir)` — `(ZipInfo, 안전한 해제 대상 경로)` 목록 + skip 개수.
+  - `import_project_zip(zip_path, dest_root, progress_cb=None, should_cancel=None) ->
+    ProjectImportResult` — `collect_export_entries()`가 만든 zip 구조의 역연산. 손상된
+    zip(`BadZipFile`, `testzip()` 실패)과 필수 항목 누락은 `ProjectZipError`로 방어적 처리.
+    실패/취소 시 이미 만든 대상 폴더를 `shutil.rmtree`로 롤백.
+- `app/core/project.py` — `add_recent(path)` 공개 함수 추가. 기존 `_touch_recent()`와 달리
+  `last_project`(마지막 열린 프로젝트, 앱 재시작 시 자동 복원용)는 건드리지 않음 — 가져오기는
+  프로젝트를 "연" 것이 아니라 최근 목록에만 반영해야 하므로 부수효과를 분리.
+- `app/widgets/project_import_dialog.py` (신규) — `ProjectImportDialog` + `_ProjectImportWorker
+  (QThread)`. 라운드 A의 `_ProjectExportWorker`와 동일 패턴(진행률 시그널 + 성공여부 포함
+  finished 시그널 하나). export 다이얼로그와 달리 옵션 체크박스가 없어(가져오기는 zip 내용을
+  그대로 복원) 구조를 단순화 — 통합하지 않고 별도 파일로 분리(export/import 성격이 다르고
+  워커 로직도 다름, 라운드 A와 같은 판단 기준 적용).
+- `app/widgets/project_start_dialog.py` — 새 프로젝트/프로젝트 열기 버튼 아래 별도 줄에
+  "📥 가져오기…" 버튼 추가. `QFileDialog.getOpenFileName`으로 zip 선택 → `ProjectImportDialog`
+  실행 → 성공 시 `proj.add_recent()`로 최근 목록 반영 후 목록 갱신(자동으로 열지는 않음 —
+  과설계 방지, 사용자가 필요하면 최근 목록에서 직접 열도록).
+- `app/core/i18n.py` — `project_import.*` 키 셋(ko/en) 추가. 버전 호환성 경고 문구
+  (`project_import.invalid_zip`, `.skipped_warning`)에 스펙이 요구한 "가져온 프로젝트에
+  문제가 있을 수 있습니다" 수준 안내를 그대로 포함.
+
+### 검증(직접 수행, 스크래치 디렉토리 사용)
+스크립트: `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\
+56a2e70d-4430-40c3-96ed-f10c2f90fcf9\scratchpad\test_import.py` (저장소 밖, 커밋 대상 아님).
+1. **왕복(round-trip) 테스트** — 합성 프로젝트(이미지 2장 중 1개는 하위폴더, `.thumbs` 캐시,
+   annotations JSON, classes.json, checkpoint, user_models) 생성 → `collect_export_entries()`로
+   실제 zip 생성 → 이번에 만든 `import_project_zip()`으로 가져오기. 이미지 바이트(sha256 일치),
+   annotations/classes.json 내용 일치, checkpoint/user_models 포함 확인, `.thumbs` 캐시는
+   내용이 이관되지 않음(빈 표준 폴더만 `ensure_dirs()`가 새로 생성) 확인. **통과**.
+2. **이름 충돌 재현** — 대상 위치에 `CollisionProj` 폴더가 이미 있는 상태에서 같은 zip을 2회
+   연속 가져오기 → 1차 `CollisionProj_imported`, 2차 `CollisionProj_imported_2`로 정확히 증가.
+   기존 폴더의 sentinel 파일 내용 무변경, `images/` 등 프로젝트 구조가 전혀 생기지 않음(전혀
+   건드려지지 않음) 확인. **통과**.
+3. **zip slip 공격 재현** — `../../evil_outside.txt`, `../evil2.txt`를 포함한 악의적 zip을
+   직접 제작해 가져오기 시도 → 두 항목 모두 skip(2/2), 나머지 정상 3개 항목은 정상 추출,
+   대상 디렉토리 밖 어디에도(`scratchpad/`, 그 상위) 파일이 생성되지 않음 확인. **통과**.
+4. **손상된 zip 재현** — (a) `images/`·`classes.json` 등 필수 항목이 전혀 없는 zip(무관한
+   파일 하나만 포함) → `ProjectZipError`로 명확히 거부. (b) zip 형식이 아닌 순수 바이트 더미
+   파일 → `zipfile.BadZipFile` → `ProjectZipError`로 변환되어 크래시 없이 거부. **통과**.
+5. `python main.py` 기동 확인 — PyQt6 → `app.core.project` 순서 유지, `ProjectStartDialog`
+   생성 시 `_btn_import` 존재 확인, 실제 앱 기동 시 예외 없음(콘솔의 cp949 로깅 인코딩 경고는
+   `PYTHONIOENCODING=utf-8`에서는 발생하지 않는 기존 환경 이슈로, 이번 변경과 무관 — 앱 기동
+   자체는 두 경우 모두 정상).
+6. 라운드 A(export) 재확인 — `ProjectExportDialog`/`_ProjectExportWorker` import 및
+   `ProjectStartDialog` 구성 시 export 버튼·컨텍스트 메뉴 정상 연결, 코드 변경 없음(라운드 B는
+   같은 파일에 함수만 추가) 확인.
+
+### 변경 파일
+`app/core/project_export.py`, `app/core/project.py`, `app/widgets/project_start_dialog.py`,
+`app/core/i18n.py`, `app/widgets/project_import_dialog.py`(신규). `git status`로 이 5개 파일
+외 다른 변경 없음 확인(세션 시작 시 이미 존재하던 `dataset.py`/`trainer.py`/`config_form.py`/
+`leader-log.md` 변경은 이번 작업과 무관 — 커밋에 포함하지 않음).
+
+### 커밋
+`4129f10` — `feat: 프로젝트 가져오기(import) 기능 추가 — GitHub #2 라운드B`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증(Verification) 에이전트의 실제 UI 조작(가져오기 버튼 클릭 → zip
+  선택 → 다이얼로그 → 진행률/완료 메시지, 라운드 A로 실제 만든 zip으로 골든 패스 확인) 확인이
+  남아있음. "주요 기능 추가" 라운드이므로 골든 패스 수준 검증 필요.
+- 검증 통과 시 **GitHub #2 요청2(export/import)가 전부 완료** — `docs/roadmap.md` 갱신 필요.
