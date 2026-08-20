@@ -1287,3 +1287,90 @@ Artifact `7876ed3e`(4탭 디자인 톤 홀리스틱 재검토) 5단계 실행안
   브러시 스핀박스 폭 — #7/#4/#3(a))를 작업 중이므로, 그 파일은 이번 커밋에 포함하지 않았음
   (git status 확인 결과 `app/tabs/labeling_tab.py`는 unstaged 변경 상태로 남아있었고 손대지
   않음).
+
+---
+
+## 2026-08-20 — GitHub #7(OK 확인 팝업) + #4(이미지명 클립보드 복사) + #3(a)/(b)(브러시 크기)
+
+라운드2 스펙(`docs/specs/voc-github-issues-round2-2026-08-20.md`) "#3", "#4", "#7" 절 기준
+구현. 동시에 다른 구현 에이전트가 `app/widgets/annotation_canvas.py`의
+`_invalidate_overlay()`(#6-A 깜빡임 수정)를 작업 중이라는 지시에 따라 그 함수는 건드리지
+않았음. `_invalidate_overlay()` 외의 같은 파일 다른 위치(브러시 크기 관련)는 이번 작업
+범위상 필요해 수정했음.
+
+### #7 — OK 처리 시 라벨 존재하면 확인 팝업
+- `app/tabs/labeling_tab.py` `_on_toggle_ok()`: OK를 **켜는** 순간(끄는 경우는 무확인)이면서
+  `self._canvas._annotations`가 비어있지 않으면 `QMessageBox.question()`으로 확인 —
+  `_on_clear_all()`이 쓰던 동일 패턴 재사용. Yes → `clear_all_annotations()` 호출 후
+  삭제를 즉시 디스크에 flush(`_save_timer` 있으면 `stop()` + `_do_save()` 직접 호출 — 안 그러면
+  500ms 디바운스 창 동안 `store.set_ok()`가 아직 라벨이 남아있는 stale JSON을 먼저 읽어
+  일시적으로 라벨+OK가 공존하는 상태가 될 수 있어, `load_image()`가 이미 쓰던 "타이머 stop 후
+  직접 `_do_save()` 호출" 패턴을 그대로 재사용) → `toggle_ok()`. No/취소 → `_act_ok.setChecked(False)`로
+  되돌리고 아무 것도 하지 않음(기존 `_on_toggle_ok`이 "이미지 미선택 시 되돌리기"에 쓰던 패턴과
+  동일).
+- i18n 키 추가(`app/core/i18n.py`, ko/en): `labeling.ok_clear_title`, `labeling.ok_clear_msg`.
+
+### #4 — 라벨링/추론 탭 이미지명 클립보드 복사
+- `app/widgets/settings_dialog.py`의 `svg_icon("clipboard")` + `QApplication.clipboard().setText(...)`
+  패턴을 그대로 재사용.
+- **라벨링 탭**: 상시 파일명 표시 UI가 없었으므로 스펙 제안대로 채널 토글 스트립
+  (`_build_channel_strip()`)의 `addStretch()` 뒤에 파일명 라벨(`_lbl_filename`) + 16×16 플랫
+  아이콘 버튼(`_btn_copy_filename`) 신설. `_on_image_selected()`/`_on_image_deleted()`에서
+  텍스트 갱신.
+- **추론 탭**: 기존 `_lbl_filename` 옆에 같은 패턴의 복사 버튼을 `QHBoxLayout`으로 감싸 추가.
+  `_on_image_selected()`가 이미 `path.name`으로 라벨을 갱신하던 구조라 텍스트 갱신 로직은
+  변경 없음, 버튼과 슬롯(`_on_copy_filename`)만 추가.
+- i18n 키 추가(라벨링 탭만 — 추론 탭은 파일 전체가 i18n 미사용이라 기존 관례대로 하드코딩 유지):
+  `labeling.copy_filename`.
+- 오토라벨링 patch training 확인 질문은 스펙 문서에 이미 사실관계로 기록 완료 — 구현 불필요.
+
+### #3(a) — 브러시 크기 입력창 잘림
+- `app/tabs/labeling_tab.py` `_spin_brush.setFixedWidth(60)` → `setMinimumWidth(76)`로 변경.
+
+### #3(b) — 브러시 크기 더블클릭 조절 (사용자 결정: 더블클릭만)
+- `app/widgets/annotation_canvas.py`: 브러시 계열 도구(`TOOL_BRUSH`/`TOOL_BRUSH_FILL`/
+  `TOOL_ERASER`/`TOOL_ERASER_FLOOD`)에서 캔버스 더블클릭 시 `QInputDialog.getInt()`로 브러시
+  크기(1~200)를 바로 입력받는 가장 단순한 방식 채택 — 팝업 슬라이더 등 커스텀 위젯 없이
+  1함수 분기로 처리(과설계 회피). `mouseDoubleClickEvent()`에 `TOOL_POLYGON` 분기 다음
+  `elif`로 추가, 폴리곤 닫기 동작과 충돌 없음.
+- 새 시그널 `brush_size_changed = pyqtSignal(int)` 추가, `set_brush_size()` 끝에서 emit —
+  더블클릭 다이얼로그로 바뀐 크기든 툴바 스핀박스로 바뀐 크기든 값이 실제로 바뀔 때 한 곳에서만
+  emit되므로 툴바 스핀박스(`labeling_tab.py`에서 `brush_size_changed.connect(self._spin_brush.setValue)`)와
+  캔버스가 항상 동기화됨. `QSpinBox.setValue()`는 값이 같으면 `valueChanged`를 재발생시키지
+  않으므로 스핀박스↔캔버스 상호 연결에 의한 무한 루프 없음(수동 확인: 코드 검토로 확정, Qt
+  표준 동작).
+- **동시성 메모**: 위 `annotation_canvas.py` 변경분은 같은 작업 디렉터리를 공유하던 다른 구현
+  에이전트의 #6-A 커밋(`6a823a5`)에 함께 포함되어 커밋됨 — 그 에이전트가 손댄
+  `_invalidate_overlay()`/`load_image()`와는 다른 위치(생성자 시그널 선언, `set_brush_size()`,
+  `mouseDoubleClickEvent()`)라 코드 충돌은 없고, git diff로 대조해 두 변경이 모두 온전히
+  반영됐음을 확인함. 다만 커밋 메시지에는 이 변경이 언급되지 않아 기록 목적상 여기 남김.
+
+### 변경 파일
+- `app/tabs/labeling_tab.py`
+- `app/tabs/inference_tab.py`
+- `app/core/i18n.py`
+- `app/widgets/annotation_canvas.py` (커밋은 `6a823a5`에 포함 — 위 동시성 메모 참고)
+
+### 커밋
+- `29248fa` — `feat: OK 확인 팝업 + 이미지명 클립보드 복사 + 브러시 스핀박스 잘림 수정 (#7, #4, #3a/b)`
+  (`app/tabs/labeling_tab.py`, `app/tabs/inference_tab.py`, `app/core/i18n.py`)
+- `6a823a5`(다른 에이전트 커밋에 편입됨) — `app/widgets/annotation_canvas.py`의
+  `brush_size_changed` 시그널 + 더블클릭 다이얼로그 부분
+- `git push`는 수행하지 않음
+
+### 검증 확인 (구현 단계 자체 스모크 테스트)
+- `ast.parse()`로 4개 변경 파일 구문 오류 없음 확인
+- `QApplication` 생성 후 `LabelingTab()`/`InferenceTab()` 인스턴스화 성공 확인(임포트·생성자
+  예외 없음)
+- `icon("clipboard")` 반환 아이콘이 null이 아님 확인
+
+### 다음 단계
+- **완료 보고 아님** — 검증 에이전트가 실제 `python main.py` 구동으로 아래를 확인해야 함:
+  1. 라벨이 있는 이미지에서 OK 토글 → 확인 팝업 → Yes/No 각각 정상 동작(Yes: 라벨 삭제 후 OK,
+     No: 되돌림), 라벨 없는 이미지는 무확인 즉시 OK, 이미 OK인 이미지 재클릭(끄기)도 무확인.
+  2. 라벨링 탭 채널 스트립의 파일명 옆 복사 버튼, 추론 탭 파일명 옆 복사 버튼 각각 클립보드에
+     정확한 파일명이 복사되는지.
+  3. 브러시 크기 스핀박스에 3자리 값(예: 150) 입력 시 잘리지 않고 다 보이는지, 브러시/지우개
+     도구에서 캔버스 더블클릭 시 크기 입력 다이얼로그가 뜨고 값 변경이 스핀박스에도 반영되는지.
+  4. 동시 작업된 #6-A(flicker) 수정과의 회귀 여부(같은 파일이므로 브러시 스트로크 연속 편집 시
+     더블클릭 다이얼로그 도입이 flicker 수정에 영향 없는지 함께 확인 권장).
