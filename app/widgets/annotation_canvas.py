@@ -659,6 +659,9 @@ class AnnotationCanvas(QWidget):
         if self._tool == TOOL_POLYGON and len(self._poly_pts) >= 3:
             self._close_polygon()
         elif self._tool in (TOOL_BRUSH, TOOL_BRUSH_FILL, TOOL_ERASER, TOOL_ERASER_FLOOD):
+            # 더블클릭의 첫 클릭이 이미 mousePressEvent/mouseReleaseEvent를 거쳐
+            # 원치 않는 미세 스트로크를 어노테이션으로 커밋했으므로 되돌린다.
+            self.undo()
             size, ok = QInputDialog.getInt(
                 self, "브러시 크기", "브러시 크기 (1~200)",
                 self._brush_size, 1, 200,
