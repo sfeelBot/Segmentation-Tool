@@ -1084,4 +1084,60 @@ matplotlib은 Qt 스타일시트를 상속받지 못하므로 색상은 Python �
 ### 다음 단계
 - **완료 보고 아님** — 검증 에이전트 확인 필요. 통과 시 Artifact `7876ed3e` 7단계 실행안
   중 5단계 이후로 진행 가능.
+
+---
+
+## 2026-08-20 — 학습 탭 큐 영역 서브스플리터 전환 (Artifact `7876ed3e` 5단계, 학습 탭 부분)
+
+### 배경
+`docs/agents/design-log.md` "2026-08-19 — UI/UX 재편 라운드 2 목업"과 "2026-08-20 — 4탭
+디자인 톤 홀리스틱 재검토"(실행 순서 5단계: 학습 탭 큐 서브스플리터)에 따라, 사용자가 짚은
+"큐 리스트를 레이아웃별로 움직일 수 없고 정보가 부족하다"는 불편을 해소.
+
+### 변경
+`app/tabs/training_tab.py` `_build_ui()`:
+- 기존: `right_layout`(QVBoxLayout)에 CUDA 배너 → `queue_box`(큐 관리 QGroupBox, 내부
+  `_queue_list.setMaximumHeight(140)` 고정) → 진행바 → 상태 행 → `h_splitter`(그래프+사이드
+  패널)를 순서대로 addWidget/addLayout — 큐 리스트는 140px로 고정, 사용자가 리사이즈 불가.
+- 변경 후: `queue_box`(큐 관리)와 `monitor_panel`(진행바+상태 행+기존 `h_splitter`)을 새
+  `self._queue_splitter`(`QSplitter(Qt.Orientation.Vertical)`)의 두 pane으로 분리.
+  라벨링 탭 라운드 2 구현(`app/tabs/labeling_tab.py`, 커밋 `f086636`)의 서브스플리터 패턴을
+  그대로 재사용 — handle width 5, hover 색상 `#374151`→`#60a5fa`.
+- `_queue_list.setMaximumHeight(140)` 제거 (대신 `queue_layout.addWidget(self._queue_list,
+  stretch=1)`) — 스플리터 전환과 **같은 커밋**에서 함께 처리해 레이아웃 붕괴 방지.
+- 초기 비율: `self._queue_splitter.setSizes([260, 10000])` — 기존 큐 박스의 자연스러운
+  높이(약 260px: 이름/모델 추가 행 + 큐 목록 140px + 제어 버튼 행 + ETA 라벨 + 그룹박스
+  여백)와 동일한 픽셀 비율로 지정, 나머지는 h_splitter 패턴(`[10000, 180]`)과 동일하게 큰
+  값으로 확장 pane 표시. `setStretchFactor(0, 0)` / `setStretchFactor(1, 1)`로 창 리사이즈
+  시에도 모니터링 영역이 우선 확장되도록 함(기존 stretch=1 동작 재현).
+- `queue_box.setMinimumHeight(120)`, `monitor_panel.setMinimumHeight(150)` 추가 — 완전
+  붕괴(0px) 방지.
+- CUDA 배너, ETA 라벨, 3열 메트릭 테이블 등은 건드리지 않음 — 진행바/상태 행/`h_splitter`는
+  `monitor_panel`이라는 새 컨테이너 QWidget으로 옮겨졌을 뿐 내부 구조·시그널 연결은 그대로.
+- **범위 확인**: `app/tabs/inference_tab.py`는 다른 구현 에이전트가 동시 작업 중이라
+  건드리지 않음.
+
+### 검증
+- `ast.parse()` 문법 확인 통과.
+- `QT_QPA_PLATFORM=offscreen`으로 `TrainingTab()` 헤드리스 인스턴스화 성공 — 예외 없음.
+  `_queue_splitter.sizes()` → `[120, 355]`(오프스크린 소형 창 기준, `setMinimumHeight`
+  제약으로 인한 값), `_queue_list.maximumHeight()` → `16777215`(Qt 기본값, 고정 상한
+  제거 확인).
+- 실제 GUI에서 사람이 드래그해보는 리사이즈 동작, 실행 시 초기 비율이 이전과 시각적으로
+  동일한지는 **미확인** — 검증 에이전트가 `python main.py`로 학습 탭을 열어
+  (1) 앱 시작 직후 큐 영역 높이가 이전과 체감상 동일한지, (2) 핸들을 드래그해 큐 리스트를
+  더 크게/작게 조절할 수 있는지, (3) 여러 작업을 큐에 추가했을 때 리스트가 확장된 영역에서
+  스크롤 없이 더 많이 보이는지 확인 필요.
+
+### 변경 파일
+`app/tabs/training_tab.py`
+
+### 커밋
+`a32a8b5` — `feat: 학습 탭 큐 영역을 세로 서브스플리터로 전환 — 자유 리사이즈 지원`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증 에이전트의 실제 UI 조작 확인 필요 (리사이즈 동작, 초기 비율).
+  통과 시 Artifact `7876ed3e` 5단계의 나머지 부분(추론 탭 서브스플리터·이미지 트리, 별도
+  구현 에이전트 작업)과 합쳐 5단계 전체 완료 여부 판단.
   실행안의 3단계 완료 처리, `docs/roadmap.md` 갱신.
