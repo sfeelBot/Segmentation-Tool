@@ -856,3 +856,70 @@ NTFS ADS 콜론 경로는 참고 사항으로만 남기며 별도 조치 불필�
 - 검증 전후 `git status` 확인 — 이번 세션 시작 시 이미 존재하던 변경(dataset.py 등)은
   검증 도중 다른 경로로 이미 커밋되어 현재 `working tree clean` — 이번 검증 작업으로 인한
   코드 변경 없음.
+
+---
+
+## 2026-08-20 — 기능 아이콘 SVG화 확장판 검증 (커밋 `2ad0165` feat + `2f05313` docs)
+
+### 배경
+`docs/agents/implementation-log.md` "2026-08-20 — 기능 아이콘 SVG화 확장판" 항목 검증. 이모지
+19종(라벨링 툴바 13개, 아이콘 전용 버튼 5개, image_browser 상태기호 3종, training_progress_dialog
+STATUS_ICON 5종, log_panel CRITICAL)을 `app/resources/icons/*.svg` 22개 + `app/widgets/icons.py`
+로더 기반 SVG로 교체한 라운드. 구현 에이전트는 `py_compile`/headless SVG 렌더링/위젯 생성
+스모크 테스트까지 수행했고, 실제 `python main.py` 대화형 구동 확인은 이번 검증에서 처음 수행.
+
+### 방법
+`C:\Users\Feel\anaconda3\python.exe main.py`를 실제 GUI 모드(오프스크린 아님)로 백그라운드 실행,
+PowerShell(`System.Windows.Forms`/`System.Drawing` P/Invoke)로 스크린샷 캡처 + 마우스 클릭
+시뮬레이션을 조합해 실제 창을 조작하며 육안 확인. 스크립트 3종(`screenshot.ps1`, `click.ps1`,
+`crop.ps1`)은 스크래치 디렉토리에만 작성(저장소에 추가 안 함). `projects/nok` 데이터로 실제
+프로젝트를 열어 조작.
+
+### 확인 결과 (전부 통과)
+1. **라벨링 탭 툴바 13개** — 폴리곤/브러시/버킷/지우개/영역지우개/선택/팬 7개 도구 아이콘 +
+   Brush size 필드 + 실행취소/전체지우기/어노테이션표시(eye)/OK(check)/자동라벨링(sparkle)/
+   전체화면 6개 전부 SVG로 정상 렌더링, 빈 아이콘·깨진 아이콘 없음(크롭 스크린샷으로 확인).
+   브러시 도구 클릭 시 활성 배경(`#1e3a5f`)이 정상 하이라이트됨(`crop_toolbar2.png`).
+   어노테이션표시(eye) 토글 클릭 시 캔버스의 폴리곤 스트로크가 실제로 사라졌다가 재클릭 시
+   복원됨(`shot17.png`→`shot18.png`) — 시각 교체뿐 아니라 기능도 정상.
+2. **이미지 브라우저 상태 아이콘 3종** — 라벨완료(초록 채움원, `#10b981`)/OK(파랑 체크,
+   `#60a5fa`)/미라벨(회색 빈 원, `#4b5563`) 전부 색상·형태 정상 렌더링, 범례 행도 아이콘+텍스트
+   조합으로 정상 표시(`crop_status.png`).
+3. **main_window 새로고침/폴더열기 버튼 2개** — 상단 우측에 원형 화살표(refresh)/폴더 아이콘
+   정상 렌더링(`crop_topright.png`).
+4. **설정 다이얼로그 클립보드 버튼** — Settings → Logs 탭에서 clipboard.svg 아이콘 버튼 3개
+   확인, 그 중 하나(`app.log` 경로)를 실제로 클릭해 Windows 클립보드에 정확한 경로 문자열이
+   복사됨을 `[System.Windows.Forms.Clipboard]::GetText()`로 직접 확인 — 시각 요소뿐 아니라
+   클릭 동작(기존 기능)도 회귀 없음.
+5. **학습 탭 큐 리스트 + 진행 다이얼로그** — 구현 로그가 지적한 "부수 발견"(`training_tab.py`가
+   `STATUS_ICON`→`STATUS_ICON_NAME` 리네임 대상을 같이 참조하던 지점) 검증에 집중. 실제로
+   Job(`test_job`)을 큐에 추가해 `_refresh_queue_list()` 경로(대기 상태 status_ring 아이콘)가
+   `ImportError` 없이 정상 렌더링됨을 확인(`crop_queue.png`), `Progress` 버튼으로
+   `TrainingProgressDialog`를 열어 `update_queue()` 경로(동일 대기 아이콘)도 정상 렌더링됨을
+   확인(`shot14.png`) — 리네임이 두 호출부 모두에서 일관되게 반영됨.
+6. **log_panel CRITICAL 기호** — 코드 정적 확인으로 `LEVEL_ICON["CRITICAL"] = "■"`(이모지
+   아님) 확인. 실제 CRITICAL 로그를 GUI 조작만으로 유발하기 어려워(운영 중 크래시급 이벤트
+   필요) 육안 트리거는 생략 — 문자 1개 치환뿐이라 정적 확인으로 충분하다고 판단(구현 로그도
+   동일 판단).
+7. **회귀 확인** — 이미지 전환(10번→11번), 도구 전환(폴리곤→브러시), 자동 라벨링 다이얼로그
+   열기(빠른 학습+자동 라벨링 탭 정상 표시 후 닫기), 학습 탭 큐 추가/전체 삭제(확인 다이얼로그
+   포함), 추론 탭 진입(체크포인트 없음 상태 정상 표시) — 전부 예외/크래시 없이 정상 동작.
+   콘솔에 반복 출력된 `UnicodeEncodeError`(cp949 로깅 인코딩 경고)는 과거 라운드 로그
+   (`2026-08-20 GitHub #2 라운드B` 검증 항목)에서도 이미 확인된 기존 환경 이슈로, 이번
+   아이콘 변경과 무관(파일 로그는 `encoding="utf-8"`로 정상 기록되고, 콘솔 스트림만 영향받음
+   — 앱 크래시로 이어지지 않음).
+8. **부수 확인** — `broom.svg`(log_panel 정리 버튼)가 작은 크기(20px)에서 대각선 손잡이 +
+   뭉친 솔 형태로 렌더링돼 얼핏 연필처럼 보일 수 있음을 육안으로 인지했으나, 승인된 디자인
+   목업(Artifact `7876ed3e`)의 의도된 형태이고 인접 폴더 아이콘과 툴팁으로 구분 가능해
+   버그로 등록하지 않음(디자인 판단 영역).
+9. 테스트 종료 후 `git status --porcelain` 클린 확인 — `projects/nok` 등 실데이터 무변경.
+
+### 결론
+**검증 통과.** 19개 지점 전부 정상 렌더링·정상 동작 확인, 발견된 버그 없음(QA.md 등록 대상 없음).
+`docs/roadmap.md`의 "아이콘/이모지 → 미니멀 디자인" 1단계 체크 표시 및 "디자인 톤 홀리스틱
+재검토" 실행 순서 1번 체크 처리는 리더 몫으로 남김.
+
+### 비고
+- 스크린샷/크롭 이미지, PowerShell 스크립트(`screenshot.ps1`/`click.ps1`/`crop.ps1`) 전부
+  스크래치 디렉토리(`.../40989d09-9093-4389-bdea-4fb6757d53b9/scratchpad/`)에만 저장, 저장소에
+  추가하지 않음.
