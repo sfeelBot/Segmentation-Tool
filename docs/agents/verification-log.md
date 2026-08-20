@@ -923,3 +923,76 @@ PowerShell(`System.Windows.Forms`/`System.Drawing` P/Invoke)로 스크린샷 캡
 - 스크린샷/크롭 이미지, PowerShell 스크립트(`screenshot.ps1`/`click.ps1`/`crop.ps1`) 전부
   스크래치 디렉토리(`.../40989d09-9093-4389-bdea-4fb6757d53b9/scratchpad/`)에만 저장, 저장소에
   추가하지 않음.
+
+---
+
+## 2026-08-20 — 장식 이모지 제거 라운드 마무리 검증 (커밋 `b33491d` feat + `b9a18d6` docs)
+
+### 배경
+`docs/agents/implementation-log.md` "장식 이모지 제거 라운드 마무리(i18n.py + 폴더 트리 아이콘)"
+항목 검증. 1차 구현 에이전트가 세션 한도로 19개 파일 미커밋 상태에서 중단, 리더가 안전성만
+확인 후 2차 에이전트가 이어받아 `i18n.py` 전체(ko/en 96곳) + `image_browser.py` 폴더 헤더
+아이콘화 + `training_tab.py` 누락분 3곳까지 마무리한 라운드. `menu.settings`/`menu.export`
+i18n 키를 삭제하고 `main_window.py`의 두 버튼을 `svg_icon()` 기반 아이콘 버튼(`gear.svg`,
+`export.svg` 신규)으로 전환하는 구조 변경이 섞여 있어 실제 클릭 동작 확인이 핵심.
+
+### 방법
+정적 검토(코드 리딩 + grep) 후 `C:\Users\Feel\anaconda3\python.exe main.py`를 실제 GUI 모드로
+백그라운드 실행, PowerShell(`screenshot.ps1`/`click.ps1`, R-아이콘 검증 라운드 스크래치에서
+재사용) 조합으로 실제 창을 조작하며 육안 확인. `projects/nok` 데이터로 실제 프로젝트를 열어
+조작.
+
+### 확인 결과
+1. **정적 검토** — `ast.parse()`로 `app/` 전체 재귀 컴파일 오류 0건 재확인.
+   `grep -rn "menu\.settings|menu\.export"` 결과 `main_window.py`의 `.tip` 서브키(존재하는
+   키) 참조만 남아있고, 삭제된 `menu.settings`/`menu.export` 자체를 참조하는 죽은 코드 없음.
+   `settings_dialog.py`의 국기 이모지(🇰🇷/🇺🇸) 원본 유지 확인.
+2. **4대 탭 이름** — Labeling / Training / Inference / Model 전부 이모지 없이 텍스트만
+   정상 표시(스크린샷 확인, 탭 전환 4회 전부 정상 렌더링, 깨진 위젯 없음).
+3. **설정 아이콘 버튼(gear.svg)** — 상단 우측 코너 클릭 시 `SettingsDialog`가 실제로 열림,
+   일반/Logs 탭 전환 정상, Language 콤보(`us  English`, 국기 이모지 보존 확인 — 다만 Windows
+   폰트가 regional indicator 이모지를 "us" 텍스트 글리프로 폴백 렌더링하는 것을 육안 확인,
+   이건 이 라운드와 무관한 OS/폰트 렌더링 특성이라 버그 아님), Logs 탭의 app.log/errors.log/
+   perf.log 클립보드 아이콘 버튼 정상 표시. 클릭 동작(다이얼로그 오픈) 회귀 없음.
+4. **내보내기 아이콘 버튼(export.svg)** — 클릭 시 `ExportDialog`("Export labeled data")가
+   실제로 열림, 체크박스 3종·포맷 콤보·"Select export folder"/"Start export" 버튼 전부 정상
+   렌더링. 클릭 동작 회귀 없음.
+5. **이미지 브라우저 폴더 트리 아이콘** — `projects/nok`은 서브폴더가 없어 실제 UI 조작만으로는
+   폴더 헤더가 트리거되지 않음. `projects/nok/images/sub_test/`에 이미지 1장을 넣고 앱을
+   재시작해 재현 시도했으나 목록에 반영되지 않음(아래 "부수 발견" 참고) — 대신 헤드리스
+   스크립트로 `ImageBrowser._all_paths`에 서브폴더 경로를 직접 주입해 `_build_folder_tree()`를
+   강제 트리거한 결과, `_make_folder_item()`이 만든 폴더 헤더 아이템의 `icon(0).isNull()`이
+   `False`(14×14 정상 렌더링)임을 확인 — **이번 라운드가 바꾼 아이콘 렌더링 코드 자체는
+   정상 동작**. 테스트 후 `sub_test/` 삭제, `git status --porcelain` 클린 재확인.
+6. **학습 탭 상태 라벨(`⏸️` 제거 3곳)** — 코드 리딩으로 505/662/668번 줄이 전부 이모지 없이
+   "중지 요청됨…"/"현재 작업 중지 요청됨…"/"전체 큐 중지 요청됨…" 텍스트만 남은 것을 확인.
+   실제 학습 작업을 큐에 넣고 중지시켜 라이브 트리거하지는 않음(모델 미로드 상태라 준비
+   비용 대비 이득이 낮다고 판단) — 인접한 학습 탭 다른 상태 라벨("Idle")이 스크린샷에서
+   정상 렌더링되는 것으로 상태 라벨 표시 파이프라인 자체는 육안 확인됨.
+7. **모델 탭** — 코드 에디터, "검증 (Validate)"/"로드 (Load Model)"/"AI 모델 프리셋..."/
+   "파일 열기 (.py)" 버튼 전부 이모지 없이 정상 렌더링.
+8. 테스트 종료 후 `taskkill`로 프로세스 정리, `git status --porcelain` 클린 확인.
+
+### 부수 발견 — BUG-005 (P2, QA.md 등록)
+정상 사용 흐름에서 "폴더가 있는 프로젝트"를 만들 방법 자체가 없음을 발견. `image_browser.py`
+`reload()`가 `images_dir()`을 비재귀적으로만 `glob()`하고(2026-05-27 커밋 `00fd6779`의 의도적
+설계 — `dataset._collect_pairs()`와의 일관성 목적), `_on_add()`/`_on_add_folder()` 둘 다
+선택한 파일/폴더를 `images_dir()` 바로 아래로 평탄하게 복사한다. 그 결과 앱의 어떤 기능으로도,
+심지어 사용자가 파일탐색기로 `images_dir()`에 직접 하위폴더를 넣어도 브라우저 목록에 반영되지
+않는다(직접 재현 확인). `_build_folder_tree()`/`_make_folder_item()`/정렬모드 "폴더" 코드
+자체는 살아있고 정상 동작하지만 트리거할 방법이 없는 죽은 코드 상태. 이번 라운드가 새로 만든
+회귀는 아니고(수 개월 전부터 존재하던 설계), 이번 라운드는 그 안의 아이콘만 이모지→SVG로
+바꿨을 뿐이라 검증 대상인 "장식 이모지 제거" 자체는 정상 통과. 다만 `QA.md`/`docs/roadmap.md`의
+GitHub #1 VOC 응답("라벨링 탭은 기존부터 폴더 트리 있음")이 실제 도달 가능한 동작과 어긋나
+QA.md에 BUG-005로 등록하고 VOC 표에도 정정 각주 추가. 후속 조치(문서만 정정할지, 기능을 실제로
+구현할지)는 리더/기획 판단 필요.
+
+### 결론
+**검증 통과.** 이번 라운드가 변경한 범위(i18n 이모지 제거, 아이콘 버튼 전환, 폴더 트리 아이콘,
+학습 탭 상태 라벨) 전부 정상 동작, 회귀 없음. 별도로 발견한 BUG-005는 이번 라운드의 결함이
+아닌 기존 결함이나, 검증 중 실제로 재현되어 QA.md에 신규 등록함.
+
+### 비고
+- 스크린샷·PowerShell 스크립트·헤드리스 테스트 스크립트(`test_folder_icon.py`) 전부 스크래치
+  디렉토리(`.../40989d09-9093-4389-bdea-4fb6757d53b9/scratchpad/`)에만 저장, 저장소에 추가하지
+  않음. `projects/nok` 실데이터는 테스트 후 원상복구, `git status --porcelain` 클린 확인.
