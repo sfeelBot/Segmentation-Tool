@@ -103,17 +103,28 @@
 >
 > **라운드 A 독립 검증 통과**: 다른 규모(이미지 7장 vs 3장, 800파일)로 재현, zip 상대경로
 > 구조 확인(라운드 B 전제조건 충족), 대용량 논블로킹, 에러 케이스 재현. 새 버그 없음.
-> `docs/roadmap.md` 체크 완료. **라운드 B(가져오기) 구현 착수** — A의 zip 포맷을 그대로
-> 전제로 진행, 이름 충돌은 자동 리네임(덮어쓰기 금지)으로 확정된 정책 적용.
+> `docs/roadmap.md` 체크 완료.
+>
+> **라운드 B(가져오기) 구현 완료, 검증 대기**: `project_export.py`에 import 로직 추가
+> (`validate_project_zip`/`resolve_import_dir_name`/`_resolve_member_target`(zip slip 방어)/
+> `import_project_zip`), `project.py`에 `add_recent()`, 신규 `project_import_dialog.py`,
+> `project_start_dialog.py`에 "가져오기…" 버튼, `i18n.py` 키 추가. 왕복(export→import)
+> sha256 일치, 이름충돌 `_imported`/`_imported_2` 정상, zip slip 공격 방어, 손상zip 거부
+> 확인. 커밋 `4129f10`(feat)+`03f5e38`(docs), push 안 함. **"주요 기능 추가"라 검증 시
+> 실제 UI 조작(가져오기 버튼→zip선택→진행률→결과) 골든패스까지 요청** — 독립 검증 위임 예정.
+> 통과 시 GitHub #2 요청2(export+import) 전체 완료.
 >
 > **신규 요청 접수 — 아이콘/이모지 → 미니멀 디자인 + i18n(en) 완비**: Explore 조사 완료 —
 > i18n은 ko/en 193키 완전 대응(이모지가 값에 박혀있어 교체 쉬움), 단 3개 파일(image_browser/
 > training_progress_dialog/main_window)은 i18n 밖 하드코딩이라 en 버전 자체 없음. "꼭 필요"
 > 기능적 아이콘 4그룹(라벨링 툴바 7종/상태기호 3종/학습진행 STATUS_ICON 5종/로그레벨 3종)은
 > 미니멀 재설계, 나머지는 장식이라 텍스트만 남기고 제거 판정. `docs/roadmap.md`에 상세 반영.
-> **디자인 에이전트에게 목업 위임 중** — 아이콘 구현 방식(SVG/QPainter/유니코드 기호 중 추천)
-> + Before/After 목업 + 라운드 실행 순서 제안. `project_start_dialog.py`는 GitHub #2
-> 라운드B와 겹치니 그 라운드 완료 후로 순서 조정하도록 명시.
+> **아이콘 디자인 목업 완료** — Artifact: https://claude.ai/code/artifact/f76ffe60-df35-4fad-b87b-f845f535dc29.
+> 추천: **SVG 아이콘 + QIcon**(15~18개, `app/resources/icons/*.svg`, `currentColor`로 accent색
+> 치환) — QPainter 직접 드로잉은 과설계로 기각, 유니코드 기호 교체는 근본 원인(이모지 폰트
+> 렌더링 불안정) 미해결이라 장식 제거 단계에만 적합. 실행순서: 1라운드(4그룹 SVG화+에셋
+> 파이프라인) → 2라운드(장식 이모지 제거, `project_start_dialog.py`는 GitHub#2 라운드B 이후)
+> → 3라운드(i18n 밖 3파일 `t()` 전환+en키). **사용자 승인 대기 중.**
 >
 > **직접 처리(사소한 수정)**: "라벨링 탭 로그 패널이 너무 크다"는 요청 — 우 서브스플리터
 > 초기 비율을 로그3:목록2 → 목록 위주(400:120)로, stretch factor도 로그=0으로 변경해

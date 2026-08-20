@@ -45,6 +45,72 @@
 그대로 재사용해 시각적 통일성 확보. 단축키는 이번 라운드가 레이아웃 구조 변경만 다루므로
 영향 없음(변경 없음 확인).
 
+---
+
+## 2026-08-20 — 아이콘 미니멀 리디자인 + i18n 계획 목업 완료, 사용자 확인 대기
+
+`docs/roadmap.md` "아이콘/이모지 → 미니멀 디자인 + i18n(en) 완비" 2단계 대상. 코드는 건드리지
+않음 — `git status` 확인 결과 기존 modified(`dataset.py`/`trainer.py`/`config_form.py`/
+`leader-log.md`)만 있고 이번 작업으로 추가된 코드 변경 없음(이 파일만 append).
+
+**Artifact URL**: https://claude.ai/code/artifact/f76ffe60-df35-4fad-b87b-f845f535dc29
+
+### 구현 방식 추천 — (a) SVG 아이콘 + QIcon
+1인/소규모 유지보수 데스크탑 툴이라는 전제하에 3안을 비교:
+- **(a) SVG + QIcon [추천]**: MIT/ISC 라이선스 아이콘 팩(Feather/Lucide류)에서 15~18개를 골라
+  `app/resources/icons/*.svg`로 보관, `QIcon(path)` 또는 `QSvgRenderer`로 로드. `currentColor`
+  자리만 accent색으로 치환하면 hover/checked 상태도 같은 파일로 커버. 초기 에셋 파이프라인
+  구축비용은 있지만 아이콘 개수가 적어 일회성이고, OS/폰트에 무관하게 렌더링이 일관됨 —
+  "이모지 컬러폰트 렌더링 불안정"이라는 문제의 근본 원인을 실제로 없앤다.
+- **(b) QPainter 직접 드로잉**: 외부 의존성 0이 유일한 장점. 15개 도형(브러시 털, 버킷
+  손잡이 등)을 좌표로 손코딩해야 해 (a)보다 초기비용이 크고 결과물 품질도 낮기 쉬움 —
+  이 프로젝트 규모엔 과설계로 판단, 비추천.
+- **(c) 유니코드 기호 교체**: 비용 최저지만 근본 원인(이모지 폰트 렌더링)을 해결 못함.
+  대신 **2단계 "장식 이모지 제거"에는 적합** — 텍스트로 바꾸거나 이미 모노톤인 기호
+  (`·`/`•`/`▲`/`✕`)는 유지.
+- 목업의 "After" 아이콘은 실제로 (a) 방식대로 그린 인라인 SVG(선굵기 1.6px 통일, 폴리곤/
+  브러시/버킷/지우개/영역지우개/선택/팬 7종 + 참고용 부가액션)라 구현 시 기대 형태에 가까움.
+
+### 4그룹 재설계 요지
+1. **`labeling_tab.py` 툴바 7종**: 이모지 단독(16px) → SVG 라인 아이콘, 활성 도구만
+   accent(`#60a5fa`) 배경/테두리. 텍스트 라벨은 안 붙임(7개 다 붙이면 툴바 과밀) — 대신
+   형태 자체를 명확히 구분. 툴팁에 단축키 병기 유지.
+2. **`image_browser.py` 상태기호 3종**: 색상만 다르던 것을 유지하되(모양은 이미 채움원/체크/
+   빈원으로 구분됨) 크기·선굵기 확대 + 팔레트를 `main.py` 표준값(`#10b981`/`#60a5fa`)으로
+   교체해 대비 개선. 범례 유지.
+3. **`training_progress_dialog.py` STATUS_ICON 5종**: waiting(빈 원)/running(accent 채움
+   원+테두리)/done(초록 원+체크)/error(빨강 원+X)/stopped(회색 사각) — 색상+모양 이중 구분.
+4. **`log_panel.py` 로그레벨**: DEBUG(`·`)/INFO(`•`)는 이미 모노톤이라 유지, WARNING(`▲`)/
+   ERROR(`✕`)도 유지(두께만 통일), CRITICAL의 `🚨`(컬러 이모지)만 같은 기하기호 계열 `■`로
+   교체 — 이 항목만 이모지 폰트 의존을 완전히 제거.
+
+### 장식 이모지 제거 예시 (2단계)
+`project_start_dialog.py`("🎯 Segmentation Model UI"→"Segmentation Model UI"),
+`auto_label_dialog.py`(창제목 "✨ 오토 라벨링"→"오토 라벨링", 그룹박스 "📊 현재 프로젝트..." 등
+접두 이모지 전부 제거), `settings_dialog.py`(탭제목·버튼 접두 이모지 제거, **국기 이모지
+🇰🇷/🇺🇸는 언어 식별에 실질적 도움이라 예외 유지**).
+
+### i18n 전환 참고 (구현 시 참고, 코드 작성은 안 함)
+`i18n.py`는 ko/en 193키 완비, 이모지가 번역 값 문자열 안에 있어 위 교체는 ko/en 양쪽에 자동
+반영됨. 단 `image_browser.py`/`training_progress_dialog.py`/`main_window.py` 3개 파일은
+i18n 밖에서 한국어를 직접 하드코딩(en 버전 자체 없음) — `t()` 호출로 이관 + `i18n.py`에 en 키
+신설 필요. 라운드 1·2에서 최종 문구가 확정된 뒤 키를 뽑는 편이 재작업이 적음.
+
+### 실행 순서 제안 (3라운드)
+1. **4그룹 기능적 아이콘 SVG화** — `app/resources/icons/*.svg` 신설 + 로더 유틸. 가시성 저하
+   민원의 핵심이라 최우선.
+2. **장식 이모지 제거** — `auto_label_dialog.py`/`settings_dialog.py`/`model_presets/__init__.py`/
+   `export_dialog.py` 등. `project_start_dialog.py`는 GitHub #2 라운드B(가져오기) 완료 후
+   이 라운드에 포함(파일 겹침).
+3. **i18n 밖 3파일 en 전환** — `image_browser.py`/`training_progress_dialog.py`/
+   `main_window.py`를 `t()` 체계로 이관, `i18n.py`에 en 키 추가. 1·2에서 확정된 최종 문구
+   기준으로 키를 뽑아야 재작업이 적어 마지막 순서.
+
+### 색상·레이아웃 일관성 확인
+`main.py` 팔레트(`#1a1d23`/`#1f2329`/`#111418`/`#374151`/`#4b5563`/`#60a5fa`/`#10b981`/
+`#fbbf24`/`#f87171`/`#dc2626`)를 목업에 그대로 사용, 신규 색상 도입 없음. 단축키는 이번
+작업 범위 밖(변경 없음).
+
 ### 구현 시 참고 — 주의사항
 - **QTreeWidgetItem 구조 제안**: `image_browser.py`의 `_make_tree_item`/`_make_folder_item`
   패턴을 그대로 참고하되, 추론 탭은 라벨 상태 개념이 없으므로 상태기호(`●`/`✓`/`○`) 대신
