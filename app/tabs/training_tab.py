@@ -255,6 +255,7 @@ class TrainingTab(QWidget):
 
         # ── 큐 영역 ↕ 모니터링 영역 세로 서브스플리터 (자유 리사이즈) ────────
         self._queue_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._queue_splitter.setChildrenCollapsible(False)
         self._queue_splitter.setHandleWidth(5)
         self._queue_splitter.setStyleSheet(
             "QSplitter::handle { background:#374151; }"

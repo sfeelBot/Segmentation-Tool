@@ -45,6 +45,7 @@ class InferenceTab(QWidget):
 
         # ── 상단↔뷰어 서브스플리터 ────────────────────────────────────────────
         outer_splitter = QSplitter(Qt.Orientation.Vertical)
+        outer_splitter.setChildrenCollapsible(False)
         outer_splitter.setHandleWidth(5)
         outer_splitter.setStyleSheet(_SPLITTER_STYLE)
 
@@ -130,6 +131,7 @@ class InferenceTab(QWidget):
 
         # ── 메인 영역 (이미지 목록 | 뷰어 | 범례) ────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(5)
         splitter.setStyleSheet(_SPLITTER_STYLE)
         splitter.setMinimumHeight(200)

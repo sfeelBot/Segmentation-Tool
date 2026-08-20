@@ -41,6 +41,7 @@ class LabelingTab(QWidget):
 
         # ── 좌/우 스플리터 ────────────────────────────────────────────────────
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setChildrenCollapsible(False)
         self._splitter.setHandleWidth(5)
         self._splitter.setStyleSheet(
             "QSplitter::handle { background:#374151; }"
@@ -56,6 +57,7 @@ class LabelingTab(QWidget):
         left_layout.setSpacing(0)
 
         self._left_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._left_splitter.setChildrenCollapsible(False)
         self._left_splitter.setHandleWidth(5)
         self._left_splitter.setStyleSheet(
             "QSplitter::handle { background:#374151; }"
@@ -94,6 +96,7 @@ class LabelingTab(QWidget):
         right_layout.setSpacing(0)
 
         self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._right_splitter.setChildrenCollapsible(False)
         self._right_splitter.setHandleWidth(5)
         self._right_splitter.setStyleSheet(
             "QSplitter::handle { background:#374151; }"
