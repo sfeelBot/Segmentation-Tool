@@ -6,7 +6,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QWidget, QInputDialog
 from PyQt6.QtGui import (
     QPainter, QPixmap, QImage, QColor, QPen, QBrush,
     QPolygonF, QCursor, QKeySequence,
@@ -145,6 +145,7 @@ class AnnotationCanvas(QWidget):
     annotation_saved   = pyqtSignal()
     selection_changed  = pyqtSignal(list)   # list[str] — 선택된 annotation_id 목록
     pixel_hovered      = pyqtSignal(int, int, int, int, int)  # x, y, r, g, b
+    brush_size_changed = pyqtSignal(int)    # 브러시 크기 변경 (더블클릭 다이얼로그 → 툴바 스핀박스 동기화)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -330,6 +331,11 @@ class AnnotationCanvas(QWidget):
         })
 
         self._selected_ids.clear()
+        # 이전 이미지의 오버레이는 크기/스케일이 다른 이미지 것이라 재사용하면
+        # 어긋난 어노테이션이 잠깐 겹쳐 보인다 — 이미지 전환 시에는 즉시 비운다
+        # (같은 이미지 내 편집 시에는 _invalidate_overlay()가 새 오버레이가
+        # 준비될 때까지 기존 것을 그대로 유지한다).
+        self._overlay = None
         self._invalidate_overlay()
         self._fit_view()
         self.update()
@@ -371,6 +377,7 @@ class AnnotationCanvas(QWidget):
 
     def set_brush_size(self, size: int) -> None:
         self._brush_size = max(1, min(size, 200))
+        self.brush_size_changed.emit(self._brush_size)
 
     def undo(self) -> None:
         if not self._undo_stack:
@@ -651,6 +658,13 @@ class AnnotationCanvas(QWidget):
             return
         if self._tool == TOOL_POLYGON and len(self._poly_pts) >= 3:
             self._close_polygon()
+        elif self._tool in (TOOL_BRUSH, TOOL_BRUSH_FILL, TOOL_ERASER, TOOL_ERASER_FLOOD):
+            size, ok = QInputDialog.getInt(
+                self, "브러시 크기", "브러시 크기 (1~200)",
+                self._brush_size, 1, 200,
+            )
+            if ok:
+                self.set_brush_size(size)
 
     def mouseMoveEvent(self, event) -> None:
         pos = QPointF(event.position())
@@ -1344,7 +1358,13 @@ class AnnotationCanvas(QWidget):
         # 진행 중인 워커가 있으면 안전하게 은퇴 (GC 크래시 방지)
         self._retire_worker(self._overlay_worker, interrupt=True)
         self._overlay_worker = None
-        self._overlay = None
+        # 기존 오버레이(self._overlay)는 여기서 비우지 않는다 — 즉시 None으로
+        # 만들면 새 오버레이가 준비되기 전까지의 paintEvent들이 어노테이션
+        # 없이 그려져 "깜빡임"으로 보인다(GitHub #6-A). 새 오버레이가 도착하면
+        # _on_overlay_done()이 교체하므로, 그 전까지는 stale 오버레이를 그대로
+        # 보여준다 — 같은 이미지 내 편집(브러시/폴리곤/지우개/선택 등)에서는
+        # 이전 프레임과 거의 동일해 자연스럽다. (이미지 자체가 바뀌는 경우는
+        # load_image()에서 별도로 self._overlay = None 처리한다.)
         self._overlay_dirty = True
         # 어노테이션 있으면 백그라운드로 즉시 빌드 시작
         if self._img_w > 0:
