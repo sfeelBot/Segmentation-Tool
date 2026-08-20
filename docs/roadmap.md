@@ -116,6 +116,42 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   - **GitHub #2 "프로젝트 내보내기 기능" 요청2 전체 완료** (2026-08-20). 요청1은 exe
     패키징 항목으로 편입(위 참고).
 
+## GitHub 이슈 VOC 라운드2 (2026-08-20 접수, #3~#7)
+
+기획 완료: [docs/specs/voc-github-issues-round2-2026-08-20.md](specs/voc-github-issues-round2-2026-08-20.md).
+[GitHub #3](https://github.com/sfeelBot/Segmentation-Tool/issues/3)(브러시 크기 조절 UX +
+입력창 잘림), [#4](https://github.com/sfeelBot/Segmentation-Tool/issues/4)(이미지명 복사 +
+오토라벨 patch training 확인), [#5](https://github.com/sfeelBot/Segmentation-Tool/issues/5)
+(모델 탭→학습 탭 "+" 모달 전환, 구조변경), [#6](https://github.com/sfeelBot/Segmentation-Tool/issues/6)
+(annotation 깜빡임 + 어노테이션 개수비례 로딩 지연 — 사용자가 "반드시 필요"로 추가 명시),
+[#7](https://github.com/sfeelBot/Segmentation-Tool/issues/7)(OK 처리 시 기존 라벨 삭제 확인
+팝업).
+
+- [ ] **#6-B 어노테이션 개수 증가 시 로딩 지연 (최우선, 사용자 명시)** — `labeling_tab.py`
+      `_refresh_ann_list()`(매 편집마다 어노테이션 목록 전체 재생성) +
+      `annotation_canvas.py` `_rebuild_overlay()`(매 편집·이미지전환마다 오버레이 전체
+      재렌더링) 2곳의 O(n) 전체 재구축 패턴이 원인으로 특정됨. 난이도 중~상, 별도 라운드
+      권장, 대규모 합성 프로젝트 벤치마크 필요.
+- [ ] #6-A annotation 깜빡임(flicker) — `_invalidate_overlay()`가 오버레이를 즉시 null 처리
+      후 비동기 재생성해 그 사이 paintEvent에서 오버레이가 사라지는 타이밍 버그. 원인
+      국소화 완료(1개 함수), 난이도 하~중.
+- [ ] #7 OK 처리 시 라벨 존재하면 확인 팝업(삭제 후 OK/취소) — 기존 "전체삭제" 확인 패턴
+      그대로 재사용 가능, 난이도 하.
+- [ ] #4 라벨링/추론 탭 이미지명 클립보드 복사 — `settings_dialog.py`의 기존 복사버튼 패턴
+      재사용, 난이도 하. 오토라벨 patch training 기본값 확인 질문은 답변 완료(학습 기본값은
+      random_crop 맞으나, 오토라벨러 자체는 patch/타일 추론 없이 전체이미지 리사이즈 단일
+      추론 — 구현 불필요, 기존 갭으로 기록만).
+- [ ] #3(a) 브러시 크기 입력창 잘림 버그 — `QSpinBox` 고정폭 60px이 3자리 값 표시에 부족,
+      난이도 하.
+- [ ] #3(b)/(c) 브러시 크기 더블클릭/우클릭 대체 조절 — 우클릭은 기존 패닝과 충돌 확인됨.
+      인터랙션 방식 **사용자 확인 필요** → `docs/decisions-needed.md` 등록.
+- [ ] #5 모델 탭→학습 탭 "+" 모달 전환 — 구조 변경(3개 탭이 `_model_tab.loaded_model` 교차
+      참조). **구조 변경 진행 여부 사용자 확인 필요** → `docs/decisions-needed.md` 등록.
+      진행 확정 시 디자인 목업 → 구현.
+- 실행 순서·파일 겹침(홀리스틱 재검토 5단계는 검증 완료·조건부 통과로 갱신됨 — 아래
+  "디자인 톤 홀리스틱 재검토" 절 참고. `inference_tab.py`에 Open인 BUG-009(검색 카운터
+  표시버그, P3)와 #4 카피 버튼 착수 시 같은 파일이니 유의)은 스펙 문서 "실행 순서 제안" 절 참고.
+
 ## 아이콘/이모지 → 미니멀 디자인 + i18n(en) 완비 (2026-08-20 요청)
 
 사용자 요청: "아이콘 가시성이 떨어진다 — 남길 아이콘은 깔끔·미니멀하게, 불필요한 건 글자로
