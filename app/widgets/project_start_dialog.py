@@ -7,7 +7,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
-    QInputDialog, QGroupBox,
+    QInputDialog, QGroupBox, QMenu,
 )
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtCore import Qt
@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt
 from app.core import project as proj
 from app.core.i18n import t
 from app.core.logger import get_logger
+from app.widgets.project_export_dialog import ProjectExportDialog
 
 log = get_logger(__name__)
 
@@ -76,6 +77,8 @@ class ProjectStartDialog(QDialog):
         rl = QVBoxLayout(recent_box)
         self._recent_list = QListWidget()
         self._recent_list.itemDoubleClicked.connect(self._on_recent_double_clicked)
+        self._recent_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._recent_list.customContextMenuRequested.connect(self._on_recent_context_menu)
         rl.addWidget(self._recent_list)
         self._populate_recent()
         root.addWidget(recent_box, stretch=1)
@@ -137,6 +140,28 @@ class ProjectStartDialog(QDialog):
         if not path_str:
             return
         self._try_open(Path(path_str))
+
+    def _on_recent_context_menu(self, pos) -> None:
+        item = self._recent_list.itemAt(pos)
+        if item is None:
+            return
+        path_str = item.data(Qt.ItemDataRole.UserRole)
+        if not path_str:
+            return
+        menu = QMenu(self)
+        act_export = menu.addAction(t("project_export.action"))
+        act_export.setToolTip(t("project_export.action.tip"))
+        chosen = menu.exec(self._recent_list.mapToGlobal(pos))
+        if chosen == act_export:
+            self._on_export_project(Path(path_str))
+
+    def _on_export_project(self, path: Path) -> None:
+        if not path.exists():
+            QMessageBox.warning(self, t("project_export.title"), t("project_export.project_missing"))
+            self._populate_recent()
+            return
+        dlg = ProjectExportDialog(path, parent=self)
+        dlg.exec()
 
     def _try_open(self, path: Path) -> None:
         try:

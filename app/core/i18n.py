@@ -56,6 +56,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "menu.project":             "🗂  프로젝트",
         "menu.project.tip":         "현재 프로젝트: {name}",
 
+        # ── 프로젝트 내보내기 ─────────────────────────────────────────────
+        "project_export.action":          "📦  내보내기…",
+        "project_export.action.tip":      "프로젝트 전체를 zip 파일로 백업합니다 (프로젝트를 열지 않아도 됩니다).",
+        "project_export.title":           "📦  프로젝트 내보내기",
+        "project_export.always_included": "항상 포함: images, annotations, classes.json, project.json",
+        "project_export.include_ckpt":    "checkpoints/ 포함 (용량 큼)",
+        "project_export.include_models":  "user_models/ 포함 (커스텀 모델 코드)",
+        "project_export.models_hint":     "커스텀 모델 코드는 가져오기 후 모델 탭에서 다시 로드해야 합니다.",
+        "project_export.choose_path":     "저장 위치 선택",
+        "project_export.output":          "저장 경로",
+        "project_export.run":             "▶  내보내기 시작",
+        "project_export.choose_first":    "저장 위치를 먼저 선택하세요.",
+        "project_export.running":         "압축 중…",
+        "project_export.done":            "완료 — {n}개 파일을 내보냈습니다.\n{path}",
+        "project_export.failed":          "내보내기 실패",
+        "project_export.cancelled":       "취소됨",
+        "project_export.cancel":          "취소",
+        "project_export.project_missing": "프로젝트 폴더를 찾을 수 없습니다.",
+
         # ── 단축키 ────────────────────────────────────────────────────────
         "settings.shortcuts":          "⌨️  단축키",
         "settings.shortcuts.hint":     "라벨링 탭에서 사용할 수 있는 주요 단축키 모음.",
@@ -259,6 +278,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.open_folder":      "📁  Open project folder",
         "menu.project":             "🗂  Project",
         "menu.project.tip":         "Current project: {name}",
+
+        # ── Project export ───────────────────────────────────────────────
+        "project_export.action":          "📦  Export…",
+        "project_export.action.tip":      "Back up the whole project as a zip file (no need to open it first).",
+        "project_export.title":           "📦  Export project",
+        "project_export.always_included": "Always included: images, annotations, classes.json, project.json",
+        "project_export.include_ckpt":    "Include checkpoints/ (large)",
+        "project_export.include_models":  "Include user_models/ (custom model code)",
+        "project_export.models_hint":     "Custom model code must be reloaded in the Model tab after importing.",
+        "project_export.choose_path":     "Choose save location",
+        "project_export.output":          "Output path",
+        "project_export.run":             "▶  Start export",
+        "project_export.choose_first":    "Please choose a save location first.",
+        "project_export.running":         "Compressing…",
+        "project_export.done":            "Done — exported {n} files.\n{path}",
+        "project_export.failed":          "Export failed",
+        "project_export.cancelled":       "Cancelled",
+        "project_export.cancel":          "Cancel",
+        "project_export.project_missing": "Project folder not found.",
 
         # ── Shortcuts ────────────────────────────────────────────────────
         "settings.shortcuts":          "⌨️  Shortcuts",
