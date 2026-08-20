@@ -996,3 +996,78 @@ QA.md에 BUG-005로 등록하고 VOC 표에도 정정 각주 추가. 후속 조�
 - 스크린샷·PowerShell 스크립트·헤드리스 테스트 스크립트(`test_folder_icon.py`) 전부 스크래치
   디렉토리(`.../40989d09-9093-4389-bdea-4fb6757d53b9/scratchpad/`)에만 저장, 저장소에 추가하지
   않음. `projects/nok` 실데이터는 테스트 후 원상복구, `git status --porcelain` 클린 확인.
+
+---
+
+## 2026-08-20 — `model_tab.py` 팔레트 정규화 검증 (커밋 `a8ac52d` refactor + `f0fc2ef` docs)
+
+### 배경
+`docs/roadmap.md` "디자인 톤 홀리스틱 재검토" 3단계 항목. `app/tabs/model_tab.py`의 코드
+에디터·로그 패널이 쓰던 GitHub 다크 테마 계열 독자 팔레트(`#0D1117`/`#3fb950`/`#f85149`/
+`#79c0ff` 등)를 `main.py` 표준 팔레트(`#111418`/`#10b981`/`#f87171`/`#fbbf24`/`#60a5fa`
+등)로 교체한 라운드. 구현 에이전트는 `ast.parse()` 정적 검토만 수행, 실제 GUI 구동 미확인
+상태로 검증에 넘어옴.
+
+### 검증 방법 (직접 실행, `C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`)
+1. **diff 리뷰** — `git show a8ac52d` 전체 diff 확인. 변경 범위가 색상값 5종(하이라이터)
+   + 배경/텍스트 2종 + 상태라벨 2종 + 로그헬퍼 4종, 총 30줄(+15/-15)로 스펙과 정확히 일치.
+   폰트(`QFont("Consolas", ...)`)·레이아웃(splitter 크기, margin 등) 코드는 diff에 전혀
+   포함되지 않아 회귀 위험 없음을 코드 레벨로 먼저 확인.
+2. **`main.py` 표준 팔레트 대조** — `grep`으로 `main.py`의 전역 스타일시트에 `#111418`/
+   `#e5e7eb`/`#10b981`/`#60a5fa`/`#9ca3af`가 이미 다수 지점(입력창 배경, accent 보더, 완료
+   버튼 등)에 쓰이고 있음을 확인 — model_tab.py가 실제로 앱 표준값을 그대로 재사용했음을
+   확인(신규 값 도입 아님).
+3. **스크래치 스크립트로 `ModelTab` 위젯 직접 생성**(`verify_model_tab_palette.py`,
+   `verify_model_tab_load.py`, 프로젝트에 추가 안 함) — `QApplication` → `ModelTab()` →
+   `show()` 후:
+   - **검증(Validate) 골든패스**: 유효한 `nn.Module` 코드(허용 모듈만 사용) 입력 →
+     `_on_validate()` 호출 → 상태 라벨 `"✓ MyModel"` + `styleSheet()` `"color: #10b981;"`
+     확인, 로그 패널 `toHtml()`에서 `[OK]` 항목이 `color:#10b981` 스팬으로 정확히 렌더링됨을
+     확인.
+   - **에러 경로**: 차단 모듈 import(`import os`) + `nn.Module` 서브클래스 없는 코드 →
+     `[ERR]` 로그 2건 모두 `color:#f87171` 스팬, 상태 라벨 `"✗ 검증 실패"` +
+     `"color: #f87171;"` 확인. `_btn_load.isEnabled()` False로 정상 차단.
+   - **경고 경로**: 빈 코드 입력 → `_log_warn("코드가 비어 있습니다.")` 호출 →
+     `[WARN]` 로그가 `color:#fbbf24` 스팬으로 렌더링 확인.
+   - **로드(Load Model) 골든패스**: (허용 모듈만 쓰는) 깨끗한 유효 코드로 재시도 —
+     `_on_validate()` → `_on_load()` 순서로 호출, 최종 상태 라벨 `"✓ MyModel (56 params)"` +
+     `"color: #10b981;"`, `tab.loaded_model`이 실제 `MyModel` 인스턴스(`Conv2d(3,2,...)`)로
+     정상 반환됨을 확인 — 팔레트 교체로 로드 파이프라인이 깨지지 않았음을 확인.
+   - 에디터/로그 `styleSheet()` 원시 문자열도 각각
+     `"background:#111418; color:#e5e7eb; border:1px solid #374151;border-radius:6px;
+     padding:4px;"`로 스펙과 정확히 일치.
+4. **가독성(대비) 정량 검증** — 오프스크린 렌더링 환경은 시스템 폰트 글리프가 깨져
+   (`QPixmap.grab()` 결과가 빈 사각형으로만 나옴) 스크린샷 육안 비교가 신뢰 불가하다고
+   판단, 대신 WCAG 상대 휘도 공식으로 신/구 팔레트의 배경 대비 명암비를 전수 계산:
+   - 신규(배경 `#111418`) — 본문 텍스트 14.92, 키워드/INFO(`#60a5fa`) 7.26, 문자열/WARN
+     (`#fbbf24`) 11.06, 주석(`#9ca3af`) 7.27, 숫자/OK(`#10b981`) 7.28, torch·nn
+     (`#34d399`) 9.61, ERR(`#f87171`) 6.68 — **전 항목 WCAG AA(4.5:1) 여유 통과, ERR 제외
+     전부 AAA(7:1)도 통과**.
+   - 구버전(배경 `#0D1117`)과 항목별 비교 — ERR 5.65→6.68(개선), 주석 5.68→7.27(개선),
+     INFO 9.73→7.26(소폭 하락하나 여전히 AAA 상회), 나머지는 동등 수준. **가독성 저하로
+     판정할 항목 없음** — 검증 지시의 "가독성 저하 확인 시 이슈 등록" 기준에 해당하지 않음.
+5. **테스트 오염 정리** — 위 로드 골든패스 실행 중 `save_user_code()`가 실제로
+   `data/user_models/model_20260820_164003.py`를 생성(정상 동작). 검증 종료 후 삭제,
+   `git status --porcelain` 클린 확인.
+
+### 부수 발견 — BUG-006 (P2, `QA.md` 신규 등록, 이번 팔레트 라운드의 회귀 아님)
+로드 골든패스 1차 시도에서 `import random`(허용 목록 밖 모듈, `[WARN]`만 뜨고 `ok=True`)을
+포함한 코드로 `_on_validate()` → `_on_load()`를 실행했더니 **검증은 통과("✓ MyModel")했지만
+로드는 항상 실패**("✗ 로드 실패", `load_from_code()`가 `ImportError`를 잡아 에러 처리)함을
+발견. 원인: `model_validator.validate()`는 허용 목록 밖 import를 warning으로만 취급해
+`result.ok=True`를 반환하지만, `model_loader.load_from_code()`의 `exec()` 샌드박스
+(`_make_safe_import`)는 `_ALLOWED_ROOTS` 밖 모듈이면 무조건 `ImportError`를 던진다 —
+"검증 통과 + 로드 버튼 활성화"인데 실제로 로드하면 늘 실패하는 정책 불일치. 팔레트 변경과
+무관한 기존 로직 결함이며 이번 커밋(`a8ac52d`)이 만든 회귀가 아님을 diff로 확인. 재현 코드
+제거(깨끗한 허용 모듈만 사용) 후 재시도하니 로드 골든패스는 정상 통과함을 위 3번 항목에서
+별도로 재확인함.
+
+### 판정
+**통과.** 색상값 교체가 스펙(신 5매핑 + 배경/텍스트/상태라벨/로그헬퍼)과 정확히 일치하고,
+실제 `ModelTab` 위젯 구동으로 검증/로드 골든패스 모두 정상 동작 확인, 폰트/레이아웃 등
+비색상 요소 회귀 없음, 대비(가독성)도 신구 팔레트 동등 이상. 다음 실행 순서 항목(4번,
+`loss_chart.py` matplotlib 배색)으로 진행 가능.
+
+### 비고
+스크래치 스크립트 전부 `.../40989d09-9093-4389-bdea-4fb6757d53b9/scratchpad/`에만 저장,
+저장소에 추가 안 함. `git status --porcelain` 최종 클린 확인 (QA.md 수정만 반영 대상).
