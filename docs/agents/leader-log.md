@@ -95,6 +95,13 @@
 > `QA.md`/`docs/decisions-needed.md` 전부 반영. **라운드 A 구현 착수** — 목업 불필요(기존
 > export_dialog.py/_FolderImportWorker 패턴 재사용), A 검증 통과 후 곧바로 B로 이어감.
 >
+> **라운드 A(내보내기) 구현 완료, 검증 대기**: `app/core/project_export.py`(Qt 비의존 순수
+> 로직) + `app/widgets/project_export_dialog.py`(`ProjectExportDialog`+`_ProjectExportWorker`)
+> 신규, `project_start_dialog.py` 우클릭 메뉴 진입점 추가, `i18n.py` 키 추가. 합성 프로젝트로
+> `.thumbs/` 제외, 체크박스별 포함/제외, 500파일 대용량 progress 논블로킹, 에러 케이스 2건
+> 확인. 커밋 `911f85a`(feat)+`d42fe46`(docs), push 안 함. 독립 검증 위임 예정 — 통과 시
+> 라운드 B(가져오기)로 이어감.
+>
 > **미해결 결정 대기 없음**(`docs/decisions-needed.md` 비어있음). 커밋은 전부 로컬에만 있고
 > `git push` 안 함(사용자가 "push는 진행하지 말고" 확인한 상태 — origin/main은 여전히
 > `1de27e6`까지만 반영, 로컬 main은 그 뒤로 8개 커밋 앞섬).
