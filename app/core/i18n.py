@@ -75,6 +75,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project_export.cancel":          "취소",
         "project_export.project_missing": "프로젝트 폴더를 찾을 수 없습니다.",
 
+        # ── 프로젝트 가져오기 ─────────────────────────────────────────────
+        "project_import.action":          "📥  가져오기…",
+        "project_import.action.tip":      "zip 백업 파일에서 프로젝트를 복원합니다.",
+        "project_import.choose_zip":      "가져올 zip 파일 선택",
+        "project_import.title":           "📥  프로젝트 가져오기",
+        "project_import.dest_root":       "저장 위치",
+        "project_import.hint":            "같은 이름의 프로젝트가 이미 있으면 기존 프로젝트는 건드리지 않고 '_imported' 이름으로 저장됩니다.",
+        "project_import.run":             "▶  가져오기 시작",
+        "project_import.cancel":          "취소",
+        "project_import.cancelled":       "취소됨",
+        "project_import.failed":          "가져오기 실패",
+        "project_import.zip_missing":     "zip 파일을 찾을 수 없습니다.",
+        "project_import.done":            "완료 — '{name}' 프로젝트로 저장되었습니다. ({n}개 파일)",
+        "project_import.skipped_warning": "안전하지 않은 경로 {n}개 항목은 건너뛰었습니다. 가져온 프로젝트에 문제가 있을 수 있습니다.",
+        "project_import.invalid_zip":     "가져온 zip 파일에 문제가 있어 프로젝트를 열 수 없습니다: {reason}\n가져온 프로젝트에 문제가 있을 수 있습니다.",
+
         # ── 단축키 ────────────────────────────────────────────────────────
         "settings.shortcuts":          "⌨️  단축키",
         "settings.shortcuts.hint":     "라벨링 탭에서 사용할 수 있는 주요 단축키 모음.",
@@ -297,6 +313,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project_export.cancelled":       "Cancelled",
         "project_export.cancel":          "Cancel",
         "project_export.project_missing": "Project folder not found.",
+
+        # ── Project import ───────────────────────────────────────────────
+        "project_import.action":          "📥  Import…",
+        "project_import.action.tip":      "Restore a project from a zip backup file.",
+        "project_import.choose_zip":      "Choose zip file to import",
+        "project_import.title":           "📥  Import project",
+        "project_import.dest_root":       "Destination",
+        "project_import.hint":            "If a project with the same name already exists, it is left untouched and the imported one is saved as '_imported'.",
+        "project_import.run":             "▶  Start import",
+        "project_import.cancel":          "Cancel",
+        "project_import.cancelled":       "Cancelled",
+        "project_import.failed":          "Import failed",
+        "project_import.zip_missing":     "Zip file not found.",
+        "project_import.done":            "Done — saved as project '{name}'. ({n} files)",
+        "project_import.skipped_warning": "Skipped {n} unsafe path entries. The imported project may have issues.",
+        "project_import.invalid_zip":     "The imported zip file has a problem and could not be opened: {reason}\nThe imported project may have issues.",
 
         # ── Shortcuts ────────────────────────────────────────────────────
         "settings.shortcuts":          "⌨️  Shortcuts",

@@ -16,6 +16,7 @@ from app.core import project as proj
 from app.core.i18n import t
 from app.core.logger import get_logger
 from app.widgets.project_export_dialog import ProjectExportDialog
+from app.widgets.project_import_dialog import ProjectImportDialog
 
 log = get_logger(__name__)
 
@@ -71,6 +72,15 @@ class ProjectStartDialog(QDialog):
         self._btn_open.clicked.connect(self._on_open)
         action_row.addWidget(self._btn_open, stretch=1)
         root.addLayout(action_row)
+
+        # ── 가져오기(zip 백업 복원) — 별도 줄, 보조 액션 ─────────────────────
+        import_row = QHBoxLayout()
+        self._btn_import = QPushButton(t("project_import.action"))
+        self._btn_import.setToolTip(t("project_import.action.tip"))
+        self._btn_import.clicked.connect(self._on_import)
+        import_row.addWidget(self._btn_import)
+        import_row.addStretch()
+        root.addLayout(import_row)
 
         # ── 최근 프로젝트 ────────────────────────────────────────────────────
         recent_box = QGroupBox(t("project.recent"))
@@ -154,6 +164,17 @@ class ProjectStartDialog(QDialog):
         chosen = menu.exec(self._recent_list.mapToGlobal(pos))
         if chosen == act_export:
             self._on_export_project(Path(path_str))
+
+    def _on_import(self) -> None:
+        zip_path, _ = QFileDialog.getOpenFileName(
+            self, t("project_import.choose_zip"), str(proj.get_projects_root()),
+            "Zip Archives (*.zip)",
+        )
+        if not zip_path:
+            return
+        dlg = ProjectImportDialog(Path(zip_path), parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._populate_recent()
 
     def _on_export_project(self, path: Path) -> None:
         if not path.exists():

@@ -166,6 +166,18 @@ def recent(max_count: int = 10) -> list[Path]:
     return out
 
 
+def add_recent(path: Path) -> None:
+    """열지 않고 최근 목록에만 추가(가져오기 완료 직후 등) — `last_project`는 건드리지 않는다."""
+    from app.core.i18n import load_settings, save_settings
+    s = load_settings()
+    recents: list[str] = list(s.get("recent_projects", []))
+    path_str = str(Path(path).resolve())
+    if path_str in recents:
+        recents.remove(path_str)
+    recents.insert(0, path_str)
+    save_settings({"recent_projects": recents[:10]})
+
+
 def _touch_recent(path: Path) -> None:
     from app.core.i18n import load_settings, save_settings
     s = load_settings()
