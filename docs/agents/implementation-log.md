@@ -824,3 +824,98 @@ GitHub #2 요청2(프로젝트 export/import)의 마지막 라운드다** — �
   선택 → 다이얼로그 → 진행률/완료 메시지, 라운드 A로 실제 만든 zip으로 골든 패스 확인) 확인이
   남아있음. "주요 기능 추가" 라운드이므로 골든 패스 수준 검증 필요.
 - 검증 통과 시 **GitHub #2 요청2(export/import)가 전부 완료** — `docs/roadmap.md` 갱신 필요.
+
+---
+
+## 2026-08-20 — 기능 아이콘 SVG화 확장판 (Artifact `7876ed3e` 실행 순서 1단계)
+
+`docs/agents/design-log.md` "4탭 디자인 톤 홀리스틱 재검토" 항목이 승인한 통합 목업(Artifact
+`7876ed3e-e6ef-4d8b-92cb-cd2fecf2d98a`) 7단계 중 1단계 — 기능 아이콘 19종 SVG화. 리더가
+지정한 대상(A~E) 전부 처리.
+
+### 변경 내용
+- **`app/resources/icons/` 신설** — SVG 22개(`tool_polygon`/`tool_brush`/`tool_bucket`/
+  `tool_eraser`/`tool_eraser_flood`/`tool_select`/`tool_pan`/`undo`/`trash`/`eye`/`check`/
+  `sparkle`/`fullscreen`/`refresh`/`folder`/`broom`/`clipboard`/`status_dot`/`status_ring`/
+  `status_done`/`status_error`/`status_square`). 전부 24×24 뷰박스, 스트로크
+  1.6px(체크마크류만 1.8px), `stroke="currentColor"`(또는 `fill="currentColor"`) — 새 색상
+  팔레트 도입 없음, 로드 시 문자열 치환으로 앱 표준값을 입힘. 22개 파일이지만 여러 UI
+  지점에서 재사용(예: `folder.svg`는 main_window 프로젝트폴더열기 + log_panel 로그폴더열기
+  2곳, `check.svg`는 라벨링 OK 버튼 + image_browser "ok" 상태기호 2곳, `status_ring`은
+  image_browser "미작업" + training_progress_dialog "waiting" 2곳)해 지시사항의 "19종"
+  범위를 커버.
+- **`app/widgets/icons.py` (신규)** — `icon(name, color, size)`/`pixmap(name, color, size)`.
+  SVG 텍스트에서 `currentColor`를 지정 색으로 치환 후 `QSvgRenderer`로 `QPixmap` 렌더링,
+  `functools.lru_cache`로 (이름,색상,크기) 단위 캐시. QIcon을 다루므로 CLAUDE.md 규칙대로
+  `app/core/`가 아닌 `app/widgets/`에 배치(Qt 의존 유틸은 widgets 인접 배치가 관례에 부합).
+- **A. `labeling_tab.py` 툴바 13개** — `tool_action()`의 이모지 인자를 아이콘 이름으로 변경,
+  `QAction(svg_icon(name), "", self)`로 재구성. 나머지 6개(실행취소/전체지우기/
+  어노테이션표시/OK/자동라벨링/전체화면)도 동일 패턴. 툴바 스타일시트의 `font-size:16px`
+  제거하고 `tb.setIconSize(QSize(20,20))`으로 대체 — 체크 상태 시각 구분(배경 `#1e3a5f`)은
+  `main.py`의 기존 `QToolButton:checked` 규칙이 그대로 적용되므로 아이콘 자체 색상 스왑
+  로직은 추가하지 않음(불필요한 복잡도 회피).
+- **B. 아이콘 전용 버튼 5개** — `main_window.py`(새로고침/폴더열기), `log_panel.py`(정리/
+  폴더), `settings_dialog.py`(클립보드) — `QPushButton("이모지")` → `QPushButton()` +
+  `setIcon()`/`setIconSize()`. 텍스트가 없어지므로 `font-size` 스타일 제거.
+- **C. `image_browser.py` 상태기호 3종** — 기존엔 `f"{sym}  {text}"` 형태로 유니코드 기호를
+  텍스트에 직접 붙이던 방식(폰트 렌더링이라 굵기 제어 불가)을 `item.setIcon(0, ...)` +
+  `item.setText(0, 텍스트만)`으로 전환해 실제 벡터 스트로크로 "선굵기 확대" 요구를 충족.
+  색상도 목표값대로 `#6ddf6d`→`#10b981`(라벨완료), `#5ba8ff`→`#60a5fa`(OK, `check.svg`
+  재사용), `#999999`→`#4b5563`(미작업) 교체. 범례 행도 `QLabel` 텍스트 기호 → 아이콘
+  픽스맵 + 텍스트 라벨 조합으로 변경. `_tree.setIconSize(QSize(14,14))` 추가.
+- **D. `training_progress_dialog.py` STATUS_ICON 5종** — `STATUS_ICON`(이모지 dict) →
+  `STATUS_ICON_NAME`(SVG 이름 dict)으로 개명, `update_queue()`가 `QListWidgetItem(icon, text)`
+  생성자로 아이콘+텍스트를 함께 넣도록 변경. **사이드이펙트 발견**: `app/tabs/training_tab.py`
+  가 같은 모듈에서 `STATUS_ICON`을 직접 import해 자체 학습 큐 리스트(`_refresh_queue_list`)에
+  동일 이모지를 쓰고 있었음 — 개명만 하면 `ImportError`가 나므로, "공유 심볼의 모든 호출부를
+  먼저 grep한다" 원칙에 따라 `training_tab.py`도 함께 `STATUS_ICON_NAME` + `svg_icon()`으로
+  전환(같은 라운드·같은 커밋에서 처리, 절반만 마이그레이션된 상태로 남기지 않음).
+- **E. `log_panel.py` CRITICAL** — `LEVEL_ICON["CRITICAL"]`을 `"🚨"` → `"■"`(U+25A0) 텍스트
+  문자로 교체. DEBUG/INFO/WARNING/ERROR와 동일하게 이 값은 QListWidgetItem 텍스트 안에 직접
+  섞여 들어가는 인라인 문자라서 SVG/QIcon화가 불필요 — 나머지 4개와 같은 "플레인 유니코드
+  기호" 방식을 그대로 따르는 것이 더 단순하고 일관적이라 판단(SVG로 만드는 대신 문자 1개
+  치환으로 근본 원인인 "컬러 이모지 폰트" 문제 해결).
+
+### 범위 밖 확인 (건드리지 않음)
+`i18n.py`의 툴팁 텍스트 안 이모지(예: "📐 폴리곤 [Q]\n...")는 텍스트 문자열이지 버튼 아이콘이
+아니므로 유지 — 지시사항의 "텍스트 변경 없음, 아이콘만 교체" 원칙 그대로. `model_tab.py`/
+`auto_label_dialog.py`/`export_dialog.py`/`settings_dialog.py`의 탭제목·그룹박스·텍스트있는
+버튼 이모지, `image_browser.py`의 폴더 헤더 `📁` 등은 "장식 이모지 제거"(다음 라운드) 대상이라
+이번 라운드에서 제외.
+
+### 검증(직접 수행, 스크래치 디렉토리 사용)
+스크립트: `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\
+40989d09-9093-4389-bdea-4fb6757d53b9\scratchpad\smoke*.py` (저장소 밖, 커밋 대상 아님).
+1. `py_compile`로 변경 파일 8개 전부 구문 오류 없음 확인.
+2. `QT_QPA_PLATFORM=offscreen` 헤드리스 환경에서 SVG 22개 전부 `icon()`/`pixmap()`으로 렌더링
+   — `isNull()` False 확인(전부 정상 렌더링).
+3. 임시 프로젝트 생성 후 `MainWindow`/`ImageBrowser`/`TrainingProgressDialog`/`LogPanel`/
+   `SettingsDialog`/`TrainingTab`/`LabelingTab` 전부 생성 — 예외 없이 통과.
+4. `TrainingProgressDialog.update_queue()`에 waiting/running/done/error/stopped 5개 상태의
+   가짜 Job을 넣어 호출 — 5개 아이템 모두 아이콘 `isNull()` False 확인.
+5. 실제 이미지 파일 1개로 `ImageBrowser` 트리 아이템 생성 + `refresh_item()` 재호출 — 아이콘·
+   텍스트 정상 갱신 확인.
+6. `python main.py`를 통한 실제 GUI 기동/조작(라벨링 탭 툴바 클릭 등)은 미수행 — 검증
+   에이전트가 실제 창을 띄워 확인 필요.
+
+### 변경 파일
+`app/resources/icons/*.svg`(신규 22개), `app/widgets/icons.py`(신규), `app/main_window.py`,
+`app/tabs/labeling_tab.py`, `app/tabs/training_tab.py`, `app/widgets/image_browser.py`,
+`app/widgets/log_panel.py`, `app/widgets/settings_dialog.py`,
+`app/widgets/training_progress_dialog.py`. `git status`로 이 파일들 외 다른 변경 없음 확인
+(세션 시작 시 이미 존재하던 `docs/agents/design-log.md`/`docs/agents/leader-log.md`/
+`docs/roadmap.md`의 미커밋 변경은 이번 작업과 무관 — 커밋에 포함하지 않음).
+
+### 커밋
+`2ad0165` — `feat: 기능 아이콘 19종 SVG화 — 이모지 대신 QIcon/QSvgRenderer 라인 아이콘`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증 에이전트가 `python main.py`로 실제 창을 띄워 라벨링 탭 툴바 13개
+  아이콘의 시각적 형태·체크 상태 배경, `main_window`/`log_panel`/`settings_dialog` 아이콘 전용
+  버튼 클릭 동작, `image_browser` 상태기호 색상, 학습 큐(진행 다이얼로그 + 학습 탭 본문 둘 다)
+  상태 아이콘, 로그 패널 CRITICAL 로그 표시를 확인해야 함. 이번 라운드는 리더가 "주요 기능
+  추가"로 분류하지는 않았으나(순수 시각 교체, 로직 변경 없음) 19개 지점 전부를 실제로 눈으로
+  확인하는 것이 안전.
+- 통과 시 `docs/roadmap.md`의 "아이콘/이모지 → 미니멀 디자인" 항목 중 1단계 체크 표시, Artifact
+  `7876ed3e` 실행 순서 2단계(장식 이모지 제거, `model_tab.py` 포함)로 진행 가능.
