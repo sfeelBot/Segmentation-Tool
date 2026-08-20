@@ -240,6 +240,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "labeling.ch_b.tip":      "Blue 채널만 표시",
         "labeling.clear_title":   "전체 삭제",
         "labeling.clear_msg":     "현재 이미지의 모든 어노테이션을 삭제하시겠습니까?",
+        "labeling.ok_clear_title": "라벨 삭제 후 OK 처리",
+        "labeling.ok_clear_msg":   "현재 이미지에 라벨(어노테이션)이 있습니다. 라벨을 삭제하고 OK 처리하시겠습니까?",
+        "labeling.copy_filename":  "파일명 복사",
     },
 
     "en": {
@@ -475,6 +478,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "labeling.ch_b.tip":      "Blue channel only",
         "labeling.clear_title":   "Clear All",
         "labeling.clear_msg":     "Delete all annotations on the current image?",
+        "labeling.ok_clear_title": "Delete Labels and Mark OK",
+        "labeling.ok_clear_msg":   "This image has labels (annotations). Delete them and mark OK?",
+        "labeling.copy_filename":  "Copy filename",
 
         # ── Missing shortcut keys (English) ──────────────────────────────
         "sc.eraser_flood":     "Connected eraser",

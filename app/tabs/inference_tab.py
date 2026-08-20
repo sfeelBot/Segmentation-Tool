@@ -5,9 +5,12 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QComboBox, QSpinBox,
     QFileDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QGroupBox, QSplitter, QHeaderView,
+    QApplication,
 )
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
+
+from app.widgets.icons import icon as svg_icon
 
 from app.core import inference_engine as engine
 from app.core.inference_engine import (
@@ -162,9 +165,23 @@ class InferenceTab(QWidget):
         center = QWidget()
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
+        filename_row = QHBoxLayout()
+        filename_row.setContentsMargins(0, 0, 0, 0)
         self._lbl_filename = QLabel("선택된 이미지 없음")
         self._lbl_filename.setStyleSheet("color:#9ca3af; padding:2px 4px;")
-        center_layout.addWidget(self._lbl_filename)
+        filename_row.addWidget(self._lbl_filename)
+
+        self._btn_copy_filename = QPushButton()
+        self._btn_copy_filename.setIcon(svg_icon("clipboard"))
+        self._btn_copy_filename.setIconSize(QSize(14, 14))
+        self._btn_copy_filename.setFixedSize(22, 22)
+        self._btn_copy_filename.setFlat(True)
+        self._btn_copy_filename.setToolTip("파일명 복사")
+        self._btn_copy_filename.setStyleSheet("QPushButton{border:none;padding:0;}")
+        self._btn_copy_filename.clicked.connect(self._on_copy_filename)
+        filename_row.addWidget(self._btn_copy_filename)
+        filename_row.addStretch()
+        center_layout.addLayout(filename_row)
         self._viewer_panel = OverlayViewerPanel()
         center_layout.addWidget(self._viewer_panel, stretch=1)
         splitter.addWidget(center)
@@ -246,6 +263,11 @@ class InferenceTab(QWidget):
         self._lbl_filename.setText(path.name)
         self._lbl_filename.setStyleSheet("color:#e5e7eb; padding:2px 4px;")
         self._update_nav_label()
+
+    def _on_copy_filename(self) -> None:
+        if self._image_path is None:
+            return
+        QApplication.clipboard().setText(self._image_path.name)
 
     def _update_nav_label(self) -> None:
         idx = self._img_list.current_display_index()

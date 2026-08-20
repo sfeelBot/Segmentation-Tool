@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QToolBar, QLabel, QSpinBox, QMessageBox,
     QListWidget, QListWidgetItem, QGroupBox,
-    QPushButton, QButtonGroup, QSplitter,
+    QPushButton, QButtonGroup, QSplitter, QApplication,
 )
 from PyQt6.QtGui import QAction, QColor, QKeySequence, QShortcut, QFont
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
@@ -178,6 +178,21 @@ class LabelingTab(QWidget):
 
         lay.addStretch()
 
+        self._lbl_filename = QLabel("")
+        self._lbl_filename.setFont(small_font)
+        self._lbl_filename.setStyleSheet("font-size:9px; color:#9ca3af;")
+        lay.addWidget(self._lbl_filename)
+
+        self._btn_copy_filename = QPushButton()
+        self._btn_copy_filename.setIcon(svg_icon("clipboard"))
+        self._btn_copy_filename.setIconSize(QSize(11, 11))
+        self._btn_copy_filename.setFixedSize(16, 16)
+        self._btn_copy_filename.setFlat(True)
+        self._btn_copy_filename.setToolTip(t("labeling.copy_filename"))
+        self._btn_copy_filename.setStyleSheet("QPushButton{border:none;padding:0;}")
+        self._btn_copy_filename.clicked.connect(self._on_copy_filename)
+        lay.addWidget(self._btn_copy_filename)
+
         self._lbl_pixel = QLabel("—")
         self._lbl_pixel.setFont(small_font)
         self._lbl_pixel.setStyleSheet(
@@ -225,8 +240,9 @@ class LabelingTab(QWidget):
         self._spin_brush = QSpinBox()
         self._spin_brush.setRange(1, 200)
         self._spin_brush.setValue(20)
-        self._spin_brush.setFixedWidth(60)
+        self._spin_brush.setMinimumWidth(76)
         self._spin_brush.valueChanged.connect(self._canvas.set_brush_size)
+        self._canvas.brush_size_changed.connect(self._spin_brush.setValue)
         tb.addWidget(self._spin_brush)
 
         tb.addSeparator()
@@ -359,15 +375,23 @@ class LabelingTab(QWidget):
     def _on_image_selected(self, path: Path) -> None:
         self._canvas.load_image(path)
         log.info(f"이미지 열기: {path.name}")
+        self._lbl_filename.setText(path.name)
         from app.core.annotation_store import get_ok
         self._act_ok.setChecked(get_ok(path))
         self._refresh_ann_list()
+
+    def _on_copy_filename(self) -> None:
+        path = self._canvas._image_path
+        if path is None:
+            return
+        QApplication.clipboard().setText(path.name)
 
     def _on_image_deleted(self, path: Path) -> None:
         if self._canvas._image_path == path:
             self._canvas.clear()
             log.info(f"이미지 삭제됨: {path.name}")
             self._ann_list.clear()
+            self._lbl_filename.setText("")
 
     def _on_annotation_saved(self) -> None:
         n = len(self._canvas._annotations)
@@ -419,6 +443,21 @@ class LabelingTab(QWidget):
         if self._canvas._image_path is None:
             self._act_ok.setChecked(False)
             return
+        # OK를 켜는 순간(끄는 경우는 무확인) + 라벨이 남아있으면 삭제 확인
+        if self._act_ok.isChecked() and self._canvas._annotations:
+            reply = QMessageBox.question(
+                self, t("labeling.ok_clear_title"),
+                t("labeling.ok_clear_msg"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self._act_ok.setChecked(False)
+                return
+            self._canvas.clear_all_annotations()
+            # 삭제를 즉시 디스크에 반영한 뒤 OK 플래그를 써야 잔여 라벨과 섞이지 않음
+            if self._canvas._save_timer.isActive():
+                self._canvas._save_timer.stop()
+                self._canvas._do_save()
         self._canvas.toggle_ok()
 
     def _on_auto_label(self) -> None:
