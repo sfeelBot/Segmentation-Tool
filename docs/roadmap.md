@@ -105,9 +105,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
     체크), `_FolderImportWorker` 패턴 따르는 백그라운드 압축 워커. 라운드 B: zip→프로젝트
     복원, 이름 충돌 시 자동 리네임(덮어쓰기 금지)으로 확정. A 구현·검증 통과 후 곧바로 B로
     이어서 진행(zip 포맷 의존관계). `docs/decisions-needed.md` 비움.
-  - [ ] 라운드 A(export) — 구현 착수 가능 (디자인 목업 불필요 — 기존 export_dialog.py/
-        _FolderImportWorker 패턴을 따르는 정형화된 구조)
-  - [ ] 라운드 B(import) — 라운드 A 완료 후 이어서 착수
+  - [x] 라운드 A(export) — 구현+독립검증 통과, 커밋 `911f85a`(feat)+`d42fe46`(docs).
+        `app/core/project_export.py` + `app/widgets/project_export_dialog.py` 신설,
+        zip 상대경로 구조 확인(라운드 B 전제조건 충족).
+  - [ ] 라운드 B(import) — 구현 착수 가능
 
 ## exe 패키징 + Setup Guide (2026-08-20 요청, 추후 착수)
 

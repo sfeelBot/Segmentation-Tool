@@ -99,8 +99,12 @@
 > 로직) + `app/widgets/project_export_dialog.py`(`ProjectExportDialog`+`_ProjectExportWorker`)
 > 신규, `project_start_dialog.py` 우클릭 메뉴 진입점 추가, `i18n.py` 키 추가. 합성 프로젝트로
 > `.thumbs/` 제외, 체크박스별 포함/제외, 500파일 대용량 progress 논블로킹, 에러 케이스 2건
-> 확인. 커밋 `911f85a`(feat)+`d42fe46`(docs), push 안 함. 독립 검증 위임 예정 — 통과 시
-> 라운드 B(가져오기)로 이어감.
+> 확인. 커밋 `911f85a`(feat)+`d42fe46`(docs), push 안 함.
+>
+> **라운드 A 독립 검증 통과**: 다른 규모(이미지 7장 vs 3장, 800파일)로 재현, zip 상대경로
+> 구조 확인(라운드 B 전제조건 충족), 대용량 논블로킹, 에러 케이스 재현. 새 버그 없음.
+> `docs/roadmap.md` 체크 완료. **라운드 B(가져오기) 구현 착수** — A의 zip 포맷을 그대로
+> 전제로 진행, 이름 충돌은 자동 리네임(덮어쓰기 금지)으로 확정된 정책 적용.
 >
 > **미해결 결정 대기 없음**(`docs/decisions-needed.md` 비어있음). 커밋은 전부 로컬에만 있고
 > `git push` 안 함(사용자가 "push는 진행하지 말고" 확인한 상태 — origin/main은 여전히
