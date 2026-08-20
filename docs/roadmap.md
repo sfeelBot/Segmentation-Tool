@@ -94,18 +94,20 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
     (`README.md`, `requirements.txt`, `docs/USER_MANUAL.md`). 코드 변경 아님.
 - [GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) "프로젝트 내보내기 기능"
   — 기획 완료: [docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md)
-  - ① 프로젝트 클릭 시 자동 열기 — 더블클릭은 이미 지원되고 번거로운 추가 흐름도 없음(코드
-    확인 완료). 싱글클릭을 원하는 건지 단순 미인지였는지는 이슈 원문만으로 판별 불가 →
-    `docs/decisions-needed.md` 등록, 리더가 GitHub 이슈에 재확인 코멘트 남긴 뒤 답변에 따라
-    처리(별도 라운드 불필요 — 초경량 수정 또는 안내로 종료).
-  - ② 프로젝트 전체 내보내기/단일 파일 통합 — export(라운드 A)+import(라운드 B) 2라운드로
-    스코프 산정. 라운드 A: `project_export_dialog.py` 신설(zip, `images/`+`annotations/`+
-    `classes.json`+`project.json` 항상 포함, `checkpoints/`·`user_models/`는 체크박스 선택 —
-    기본값 사용자 확인 대기), `_FolderImportWorker` 패턴을 따르는 백그라운드 압축 워커.
-    라운드 B: zip → 프로젝트 복원(import), 라운드 A 완료 후 착수(의존관계) — 이름 충돌 정책
-    등 사용자 확인 대기. 결정 대기 3건 `docs/decisions-needed.md` 등록.
-  - [ ] 다음: 리더가 사용자에게 decisions-needed 3건 확인 → 요청1 처리 + 요청2 라운드 A부터
-        디자인/구현 착수.
+  - ① **2026-08-20 사용자 재확인으로 요청 정정** — "최근 프로젝트 목록 클릭" 문제가 아니라
+    "전용 프로젝트 확장자를 만들어 OS 파일탐색기에서 더블클릭하면 앱이 그 프로젝트로 바로
+    열리게 해달라"는 뜻이었음. Windows 파일 연결(레지스트리 등록)은 보통 설치 프로그램이
+    처리하므로 아래 "exe 패키징 + Setup Guide" 항목에 하위 요구사항으로 편입 — 별도 라운드
+    아님, exe 패키징 착수 시 함께 설계.
+  - ② 프로젝트 전체 내보내기/가져오기 — **2026-08-20 사용자 확인 완료: A(export)+B(import)
+    모두 이번에 진행.** 라운드 A: `project_export_dialog.py` 신설(zip, `images/`+`annotations/`+
+    `classes.json`+`project.json` 항상 포함, `checkpoints/` 기본 미체크/`user_models/` 기본
+    체크), `_FolderImportWorker` 패턴 따르는 백그라운드 압축 워커. 라운드 B: zip→프로젝트
+    복원, 이름 충돌 시 자동 리네임(덮어쓰기 금지)으로 확정. A 구현·검증 통과 후 곧바로 B로
+    이어서 진행(zip 포맷 의존관계). `docs/decisions-needed.md` 비움.
+  - [ ] 라운드 A(export) — 구현 착수 가능 (디자인 목업 불필요 — 기존 export_dialog.py/
+        _FolderImportWorker 패턴을 따르는 정형화된 구조)
+  - [ ] 라운드 B(import) — 라운드 A 완료 후 이어서 착수
 
 ## exe 패키징 + Setup Guide (2026-08-20 요청, 추후 착수)
 
@@ -116,6 +118,11 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - PyInstaller(또는 유사 도구)로 `main.py` → 단일 exe/설치본 패키징. torch/torchvision/CUDA
   런타임 DLL을 exe에 어떻게 포함시킬지가 핵심 난제(용량·GPU 빌드별 분기 — [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1)
   의 CPU-only 설치 문제와 같은 종류의 함정이 exe 배포에서도 재현될 수 있음).
+- **[GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) 요청1 편입** (2026-08-20):
+  전용 프로젝트 확장자(예: `.segproj`) 파일을 OS에서 더블클릭하면 이 앱이 그 프로젝트를 바로
+  열도록. Windows 파일 연결 레지스트리 등록(보통 설치 프로그램이 처리) + `main.py`가
+  `sys.argv[1]`로 넘어온 프로젝트 경로를 받아 시작 다이얼로그를 건너뛰는 로직 필요. 상세:
+  [docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md) "요청 1" 절.
 - Setup Guide 문서 — 현재 `docs/USER_MANUAL.md`는 "pip install"이 전제인 개발자용 설치
   안내. exe 배포판 사용자는 pip/Python 환경 자체가 없을 수 있으므로 별도 성격의 문서(또는
   같은 문서의 새 절)가 필요.

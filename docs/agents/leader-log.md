@@ -85,6 +85,16 @@
 > 않고 `docs/roadmap.md`에 배경(torch/CUDA 런타임 번들링 난제, Setup Guide는 USER_MANUAL.md와
 > 성격이 다름)과 함께 기록만 해둠. 사용자에게 착수 시점 확인 필요.
 >
+> **GitHub #2 결정 3건 확인 완료 (2026-08-20) — 요청1 대폭 정정**: 사용자가 "요청1은 최근
+> 프로젝트 목록 클릭 얘기가 아니라, 전용 프로젝트 확장자를 만들어 OS에서 더블클릭하면 앱이
+> 바로 열리게 해달라는 뜻"이라고 정정 — 애초 기획 판단(싱글/더블클릭 문제)이 틀렸었음. Windows
+> 파일 연결은 설치 프로그램이 처리하는 게 정석이라 **exe 패키징(추후) 항목에 하위 요구사항으로
+> 편입**, 별도 라운드로 잡지 않음. 요청2는 **export(라운드A)+import(라운드B) 둘 다 이번에
+> 진행 확정**(체크포인트 기본 미체크/user_models 기본 체크, import 이름충돌은 자동 리네임으로
+> 리더가 안전 기본값 채택). `docs/specs/voc-github-issues-2026-08-20.md`/`docs/roadmap.md`/
+> `QA.md`/`docs/decisions-needed.md` 전부 반영. **라운드 A 구현 착수** — 목업 불필요(기존
+> export_dialog.py/_FolderImportWorker 패턴 재사용), A 검증 통과 후 곧바로 B로 이어감.
+>
 > **미해결 결정 대기 없음**(`docs/decisions-needed.md` 비어있음). 커밋은 전부 로컬에만 있고
 > `git push` 안 함(사용자가 "push는 진행하지 말고" 확인한 상태 — origin/main은 여전히
 > `1de27e6`까지만 반영, 로컬 main은 그 뒤로 8개 커밋 앞섬).

@@ -6,8 +6,9 @@
 
 ## 결정 대기
 
-*(현재 없음 — UI/UX 재편 4건 2026-08-20 사용자 확인 완료, 결과는
-[docs/specs/ui-redesign-plan-2026-08-19.md](specs/ui-redesign-plan-2026-08-19.md)
+*(현재 없음 — GitHub #2 관련 3건 2026-08-20 사용자 확인 완료. 요청1은 exe 패키징 항목으로
+편입, 요청2는 라운드 A+B 함께 진행 확정. 결과는
+[docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md)
 "사용자 결정 — 전부 완료" 절에 기록됨)*
 
 ## 보류된 항목
