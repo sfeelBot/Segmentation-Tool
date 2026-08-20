@@ -1423,3 +1423,82 @@ Windows 클립보드 내용 UTF-8 파일로 덤프해 검증. 스크린샷은 Py
 - **종합 판정: 조건부 통과(Conditional Pass)** — #3(a)/#4/#6-A/#7은 완전 통과, #3(b)는
   핵심 기능은 동작하나 BUG-011(P1) 수정 전까지 실사용 시 라벨 데이터 오염 위험을 사용자에게
   안내하거나 신속한 후속 수정이 필요하다.
+
+---
+
+## 2026-08-20 — BUG-011/012/013 재검증 (GitHub 이슈 라운드2 후속 수정)
+
+### 배경
+`implementation-log.md`의 "GitHub #3(b) 검증 후속"(BUG-011, 커밋 `24e93c9`, 리더가 직접
+수정)과 "GitHub #3/#4/#6-A/#7 라운드2 검증 후속"(BUG-012/013, 커밋 `5d551c3`) 두 수정을
+재검증. 대상 파일은 `app/widgets/annotation_canvas.py`(`mouseDoubleClickEvent()`, `undo()`,
+`_do_save(sync: bool)`), `app/tabs/labeling_tab.py`(`_on_toggle_ok()`), `app/core/i18n.py`
+(`tool.brush_size_dialog.*` 키).
+
+### 방법
+이 자동화 셸은 실제 마우스/키보드로 GUI를 조작할 수 없어(이전 라운드 검증 로그들과 동일한
+제약), `QT_QPA_PLATFORM=offscreen` + `QApplication` 실제 생성 + `PyQt6.QtTest.QTest`로
+진짜 Qt 이벤트(마우스 press/release/더블클릭)를 위젯에 전달하는 방식으로 골든 패스를
+재현했다. 데이터는 `projects/nok`을 스크래치 디렉토리(`.../scratchpad/test_project`)로
+복사해 사용 — 실 데이터(`projects/nok`)는 읽기 전용으로만 열었다(`project.open_existing()` 후
+`project_mod._current`에 직접 대입, `set_current()`가 건드리는 `data/settings.json`
+`recent_projects`/`last_project`는 우회). 스크립트: `verify_bugs.py`(BUG-011/012/013 본 검증),
+`verify_boot.py`(앱 기동 확인) — 둘 다 스크래치 디렉토리에만 저장, 프로젝트에 추가 안 함.
+
+### BUG-011 재검증 — PASS
+`AnnotationCanvas`를 직접 생성해 `projects/nok` 이미지(`10번.bmp`) 로드 → 브러시 도구
+선택 → `QInputDialog.getInt`를 패치(Cancel/OK 각각 시뮬레이션)한 뒤 `QTest.mouseDClick()`으로
+실제 Qt 더블클릭 이벤트 시퀀스(press→release→press→doubleClick→release)를 그대로 위젯에
+전달:
+- Cancel 케이스 1회, OK 케이스(브러시 크기 변경) 3회 반복 — **매번 어노테이션 개수가
+  더블클릭 전후 정확히 동일(0 → 0)**, stray `[Mask]` 어노테이션 미생성 확인. OK 케이스에서
+  브러시 크기(`_brush_size`)는 다이얼로그 반환값(15)으로 정상 반영됨도 확인.
+- **회귀 확인**: 더블클릭이 아닌 일반 연속 페인팅(press→move→release)은 여전히 어노테이션
+  1개로 정상 커밋됨(0 → 1). 그 뒤 `canvas.undo()`(Ctrl+Z 경로) 호출 시 정확히 그 1개만
+  제거되어 원상태로 복귀 — undo 스택 자체의 회귀 없음.
+
+### BUG-012 재검증 — PASS
+`LabelingTab()`을 직접 생성(`_image_browser.reload()` 포함), 실제 어노테이션이 있는
+`11번.bmp`(폴리곤 1개, `ok` 미설정)를 대상으로 선택. `QMessageBox.question`을 `Yes`로
+패치해 `_act_ok.setChecked(True)` → `_on_toggle_ok()`(GitHub #7 "예" 경로: 라벨 삭제
+확인 → 동기 flush → OK 설정) 실행:
+- 토글 직후 `store.get_ok()=True`, 사이드바 `_status_cache["11번"]="ok"` 즉시 일치 확인.
+- **다른 이미지로 전환 후 11번으로 복귀를 6회 반복**(매 라운드 사이 50ms 대기 — 잔존
+  가능한 비동기 스레드에 여유를 주기 위함) — **매 라운드 사이드바 캐시=`ok`, 디스크
+  JSON `ok:true`, `annotations:[]`(빈 배열) 완전 일치, 불일치 0건**. 과거 보고된 "돌아오면
+  미라벨로 되돌아감" 증상 재현 안 됨.
+- **회귀 확인**: 어노테이션이 없는 이미지(`10번.bmp`)에서 OK 토글(확인창 없이 바로
+  진행되는 경로) on/off 각각 정상 동작. 다른 이미지(`10번.bmp`)에 브러시 스트로크 1개를
+  그린 뒤(500ms 디바운스 타이머 시작 확인) 타이머 만료 전에 즉시 다른 이미지로 전환 —
+  `load_image()`의 기존 flush 경로(`_do_save()`, 비동기)가 정상 동작해 스트로크 1개가
+  `10번.json`에 정확히 저장됨. 이번 수정이 건드리지 않은 다른 `_do_save()` 호출부(디바운스,
+  이미지 전환 전 flush)에 회귀 없음을 확인.
+
+### BUG-013 재검증 — PASS
+`i18n.set_language("en")` 후 `t("tool.brush_size_dialog.title")` = `"Brush Size"`,
+`t("tool.brush_size_dialog.label")` = `"Brush size (1~200)"` 확인(영문). `i18n.set_language
+("ko")`로 되돌리면 각각 `"브러시 크기"`, `"브러시 크기 (1~200)"`로 정상 복귀(한글) —
+`annotation_canvas.py`의 더블클릭 다이얼로그가 이 두 키를 통해 `t()`를 호출하는 코드 경로를
+직접 확인했으므로(정적 리딩), 언어 전환 시 다이얼로그 문자열도 동일하게 전환됨을 신뢰할 수
+있음.
+
+### 앱 기동 확인 (`verify_boot.py`)
+`QApplication` 생성 → `PyQt6.QtSvg` 선행 import(이 자동화 셸 특유의 DLL 로드 순서 이슈 —
+`app.core.project`보다 `PyQt6.QtSvg`를 먼저 import해야 `ImportError: DLL load failed while
+importing QtSvg`가 회피됨, R4/R5 검증 로그의 기존 회피 패턴과 동일 계열의 별도 이슈로
+추정, 이번 라운드가 만든 문제 아님) → `projects/nok`을 읽기 전용으로 오픈(`set_current()`
+미사용) → `MainWindow()` 생성 → `show()`까지 예외 없이 통과.
+
+### 정리
+`git status --porcelain` 결과 공백(변경 없음, `data/settings.json`도 무변경 — 스크립트가
+전부 `project_mod._current` 직접 대입 방식으로 `set_current()`의 `recent_projects` 부작용을
+우회했기 때문). 테스트 데이터는 전부 스크래치 디렉토리 사본(`test_project`)에서만 수정,
+`projects/nok` 실데이터는 읽기 전용으로만 열어 무변경. `QA.md`의 BUG-011/012/013 세 항목에
+"재검증 완료(2026-08-20, verifier)" 문구와 구체적 재현 절차·결과를 추가했다(Closed Issues
+표는 유지, 재검증 필요 문구만 완료 문구로 교체).
+
+### 판정
+- **BUG-011/012/013 세 건 모두 재검증 통과.** 신규 회귀 발견 없음(정상 브러시 페인팅, undo
+  단축키, 무라벨 OK 토글, 이미지 전환 시 디바운스 flush 전부 정상).
+- **종합 판정: 통과(Pass)** — 별도 블로커 없음. 이번 라운드로 GitHub 이슈 라운드2에서
+  발견된 3개 버그(BUG-011/012/013)가 모두 해소된 것으로 확인.
