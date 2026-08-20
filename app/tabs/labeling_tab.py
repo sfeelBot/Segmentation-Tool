@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QButtonGroup, QSplitter,
 )
 from PyQt6.QtGui import QAction, QColor, QKeySequence, QShortcut, QFont
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 
 from app.widgets.annotation_canvas import (
     AnnotationCanvas,
@@ -18,6 +18,7 @@ from app.widgets.class_panel import ClassPanel
 from app.widgets.image_browser import ImageBrowser
 from app.widgets.auto_label_dialog import AutoLabelDialog
 from app.widgets.log_panel import LogPanel
+from app.widgets.icons import icon as svg_icon
 from app.core.i18n import t
 from app.core.logger import get_logger
 
@@ -188,20 +189,20 @@ class LabelingTab(QWidget):
         tb = QToolBar()
         tb.setMovable(False)
 
-        def tool_action(emoji: str, tool: str, tip_key: str) -> QAction:
-            act = QAction(emoji, self)
+        def tool_action(icon_name: str, tool: str, tip_key: str) -> QAction:
+            act = QAction(svg_icon(icon_name), "", self)
             act.setToolTip(t(tip_key))
             act.setCheckable(True)
             act.triggered.connect(lambda: self._set_tool(tool))
             return act
 
-        self._act_polygon      = tool_action("📐", TOOL_POLYGON,      "tool.polygon.tip")
-        self._act_brush        = tool_action("🖌",  TOOL_BRUSH,        "tool.brush.tip")
-        self._act_brush_fill   = tool_action("🪣", TOOL_BRUSH_FILL,   "tool.brush_fill.tip")
-        self._act_eraser       = tool_action("🧹", TOOL_ERASER,       "tool.eraser.tip")
-        self._act_eraser_flood = tool_action("🧲", TOOL_ERASER_FLOOD, "tool.eraser_flood.tip")
-        self._act_select       = tool_action("🔲", TOOL_SELECT,       "tool.select.tip")
-        self._act_pan          = tool_action("✋", TOOL_PAN,          "tool.pan.tip")
+        self._act_polygon      = tool_action("tool_polygon",      TOOL_POLYGON,      "tool.polygon.tip")
+        self._act_brush        = tool_action("tool_brush",        TOOL_BRUSH,        "tool.brush.tip")
+        self._act_brush_fill   = tool_action("tool_bucket",       TOOL_BRUSH_FILL,   "tool.brush_fill.tip")
+        self._act_eraser       = tool_action("tool_eraser",       TOOL_ERASER,       "tool.eraser.tip")
+        self._act_eraser_flood = tool_action("tool_eraser_flood", TOOL_ERASER_FLOOD, "tool.eraser_flood.tip")
+        self._act_select       = tool_action("tool_select",       TOOL_SELECT,       "tool.select.tip")
+        self._act_pan          = tool_action("tool_pan",          TOOL_PAN,          "tool.pan.tip")
 
         for act in (self._act_polygon, self._act_brush, self._act_brush_fill,
                     self._act_eraser, self._act_eraser_flood,
@@ -209,9 +210,10 @@ class LabelingTab(QWidget):
             tb.addAction(act)
         self._act_polygon.setChecked(True)
 
-        # 툴바 버튼 스타일 — 이모지를 크게 표시
+        # 툴바 버튼 스타일 — SVG 아이콘 크기 통일
+        tb.setIconSize(QSize(20, 20))
         tb.setStyleSheet(
-            "QToolBar QToolButton { font-size:16px; min-width:36px; min-height:30px; padding:2px 6px; }"
+            "QToolBar QToolButton { min-width:36px; min-height:30px; padding:4px 8px; }"
         )
 
         tb.addSeparator()
@@ -226,18 +228,18 @@ class LabelingTab(QWidget):
 
         tb.addSeparator()
 
-        act_undo = QAction("↶", self)
+        act_undo = QAction(svg_icon("undo"), "", self)
         act_undo.setToolTip(t("tool.undo.tip"))
         act_undo.setShortcut("Ctrl+Z")
         act_undo.triggered.connect(self._canvas.undo)
         tb.addAction(act_undo)
 
-        act_clear = QAction("🗑", self)
+        act_clear = QAction(svg_icon("trash"), "", self)
         act_clear.setToolTip(t("tool.clear.tip"))
         act_clear.triggered.connect(self._on_clear_all)
         tb.addAction(act_clear)
 
-        self._act_ann_visible = QAction("👁", self)
+        self._act_ann_visible = QAction(svg_icon("eye"), "", self)
         self._act_ann_visible.setCheckable(True)
         self._act_ann_visible.setChecked(True)
         self._act_ann_visible.setToolTip(t("sc.ann_visible") + " [F]")
@@ -248,7 +250,7 @@ class LabelingTab(QWidget):
 
         tb.addSeparator()
 
-        self._act_ok = QAction("✅", self)
+        self._act_ok = QAction(svg_icon("check"), "", self)
         self._act_ok.setCheckable(True)
         self._act_ok.setToolTip(t("tool.ok.tip"))
         self._act_ok.triggered.connect(self._on_toggle_ok)
@@ -256,14 +258,14 @@ class LabelingTab(QWidget):
 
         tb.addSeparator()
 
-        act_auto = QAction("✨", self)
+        act_auto = QAction(svg_icon("sparkle"), "", self)
         act_auto.setToolTip(t("tool.auto.tip"))
         act_auto.triggered.connect(self._on_auto_label)
         tb.addAction(act_auto)
 
         tb.addSeparator()
 
-        self._act_fullscreen = QAction("🔳", self)
+        self._act_fullscreen = QAction(svg_icon("fullscreen"), "", self)
         self._act_fullscreen.setCheckable(True)
         self._act_fullscreen.setToolTip(t("tool.fullscreen.tip"))
         self._act_fullscreen.setShortcut(QKeySequence(Qt.Key.Key_T))

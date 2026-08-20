@@ -5,7 +5,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QLabel, QPushButton, QWidget, QHBoxLayout,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 
 from app.tabs.model_tab import ModelTab
 from app.tabs.labeling_tab import LabelingTab
@@ -13,6 +13,7 @@ from app.tabs.training_tab import TrainingTab
 from app.tabs.inference_tab import InferenceTab
 from app.widgets.settings_dialog import SettingsDialog
 from app.widgets.export_dialog import ExportDialog
+from app.widgets.icons import icon as svg_icon
 from app.core.i18n import t
 from app.core import project as _project
 
@@ -54,23 +55,27 @@ class MainWindow(QMainWindow):
         )
         cl.addWidget(self._lbl_project)
 
-        self._btn_switch = QPushButton("🔄")
+        self._btn_switch = QPushButton()
+        self._btn_switch.setIcon(svg_icon("refresh"))
+        self._btn_switch.setIconSize(QSize(16, 16))
         self._btn_switch.setFlat(True)
         self._btn_switch.setToolTip(t("project.switch.tip"))
         self._btn_switch.setFixedWidth(30)
         self._btn_switch.setStyleSheet(
-            "QPushButton { font-size:15px; padding:4px; }"
+            "QPushButton { padding:4px; }"
             "QPushButton:hover { background:#374151; border-radius:4px; }"
         )
         self._btn_switch.clicked.connect(self._on_switch_project)
         cl.addWidget(self._btn_switch)
 
-        self._btn_open_folder = QPushButton("📁")
+        self._btn_open_folder = QPushButton()
+        self._btn_open_folder.setIcon(svg_icon("folder"))
+        self._btn_open_folder.setIconSize(QSize(16, 16))
         self._btn_open_folder.setFlat(True)
         self._btn_open_folder.setToolTip(t("project.open_folder"))
         self._btn_open_folder.setFixedWidth(30)
         self._btn_open_folder.setStyleSheet(
-            "QPushButton { font-size:15px; padding:4px; }"
+            "QPushButton { padding:4px; }"
             "QPushButton:hover { background:#374151; border-radius:4px; }"
         )
         self._btn_open_folder.clicked.connect(self._on_open_project_folder)

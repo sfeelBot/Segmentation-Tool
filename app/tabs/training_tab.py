@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QLineEdit, QGroupBox, QComboBox, QSplitter,
 )
 from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QSize, pyqtSignal
 
 from app.core.trainer import TrainerWorker, TrainingConfig
 from app.core.annotation_store import load_classes
@@ -24,8 +24,9 @@ from app.model_presets import PRESETS, preset_by_key, load_preset_code
 from app.widgets.config_form import ConfigForm
 from app.widgets.loss_chart import LossChart
 from app.widgets.training_progress_dialog import (
-    TrainingProgressDialog, STATUS_ICON, STATUS_COLOR, _fmt_time,
+    TrainingProgressDialog, STATUS_ICON_NAME, STATUS_COLOR, _fmt_time,
 )
+from app.widgets.icons import icon as svg_icon
 
 log = get_logger(__name__)
 
@@ -218,6 +219,7 @@ class TrainingTab(QWidget):
         self._queue_list = QListWidget()
         self._queue_list.setAlternatingRowColors(True)
         self._queue_list.setMaximumHeight(140)
+        self._queue_list.setIconSize(QSize(14, 14))
         queue_layout.addWidget(self._queue_list)
 
         # 큐 제어 버튼
@@ -372,16 +374,16 @@ class TrainingTab(QWidget):
     def _refresh_queue_list(self) -> None:
         self._queue_list.clear()
         for job in self._jobs:
-            icon = STATUS_ICON.get(job.status, "•")
+            icon_name = STATUS_ICON_NAME.get(job.status, "status_ring")
             color = STATUS_COLOR.get(job.status, "#cccccc")
             model_lbl = _model_source_label(job.model_source)
-            text = (f"{icon}  {job.name}  🧠 {model_lbl}   "
+            text = (f"{job.name}  🧠 {model_lbl}   "
                     f"[epochs={job.config.epochs}, bs={job.config.batch_size}, "
                     f"lr={job.config.lr:.1e}]   "
                     f"({job.epochs_done}/{job.config.epochs})")
             if job.status == "running":
                 text += f"   ETA {_fmt_time(job.eta_seconds)}"
-            item = QListWidgetItem(text)
+            item = QListWidgetItem(svg_icon(icon_name, color, 14), text)
             item.setForeground(QColor(color))
             self._queue_list.addItem(item)
         self._update_total_eta()

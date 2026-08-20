@@ -9,9 +9,10 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton,
 )
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 
 from app.core.logger import bridge, log_file_path
+from app.widgets.icons import icon as svg_icon
 
 
 LEVEL_COLOR = {
@@ -27,7 +28,7 @@ LEVEL_ICON = {
     "INFO":     "•",
     "WARNING":  "⚠",
     "ERROR":    "✖",
-    "CRITICAL": "🚨",
+    "CRITICAL": "■",
 }
 
 
@@ -51,13 +52,17 @@ class LogPanel(QWidget):
         header.addWidget(title)
         header.addStretch()
 
-        self._btn_clear = QPushButton("🧹")
+        self._btn_clear = QPushButton()
+        self._btn_clear.setIcon(svg_icon("broom"))
+        self._btn_clear.setIconSize(QSize(14, 14))
         self._btn_clear.setFixedSize(24, 22)
         self._btn_clear.setToolTip("로그 지우기")
         self._btn_clear.clicked.connect(self._on_clear)
         header.addWidget(self._btn_clear)
 
-        self._btn_open = QPushButton("📂")
+        self._btn_open = QPushButton()
+        self._btn_open.setIcon(svg_icon("folder"))
+        self._btn_open.setIconSize(QSize(14, 14))
         self._btn_open.setFixedSize(24, 22)
         self._btn_open.setToolTip(f"로그 파일이 있는 폴더 열기\n{log_file_path()}")
         self._btn_open.clicked.connect(self._on_open_file)

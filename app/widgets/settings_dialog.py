@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QFileDialog,
 )
 from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 
 from app.core.i18n import (
     TRANSLATIONS, get_language, set_language, save_settings, t,
@@ -18,6 +18,7 @@ from app.core.i18n import (
 from app.core.logger import log_file_path, error_log_file_path
 from app.core.perf_logger import PERF_LOG
 from app.core.project import get_projects_root, set_projects_root
+from app.widgets.icons import icon as svg_icon
 
 
 LANG_DISPLAY = {
@@ -273,7 +274,9 @@ class SettingsDialog(QDialog):
         field.setCursorPosition(0)
         row.addWidget(field, stretch=1)
 
-        btn_copy = QPushButton("📋")
+        btn_copy = QPushButton()
+        btn_copy.setIcon(svg_icon("clipboard"))
+        btn_copy.setIconSize(QSize(14, 14))
         btn_copy.setFixedWidth(36)
         btn_copy.setToolTip(t("settings.logs.copy_path"))
         btn_copy.clicked.connect(lambda _=False, p=str(path): self._on_copy(p, btn_copy))

@@ -8,22 +8,25 @@ from PyQt6.QtWidgets import (
     QComboBox, QLineEdit,
 )
 from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QSize
 from app.core.i18n import t
 
 from app.core.annotation_store import get_label_status
 from app.core import project as _project
+from app.widgets.icons import icon as svg_icon, pixmap as svg_pixmap
 
 SUPPORTED = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.tif")
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
 
 _SEARCH_DEBOUNCE_MS = 200
 
-# sym, text color
+_STATUS_ICON_SIZE = 14
+
+# icon name, color
 _STATUS_STYLE = {
-    "labeled":   ("●", "#6ddf6d"),
-    "ok":        ("✓", "#5ba8ff"),
-    "unlabeled": ("○", "#999999"),
+    "labeled":   ("status_dot",  "#10b981"),
+    "ok":        ("check",       "#60a5fa"),
+    "unlabeled": ("status_ring", "#4b5563"),
 }
 
 # 정렬 기준 (mode_key, 표시 레이블)
@@ -180,18 +183,23 @@ class ImageBrowser(QWidget):
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(16)
         self._tree.setUniformRowHeights(True)
+        self._tree.setIconSize(QSize(_STATUS_ICON_SIZE, _STATUS_ICON_SIZE))
         self._tree.setStyleSheet(_TREE_STYLE)
         self._tree.currentItemChanged.connect(self._on_current_item_changed)
         layout.addWidget(self._tree)
 
         # ── 범례 ──────────────────────────────────────────────────────────────
         legend = QHBoxLayout()
-        for sym, color, label in [("●", "#6ddf6d", "라벨링됨"),
-                                   ("✓", "#5ba8ff", "OK"),
-                                   ("○", "#999999", "미라벨")]:
-            lbl = QLabel(f"<font color='{color}'>{sym}</font> {label}")
-            lbl.setStyleSheet("font-size:10px;")
-            legend.addWidget(lbl)
+        legend.setSpacing(3)
+        for icon_name, color, label in [("status_dot",  "#10b981", "라벨링됨"),
+                                         ("check",       "#60a5fa", "OK"),
+                                         ("status_ring", "#4b5563", "미라벨")]:
+            icon_lbl = QLabel()
+            icon_lbl.setPixmap(svg_pixmap(icon_name, color, 12))
+            legend.addWidget(icon_lbl)
+            text_lbl = QLabel(label)
+            text_lbl.setStyleSheet(f"font-size:10px; color:{color}; margin-right:6px;")
+            legend.addWidget(text_lbl)
         legend.addStretch()
         layout.addLayout(legend)
 
@@ -233,10 +241,11 @@ class ImageBrowser(QWidget):
         item = self._path_to_item.get(path)
         if item is None:
             return
-        sym, color = _STATUS_STYLE[status]
+        icon_name, color = _STATUS_STYLE[status]
         # 폴더 헤더 아래 자식이면 파일명만, 최상위면 상대경로
         display = path.name if item.parent() is not None else self._rel_name(path)
-        item.setText(0, f"{sym}  {display}")
+        item.setIcon(0, svg_icon(icon_name, color, _STATUS_ICON_SIZE))
+        item.setText(0, display)
         item.setForeground(0, QColor(color))
 
     def current_path(self) -> Path | None:
@@ -409,10 +418,11 @@ class ImageBrowser(QWidget):
         Path는 UserRole에 직접 저장 (dict 키로 사용하지 않음).
         """
         status = self._status_cache.get(path) or get_label_status(path)
-        sym, color = _STATUS_STYLE[status]
+        icon_name, color = _STATUS_STYLE[status]
         label = display_name if display_name is not None else self._rel_name(path)
         item = QTreeWidgetItem()
-        item.setText(0, f"{sym}  {label}")
+        item.setIcon(0, svg_icon(icon_name, color, _STATUS_ICON_SIZE))
+        item.setText(0, label)
         item.setForeground(0, QColor(color))
         item.setData(0, _PATH_ROLE, path)   # ← Path 를 아이템에 직접 저장
         return item

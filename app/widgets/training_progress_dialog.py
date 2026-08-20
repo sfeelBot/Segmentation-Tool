@@ -4,15 +4,18 @@ from PyQt6.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QGroupBox,
 )
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 
+from app.widgets.icons import icon as svg_icon
 
-STATUS_ICON = {
-    "waiting": "⏳",
-    "running": "🔵",
-    "done":    "✅",
-    "error":   "❌",
-    "stopped": "⏹️",
+_QUEUE_ICON_SIZE = 14
+
+STATUS_ICON_NAME = {
+    "waiting": "status_ring",
+    "running": "status_dot",
+    "done":    "status_done",
+    "error":   "status_error",
+    "stopped": "status_square",
 }
 
 STATUS_COLOR = {
@@ -100,6 +103,7 @@ class TrainingProgressDialog(QDialog):
         q_layout = QVBoxLayout(q_box)
         self._queue_list = QListWidget()
         self._queue_list.setAlternatingRowColors(True)
+        self._queue_list.setIconSize(QSize(_QUEUE_ICON_SIZE, _QUEUE_ICON_SIZE))
         q_layout.addWidget(self._queue_list)
         root.addWidget(q_box, stretch=1)
 
@@ -143,12 +147,12 @@ class TrainingProgressDialog(QDialog):
         """jobs: TrainingJob 리스트."""
         self._queue_list.clear()
         for job in jobs:
-            icon = STATUS_ICON.get(job.status, "•")
+            icon_name = STATUS_ICON_NAME.get(job.status, "status_ring")
             color = STATUS_COLOR.get(job.status, "#cccccc")
-            text = f"{icon}  {job.name}   ({job.epochs_done}/{job.config.epochs})"
+            text = f"{job.name}   ({job.epochs_done}/{job.config.epochs})"
             if job.status == "running":
                 text += f"  · ETA {_fmt_time(job.eta_seconds)}"
-            item = QListWidgetItem(text)
+            item = QListWidgetItem(svg_icon(icon_name, color, _QUEUE_ICON_SIZE), text)
             item.setForeground(QColor(color))
             self._queue_list.addItem(item)
 
