@@ -47,18 +47,32 @@ class LabelingTab(QWidget):
         )
         outer.addWidget(self._splitter)
 
-        # ── 왼쪽: 이미지 브라우저 + 클래스 패널 ─────────────────────────────
+        # ── 왼쪽: 이미지 브라우저 + 클래스 패널 (세로 서브스플리터) ──────────
         self._left_panel = QWidget()
         self._left_panel.setMinimumWidth(150)
         left_layout = QVBoxLayout(self._left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
-        left_layout.setSpacing(6)
+        left_layout.setSpacing(0)
+
+        self._left_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._left_splitter.setHandleWidth(5)
+        self._left_splitter.setStyleSheet(
+            "QSplitter::handle { background:#374151; }"
+            "QSplitter::handle:hover { background:#60a5fa; }"
+        )
 
         self._image_browser = ImageBrowser()
         self._class_panel = ClassPanel()
+        self._image_browser.setMinimumHeight(80)
+        self._class_panel.setMinimumHeight(80)
 
-        left_layout.addWidget(self._image_browser, stretch=3)
-        left_layout.addWidget(self._class_panel, stretch=2)
+        self._left_splitter.addWidget(self._image_browser)
+        self._left_splitter.addWidget(self._class_panel)
+        self._left_splitter.setSizes([300, 200])  # 기존 stretch 3:2 재현
+        self._left_splitter.setStretchFactor(0, 3)
+        self._left_splitter.setStretchFactor(1, 2)
+
+        left_layout.addWidget(self._left_splitter)
 
         # ── 가운데: 툴바 + 캔버스 + 상태바 ──────────────────────────────────
         center = QWidget()
@@ -71,12 +85,19 @@ class LabelingTab(QWidget):
         center_layout.addWidget(self._canvas)
         center_layout.addWidget(self._build_channel_strip())
 
-        # ── 오른쪽: 어노테이션 목록 + 로그 패널 ─────────────────────────────
+        # ── 오른쪽: 어노테이션 목록 + 로그 패널 (세로 서브스플리터) ─────────
         self._right_panel = QWidget()
         self._right_panel.setMinimumWidth(130)
         right_layout = QVBoxLayout(self._right_panel)
         right_layout.setContentsMargins(4, 4, 4, 4)
-        right_layout.setSpacing(4)
+        right_layout.setSpacing(0)
+
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._right_splitter.setHandleWidth(5)
+        self._right_splitter.setStyleSheet(
+            "QSplitter::handle { background:#374151; }"
+            "QSplitter::handle:hover { background:#60a5fa; }"
+        )
 
         ann_box = QGroupBox(t("labeling.ann_list"))
         ann_box_layout = QVBoxLayout(ann_box)
@@ -92,11 +113,19 @@ class LabelingTab(QWidget):
         self._lbl_sel_hint.hide()
         ann_box_layout.addWidget(self._lbl_sel_hint)
 
-        right_layout.addWidget(ann_box, stretch=2)
+        ann_box.setMinimumHeight(80)
 
         # 어노테이션 목록 밑에 로그 패널
         self._log_panel = LogPanel()
-        right_layout.addWidget(self._log_panel, stretch=3)
+        self._log_panel.setMinimumHeight(80)
+
+        self._right_splitter.addWidget(ann_box)
+        self._right_splitter.addWidget(self._log_panel)
+        self._right_splitter.setSizes([200, 300])  # 기존 stretch 2:3 재현
+        self._right_splitter.setStretchFactor(0, 2)
+        self._right_splitter.setStretchFactor(1, 3)
+
+        right_layout.addWidget(self._right_splitter)
 
         # 스플리터에 추가 (좌 · 가운데 · 우)
         self._splitter.addWidget(self._left_panel)

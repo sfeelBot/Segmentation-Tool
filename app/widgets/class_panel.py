@@ -24,7 +24,6 @@ class ClassPanel(QWidget):
         layout.addWidget(QLabel("클래스"))
 
         self._list = QListWidget()
-        self._list.setMaximumHeight(200)
         self._list.currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self._list)
 
