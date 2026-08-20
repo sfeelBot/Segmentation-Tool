@@ -24,7 +24,10 @@
 
 | 날짜 | 요청 내용 | 결정 | 근거 |
 |------|-----------|------|------|
-| — | — | — | — |
+| 2026-08-20 | [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1) "사용성 정리" ① 라벨링/추론 이미지 탭에 폴더 정보(최하위 폴더명) 표시 요청 | 수용 — 이미 진행 중인 UI/UX 재편 라운드 2에서 커버됨(라벨링 탭은 기존부터 폴더 트리 있음, 추론 탭은 라운드 2에서 트리형 폴더 그룹핑 신규 추가 예정) | `docs/specs/ui-redesign-plan-2026-08-19.md`, `docs/roadmap.md` "UI/UX 재편" 절 |
+| 2026-08-20 | [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1) "사용성 정리" ② RTX 4500 Ada GPU인데 `torch 2.13.0+cpu`(CPU 전용)로 설치됨, torchvision 설치 실패 원인 문의, .exe 빌드 시 의존성 별도 설치 필요 여부 문의 | 원인 파악 완료 — `requirements.txt`에 CUDA index-url 안내가 없어 `pip install -r requirements.txt`를 먼저 실행하면 CPU 전용 빌드가 잡힘. `docs/USER_MANUAL.md`엔 이미 올바른 설치 순서(torch를 CUDA 빌드로 먼저 설치)가 있었으나 루트 `README.md`가 빈 플레이스홀더라 발견이 안 됨 | **즉시 수정**: `README.md`에 설치 가이드 추가(USER_MANUAL 링크 포함), `requirements.txt`에 경고 주석 추가, `USER_MANUAL.md` GPU 표에 RTX Ada 워크스테이션 계열 행 추가. .exe 빌드 의존성 별도 설치 문제는 CLAUDE.md상 PyInstaller 패키징이 범위 밖이라 별도 논의 필요 |
+| 2026-08-20 | [GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) "프로젝트 내보내기 기능" ① 프로젝트를 클릭하면 자동으로 열리게 해달라 | 확인 필요 — 현재 `project_start_dialog.py`는 최근 프로젝트 목록에서 **더블클릭**은 이미 지원(`itemDoubleClicked`). 싱글클릭으로 바로 열리길 원하는 건지, 다른 불편(예: "열기" 버튼이 별도로 필요해서 번거로움)인지 기획 단계에서 재확인 필요 | `app/widgets/project_start_dialog.py` |
+| 2026-08-20 | [GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) "프로젝트 내보내기 기능" ② 프로젝트 전체를 내보내거나 하나의 파일로 통합하는 기능 요청 | 신규 기능 — 기존 `export_dialog.py`는 라벨 데이터(JSON/YOLO/COCO) 내보내기만 지원, 프로젝트 전체(이미지+어노테이션+체크포인트+분류) 패키징 기능은 없음. 기획 에이전트에게 스코프 산정 위임 | `app/widgets/export_dialog.py`, `app/core/project.py` |
 
 ---
 

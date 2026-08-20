@@ -55,6 +55,7 @@ GPU 별 추천 CUDA 빌드:
 |---|---|
 | RTX 50 시리즈 (Blackwell) | `cu128` |
 | RTX 40 / 30 / 20 | `cu124` / `cu121` |
+| RTX Axxx / A-시리즈 Ada 워크스테이션 GPU (예: RTX 4500 Ada) | `cu124` (RTX 40 시리즈와 동일 세대) |
 | GTX 10 (Pascal) | `cu121` |
 | Quadro M4000 / M5000 (Maxwell) | `cu118` |
 | GPU 없음 | `cpu` |

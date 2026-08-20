@@ -603,3 +603,81 @@ DLL 함정(리더가 보고한 `app.core.project` → `PyQt6.QtWidgets` 순서 �
 ### 비고
 - 검증 스크립트 2종(`verify_ui_r1.py`, `verify_boot_r1_ui.py`)은 스크래치 디렉토리에만 작성,
   프로젝트에 커밋하지 않음.
+
+---
+
+## 2026-08-20 — UI 재편 라운드2(라벨링 탭) 검증 (커밋 `f086636`)
+
+`docs/specs/ui-redesign-plan-2026-08-19.md` 라운드 2 대상 중 사용자가 범위를 라벨링 탭으로
+좁힌 지시에 따라 구현된 항목. 구현 로그(`implementation-log.md` "UI/UX 재편 라운드 2(라벨링
+탭만)" 항목)의 주장을 그대로 신뢰하지 않고, 구현자 스크립트를 재사용하지 않은 별도 스크래치
+스크립트(`.../scratchpad/verify_labeling_r2.py`, `verify_boot.py` — 프로젝트에 추가 안 함)로
+독립 재현. 목업(design-log.md 2026-08-20 항목, Artifact `5df2af11-...`)의 라벨링 탭 부분과 대조.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위 확인** — `git show --stat f086636`: `app/tabs/labeling_tab.py`(+37/-8),
+   `app/widgets/class_panel.py`(+0/-1) 2개 파일만 변경. 구현자 주장(2개 파일)과 정확히 일치.
+   의도치 않은 다른 파일 변경 없음.
+2. **코드 리딩** — `labeling_tab.py`의 `_build_ui()`(36-137행)를 직접 읽음. 좌 패널
+   (`_left_splitter`)이 `QSplitter(Qt.Orientation.Vertical)`로 `ImageBrowser`/`ClassPanel`을
+   `addWidget()`, `setSizes([300, 200])` + `setStretchFactor(0, 3)/(1, 2)`, 우 패널
+   (`_right_splitter`)이 어노테이션 `QGroupBox`/`LogPanel`을 `setSizes([200, 300])` +
+   `setStretchFactor(0, 2)/(1, 3)`로 감쌈을 확인. 양쪽 모두 자식 위젯에 `setMinimumHeight(80)`
+   부여, 메인 스플리터와 동일한 `QSplitter::handle:hover { background:#60a5fa; }` 스타일 적용
+   확인. `_on_toggle_fullscreen()`(320-331행)이 `self._splitter`(바깥 메인 좌우 스플리터)의
+   `sizes()`만 저장/복원하고 `_left_panel`/`_right_panel`을 통째로 `setVisible()`하는 구조라
+   서브스플리터와 구조적으로 독립적임을 코드로 확인. `class_panel.py`에서 `_list =
+   QListWidget()` 다음 줄의 `setMaximumHeight(200)` 호출이 실제로 제거되어 있음(diff와 대조)
+   확인.
+3. **독립 재현 — `LabelingTab` 직접 생성** (`verify_labeling_r2.py`, PyQt6를 `app.core.project`
+   보다 먼저 import해 R4 검증 로그의 DLL 함정 회피 패턴 준수, `projects/nok` 오픈):
+   - `findChildren(QSplitter)` 결과 총 3개(메인+좌+우) 확인, `_left_splitter`/`_right_splitter`
+     모두 그 안에 포함되고 `orientation() == Qt.Orientation.Vertical` 확인.
+   - 초기 `sizes()` — 좌 `[532, 355]` 비율 1.4986(목표 3:2=1.5, 오차 0.0014), 우
+     `[355, 532]` 비율 0.6673(목표 2:3=0.6667, 오차 0.0006) — 구현자 수치(`[532,355]`/
+     `[355,532]`)와 정확히 동일하게 재현됨(같은 초기 창 크기라 당연한 결과지만, 별도 계산식
+     — `sizes[0]/sizes[1]` 직접 나눗셈 — 으로 재검증).
+   - `class_panel._list.maximumHeight()` = `16777215`(`QWIDGETSIZE_MAX`, 무제한) 확인.
+4. **전체화면 토글 회귀 — 단발 + 4회 연속 재현**: `_act_fullscreen.setChecked(True)` →
+   `_left_panel.isVisible()`/`_right_panel.isVisible()` 둘 다 `False`, `setChecked(False)`
+   복귀 → 둘 다 `True`, 메인 스플리터 `sizes()`가 `[230, 960, 200]`으로 토글 전후 완전 동일,
+   좌/우 서브스플리터 `sizes()`도 `[532, 355]`/`[355, 532]`로 토글 전후 불변 확인. **추가로
+   진입→복귀를 4회 연속 반복**한 결과, 매 회차 `vis_in=(False, False)`, `vis_out=(True, True)`,
+   서브스플리터 `sizes()`가 4회 내내 `[532, 355]`/`[355, 532]`로 흔들림 없이 안정적임을 확인
+   — 누적 드리프트나 상태 오염 없음.
+5. **목업 대비 — 클래스 8개 추가** — `projects/nok`의 기존 클래스(`background`, `object`)에
+   테스트용 클래스 8개(`testcls_0~7`)를 `save_classes()`로 추가 후 `class_panel.reload()` →
+   `_list.count()==10`, `maximumHeight()`는 여전히 무제한, 10행 전체가 200px 상한 없이
+   렌더링 가능한 상태(`viewport().height()==305` > `sizeHintForRow(0)*count==180`, 스크롤
+   불필요)임을 확인. **테스트 후 원래 클래스 2개로 정확히 복원**(`save_classes(existing)`),
+   `git status --porcelain` 재확인 결과 공백(변경 없음).
+6. **`python main.py` 방식 전체 기동** (`verify_boot.py`) — `QApplication` → `app.main_window
+   import MainWindow` → `MainWindow()` → `show()` → `MAIN_WINDOW_OK` 출력, `w._labeling_tab`
+   속성으로 실제 라벨링 탭 인스턴스에 접근해 좌/우 서브스플리터 `sizes()`(`[443, 296]`/
+   `[296, 443]`, 창 크기가 달라 절대값은 다르지만 비율은 동일하게 3:2/2:3 유지)까지 재확인.
+   프로세스 종료 코드 127은 R1~R6/UI라운드1 검증 로그에서 반복 관찰된 `app.exec()` 이벤트
+   루프 없는 비대화형 offscreen 셸의 노이즈로 판단 — `MAIN_WINDOW_OK` 출력이 STEP 이후
+   나온 것으로 실제 기동 성공을 확인.
+7. **다른 라벨링 탭 기능 회귀 확인** — `_connect_signals()`, 캔버스 도구 7종(`_act_polygon`
+   등 툴바 액션), `LogPanel`, `ImageBrowser` 등은 이번 diff(+37/-8, -1)가 레이아웃 컨테이너
+   교체(`QVBoxLayout` → `QSplitter`)에만 국한됨을 `git show` diff로 직접 대조 확인 — 시그널
+   배선·`keyPressEvent`·단축키 로직 라인은 diff에 전혀 등장하지 않음. 추가로 `LabelingTab()`을
+   생성한 상태에서 툴바 액션 7개, `_log_panel`, `_image_browser` 속성이 모두 정상 존재함을
+   런타임으로 재확인.
+
+### 판정
+- 구현자 주장 전부(서브스플리터 전환, 비율 재현, `maximumHeight` 제거, 전체화면 토글 무회귀,
+  앱 기동)와 목업 의도(초기 비율 유지, 8개 클래스 스크롤 없이 표시) 모두 독립 재현 성공. 4회
+  연속 전체화면 토글에서도 불안정 징후 없음. 새로운 버그 없음.
+- **라운드2(라벨링 탭) 검증 통과.**
+- 스플리터 핸들 hover 시 실제 마우스오버로 색이 바뀌는지, 핸들 드래그 체감은 라운드1 검증과
+  동일한 이유(오프스크린 환경 제약)로 육안 확인 불가 — 스타일시트 문자열 적용 자체는
+  `styleSheet()` 조회로 확인 완료, Qt 렌더링 신뢰.
+- 코드는 건드리지 않음 — `git status --porcelain` 검증 전/후 모두 공백(무변경) 확인.
+
+### 비고
+- 검증 스크립트 2종(`verify_labeling_r2.py`, `verify_boot.py`)은 스크래치 디렉토리에만 작성,
+  프로젝트에 커밋하지 않음.
+- 학습 탭·추론 탭의 라운드 2 항목(큐 박스↔진행상태, 상단↔메인뷰어 서브스플리터, 추론 탭 이미지
+  목록 트리 교체)은 이번 검증 범위 밖 — implementation-log.md에 명시된 대로 별도 라운드로 남아있음.

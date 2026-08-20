@@ -74,13 +74,30 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - [x] 라운드 2 목업 완료 (Artifact: https://claude.ai/code/artifact/5df2af11-0642-4e69-8ddc-f545333eebca)
       — 3탭 전체 대상으로 작성됨. **사용자 결정(2026-08-20): 라벨링 탭만 우선 구현**, 학습/
       추론 탭은 보류.
-- [ ] 라운드 2 — 라벨링 탭: 좌/우 서브스플리터 전환 + `ClassPanel` 200px 상한 제거 — 구현 착수 가능
-- [ ] 라운드 2 — 학습 탭 큐 영역 서브스플리터 (보류)
-- [ ] 라운드 2 — 추론 탭 상단↔뷰어 서브스플리터 + 이미지 목록 검색/정렬/트리형 폴더 신규 (보류)
+- [x] 라운드 2 — 라벨링 탭: 좌/우 서브스플리터 전환 + `ClassPanel` 200px 상한 제거 — 구현+
+      독립검증 통과, 커밋 `f086636`(feat)+`9901681`(docs). [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1)
+      폴더 정보 표시 요청 중 라벨링 탭 쪽은 기존부터 지원(이번 변경과 무관하게 이미 충족).
+- [ ] 라운드 2 — 학습 탭 큐 영역 서브스플리터 (보류, 사용자 재확인 필요)
+- [ ] 라운드 2 — 추론 탭 상단↔뷰어 서브스플리터 + 이미지 목록 검색/정렬/트리형 폴더 신규
+      (보류, 사용자 재확인 필요 — [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1)
+      폴더 정보 표시 요청과 직결)
 - [ ] 라운드 3 — 정보 추가 (디자인 목업 필요, 중~고리스크 — `annotation_canvas.py`,
       `inference_engine.py` 최소 침습 패치 포함, 아직 미착수)
 - 다음 단계: 라벨링 탭 라운드 2 구현 → 검증 → 통과 후 학습/추론 탭 진행 여부 사용자 재확인.
 
+## GitHub 이슈 VOC (2026-08-20 접수)
+
+- [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1) "사용성 정리"
+  - ① 라벨링/추론 이미지 탭 폴더 정보 표시 — 위 "UI/UX 재편" 절에서 커버(라벨링 탭은 완료,
+    추론 탭은 라운드 2 보류분).
+  - ② RTX 4500 Ada GPU인데 CPU 전용 torch 설치됨 — 원인 파악 및 문서 수정 완료
+    (`README.md`, `requirements.txt`, `docs/USER_MANUAL.md`). 코드 변경 아님.
+- [GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) "프로젝트 내보내기 기능"
+  - ① 프로젝트 클릭 시 자동 열기 — 현재 더블클릭은 이미 지원, 정확히 뭘 원하는지 기획에서
+    재확인 필요.
+  - ② 프로젝트 전체 내보내기/단일 파일 통합 — 신규 기능, 기획 스코프 산정 예정.
+  - [ ] 기획 착수 예정 (착수 시 `docs/agents/planning-log.md`·`docs/specs/`에 반영)
+
 ## 다음 후보
-- 위 UI/UX 재편 외 추가 신규 기능 요청 없음 (2026-08-19 기준). 새 요청은
+- 위 UI/UX 재편·GitHub 이슈 VOC 외 추가 신규 기능 요청 없음. 새 요청은
   [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에 반영된다.
