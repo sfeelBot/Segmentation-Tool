@@ -7,6 +7,24 @@
 
 *(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다)*
 
+> **[최신, 2026-08-20 세션 중단 시점]** 사용자 요청으로 "아이콘 목업 승인 + 학습/추론 UI
+> 재편 재개 + 전반적 디자인 톤 정리"를 디자인 에이전트에 홀리스틱 검토로 위임 →
+> 통합 Artifact(`7876ed3e`, 기존 아이콘·레이아웃 목업 2개 대체) + 신규 발견 8건 산출 →
+> 사용자 승인 → **7단계 실행안**([roadmap.md](../roadmap.md) "디자인 톤 홀리스틱 재검토"
+> 절 참고: ①아이콘SVG ②장식이모지제거 ③model_tab팔레트 ④loss_chart배색 ⑤학습/추론
+> 서브스플리터 ⑥i18n en전환 ⑦팔레트정규화)으로 라운드 단위 구현 착수.
+> **①완료+검증통과**(커밋 `2ad0165`+`2f05313`+`ed99ca5`, 버그 없음). **②장식 이모지 제거
+> 구현 에이전트가 백그라운드에서 작업 중이던 도중 사용자가 토큰 한도로 세션 중단 요청** —
+> 작업트리에 미커밋 변경 다수(`inference_engine.py`/`logger.py`/`main_window.py`/
+> `model_presets/__init__.py`/`inference_tab.py`/`model_tab.py`/`training_tab.py`/
+> `auto_label_dialog.py`/`auto_label_preview_dialog.py`/`config_form.py`/`export_dialog.py`/
+> `image_browser.py`/`log_panel.py`/`model_preset_dialog.py`/`project_export_dialog.py`/
+> `project_import_dialog.py`/`project_start_dialog.py`/`settings_dialog.py`/
+> `training_progress_dialog.py` 등 19개 파일). **에이전트는 백그라운드에서 계속 실행되며
+> 완료 시 스스로 커밋+로그 기록함(지시해둔 대로)** — 다음 세션 시작 시 완료 알림이 와 있는지,
+> 또는 `git status`로 미커밋 변경이 남아있는지 먼저 확인할 것. 검증(③)은 아직 미착수.
+> ③~⑦ 미착수.
+>
 > **성능/버그 개선 R1~R6 전체 완료** (2026-08-19) — 전부 구현+독립검증 통과. 커밋:
 > `3ce4dc9`(R1 BUG-002), `eee9b9c`(R2 지연임포트), `194430b`(R3 캔버스 캐시),
 > `5ed34e9`(R4 데이터로더 캐시+num_workers), `20bb3d0`(R5 추론 다운스케일),
