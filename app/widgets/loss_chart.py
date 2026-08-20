@@ -9,13 +9,14 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 
-_DARK   = "#1e1e1e"
-_PANEL  = "#2d2d2d"
-_TRAIN  = "#4fc3f7"   # 밝은 파란색 — train
-_VAL    = "#ef9a9a"   # 밝은 붉은색 — val
-_GRID   = "#3a3a3a"
-_TEXT   = "#cccccc"
-_EPOCH  = "#555555"   # epoch 경계 세로선
+_DARK   = "#111418"   # 앱 표준 배경
+_PANEL  = "#1f2329"   # 앱 표준 패널 배경
+_TRAIN  = "#60a5fa"   # accent — train
+_VAL    = "#f87171"   # 에러 계열 — val
+_GRID   = "#374151"   # 앱 표준 테두리
+_TEXT   = "#e5e7eb"   # 앱 표준 기본 텍스트
+_TEXT_MUTED = "#9ca3af"   # 앱 표준 보조 텍스트 (눈금)
+_EPOCH  = "#374151"   # epoch 경계 세로선
 
 
 class LossChart(FigureCanvasQTAgg):
@@ -125,16 +126,16 @@ class LossChart(FigureCanvasQTAgg):
     def _style_ax(self) -> None:
         ax = self._ax
         ax.set_facecolor(_PANEL)
-        ax.tick_params(colors=_TEXT, labelsize=8)
+        ax.tick_params(colors=_TEXT_MUTED, labelsize=8)
         ax.xaxis.label.set_color(_TEXT)
         ax.yaxis.label.set_color(_TEXT)
         ax.set_xlabel("Epoch", fontsize=9)
         ax.set_ylabel("Loss",  fontsize=9)
-        ax.set_title("Train / Val Loss", color="#eeeeee", fontsize=10)
-        ax.legend(facecolor="#3a3a3a", labelcolor=_TEXT, fontsize=8)
+        ax.set_title("Train / Val Loss", color=_TEXT, fontsize=10)
+        ax.legend(facecolor=_PANEL, edgecolor=_GRID, labelcolor=_TEXT, fontsize=8)
         ax.grid(True, color=_GRID, linewidth=0.4, alpha=0.6)
         for spine in ax.spines.values():
-            spine.set_edgecolor("#555555")
+            spine.set_edgecolor(_GRID)
 
 
 # 모듈 레벨에서 상수 접근용 (LossChart 내부 _EMA_ALPHA 와 동기화)
