@@ -69,7 +69,10 @@
 > [#2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) "프로젝트 내보내기 기능"
 > (클릭 자동열기 — 이미 더블클릭 지원 중이라 정확한 요구 재확인 필요 / 프로젝트 전체
 > 내보내기·단일파일 통합 — 신규 기능, `export_dialog.py`는 라벨데이터 export만 지원해서
-> 겹치지 않음). `QA.md` VOC 테이블에 4건 전부 기록. 기획 에이전트에게 #2 스코프 산정 위임 중.
+> 겹치지 않음). `QA.md` VOC 테이블에 4건 전부 기록. CUDA 설치 가이드는 리더가 직접 수정
+(README.md/requirements.txt/USER_MANUAL.md) 완료·커밋. 라운드2(라벨링탭) 독립 검증도
+통과(4연속 전체화면 토글 안정, 클래스 10개 스크롤 없이 표시). **기획 에이전트에게 GitHub
+#2(프로젝트 자동열기 재확인 + 전체 내보내기/가져오기 신규 기능) 스코프 산정 위임 중.**
 >
 > **미해결 결정 대기 없음**(`docs/decisions-needed.md` 비어있음). 커밋은 전부 로컬에만 있고
 > `git push` 안 함(사용자가 "push는 진행하지 말고" 확인한 상태 — origin/main은 여전히
