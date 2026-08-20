@@ -492,12 +492,17 @@ class LabelingTab(QWidget):
     # ── 어노테이션 목록 관리 ─────────────────────────────────────────────────
 
     def _refresh_ann_list(self) -> None:
-        self._ann_list_updating = True
-        self._ann_list.clear()
+        """어노테이션 목록 패널 갱신 — 매번 clear()+전체 재생성 대신, 이전 상태와
+        위치별로 비교(diff)해 실제로 바뀐 항목만 갱신한다. 편집·이미지 전환마다
+        호출되므로(GitHub #6-B), n개 QListWidgetItem을 통째로 파괴/재생성하던
+        기존 방식은 어노테이션이 많을수록 매 호출 비용이 커졌다 — 항목을 이어붙이거나
+        끝에서 지우는 흔한 편집 패턴에서는 위치가 안 바뀐 기존 아이템을 그대로 두고
+        건드리지 않는다."""
         from app.core.annotation_store import load_classes
         cls_map = {c.class_id: c for c in load_classes()}
 
         class_count: dict[int, int] = {}
+        target: list[tuple[str, str, tuple[int, int, int]]] = []
 
         for ann in self._canvas._annotations:
             cls   = cls_map.get(ann.class_id)
@@ -516,13 +521,36 @@ class LabelingTab(QWidget):
                 cy = int(sum(p[1] for p in ann.points) / len(ann.points))
                 pos_info = f"  @({cx},{cy})  ·  {len(ann.points)}pts"
 
-            item = QListWidgetItem(
-                f"#{idx}  [{type_label}] {name}{pos_info}"
-            )
-            item.setData(Qt.ItemDataRole.UserRole, ann.annotation_id)
+            target.append((
+                ann.annotation_id,
+                f"#{idx}  [{type_label}] {name}{pos_info}",
+                color,
+            ))
+
+        self._ann_list_updating = True
+        n_old = self._ann_list.count()
+        n_new = len(target)
+
+        for i in range(min(n_old, n_new)):
+            item = self._ann_list.item(i)
+            ann_id, text, color = target[i]
+            if item.data(Qt.ItemDataRole.UserRole) == ann_id and item.text() == text:
+                continue  # 안 바뀐 항목은 건드리지 않음 (선택 상태도 그대로 유지됨)
+            item.setText(text)
+            item.setData(Qt.ItemDataRole.UserRole, ann_id)
             item.setForeground(QColor(*color))
             item.setBackground(QColor(*color, 40))
-            self._ann_list.addItem(item)
+
+        if n_new > n_old:
+            for ann_id, text, color in target[n_old:]:
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, ann_id)
+                item.setForeground(QColor(*color))
+                item.setBackground(QColor(*color, 40))
+                self._ann_list.addItem(item)
+        elif n_old > n_new:
+            for i in range(n_old - 1, n_new - 1, -1):
+                self._ann_list.takeItem(i)
 
         self._ann_list_updating = False
 
