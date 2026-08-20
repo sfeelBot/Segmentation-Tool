@@ -1071,3 +1071,79 @@ QA.md에 BUG-005로 등록하고 VOC 표에도 정정 각주 추가. 후속 조�
 ### 비고
 스크래치 스크립트 전부 `.../40989d09-9093-4389-bdea-4fb6757d53b9/scratchpad/`에만 저장,
 저장소에 추가 안 함. `git status --porcelain` 최종 클린 확인 (QA.md 수정만 반영 대상).
+
+---
+
+## 2026-08-20 — loss_chart.py matplotlib 배색 정규화 독립 검증 (커밋 `e76361a`+`eda6455`, Artifact `7876ed3e` 4단계)
+
+`docs/agents/design-log.md` "4탭 디자인 톤 홀리스틱 재검토" 발견 2번 대상. 구현 로그
+(`implementation-log.md` "loss_chart.py matplotlib 배색을 앱 표준으로 정규화" 항목)는
+`ast.parse()` 정적 검토만 수행했고 실제 GUI 렌더링은 미확인 — 이번 검증에서 실제 렌더링까지
+확인.
+
+### 확인 항목 및 결과
+
+1. **커밋 범위 확인** — `git show e76361a -- app/widgets/loss_chart.py`: `_DARK/_PANEL/_TRAIN/
+   _VAL/_GRID/_TEXT/_EPOCH` 상수값 교체 + `_TEXT_MUTED` 신규 상수 + `_style_ax()`의 눈금/제목/
+   범례/스파인 참조 갱신만 변경(+12/-11). 구현 로그의 색상 매핑표(facecolor `#111418`/`#1f2329`,
+   train `#60a5fa`, val `#f87171`, 그리드/epoch/스파인 `#374151`, 텍스트 `#e5e7eb`/`#9ca3af`,
+   범례 배경+테두리)와 diff가 정확히 일치. 로직(`append_batch`/`append_val`/`append`/`reset`/
+   `_update_plot`) 변경 없음.
+2. **`main.py` 표준 팔레트 대조** — `grep -c` 결과 `#111418`/`#1f2329`/`#374151`/`#e5e7eb`/
+   `#9ca3af`/`#60a5fa`/`#f87171` 조합이 `main.py` 전역 스타일시트에서 총 44회 사용되는 앱
+   표준 토큰임을 확인 — `loss_chart.py`만의 임의 색상이 아니라 실제 표준 팔레트와 일치.
+3. **실제 렌더링(더미 데이터, `LossChart` 위젯 직접 생성)** — 스크래치 스크립트
+   (`verify_loss_chart.py`, `C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`)로
+   `main.py`의 `QGroupBox` 스타일(배경 `#1f2329`, 테두리 `#374151`)을 재현한 패널 안에 실제
+   `LossChart`를 배치하고, 6 epoch × 20 batch 더미 loss(EMA 스무딩 포함)로 `append_batch()`/
+   `append_val()`을 실제 호출해 학습 진행을 흉내낸 뒤 `QWidget.grab()`으로 스크린샷 저장.
+   - **배경**: Figure facecolor `(0.0667,0.0784,0.0941)` = `#111418`, Axes facecolor
+     `(0.1216,0.1373,0.1608)` = `#1f2329` — 스펙과 정확히 일치, 주변 Qt 패널과 자연스럽게
+     어울림(스크린샷 육안 확인).
+   - **선 색상**: `chart._line_train.get_color() == "#60a5fa"`, `chart._line_val.get_color()
+     == "#f87171"` — train(파랑)/val(빨강) 두 선이 배경 대비 뚜렷하고 서로도 명확히 구분됨
+     (스크린샷 확인).
+   - **텍스트/그리드**: 축 라벨("Epoch"/"Loss")·제목·눈금 모두 어두운 배경 위에서 읽기 쉬운
+     밝기로 렌더링, 그리드는 은은하게 표시되어 데이터 라인을 가리지 않음.
+   - **범례**: 배경 `#1f2329`(패널과 동일 톤) + 테두리 `#374151`로 그래프 안에서 도드라지지도
+     안 보이지도 않는 적절한 대비 확인(확대 스크린샷으로 재확인).
+4. **회귀 확인(실제 위젯 메서드 직접 호출)**:
+   - `reset()` 후 `_bx/_by/_vx/_vy` 전부 빈 리스트, `_ema is None` 확인(`RESET_OK`).
+   - 기존 호환 메서드 `append(epoch, train, val)`을 reset 후 2회 호출 → `_line_train`/
+     `_line_val`의 xdata 길이 각 2 — epoch 단위 갱신 경로도 색상 변경과 무관하게 정상 동작
+     (`APPEND_COMPAT_OK`).
+   - 배치 단위 실시간 갱신(`append_batch`, `_DRAW_EVERY=5`마다 draw, EMA 스무딩)과 epoch
+     경계 세로선(`axvline`) 생성 모두 예외 없이 120회 반복 호출 성공 — 스크린샷의 매끄러운
+     곡선(스무딩 반영)으로 시각적으로도 확인.
+   - 이 앱에는 matplotlib `NavigationToolbar`(확대/축소 등 인터랙티브 도구)가 애초에
+     연결되어 있지 않음을 `loss_chart.py`/`training_tab.py` 양쪽 grep으로 확인 — "확대/축소"는
+     해당 사항 없는 항목, 별도 회귀 대상 아님.
+5. **`TrainingTab` 실제 생산 레이아웃 내 구동 확인** — `QT_QPA_PLATFORM=offscreen`에서
+   `PyQt6.QtSvg`를 `QApplication` 생성 전에 먼저 import(R4/R5 검증 로그의 DLL 순서 함정
+   회피 패턴 준수) → `QApplication` → `from app.tabs.training_tab import TrainingTab` →
+   `TrainingTab()` 인스턴스화(내부적으로 실제 `LossChart()`를 그대로 포함) — 예외 없이
+   `TRAINING_TAB_OK`까지 도달. 프로세스 종료 코드 127은 R1~R6 검증 로그와 동일한 비대화형
+   offscreen 환경의 조기 종료 노이즈로, 위 STEP 전부 성공 이후 발생해 회귀로 보지 않음.
+
+### 발견 사항 — QA.md `BUG-007` 등록(P3)
+그리드(`_GRID`)와 epoch 경계 세로선(`_EPOCH`) 상수가 이번 라운드에서 동일한 `#374151`로
+통일됨. 구버전은 `_GRID=#3a3a3a`/`_EPOCH=#555555`로 명도가 달라 epoch 경계선이 그리드보다
+밝게 도드라졌지만, 통일 후에는 alpha(0.6 vs 1.0)·선굵기(0.4 vs 0.6)의 미세한 차이만 남아
+실제 렌더링(확대 스크린샷)에서 epoch 경계 세로선이 x축 그리드선과 거의 구분되지 않음. 데이터
+판독(손실 값, train/val 선 구분)에는 영향 없고 구현 로그의 색상 매핑표에 "그리드와 통일"로
+명시된 의도된 절충이라 기능 결함은 아니나, epoch 경계 표시라는 원래 목적은 사실상 무력화됨 —
+`QA.md` `BUG-007`(P3, Open)로 등록. 재작업 요구 아님, 필요 시 `_EPOCH`에 그리드보다 밝은
+별도 톤 부여 검토 권장.
+
+### 판정
+**통과.** 색상값 교체가 스펙(구현 로그 매핑표)과 정확히 일치하고, 실제 `LossChart` 위젯을
+더미 데이터로 렌더링해 배경/텍스트/train·val 선/범례 대비 모두 가독성 확인, `TrainingTab`
+실제 프로덕션 레이아웃에서도 예외 없이 구동, 배치/epoch 단위 갱신·reset·호환 메서드 등
+상호작용 회귀 없음. BUG-007(epoch 경계선-그리드 색 통일로 시각적 구분 약화)은 P3 수준으로
+판단해 별도 이슈만 등록 — 이번 라운드를 블로커로 간주하지 않음. Artifact `7876ed3e` 4단계
+완료 처리 가능.
+
+### 비고
+스크래치 스크립트(`verify_loss_chart.py`) 및 스크린샷은
+`.../40989d09-9093-4389-bdea-4fb6757d53b9/scratchpad/`에만 저장, 저장소에 추가 안 함.
+`git status --porcelain` 결과 `QA.md`(BUG-007 등록)만 변경, 코드 파일은 무수정.
