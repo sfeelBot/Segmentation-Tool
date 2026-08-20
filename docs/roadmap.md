@@ -108,7 +108,11 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   - [x] 라운드 A(export) — 구현+독립검증 통과, 커밋 `911f85a`(feat)+`d42fe46`(docs).
         `app/core/project_export.py` + `app/widgets/project_export_dialog.py` 신설,
         zip 상대경로 구조 확인(라운드 B 전제조건 충족).
-  - [ ] 라운드 B(import) — 구현 착수 가능
+  - [x] 라운드 B(import) — 구현+독립검증 통과, 커밋 `4129f10`(feat)+`03f5e38`(docs).
+        신규 `app/widgets/project_import_dialog.py`, zip slip 방어(8종 공격 벡터 차단),
+        왕복 sha256 일치, 이름충돌 자동 리네임, 골든패스 UI 확인까지 완료.
+  - **GitHub #2 "프로젝트 내보내기 기능" 요청2 전체 완료** (2026-08-20). 요청1은 exe
+    패키징 항목으로 편입(위 참고).
 
 ## 아이콘/이모지 → 미니멀 디자인 + i18n(en) 완비 (2026-08-20 요청)
 

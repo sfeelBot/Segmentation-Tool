@@ -770,3 +770,89 @@ DLL 함정(리더가 보고한 `app.core.project` → `PyQt6.QtWidgets` 순서 �
 - 10번 항목(폴더 전체 소실)은 Windows 파일시스템 제약으로 완전한 재현에는 실패했으나, 원인이
   코드가 아니라 OS 잠금 특성임을 확인했고 대체 시나리오(개별 파일 소실)로 방어 로직 자체는
   검증됨 — 만약 완전한 재현이 필요하다면 Linux 환경에서 별도 재시도 권장(우선순위 낮음).
+
+---
+
+## 2026-08-20 — GitHub #2 라운드B(프로젝트 가져오기, import) 검증
+
+`docs/specs/voc-github-issues-2026-08-20.md` "요청 2 · 라운드 B" 검증. 구현 커밋
+`4129f10`, `03f5e38`. **주요 기능 추가 라운드** — 정적 검토 + 실행 확인을 넘어 실제
+QApplication(offscreen)에서 `ProjectImportDialog`를 생성해 버튼 클릭 → 워커 시작 →
+진행률/완료 시그널 수신 → 결과 메시지 반영까지 실제 객체로 재현. 구현자 스크립트/합성
+프로젝트 재사용 없이 전부 독립적으로 새로 작성(스크래치 `.../scratchpad/verify_importB/`).
+환경: `C:\Users\Feel\anaconda3\python.exe`(PyTorch 설치 인터프리터), `QT_QPA_PLATFORM=offscreen`.
+
+### 확인 결과 — 전부 통과
+
+1. **`git show --stat 4129f10`** — `app/core/project_export.py`(+222), `app/core/project.py`
+   (+12, `add_recent()`), `app/widgets/project_import_dialog.py`(신규 186줄),
+   `app/widgets/project_start_dialog.py`(+21, "가져오기…" 버튼), `app/core/i18n.py`(+32,
+   `project_import.*` 키). 구현 로그 기술과 일치.
+2. **zip slip 방어 — 구현자와 다른 8가지 공격 벡터로 재시도**: POSIX 절대경로, 윈도우 드라이브
+   문자(`C:\...`, `D:/...`), 백슬래시 상위이동(`..\..\evil.txt`), `images/` 위장 후 다중
+   `../../../../` 탈출, 윈도우 예약파일명(`CON`)을 포함한 상위탈출, 서브폴더 경유 탈출, UNC
+   경로(`\server\share\...`) — **전부 `_resolve_member_target()`이 `None`으로 차단**.
+   실제 zip으로 `import_project_zip()` 풀 실행 시 4개 공격 항목 모두 `skipped`로 집계되고
+   dest_root 안팎 어디에도 `PWNED` 파일이 생성되지 않음 확인. 참고(버그 아님): `images/evil.txt
+   :hidden_stream`(콜론 포함, NTFS ADS 스타일) 경로는 차단되지 않고 `images/evil.txt`의
+   대체 데이터 스트림으로 조용히 기록됨 — 디렉터리 탈출은 아니고(파일은 여전히
+   `images/` 안에 있음) 파일시스템 고유 동작이라 이번 스펙(zip slip = 목적지 밖 탈출)
+   범위 밖으로 판단, 버그 미등록.
+3. **왕복 재현(구현자와 다른 합성 프로젝트)** — flat 2장 + 서브폴더 1장 이미지(각기 다른 랜덤
+   바이트), 유니코드(한글) 라벨 포함 annotations 2개, classes.json, checkpoint(.pt),
+   user_models(.py), `.thumbs` 캐시 포함 구성 → `collect_export_entries()`로 실제 zip 생성 →
+   `import_project_zip()`으로 가져오기. sha256 비교 결과 `project.json`(가져오기 시
+   `imported=True`/`imported_from` 메타 추가는 의도된 동작)을 제외한 9개 실제 데이터 파일
+   전부 해시 일치, annotations/classes.json 내용(dict 비교)도 완전 일치, `.thumbs`는
+   이관되지 않음(재생성 대상) 확인. **PASS**.
+4. **이름 충돌 재현** — 같은 대상 루트에 기존 `CollideMe` 폴더가 있는 상태에서 같은 zip을
+   2회 연속 가져오기 → `CollideMe_imported`, `CollideMe_imported_2`로 정확히 증가. 기존
+   폴더 mtime·sentinel 파일 sha256·`images/keepme.jpg` 내용 전부 무변경 확인. **PASS**.
+5. **취소/실패 롤백 확인** — `should_cancel` 콜백으로 5번째 파일 처리 후 취소 유도 →
+   `ProjectImportCancelled` 발생, dest_root 잔여물 없음. `progress_cb`에서 3번째 호출 시
+   강제 `RuntimeError` 발생 → 예외 전파, dest_root 잔여물 없음(둘 다 `shutil.rmtree` 롤백
+   정상). **PASS**.
+6. **골든 패스 UI(실제 재현)**:
+   - 실제 라운드A `collect_export_entries()`로 zip 생성 → `ProjectImportDialog(zip_path)`
+     실제 생성 → `_btn_run.click()` → `_ProjectImportWorker` 시작 → `progress`(4건) 수신 →
+     `finished(True, ...)` 수신 → `QMessageBox.information` 호출 인자에 "완료 —
+     'GoldenSrc_imported' 프로젝트로 저장되었습니다. (4개 파일)" 확인(리네임된 실제 폴더명이
+     메시지에 정확히 반영됨). 같은 zip 2회째 가져오기 시 `GoldenSrc_imported_2`로 정확히
+     증가하는 메시지 확인.
+   - `proj.recent()`에 가져온 프로젝트 경로가 추가됨, `settings.json`의 `last_project`는
+     `None`(불변) — `add_recent()`가 `last_project`를 건드리지 않는다는 구현자 주장과 코드
+     둘 다 확인(`save_settings()`가 `dict.update()`로 병합 저장하므로 `recent_projects` 키만
+     갱신되고 `last_project` 키는 아예 전달하지 않아 보존됨).
+   - `ProjectStartDialog._btn_import` 클릭 시그널이 `_on_import()`에 연결돼 있고,
+     `QFileDialog.getOpenFileName`을 몽키패치해 실제 `_on_import()`를 호출 →
+     `ProjectImportDialog`가 실제로 생성되고 실행되어 3번째 가져오기(`GoldenSrc_imported_3`)
+     까지 정상 완료됨을 확인.
+   - (모달 `QMessageBox.exec()`는 offscreen에서 사용자가 닫을 수 없어 무한 대기하므로
+     `QMessageBox.information/critical`만 호출 인자 기록 후 즉시 반환하도록 패치 — 다이얼로그
+     자체 로직·시그널 흐름·워커 실행은 전부 실제 객체로 수행, exec() 블로킹만 우회.)
+   - 격리를 위해 `set_projects_root()`로 임시 경로를 명시 지정해 실행 — 실수로 실제 저장소
+     `projects/`에 `GoldenSrc` 폴더가 생성됐던 것을 발견 즉시 삭제해 정리(검증 스크립트
+     초안 문제, 앱 코드 문제 아님 — 최종 스크립트는 완전 격리).
+7. `add_recent()` 코드 확인 — `save_settings({"recent_projects": recents[:10]})`만 호출,
+   `last_project` 키 미포함. `_touch_recent()`(기존 열기 경로)만 `last_project`를 포함한다.
+   **주장과 일치, 문제 없음.**
+8. `python main.py` 기동 확인 — PyQt6 → `app.core.project` 순서로 단독 import 성공,
+   `python main.py` 40초 실행 중 크래시 없음. 콘솔에 반복되는 cp949 로깅 인코딩 경고는
+   기존에 이미 알려진 환경 이슈(콘솔 코드페이지, `PYTHONIOENCODING=utf-8`이면 미발생)로
+   이번 변경과 무관 — 과거 라운드 로그에서도 동일하게 확인된 사항.
+9. 라운드 A(export) 회귀 없음 — `ProjectExportDialog`/`project_export.py`의
+   `collect_export_entries()` 계열 함수 변경 없이 라운드 B 함수가 이어서 추가됐고, import
+   흐름 안에서 실제로 만든 export zip을 그대로 사용해 왕복 성공했으므로 export 경로 자체가
+   여전히 정상 동작함을 간접 확인.
+
+### 결론
+**라운드B 검증 통과, GitHub #2 요청2 전체 완료.** 발견된 버그 없음(QA.md 등록 대상 없음).
+NTFS ADS 콜론 경로는 참고 사항으로만 남기며 별도 조치 불필요 판단.
+
+### 비고
+- 검증 스크립트 6종(`test_zipslip.py`, `test_ads.py`, `test_roundtrip.py`, `test_collision.py`,
+  `test_rollback.py`, `test_corrupt.py`, `test_golden_ui.py`)은 전부 스크래치 디렉토리
+  (`.../scratchpad/verify_importB/`)에만 작성, 저장소에 커밋하지 않음.
+- 검증 전후 `git status` 확인 — 이번 세션 시작 시 이미 존재하던 변경(dataset.py 등)은
+  검증 도중 다른 경로로 이미 커밋되어 현재 `working tree clean` — 이번 검증 작업으로 인한
+  코드 변경 없음.
