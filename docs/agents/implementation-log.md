@@ -1450,3 +1450,146 @@ BUG-011(P1, 더블클릭 stray 어노테이션, `mouseDoubleClickEvent()`의 `se
    한국어 문구인지도 함께 확인.
 3. 두 수정 모두 `annotation_canvas.py`를 공유하므로 기존 골든 패스(브러시 페인트, undo,
    OK 토글, 더블클릭 브러시 크기 변경)에 회귀가 없는지 가볍게 스모크 확인 권장.
+
+---
+
+## 2026-08-20 — GitHub #6-B: 어노테이션 개수 증가 시 로딩 지연 최적화 (최우선, 사용자 "반드시 필요")
+
+`docs/specs/voc-github-issues-round2-2026-08-20.md` "#6-B" 절. 원인은 기획 단계에서 이미
+코드 레벨로 확정돼 있었음 — `labeling_tab.py::_refresh_ann_list()`와
+`annotation_canvas.py::_OverlayWorker.run()`(스펙 문서가 언급한 `_rebuild_overlay()`는
+실제로는 **호출되지 않는 죽은 코드**임을 확인 — `_OverlayWorker`가 도입되며 대체된 것으로
+보이나 정리되지 않고 남아있음. 이번 라운드에서는 건드리지 않음, 스코프 밖).
+
+### 벤치마크 방법론 (R6 관례 그대로 재사용)
+`C:\Users\Feel\anaconda3\python.exe`로 실행하는 스크래치 스크립트
+(`bench_6b.py`, projects_root 하위 `bench_6b_tmp` 임시 프로젝트 생성 후 실측, 실제
+프로젝트 데이터 무변경). 대형 이미지 5472×3648(nok급) 가정, 어노테이션 n=50/100/200/500개
+(약 1/3 polygon, 2/3 brush_mask — brush_mask는 이미지 전체 크기의 (H,W) uint8 배열에 150×150
+사각형 스탬프).
+
+1. `_refresh_ann_list`: n_base개가 이미 있는 상태에서 1개씩 20회 연속 추가 시 누적 소요시간
+   (구버전 clear+전체재생성 인라인 시뮬레이션 vs 실제 `LabelingTab._refresh_ann_list()` 호출).
+2. `_OverlayWorker.run()`: 어노테이션 n개에 대해 `run()` 1회 호출 소요시간(수정 전/후 실제
+   함수 직접 호출, QThread.start() 대신 동기 호출로 순수 연산시간만 측정).
+
+### 원인 진단 — 실측으로 확정
+- `_refresh_ann_list()`는 매 호출마다 `QListWidget.clear()` 후 n개 `QListWidgetItem`을
+  전부 재생성 — 메인 스레드 동기 실행이라 어노테이션이 많을수록 그대로 UI 정지로 체감.
+- `_OverlayWorker.run()`은 `_invalidate_overlay()`가 호출될 때마다(편집 1회당 1번, 이미지
+  전환 시 1번) 백그라운드 스레드에서 실행되지만, **brush_mask 어노테이션마다 이미지 전체
+  크기(20MP급) 배열을 `cv2.resize`+`_draw_mask_on_painter`(np.empty(H,W,4) 할당)로 처리** —
+  n=500에서 **3396ms**(패치 전 실측)까지 치솟음. 백그라운드 스레드라 메인 UI를 멈추진
+  않지만, 방금 그린 어노테이션이 화면에 반영되기까지 초 단위 지연이 생겨 "느려짐"으로
+  체감. 두 지점 다 "1개만 바뀌어도 전체를 처음부터 다시 만든다"는 동일 패턴.
+
+### 수정 1 — `app/tabs/labeling_tab.py::_refresh_ann_list()`
+`clear()`+전체 재생성 대신 **위치 기반 diff**로 전환:
+1. 매번 새 목표 리스트(`target: list[(ann_id, text, color)]`)를 계산(이 부분 자체는 여전히
+   O(n) 순수 Python 연산이지만 Qt 위젯 churn이 없어 매우 저렴).
+2. `min(n_old, n_new)`까지 위치별로 기존 `QListWidgetItem`과 비교 — `UserRole` 데이터와
+   텍스트가 동일하면 **건드리지 않음**(선택 상태도 그대로 유지됨, 기존 코드는 매번
+   `clear()`로 선택 상태를 잃었음 — 부수적 개선), 다르면 `setText`/`setData`/색상만 갱신
+   (아이템 재생성 없음).
+3. `n_new > n_old`면 초과분만 `addItem()`, `n_old > n_new`면 꼬리부터 `takeItem()`.
+4. 어노테이션 삽입/삭제가 리스트 중간에서 일어나면 이후 항목들의 클래스별 순번(`#1`,`#2`…)이
+   밀려 텍스트가 달라지므로 그 구간은 여전히 `setText()`로 갱신되지만(번호 매기기 방식 자체의
+   근본 특성, 이번 스코프에서 변경하지 않음), **위젯 재생성보다 훨씬 저렴**.
+
+### 수정 2 — `app/widgets/annotation_canvas.py::_OverlayWorker.run()`
+brush_mask 렌더링을 **bbox-crop** 방식으로 전환 — 어노테이션이 실제로 차지하는 영역만
+잘라 resize/dilate/합성:
+- 신규 헬퍼 `_mask_bbox(mask, margin=1)` — `cv2.boundingRect(mask)`로 바운딩 박스 계산 후
+  이미지 경계로 클리핑, margin=1은 3×3 dilate(선택 시 테두리)가 원본 프레임 전체에서
+  dilate했을 때와 동일한 결과를 내도록 확보.
+  - **`np.where(mask != 0)` 대신 `cv2.boundingRect` 채택** — 처음엔 `np.where`로 구현했으나
+    벤치마크 결과 **역효과**(n=50 기준 298ms→974ms, 3배 느려짐)를 실측으로 발견.
+    별도 마이크로벤치(5472×3648 배열 30회 평균): `np.where` 29.2ms/call vs
+    `cv2.boundingRect` 2.1ms/call(약 14배) — OpenCV 구현이 numpy 풀스캔보다 훨씬 빠름을
+    확인 후 교체. **"벤치마크 없이 직관대로 구현했으면 성능을 악화시켰을 사례"** — 이번
+    라운드에서 실측 우선 원칙이 실제로 버그를 잡은 경우로 기록.
+- `ann.mask[y0:y1, x0:x1]`로 자른 `sub` 배열에 대해서만 `cv2.resize`/`_draw_mask_on_painter`
+  /`cv2.dilate` 수행, `_draw_mask_on_painter(..., ox=x0, oy=y0)`(기존에도 있던 파라미터,
+  브러시 레이어 그리기에서 이미 쓰이던 패턴 재사용)로 올바른 위치에 합성.
+- `sc < 0.99`(다운스케일) 분기: crop을 독립적으로 resize하면 전체 프레임을 한 번에 resize할
+  때와 경계에서 최대 1px 반올림 차이가 날 수 있음(NEAREST 리샘플링 특성상 crop-local
+  인덱스와 global 인덱스의 반올림 지점이 어긋날 수 있어 수학적으로 불가피 — 코드 주석에
+  기록). 오버레이는 편집 중 미리보기일 뿐 저장되는 마스크 데이터(RLE, `annotation_store.py`)는
+  전혀 건드리지 않으므로 감수하기로 결정.
+- 남은 한계는 `_OverlayWorker` 클래스 docstring에 `# ponytail:` 주석으로 명시: bbox 계산
+  자체도 배열 1회 스캔(O(전체 이미지 크기))이라 여전히 어노테이션 n개에 비례해 늘어나는
+  구조는 남아있음 — 다음 단계는 어노테이션별 렌더링 결과(bbox+ARGB 타일)를 캐싱하고 바뀐
+  것만 다시 그리는 방식이나, `annotation_canvas.py`에 mask를 in-place로 수정하는 지점이
+  여러 곳(`951`, `1047`, `1290`행 등)이라 캐시 무효화를 하나라도 놓치면 오래된 렌더링이
+  조용히 남는 정합성 버그가 될 위험이 있어 이번 라운드에서는 보류(스펙 문서도 이 방향을
+  "더 큰 리팩터, 구현 단계에서 저울질" 로 명시).
+
+### 정확성 검증 — 픽셀 비교 self-check
+`scratchpad/check_overlay_correctness.py`(PyQt6 `QImage`를 numpy로 변환해 비교):
+- 기존(전체 프레임 resize) 렌더링 vs bbox-crop 렌더링을 4가지 마스크 형태(중앙 소형/좌상단
+  경계 접촉/우하단 경계 접촉/가늘고 긴 형태) × sc(1.0, 0.374) × selected(False/True) =
+  16가지 조합으로 비교.
+- **sc=1.0(원본 해상도) 분기: 전 조합 bit-exact 일치**(리샘플링이 없어 crop 후 그대로 옮겨
+  그리는 것과 동일해야 함 — 실제로 그렇게 확인됨).
+- **sc<0.99(다운스케일) 분기**: 12개 조합 중 8개는 bit-exact, 4개(작은/경계 접촉 도형의
+  selected 케이스 위주)는 경계에서 30~117px 차이 — 전부 "1px 팽창해도 서로를 완전히
+  포함하는" 경계 1px 이내 근사임을 형태학적 팽창(`cv2.dilate`) 비교로 검증(대형 왜곡/구멍
+  없음 확인). 전체 16/16 통과.
+
+### 벤치마크 결과 (전/후)
+`_refresh_ann_list` — n_base개 존재 + 1개씩 20회 추가 시 누적 소요:
+| n_base | 전(clear+rebuild ×20) | 후(diff ×20) | 배율 |
+|---|---|---|---|
+| 50  |    9.7ms |   5.2ms | 1.8x |
+| 100 |   21.8ms |   7.4ms | 2.9x |
+| 200 |   54.6ms |  11.0ms | 4.9x |
+| 500 |  200.1ms |  22.8ms | 8.6x |
+
+`_OverlayWorker.run()` — 어노테이션 n개, 이미지 5472×3648:
+| n | 전(전체 프레임) | 후(bbox-crop+boundingRect) | 배율 |
+|---|---|---|---|
+| 50  |  298.5ms |  148.7~156.6ms | ~2.0x |
+| 100 |  653.5ms |  279.6~284.9ms | ~2.3x |
+| 200 | 1252.0ms |  555.8~572.7ms | ~2.2x |
+| 500 | 3396.3ms | 1599.4~1630.1ms | ~2.1x |
+(오버레이는 재측정 시 5~10ms 편차 있음 — cold memory access 영향으로 추정, 배율은 실행마다
+2.0~2.3x 범위에서 일관됨.)
+
+### 앱 기동 확인 — 부분적, 환경 이슈로 완전 확인은 못함
+`C:\Users\Feel\anaconda3\python.exe`에서 `from app.main_window import MainWindow` 단독
+스크립트 실행 시 `app/widgets/icons.py`의 `from PyQt6.QtSvg import QSvgRenderer`에서
+`ImportError: DLL load failed`(QtSvg DLL 로딩 실패) 발생. **`git stash`로 이번 변경분을
+모두 제거한 클린 HEAD에서도 동일하게 재현** — 이번 수정과 무관한 기존 환경 문제로 확인
+(원인 미상, 이번 스코프 밖). 반면 `bench_6b.py`(project 모듈을 먼저 import하는 다른 실행
+순서)에서는 동일 anaconda 인터프리터로 `LabelingTab()` 인스턴스를 여러 번 실제로 생성해
+문제없이 동작함을 여러 차례 확인함 — 실제 수정된 함수(`_refresh_ann_list`,
+`_OverlayWorker.run()`)는 실제 클래스 인스턴스를 통해 반복 실행·검증됨. **다음 검증
+에이전트는 반드시 실제 `python main.py`(또는 정상 동작하는 인터프리터)로 앱을 띄워
+라벨링 탭 골든패스(브러시/폴리곤/지우개 편집, 이미지 전환, undo)를 직접 확인할 것** — 이번
+세션은 그 확인을 완료하지 못했음.
+
+### 변경 파일
+`app/tabs/labeling_tab.py`, `app/widgets/annotation_canvas.py`만 변경. 같은 파일의 기존
+GitHub #6-A(`_invalidate_overlay()` stale-overlay 유지, 커밋 `6a823a5`) 및 BUG-011/012
+(`_do_save`/`_on_toggle_ok`, 커밋 `24e93c9`/`5d551c3`) 로직은 그대로 유지 — diff 확인 결과
+해당 함수들은 이번 커밋에서 건드리지 않음.
+
+### 커밋
+`574fb3390...`(로컬 HEAD) — `perf: 어노테이션 개수 증가 시 로딩 지연 최적화 (GitHub #6-B)`
+
+### 다음 단계 — 완료 보고 아님
+검증(Verification) 에이전트 확인 필요:
+1. **정상 동작하는 인터프리터로 `python main.py` 실행** — 위 QtSvg DLL 이슈가 재현되는
+   환경이면 다른 인터프리터/환경으로 재시도할 것(이번 세션에서 근본 원인 미해결).
+2. 라벨링 탭 골든패스: 브러시/폴리곤/지우개/선택 편집 각각 정상 동작·저장 확인, 특히
+   브러시로 작은 스트로크 여러 번 연속 추가 시 오버레이가 매번 정확한 위치에 표시되는지
+   (bbox-crop 합성 위치 오프셋 버그 없는지) 육안 확인.
+3. 이미지 전환 시 어노테이션 목록·오버레이가 올바르게 갱신되는지(diff 로직이 이미지 전환
+   케이스에서도 정상 동작하는지 — `_on_image_selected()`가 `_refresh_ann_list()`를 호출하는
+   경로는 로직상 동일하게 diff를 타므로 특별 케이스 아님, 그래도 실동작 확인 권장).
+4. 대규모 합성 프로젝트(어노테이션 200개 이상)에서 실제 체감 개선 확인 — 이번 벤치마크는
+   순수 함수 호출 시간만 측정했고 실제 UI 조작 체감(특히 오버레이 스레드 완료까지의
+   지연)은 아직 육안 확인 안 됨.
+5. GitHub #6-A(오버레이 flicker) 회귀 없는지 — 같은 `_OverlayWorker.run()` 함수를 수정했으므로
+   #6-A 검증 시나리오(연속 브러시 스트로크, 연속 이미지 전환, 채널 전환 직후 즉시 라벨링)
+   재확인 권장.
