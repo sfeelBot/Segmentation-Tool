@@ -919,3 +919,75 @@ GitHub #2 요청2(프로젝트 export/import)의 마지막 라운드다** — �
   확인하는 것이 안전.
 - 통과 시 `docs/roadmap.md`의 "아이콘/이모지 → 미니멀 디자인" 항목 중 1단계 체크 표시, Artifact
   `7876ed3e` 실행 순서 2단계(장식 이모지 제거, `model_tab.py` 포함)로 진행 가능.
+
+---
+
+## 2026-08-20 — 장식 이모지 제거 라운드 마무리 (i18n.py + 폴더 트리 아이콘)
+
+### 배경
+이전 구현 에이전트가 "장식 이모지 제거" 라운드(승인된 통합 디자인 목업 7단계 실행안의
+2단계, Artifact `7876ed3e`) 작업 중 API 세션 한도로 중단됨. 작업트리에 19개 파일의
+미커밋 변경이 남아있었고, 리더가 `py_compile` + diff 검토로 문법 오류 없음·일관된 처리를
+이미 확인한 상태에서 이어받음. 해당 19개 파일은 재작업하지 않고 그대로 유지.
+
+### 이어서 수행한 작업
+1. **`app/core/i18n.py` 전체** — ko/en 두 언어 딕셔너리(총 487→484줄) 전수 조사(정규식
+   유니코드 범위 스캔: `\U0001F300-\U0001FAFF`, `\U00002300-\U000023FF`,
+   `\U00002600-\U000027BF`, `\U0001F1E6-\U0001F1FF`, `\uFE0F`)로 96곳의 선행 이모지를
+   찾아 제거, 텍스트는 그대로 보존. `▶`/`■`/`↺`/`↶` 같은 도형·화살표 기호는 이미 완료된
+   다른 19개 파일에서도 손대지 않은 것을 diff로 확인 후 동일하게 유지(이 프로젝트에서는
+   "이모지"로 취급하지 않는 기존 관례).
+   - `menu.settings`("⚙️" 단독값)와 `menu.export`("📤" 단독값)는 텍스트가 아니라 버튼의
+     유일한 표시 수단이라 단순 삭제 시 빈 버튼이 되는 회귀가 발생 — 두 키를 아예 삭제하고
+     `app/main_window.py`의 해당 버튼을 `svg_icon()` 기반 QIcon 버튼으로 전환(기존
+     `_btn_switch`/`_btn_open_folder`와 동일 패턴 재사용).
+   - 이를 위해 `app/resources/icons/gear.svg`(설정, sliders 스타일), `export.svg`(내보내기,
+     upload 스타일) 2개 신규 SVG 추가 — 기존 `icons.py` 로더(`currentColor` stroke 치환)
+     그대로 사용.
+2. **`app/widgets/image_browser.py` 폴더 트리 헤더 아이콘** — `_make_folder_item()`의
+   `📁  {folder_name}  ({count})` 텍스트에서 이모지만 제거하고, 이미 존재하던
+   `app/resources/icons/folder.svg`를 `svg_icon("folder", "#60a5fa", _STATUS_ICON_SIZE)`로
+   렌더링해 `item.setIcon(0, ...)`로 부착(파일 아이템의 상태 아이콘과 동일한 14px 크기로
+   통일). 관련 docstring의 `📁` 언급도 이모지만 제거.
+3. **전체 재스캔** — `app/` 전체를 동일 정규식으로 재스캔해 누락분 발견 후 수정:
+   - `i18n.py`의 `train.empty_queue_msg`(ko/en) — 문장 중간에 박혀있던 `➕` 리터럴
+     2곳(선행 위치가 아니라 자동 스트립 스크립트가 못 잡은 부분, 수작업으로 제거).
+   - `training_tab.py`의 학습 중지 상태 라벨 `⏸️` 접두 3곳(505/662/668번 줄) — 같은 파일의
+     다른 상태 라벨(🎯/✅ 등)은 이미 이전 에이전트가 제거했는데 이 3곳만 누락됐던 것으로 보임.
+   - 재스캔 후 남은 13곳은 전부 라운드 1에서 확정된 예외(로그레벨 기호 `⚠`/`✖`,
+     `model_tab.py`의 `✓`/`✗` 검증 결과, `settings_dialog.py`의 국기 이모지·복사 확인 `✓`,
+     `config_form.py`의 `⚠` 경고 접두)와 정확히 일치 — 추가 조치 없음.
+
+### 검증(직접 수행)
+- `py_compile`로 `app/` 전체 재귀 컴파일 — 오류 0건.
+- `QT_QPA_PLATFORM=offscreen` 헤드리스 환경에서 `MainWindow()` 실제 생성 —
+  `app/core/i18n.py`, `app/main_window.py`(신규 아이콘 버튼 포함), 4개 탭 전부를
+  임포트·구성하며 예외 없이 통과 확인.
+- `python main.py`를 통한 실제 GUI 조작(라벨링/학습/추론 탭 골든 패스)은 미수행 —
+  검증 에이전트 확인 필요.
+
+### 변경 파일 (총 22개, 커밋 `b33491d`)
+`app/core/i18n.py`, `app/main_window.py`, `app/core/inference_engine.py`,
+`app/core/logger.py`, `app/model_presets/__init__.py`, `app/tabs/inference_tab.py`,
+`app/tabs/model_tab.py`, `app/tabs/training_tab.py`, `app/widgets/auto_label_dialog.py`,
+`app/widgets/auto_label_preview_dialog.py`, `app/widgets/config_form.py`,
+`app/widgets/export_dialog.py`, `app/widgets/image_browser.py`, `app/widgets/log_panel.py`,
+`app/widgets/model_preset_dialog.py`, `app/widgets/project_export_dialog.py`,
+`app/widgets/project_import_dialog.py`, `app/widgets/project_start_dialog.py`,
+`app/widgets/settings_dialog.py`, `app/widgets/training_progress_dialog.py`(이상 19개는
+이전 에이전트가 이미 수정한 것을 그대로 커밋에 포함), `app/resources/icons/gear.svg`(신규),
+`app/resources/icons/export.svg`(신규).
+
+### 커밋
+`b33491d` — `feat: 장식 이모지 제거 라운드 마무리 — i18n.py 전체 + 폴더 트리 아이콘 SVG화`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증 에이전트가 `python main.py`로 실제 창을 띄워 4개 탭
+  (모델/라벨링/학습/추론) 이름, 설정 다이얼로그, 프로젝트 내보내기/가져오기 다이얼로그,
+  학습 큐·진행 다이얼로그, 상단 코너의 새 설정/내보내기 아이콘 버튼 클릭 동작,
+  이미지 브라우저 폴더 트리 아이콘 표시를 실제로 확인해야 함. 이번 라운드는 순수 텍스트/
+  아이콘 교체이나 버튼 2개를 아이콘 전용으로 전환하는 구조 변경이 포함되어 있어 클릭 동작
+  실제 확인이 특히 중요.
+- 통과 시 Artifact `7876ed3e` 7단계 실행안의 2단계(장식 이모지 제거) 완료 처리,
+  `docs/roadmap.md`의 관련 항목 갱신.
