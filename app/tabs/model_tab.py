@@ -20,11 +20,11 @@ class _PythonHighlighter(QSyntaxHighlighter):
         (r"\b(import|from|as|class|def|return|if|else|elif|for|while"
          r"|pass|self|True|False|None|in|not|and|or|is|lambda|with"
          r"|raise|try|except|finally|yield|super)\b",
-         QColor("#569CD6")),
-        (r"\"[^\"]*\"|'[^']*'", QColor("#CE9178")),
-        (r"#[^\n]*",            QColor("#6A9955")),
-        (r"\b\d+(\.\d+)?\b",    QColor("#B5CEA8")),
-        (r"\b(nn|torch|F)\b",   QColor("#4EC9B0")),
+         QColor("#60a5fa")),  # accent — 키워드
+        (r"\"[^\"]*\"|'[^']*'", QColor("#fbbf24")),  # 경고 톤 — 문자열
+        (r"#[^\n]*",            QColor("#9ca3af")),  # 보조 텍스트 — 주석
+        (r"\b\d+(\.\d+)?\b",    QColor("#10b981")),  # 성공 톤 — 숫자
+        (r"\b(nn|torch|F)\b",   QColor("#34d399")),  # 성공 톤(밝은 명도) — 라이브러리명
     ]
 
     def __init__(self, document):
@@ -89,7 +89,7 @@ class ModelTab(QWidget):
             "        return self.conv(x)"
         )
         self._editor.setStyleSheet(
-            "background:#0D1117; color:#D4D4D4; border:1px solid #374151;"
+            "background:#111418; color:#e5e7eb; border:1px solid #374151;"
             "border-radius:6px; padding:4px;"
         )
         self._highlighter = _PythonHighlighter(self._editor.document())
@@ -100,7 +100,7 @@ class ModelTab(QWidget):
         self._log.setFont(QFont("Consolas", 9))
         self._log.setMaximumHeight(180)
         self._log.setStyleSheet(
-            "background:#0A0E14; color:#C9D1D9; border:1px solid #374151;"
+            "background:#111418; color:#e5e7eb; border:1px solid #374151;"
             "border-radius:6px; padding:4px;"
         )
         splitter.addWidget(self._log)
@@ -172,12 +172,12 @@ class ModelTab(QWidget):
             self._log_ok(f"검증 통과 ✓  클래스: {result.model_class_name}")
             self._btn_load.setEnabled(True)
             self._lbl_status.setText(f"✓ {result.model_class_name}")
-            self._lbl_status.setStyleSheet("color: #3fb950;")
+            self._lbl_status.setStyleSheet("color: #10b981;")
         else:
             self._log_error(f"검증 실패 — {len(result.errors)}개 오류")
             self._btn_load.setEnabled(False)
             self._lbl_status.setText("✗ 검증 실패")
-            self._lbl_status.setStyleSheet("color: #f85149;")
+            self._lbl_status.setStyleSheet("color: #f87171;")
 
     def _on_load(self) -> None:
         code = self._editor.toPlainText().strip()
@@ -187,7 +187,7 @@ class ModelTab(QWidget):
         if not result.ok:
             self._log_error(f"로드 실패: {result.error}")
             self._lbl_status.setText("✗ 로드 실패")
-            self._lbl_status.setStyleSheet("color: #f85149;")
+            self._lbl_status.setStyleSheet("color: #f87171;")
             return
 
         save_user_code(code)
@@ -200,21 +200,21 @@ class ModelTab(QWidget):
         self._lbl_status.setText(
             f"✓ {result.class_name} ({params_str} params)"
         )
-        self._lbl_status.setStyleSheet("color: #3fb950;")
+        self._lbl_status.setStyleSheet("color: #10b981;")
 
     # ── 로그 헬퍼 ─────────────────────────────────────────────────────────────
 
     def _log_ok(self, msg: str) -> None:
-        self._log.append(f'<span style="color:#3fb950">[OK]  {msg}</span>')
+        self._log.append(f'<span style="color:#10b981">[OK]  {msg}</span>')
 
     def _log_error(self, msg: str) -> None:
-        self._log.append(f'<span style="color:#f85149">[ERR] {msg}</span>')
+        self._log.append(f'<span style="color:#f87171">[ERR] {msg}</span>')
 
     def _log_warn(self, msg: str) -> None:
-        self._log.append(f'<span style="color:#d29922">[WARN]{msg}</span>')
+        self._log.append(f'<span style="color:#fbbf24">[WARN]{msg}</span>')
 
     def _log_info(self, msg: str) -> None:
-        self._log.append(f'<span style="color:#79c0ff">[INFO]{msg}</span>')
+        self._log.append(f'<span style="color:#60a5fa">[INFO]{msg}</span>')
 
     # ── 외부 접근 ─────────────────────────────────────────────────────────────
 
