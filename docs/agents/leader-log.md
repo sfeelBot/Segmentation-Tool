@@ -13,17 +13,16 @@
 > 사용자 승인 → **7단계 실행안**([roadmap.md](../roadmap.md) "디자인 톤 홀리스틱 재검토"
 > 절 참고: ①아이콘SVG ②장식이모지제거 ③model_tab팔레트 ④loss_chart배색 ⑤학습/추론
 > 서브스플리터 ⑥i18n en전환 ⑦팔레트정규화)으로 라운드 단위 구현 착수.
-> **①완료+검증통과**(커밋 `2ad0165`+`2f05313`+`ed99ca5`, 버그 없음). **②장식 이모지 제거
-> 구현 에이전트가 백그라운드에서 작업 중이던 도중 사용자가 토큰 한도로 세션 중단 요청** —
-> 작업트리에 미커밋 변경 다수(`inference_engine.py`/`logger.py`/`main_window.py`/
-> `model_presets/__init__.py`/`inference_tab.py`/`model_tab.py`/`training_tab.py`/
-> `auto_label_dialog.py`/`auto_label_preview_dialog.py`/`config_form.py`/`export_dialog.py`/
-> `image_browser.py`/`log_panel.py`/`model_preset_dialog.py`/`project_export_dialog.py`/
-> `project_import_dialog.py`/`project_start_dialog.py`/`settings_dialog.py`/
-> `training_progress_dialog.py` 등 19개 파일). **에이전트는 백그라운드에서 계속 실행되며
-> 완료 시 스스로 커밋+로그 기록함(지시해둔 대로)** — 다음 세션 시작 시 완료 알림이 와 있는지,
-> 또는 `git status`로 미커밋 변경이 남아있는지 먼저 확인할 것. 검증(③)은 아직 미착수.
-> ③~⑦ 미착수.
+> **①완료+검증통과**(커밋 `2ad0165`+`2f05313`+`ed99ca5`, 버그 없음). **②장식 이모지 제거 —
+> 첫 구현 에이전트가 API 세션 한도(`failed`)로 19개 파일 미커밋 상태에서 중단됨.** 리더가
+> 재개 전 안전성 확인: 전 파일 `py_compile` 통과(문법 깨짐 없음), 완료분 diff 검토 결과
+> 텍스트 보존+이모지만 제거 원칙 일관되게 지켜짐 확인. 단 `app/core/i18n.py` 전체(ko/en
+> 92줄, 4대 탭 이름 포함)와 `image_browser.py` 폴더 트리 헤더 아이콘(📁, 기능적 표시라
+> 삭제 대신 라운드1의 `icons.py`/`folder.svg`로 전환 필요)이 미착수임을 grep으로 확인 →
+> **두 번째 구현 에이전트에 "이어서 완료"로 위임(백그라운드, 이전 19개 파일 재작업 금지
+> 명시, 남은 두 항목 + 전체 재확인 grep 지시)**. 완료 시 스스로 커밋+로그. 다음 세션은
+> 완료 알림 확인 또는 `git status`로 미커밋 여부 먼저 확인할 것. 검증(③단계, verifier
+> 호출)은 아직 미착수. ③~⑦ 미착수.
 >
 > **성능/버그 개선 R1~R6 전체 완료** (2026-08-19) — 전부 구현+독립검증 통과. 커밋:
 > `3ce4dc9`(R1 BUG-002), `eee9b9c`(R2 지연임포트), `194430b`(R3 캔버스 캐시),
