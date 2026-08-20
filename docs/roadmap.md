@@ -178,7 +178,17 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         22개 + 로더(`app/widgets/icons.py`) 신설. 검증 에이전트가 `python main.py` 실제
         구동으로 19개 지점 전부 육안 확인(브러시 활성 하이라이트, eye 토글 실동작, 클립보드
         복사 실동작, 학습 탭/진행다이얼로그 STATUS_ICON_NAME 리네임 양쪽 정상 등). 버그 없음.
-  2. [ ] 장식 이모지 제거(`model_tab.py` 포함하도록 대상 파일 목록 갱신)
+  2. [x] 장식 이모지 제거 — 구현 완료(2세션 이어서 진행: 1차 에이전트 API세션한도로 중단
+        → 리더가 안전성 확인(py_compile, diff 일관성) 후 2차 에이전트가 이어받아 마무리),
+        커밋 `b33491d`(feat)+`b9a18d6`(docs). `i18n.py` ko/en 약 96곳 + `training_tab.py`
+        `⏸️` 3곳 + `image_browser.py` 폴더 트리 아이콘(기능적 표시라 삭제 대신
+        `svg_icon("folder", ...)`로 전환) 등 19개+ 파일. 이모지 전용 라벨(`menu.settings`/
+        `menu.export`)은 텍스트가 없어 아이콘 버튼으로 전환(`gear.svg`/`export.svg` 신규),
+        `main_window.py`의 기존 `svg_icon()` 패턴 재사용. 예외(설정 언어 국기, 로그레벨
+        모노톤 기호, model_tab `✓`/`✗`, config_form `⚠`)는 그대로 보존 확인. **검증 대기**
+        — 정적검토+headless 스모크는 구현 에이전트 수행 완료, 실제 `python main.py` 골든
+        패스(설정/내보내기 아이콘 버튼, 4대 탭 이름, 이미지브라우저 폴더 트리) 확인은 검증
+        에이전트 몫으로 남음.
   3. [ ] `model_tab.py` 에디터/로그 팔레트를 앱 표준으로 정규화 (발견 1)
   4. [ ] `loss_chart.py` matplotlib 배색을 앱 톤에 맞게 조정 (발견 2)
   5. [ ] 학습 탭 큐 서브스플리터 + 추론 탭 서브스플리터·이미지 트리 (1번과 병행 가능)
