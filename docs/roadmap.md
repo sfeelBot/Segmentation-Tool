@@ -142,10 +142,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       상세: [docs/agents/design-log.md](agents/design-log.md) 예정 참고(디자인 단계에서 인용).
 - [x] 2단계 — 디자인 에이전트가 목업 제안(Artifact) → **2026-08-20 사용자 승인 완료**
       (SVG+QIcon 방식, 3라운드 실행안 채택). 상세: [design-log.md](agents/design-log.md).
-- [ ] 3단계 — 구현: 4그룹 아이콘 재설계 + 장식 이모지 제거 + i18n 밖 3개 파일 en 전환
-      (파일이 많아 여러 라운드로 나눌 가능성 있음. **아래 "디자인 톤 홀리스틱 재검토" 완료
-      후 착수** — 학습/추론 탭 재편과 함께 일관된 톤으로 맞추기 위해 순서 조정.
-      `project_start_dialog.py`는 GitHub #2 라운드B와 겹치니 그쪽 완료 후 순서 조정)
+- [ ] 3단계 — 구현: 4그룹 아이콘 재설계(완료, 아래 "디자인 톤 홀리스틱 재검토" 1단계 참고)
+      + 장식 이모지 제거 + i18n 밖 3개 파일 en 전환 (아래 "디자인 톤 홀리스틱 재검토" 실행
+      순서로 이관해 진행 중. `project_start_dialog.py`는 GitHub #2 라운드B와 겹치니 그쪽
+      완료 후 순서 조정 — GitHub #2는 이미 완료됐으므로 다음 라운드에 포함 가능)
 
 ## 디자인 톤 홀리스틱 재검토 (2026-08-20 요청)
 
@@ -173,13 +173,11 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   목업, 확장 팔레트 참조표, 7단계 실행 순서 포함.
 - **2026-08-20 사용자 승인 완료** — 통합안대로 구현 착수 확정. 새 색상 팔레트 도입 없음
   (기존 값 재사용). 7단계 실행 순서(라운드 단위로 구현+검증):
-  1. [x] 기능 아이콘 SVG화 확장판(승인 7종 + 신규 12종) — 구현 완료, 커밋 `2ad0165`(feat)+
-        `2f05313`(docs). `app/resources/icons/*.svg` 22개 + 로더(`app/widgets/icons.py`)
-        신설. 구현 중 부수 발견: `training_progress_dialog.py`의 `STATUS_ICON`을
-        `STATUS_ICON_NAME`으로 리네임하면서 이를 가져다 쓰던 `training_tab.py`도 함께 수정
-        (root-cause 수정, 방치 시 ImportError). **검증 대기** — 정적 검토는 구현 에이전트가
-        수행(py_compile, headless SVG 렌더링, 위젯 생성 스모크 테스트); 실제 `python main.py`
-        구동 시각 확인은 검증 에이전트 몫으로 남음.
+  1. [x] 기능 아이콘 SVG화 확장판(승인 7종 + 신규 12종) — 구현+독립검증 통과, 커밋
+        `2ad0165`(feat)+`2f05313`(docs)+`ed99ca5`(검증로그). `app/resources/icons/*.svg`
+        22개 + 로더(`app/widgets/icons.py`) 신설. 검증 에이전트가 `python main.py` 실제
+        구동으로 19개 지점 전부 육안 확인(브러시 활성 하이라이트, eye 토글 실동작, 클립보드
+        복사 실동작, 학습 탭/진행다이얼로그 STATUS_ICON_NAME 리네임 양쪽 정상 등). 버그 없음.
   2. [ ] 장식 이모지 제거(`model_tab.py` 포함하도록 대상 파일 목록 갱신)
   3. [ ] `model_tab.py` 에디터/로그 팔레트를 앱 표준으로 정규화 (발견 1)
   4. [ ] `loss_chart.py` matplotlib 배색을 앱 톤에 맞게 조정 (발견 2)
