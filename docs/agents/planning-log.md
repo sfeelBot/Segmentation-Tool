@@ -117,3 +117,49 @@
 ### 상태
 완료. 다음: 리더가 사용자에게 `docs/decisions-needed.md` 4건(레이아웃 상한 수치, 추론 탭
 신뢰도 표시 범위, ClassPanel 200px 상한, 추론 탭 폴더 그룹핑 방식) 확인 후 라운드 1부터 진행.
+
+---
+
+## 2026-08-20 — GitHub #2 "프로젝트 내보내기 기능" VOC 2건 스코프 산정
+
+### 배경
+GitHub 이슈 [#2](https://github.com/sfeelBot/Segmentation-Tool/issues/2)에서 접수된 VOC 2건
+(`QA.md` VOC 테이블 2026-08-20)의 스코프 산정 위임: ① 최근 프로젝트 클릭 시 자동 열기, ②
+프로젝트 전체 내보내기/단일 파일 통합.
+
+### 한 일
+- `app/widgets/project_start_dialog.py` 전체 흐름 확인: 최근 프로젝트 목록은 이미 더블클릭
+  (`itemDoubleClicked` → `_on_recent_double_clicked` → `_try_open()`)으로 한 번에 열림 —
+  중간에 별도 "열기" 버튼을 또 눌러야 하는 번거로운 흐름은 없음(가설 b 기각). 싱글클릭을
+  원하는지(가설 a) 단순히 몰랐는지(가설 c)는 GitHub 이슈 원문("클릭하면 자동으로 열리게")
+  만으로 판별 불가 — 한국어에서 "클릭"과 "더블클릭"이 혼용되는 경우가 많아 판단을 내리지
+  않고 `docs/decisions-needed.md`에 등록.
+- `app/core/project.py`(`Project` 경로 구조: images/annotations/checkpoints/user_models/
+  classes.json/project.json)와 `app/widgets/export_dialog.py`(기존 export는 라벨 데이터만
+  JSON/YOLO/COCO로 변환, 프로젝트 패키징 아님) 확인. 추가로 `trainer.py`/`inference_engine.py`를
+  교차 확인해 체크포인트의 `model_source`가 실제 소스 코드가 아니라 태그 문자열이라는 점,
+  `"loaded"`(커스텀 모델)는 자동 재인스턴스화가 안 되고 사용자가 모델 탭에서 다시 로드해야
+  한다는 기존 갭을 확인 — 이는 `user_models/` 포함 여부 판단(포함해도 체크포인트와 자동
+  연결은 안 됨, 그래도 코드 자산 자체는 보존 가치 있음)에 반영.
+- `.gitignore`가 `projects/*/checkpoints/`, `*.pt`, `*.pth`를 이미 제외 대상으로 두고 있는
+  점을 "체크포인트는 무겁고 재생성 가능한 산출물" 취급 관례의 근거로 삼아 기본 미체크 제안.
+  `app/widgets/image_browser.py`의 `_FolderImportWorker(QThread)` 패턴을 확인해 zip 압축도
+  같은 관례(백그라운드 워커 + 진행률 시그널)로 구현 가능함을 확인 — 스파이크 불필요(신규
+  라이브러리 선택이 아니라 기존 관례 재사용, `zipfile` 표준 라이브러리로 충분).
+- 스펙 문서 신설: [docs/specs/voc-github-issues-2026-08-20.md](../specs/voc-github-issues-2026-08-20.md)
+  — 요청 1은 판단 보류 + 재확인 경로 제시, 요청 2는 라운드 A(export, zip, 체크박스 기본값 제안)
+  + 라운드 B(import, 라운드 A 완료 후 착수 — zip 구조 확정이 선행돼야 함) 2라운드로 스코프
+  산정, 라운드 B의 리스크(경로 충돌·zip 검증·버전 호환성)를 라운드 A보다 명시적으로 높게 평가.
+- `docs/decisions-needed.md`에 3건 등록: (1) 요청1 싱글클릭 vs 더블클릭 재확인, (2) 라운드 A
+  `checkpoints/`·`user_models/` 기본 포함 여부, (3) 라운드 B(import) 착수 여부 + 이름 충돌 정책.
+- `docs/roadmap.md` "GitHub 이슈 VOC" 절 갱신 — 스펙 링크 반영, 요청1/2 각각 다음 단계 명시.
+- 코드는 건드리지 않음. 시작 전 `git status` 확인 — `app/core/dataset.py`, `app/core/trainer.py`,
+  `app/widgets/config_form.py`, `docs/agents/leader-log.md`의 기존 uncommitted 변경은 이번
+  작업과 무관(건드리지 않음). 작업 종료 시 `git status`로 스펙/decisions-needed/roadmap/본 로그
+  4개 문서 변경만 추가됐음을 확인.
+
+### 상태
+완료 — 다음: 리더가 사용자에게 decisions-needed 3건 확인. 요청1은 GitHub 이슈 재확인 코멘트
+후 답변에 따라 초경량 수정 또는 안내로 종료(별도 라운드 불필요). 요청2는 답변 확인 후 라운드
+A(export)부터 디자인 목업 → 구현 → 검증(주요 기능 추가라 골든패스 수준 검증 요청) 순으로 진행,
+라운드 B(import)는 라운드 A 완료 후 착수 여부 재확인.
