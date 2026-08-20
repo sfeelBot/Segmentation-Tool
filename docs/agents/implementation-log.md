@@ -675,3 +675,69 @@ Artifact `5df2af11-0642-4e69-8ddc-f545333eebca`)의 라벨링 탭 부분 + "구�
   8개 클래스 스크롤 없이 표시 등 목업 대비 육안 확인)까지 확인해야 한다.
 - 학습 탭·추론 탭의 라운드 2 항목(큐 박스↔진행상태 서브스플리터, 상단↔메인뷰어 서브스플리터,
   추론 탭 이미지 목록 트리 교체)은 이번 범위 밖 — 별도 라운드로 남아있음.
+
+---
+
+## 2026-08-20 — GitHub #2 라운드 A(프로젝트 전체 내보내기, export)
+
+스펙: [docs/specs/voc-github-issues-2026-08-20.md](../specs/voc-github-issues-2026-08-20.md)
+"요청 2 — 라운드 A" 절. 라운드 B(import)는 이번 범위 밖 — A 검증 통과 후 별도 위임.
+
+### 변경
+- **신규** `app/core/project_export.py` — Qt 비의존 순수 로직. `collect_export_entries()`가
+  `images/`(`.thumbs/` 캐시 디렉토리 제외)·`annotations/`·`classes.json`·`project.json`은
+  항상, `checkpoints/`·`user_models/`는 옵션에 따라 (절대경로, zip arcname) 목록을 계산.
+  `default_export_filename()`이 `{project_name}_{yyyymmdd}.zip` 생성. zip 루트에 각 폴더가
+  그대로 위치하도록 arcname을 구성(추후 라운드 B가 압축 해제 결과를 곧바로 프로젝트 폴더로
+  쓸 수 있게).
+- **신규** `app/widgets/project_export_dialog.py` — `ProjectExportDialog(QDialog)` +
+  `_ProjectExportWorker(QThread)`. 워커는 `image_browser.py`의 `_FolderImportWorker`와
+  동일한 패턴(파일 수 기준 `progress(done,total,name)` 시그널, 완료/에러를
+  `finished(ok:bool, message:str)` 하나로 통합)을 따름. `zipfile`(표준 라이브러리)만 사용,
+  외부 의존성 추가 없음. 체크박스 기본값: `checkpoints/` 미체크·`user_models/` 체크(확정된
+  사용자 결정 반영), `user_models/` 옆에 "커스텀 모델 코드는 가져오기 후 모델 탭에서 다시
+  로드해야 합니다" 안내 문구 배치. 취소 버튼(진행 중 워커에 cancel 플래그 전달, 부분 zip
+  파일 삭제) 및 `closeEvent`에서 실행 중 워커 정리 처리 추가. 프로젝트를 열지 않고도 쓸 수
+  있도록 `Project(path)`를 직접 구성(`open_existing()`/`set_current()` 미사용 — 부수효과
+  없음).
+- `app/widgets/project_start_dialog.py` — 최근 프로젝트 목록에 우클릭 컨텍스트 메뉴
+  ("📦 내보내기…") 추가. 존재하지 않는 경로 선택 시 경고 후 목록 갱신.
+- `app/core/i18n.py` — `project_export.*` 키 셋(ko/en) 추가.
+
+### 검증(직접 수행, 스크래치 디렉토리 사용)
+1. 합성 테스트 프로젝트(`testproj`: 이미지 3장 + `.thumbs` 캐시 1장, annotations 1개,
+   classes.json, project.json, 가짜 checkpoint `.pt`, 가짜 `user_models/*.py`) 생성 후
+   `collect_export_entries()` 단위 확인 — 기본 옵션(ckpt=False/models=True)에서
+   `checkpoints/`는 제외, `user_models/`는 포함, `.thumbs`는 완전히 제외됨을 확인.
+   반대 옵션(ckpt=True/models=False)도 확인.
+2. `_ProjectExportWorker`를 실제 `QApplication`+이벤트루프로 구동해 zip 생성 →
+   `zipfile.ZipFile`로 열어 내용물 검증 — `.thumbs` 미포함, `checkpoints/` 체크 해제 시
+   미포함/체크 시 포함, `user_models/` 기본 포함 모두 실측 확인.
+3. 대용량 시나리오(빈 파일 500장) — `progress` 시그널 503회 emit 확인, `QTimer`가 워커
+   실행 중에도 계속 틱을 쌓아 이벤트 루프가 블로킹되지 않음을 확인, zip 파일 수(503개) 일치.
+4. 에러 케이스 2건: (a) 프로젝트 폴더가 사라진 경우 — `finished(False, "프로젝트 폴더를
+   찾을 수 없습니다.")`, zip 파일 미생성 확인. (b) 쓰기 권한 없는 경로(`C:\Windows\System32\
+   config\`) 저장 시도 — `PermissionError`가 `finished(False, msg)`로 정상 전파, 부분 zip
+   미생성 확인.
+5. `ProjectExportDialog` 실제 생성 — 체크박스 기본값(`checkpoints`=False, `user_models`=True)
+   실측 확인.
+6. `python main.py`와 동등한 절차(PyQt6 → `app.core.project` → `app.main_window.MainWindow`
+   → `app.widgets.project_start_dialog.ProjectStartDialog` 순 import, 오프스크린 플랫폼)로
+   기동 확인 — 예외 없음, 컨텍스트 메뉴 슬롯 연결 확인.
+- 검증 스크립트: 스크래치 디렉토리 `verify_export.py`/`verify_export_large.py`(프로젝트
+  저장소 밖, 커밋 대상 아님).
+
+### 변경 파일
+`app/core/project_export.py`(신규), `app/widgets/project_export_dialog.py`(신규),
+`app/widgets/project_start_dialog.py`, `app/core/i18n.py`. `git status`로 이 4개 파일
+외 다른 변경 없음 확인.
+
+### 커밋
+`911f85a` — `feat: 프로젝트 전체 내보내기(export) 기능 추가 — GitHub #2 라운드A`
+(`git push`는 수행하지 않음 — 사용자 명시적 확인 필요)
+
+### 다음 단계
+- **완료 보고 아님** — 검증(Verification) 에이전트의 실제 UI 조작(우클릭 메뉴 → 다이얼로그
+  → 저장 경로 선택 → 실행 → 진행률/완료 메시지 육안 확인) 확인이 남아있음. "주요 기능 추가"
+  라운드이므로 골든 패스 수준 검증 필요.
+- 검증 통과 시 스펙에 명시된 대로 라운드 B(프로젝트 가져오기, import)로 곧바로 이어짐.
