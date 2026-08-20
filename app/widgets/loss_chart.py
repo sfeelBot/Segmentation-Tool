@@ -16,7 +16,7 @@ _VAL    = "#f87171"   # 에러 계열 — val
 _GRID   = "#374151"   # 앱 표준 테두리
 _TEXT   = "#e5e7eb"   # 앱 표준 기본 텍스트
 _TEXT_MUTED = "#9ca3af"   # 앱 표준 보조 텍스트 (눈금)
-_EPOCH  = "#374151"   # epoch 경계 세로선
+_EPOCH  = "#4b5563"   # epoch 경계 세로선 (그리드보다 밝게 — 구분 가능하도록)
 
 
 class LossChart(FigureCanvasQTAgg):

@@ -203,11 +203,12 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         띄우고 통과시키지만 `model_loader`의 exec 샌드박스는 같은 모듈에 ImportError로
         무조건 실패 — "검증 통과+로드 버튼 활성화"인데 실제 로드는 항상 실패하는 기존
         정책 불일치. 이번 라운드 회귀 아님(수개월 전부터 존재), `QA.md` 등록 완료.
-  4. [ ] `loss_chart.py` matplotlib 배색을 앱 톤에 맞게 조정 (발견 2) — 구현 완료, 커밋
-        `e76361a`(refactor)+`eda6455`(docs). facecolor `#111418`/`#1f2329`, train선
-        `#60a5fa`, val선 `#f87171`, 그리드/스파인 `#374151`, 텍스트 `#e5e7eb`/`#9ca3af`,
-        범례 배경+테두리 정규화. **검증 대기** — ast.parse만 수행, 학습 탭 실제 그래프
-        렌더링·시각 대비 확인 필요.
+  4. [x] `loss_chart.py` matplotlib 배색을 앱 톤에 맞게 조정 (발견 2) — 구현+독립검증
+        통과, 커밋 `e76361a`(refactor)+`eda6455`(docs)+`9c7916c`(검증로그). 검증 에이전트가
+        실제 `LossChart` 위젯에 더미 손실데이터로 렌더링해 배경/선색/범례 대비 확인.
+        부수 발견 **BUG-007(P3)** — 그리드·epoch경계선이 동일 색으로 통일돼 구분이 안
+        되던 것을 리더가 직접 1줄 수정(`_EPOCH`→`#4b5563`)해 즉시 해결, `QA.md` Closed로
+        기록.
   5. [ ] 학습 탭 큐 서브스플리터 + 추론 탭 서브스플리터·이미지 트리 (1번과 병행 가능)
   6. [ ] i18n 밖 3파일(`image_browser.py`/`training_progress_dialog.py`/`main_window.py`)
         en 전환 (1~5 확정 후 마지막)
