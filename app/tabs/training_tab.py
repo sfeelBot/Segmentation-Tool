@@ -215,12 +215,11 @@ class TrainingTab(QWidget):
         add_row.addWidget(self._btn_add_job)
         queue_layout.addLayout(add_row)
 
-        # 큐 목록
+        # 큐 목록 — 고정 높이 상한 제거, 아래 _queue_splitter 로 자유 리사이즈
         self._queue_list = QListWidget()
         self._queue_list.setAlternatingRowColors(True)
-        self._queue_list.setMaximumHeight(140)
         self._queue_list.setIconSize(QSize(14, 14))
-        queue_layout.addWidget(self._queue_list)
+        queue_layout.addWidget(self._queue_list, stretch=1)
 
         # 큐 제어 버튼
         ctrl_row = QHBoxLayout()
@@ -252,15 +251,30 @@ class TrainingTab(QWidget):
         self._lbl_total_eta.setStyleSheet("color:#93c5fd; font-weight:bold;")
         queue_layout.addWidget(self._lbl_total_eta)
 
-        right_layout.addWidget(queue_box)
+        queue_box.setMinimumHeight(120)
+
+        # ── 큐 영역 ↕ 모니터링 영역 세로 서브스플리터 (자유 리사이즈) ────────
+        self._queue_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._queue_splitter.setHandleWidth(5)
+        self._queue_splitter.setStyleSheet(
+            "QSplitter::handle { background:#374151; }"
+            "QSplitter::handle:hover { background:#60a5fa; }"
+        )
+        self._queue_splitter.addWidget(queue_box)
 
         # ── 현재 학습 상태 ───────────────────────────────────────────────────
+        monitor_panel = QWidget()
+        monitor_panel.setMinimumHeight(150)
+        monitor_layout = QVBoxLayout(monitor_panel)
+        monitor_layout.setContentsMargins(0, 0, 0, 0)
+        monitor_layout.setSpacing(8)
+
         # Epoch 진행바
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setFormat("Epoch %v / %m")
-        right_layout.addWidget(self._progress)
+        monitor_layout.addWidget(self._progress)
 
         # 상태 + Step 카운터 행
         status_row = QHBoxLayout()
@@ -272,7 +286,7 @@ class TrainingTab(QWidget):
         )
         status_row.addWidget(self._lbl_status, stretch=1)
         status_row.addWidget(self._lbl_step, stretch=0)
-        right_layout.addLayout(status_row)
+        monitor_layout.addLayout(status_row)
 
         # ── 그래프 (좌) + 메트릭·체크포인트 (우) 수평 분할 ─────────────────
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -316,7 +330,14 @@ class TrainingTab(QWidget):
         h_splitter.setStretchFactor(0, 1)
         h_splitter.setStretchFactor(1, 0)
 
-        right_layout.addWidget(h_splitter, stretch=1)
+        monitor_layout.addWidget(h_splitter, stretch=1)
+
+        self._queue_splitter.addWidget(monitor_panel)
+        self._queue_splitter.setSizes([260, 10000])  # 기존 배치(큐 박스 고정 높이, 나머지 확장) 재현
+        self._queue_splitter.setStretchFactor(0, 0)
+        self._queue_splitter.setStretchFactor(1, 1)
+
+        right_layout.addWidget(self._queue_splitter, stretch=1)
 
         self._main_splitter.addWidget(right)
         self._main_splitter.setSizes([320, 10000])
