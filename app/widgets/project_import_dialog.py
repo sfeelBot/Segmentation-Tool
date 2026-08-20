@@ -87,7 +87,7 @@ class ProjectImportDialog(QDialog):
         root.setSpacing(10)
         root.setContentsMargins(16, 16, 16, 16)
 
-        header = QLabel(f"📥  {self._zip_path.name}")
+        header = QLabel(self._zip_path.name)
         header.setStyleSheet("font-weight:bold; font-size:13px;")
         root.addWidget(header)
         path_lbl = QLabel(str(self._zip_path))

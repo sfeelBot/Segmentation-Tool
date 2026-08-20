@@ -16,7 +16,7 @@ class ModelPresetDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("📚  AI 모델 프리셋 라이브러리")
+        self.setWindowTitle("AI 모델 프리셋 라이브러리")
         self.setMinimumSize(720, 500)
         self.selected_code: str | None = None
         self.selected_key:  str | None = None
@@ -27,7 +27,7 @@ class ModelPresetDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        header = QLabel("🧠  산업용 검사에 적합한 대표 세그멘테이션 모델 모음")
+        header = QLabel("산업용 검사에 적합한 대표 세그멘테이션 모델 모음")
         header.setStyleSheet("color:#60a5fa; font-weight:bold; font-size:13px;")
         root.addWidget(header)
 
@@ -55,7 +55,7 @@ class ModelPresetDialog(QDialog):
         btn_row.addStretch()
         self._btn_cancel = QPushButton(t("common.cancel"))
         self._btn_cancel.clicked.connect(self.reject)
-        self._btn_load = QPushButton("📥  에디터에 불러오기")
+        self._btn_load = QPushButton("에디터에 불러오기")
         self._btn_load.setStyleSheet("background:#065f46; font-weight:bold; padding:6px 14px;")
         self._btn_load.setEnabled(False)
         self._btn_load.clicked.connect(self._on_load)
@@ -78,13 +78,13 @@ class ModelPresetDialog(QDialog):
             f"<h2 style='color:#60a5fa; margin:0'>{info.title}</h2>"
             f"<p style='color:#93c5fd; margin:4px 0 12px 0;'>{info.tagline}</p>"
             f"<hr style='border:1px solid #374151'>"
-            f"<p><b style='color:#e5e7eb'>📌 활용</b><br>"
+            f"<p><b style='color:#e5e7eb'>활용</b><br>"
             f"<span style='color:#cbd5e1'>{info.use_case}</span></p>"
-            f"<p><b style='color:#e5e7eb'>🔢 파라미터</b><br>"
+            f"<p><b style='color:#e5e7eb'>파라미터</b><br>"
             f"<span style='color:#cbd5e1'>{info.params}</span></p>"
-            f"<p><b style='color:#34d399'>✅ 장점</b><br>"
+            f"<p><b style='color:#34d399'>장점</b><br>"
             f"<span style='color:#cbd5e1'>{info.pros}</span></p>"
-            f"<p><b style='color:#fbbf24'>⚠️ 단점</b><br>"
+            f"<p><b style='color:#fbbf24'>단점</b><br>"
             f"<span style='color:#cbd5e1'>{info.cons}</span></p>"
         )
         self._btn_load.setEnabled(True)

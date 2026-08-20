@@ -30,7 +30,7 @@ class AutoLabelPreviewDialog(QDialog):
     def __init__(self, results: List[ResultTuple], parent=None) -> None:
         super().__init__(parent)
         self._results = results
-        self.setWindowTitle("✨ 오토 라벨링 미리보기")
+        self.setWindowTitle("오토 라벨링 미리보기")
         self.setMinimumSize(900, 680)
         self._build_ui()
 
@@ -40,7 +40,7 @@ class AutoLabelPreviewDialog(QDialog):
         root.setSpacing(10)
 
         # ── 요약 ─────────────────────────────────────────────────────────────
-        title = QLabel("✨  오토 라벨링 결과 미리보기")
+        title = QLabel("오토 라벨링 결과 미리보기")
         tf = QFont(); tf.setBold(True); tf.setPointSize(14)
         title.setFont(tf)
         title.setStyleSheet("color:#60a5fa;")
@@ -99,8 +99,8 @@ class AutoLabelPreviewDialog(QDialog):
         # ── 버튼 ─────────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        self._btn_cancel = QPushButton("❌  취소 (결과 버리기)")
-        self._btn_commit = QPushButton("✅  합치기 — 프로젝트에 저장")
+        self._btn_cancel = QPushButton("취소 (결과 버리기)")
+        self._btn_commit = QPushButton("합치기 — 프로젝트에 저장")
         self._btn_commit.setStyleSheet(
             "background:#065f46; font-weight:bold; padding:8px 18px; font-size:13px;"
         )
@@ -156,10 +156,10 @@ class AutoLabelPreviewDialog(QDialog):
             cls_names = {c.class_id: c.name for c in classes}
             parts = [f"{cls_names.get(cid, f'#{cid}')}:{n}"
                      for cid, n in sorted(per_class.items())]
-            info = QLabel("🏷 " + "  ·  ".join(parts))
+            info = QLabel("  ·  ".join(parts))
             info.setStyleSheet("color:#93c5fd; font-size:10px;")
         else:
-            info = QLabel("⬜ 어노테이션 없음")
+            info = QLabel("어노테이션 없음")
             info.setStyleSheet("color:#6b7280; font-size:10px;")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(info)

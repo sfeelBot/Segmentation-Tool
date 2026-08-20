@@ -25,7 +25,7 @@ class MainWindow(QMainWindow):
 
         proj = _project.current()
         proj_name = proj.name if proj else "—"
-        self.setWindowTitle(f"Segmentation Model UI  ·  🧠 {proj_name}")
+        self.setWindowTitle(f"Segmentation Model UI  ·  {proj_name}")
         self.resize(1280, 800)
 
         self._tabs = QTabWidget()
@@ -45,7 +45,7 @@ class MainWindow(QMainWindow):
         cl.setContentsMargins(0, 0, 8, 0)
         cl.setSpacing(4)
 
-        self._lbl_project = QLabel(f"🗂  {proj_name}")
+        self._lbl_project = QLabel(proj_name)
         self._lbl_project.setStyleSheet(
             "color:#60a5fa; font-weight:bold; padding:4px 8px;"
         )
@@ -81,23 +81,27 @@ class MainWindow(QMainWindow):
         self._btn_open_folder.clicked.connect(self._on_open_project_folder)
         cl.addWidget(self._btn_open_folder)
 
-        self._btn_export = QPushButton(t("menu.export"))
+        self._btn_export = QPushButton()
+        self._btn_export.setIcon(svg_icon("export"))
+        self._btn_export.setIconSize(QSize(16, 16))
         self._btn_export.setFlat(True)
         self._btn_export.setToolTip(t("menu.export.tip"))
         self._btn_export.setFixedWidth(30)
         self._btn_export.setStyleSheet(
-            "QPushButton { font-size:15px; padding:4px; }"
+            "QPushButton { padding:4px; }"
             "QPushButton:hover { background:#374151; border-radius:4px; }"
         )
         self._btn_export.clicked.connect(self._on_open_export)
         cl.addWidget(self._btn_export)
 
-        self._btn_settings = QPushButton(t("menu.settings"))
+        self._btn_settings = QPushButton()
+        self._btn_settings.setIcon(svg_icon("gear"))
+        self._btn_settings.setIconSize(QSize(16, 16))
         self._btn_settings.setToolTip(t("menu.settings.tip"))
         self._btn_settings.setFlat(True)
         self._btn_settings.setFixedWidth(36)
         self._btn_settings.setStyleSheet(
-            "QPushButton { font-size:18px; padding:4px 8px; }"
+            "QPushButton { padding:4px 8px; }"
             "QPushButton:hover { background:#374151; border-radius:4px; }"
         )
         self._btn_settings.clicked.connect(self._on_open_settings)

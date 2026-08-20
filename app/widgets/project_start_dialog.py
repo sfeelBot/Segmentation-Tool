@@ -36,7 +36,7 @@ class ProjectStartDialog(QDialog):
         root.setSpacing(14)
 
         # ── 헤더 ─────────────────────────────────────────────────────────────
-        header = QLabel("🎯  Segmentation Model UI")
+        header = QLabel("Segmentation Model UI")
         hf = QFont()
         hf.setPointSize(18)
         hf.setBold(True)
@@ -115,7 +115,7 @@ class ProjectStartDialog(QDialog):
                         updated = f"   ·   {_format_date(m['updated_at'])}"
             except Exception:
                 pass
-            label = f"🧠  {name}{updated}\n        {p}"
+            label = f"{name}{updated}\n        {p}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, str(p))
             self._recent_list.addItem(item)

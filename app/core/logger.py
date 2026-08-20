@@ -106,7 +106,7 @@ def setup_logging() -> None:
                 from PyQt6.QtCore import QTimer
                 def _show():
                     dlg = QMessageBox()
-                    dlg.setWindowTitle("❌  예기치 않은 오류 — 앱이 종료될 수 있습니다")
+                    dlg.setWindowTitle("예기치 않은 오류 — 앱이 종료될 수 있습니다")
                     dlg.setText(
                         f"<b>{exc_type.__name__}: {exc_value}</b><br><br>"
                         "자세한 내용은 아래 또는 <code>data/logs/errors.log</code> 를 확인하세요."

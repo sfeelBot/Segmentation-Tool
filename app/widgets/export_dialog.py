@@ -37,7 +37,7 @@ class ExportDialog(QDialog):
         root.setContentsMargins(16, 16, 16, 16)
 
         # 옵션 박스
-        box = QGroupBox("📦  " + t("export.title"))
+        box = QGroupBox(t("export.title"))
         lay = QVBoxLayout(box)
 
         self._chk_labeled = QCheckBox(t("export.labeled_only"))
@@ -72,7 +72,7 @@ class ExportDialog(QDialog):
         self._lbl_out = QLabel("—")
         self._lbl_out.setStyleSheet("color:#60a5fa;")
         out_row.addWidget(self._lbl_out, stretch=1)
-        btn_pick = QPushButton("📂  " + t("export.choose_dir"))
+        btn_pick = QPushButton(t("export.choose_dir"))
         btn_pick.clicked.connect(self._on_pick_dir)
         out_row.addWidget(btn_pick)
         lay.addLayout(out_row)

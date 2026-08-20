@@ -51,7 +51,7 @@ SHORTCUTS: list[tuple[str, str]] = [
     # ── 캔버스 조작 ─────────────────────────────────────────────────────
     ("Space + drag",    "sc.space_pan"),
     ("우클릭 + drag",   "sc.rmb_pan"),
-    ("🖱 휠",           "sc.wheel_zoom"),
+    ("휠",              "sc.wheel_zoom"),
     ("[  /  -",         "sc.brush_smaller"),
     ("]  /  +",         "sc.brush_bigger"),
     ("더블클릭",        "sc.polygon_close"),
@@ -72,8 +72,8 @@ class SettingsDialog(QDialog):
         layout.setSpacing(10)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_general_tab(),   "⚙️  일반")
-        tabs.addTab(self._build_paths_tab(),     "📁  경로")
+        tabs.addTab(self._build_general_tab(),   "일반")
+        tabs.addTab(self._build_paths_tab(),     "경로")
         tabs.addTab(self._build_shortcut_tab(),  t("settings.shortcuts"))
         tabs.addTab(self._build_logs_tab(),      t("settings.logs"))
         layout.addWidget(tabs, stretch=1)
@@ -122,7 +122,7 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(w)
         lay.setSpacing(10)
 
-        proj_box = QGroupBox("📁  프로젝트 저장 경로")
+        proj_box = QGroupBox("프로젝트 저장 경로")
         pl = QVBoxLayout(proj_box)
 
         desc = QLabel(
@@ -141,7 +141,7 @@ class SettingsDialog(QDialog):
         )
         path_row.addWidget(self._projects_root_field, stretch=1)
 
-        btn_browse = QPushButton("📂  찾아보기")
+        btn_browse = QPushButton("찾아보기")
         btn_browse.clicked.connect(self._on_browse_projects_root)
         path_row.addWidget(btn_browse)
 
@@ -237,7 +237,7 @@ class SettingsDialog(QDialog):
             accent="#fbbf24",
         ))
         lay.addWidget(self._build_path_row(
-            "⚡ 성능 로그 (perf.log)",
+            "성능 로그 (perf.log)",
             PERF_LOG.resolve(),
             accent="#a78bfa",
         ))
@@ -253,7 +253,7 @@ class SettingsDialog(QDialog):
         return w
 
     def _build_path_row(self, label: str, path: Path, accent: str) -> QWidget:
-        """라벨 + 경로 입력(readonly) + 📋 복사 버튼을 한 묶음 위젯으로."""
+        """라벨 + 경로 입력(readonly) + 복사 버튼을 한 묶음 위젯으로."""
         container = QWidget()
         wrap = QVBoxLayout(container)
         wrap.setContentsMargins(0, 0, 0, 0)

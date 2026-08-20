@@ -202,7 +202,7 @@ class TrainingTab(QWidget):
         add_row.addWidget(QLabel(t("train.model_label")))
         self._model_combo = QComboBox()
         self._model_combo.setMinimumWidth(220)
-        self._model_combo.addItem("🧠 현재 로드된 모델", "loaded")
+        self._model_combo.addItem("현재 로드된 모델", "loaded")
         for p in PRESETS:
             self._model_combo.addItem(p.title, f"preset:{p.key}")
         add_row.addWidget(self._model_combo, stretch=1)
@@ -377,7 +377,7 @@ class TrainingTab(QWidget):
             icon_name = STATUS_ICON_NAME.get(job.status, "status_ring")
             color = STATUS_COLOR.get(job.status, "#cccccc")
             model_lbl = _model_source_label(job.model_source)
-            text = (f"{job.name}  🧠 {model_lbl}   "
+            text = (f"{job.name}  {model_lbl}   "
                     f"[epochs={job.config.epochs}, bs={job.config.batch_size}, "
                     f"lr={job.config.lr:.1e}]   "
                     f"({job.epochs_done}/{job.config.epochs})")
@@ -399,7 +399,7 @@ class TrainingTab(QWidget):
                 remaining = max(0, job.config.epochs - job.epochs_done)
                 total += remaining * avg
         self._lbl_total_eta.setText(
-            f"⏱️  전체 예상 시간: {_fmt_time(total) if total > 0 else '—'}"
+            f"전체 예상 시간: {_fmt_time(total) if total > 0 else '—'}"
         )
 
     # ── 큐 실행 슬롯 ──────────────────────────────────────────────────────────
@@ -407,14 +407,14 @@ class TrainingTab(QWidget):
     def _on_start_queue(self) -> None:
         if not self._jobs:
             QMessageBox.information(self, "큐 비어있음",
-                "'➕ 큐에 추가' 로 먼저 학습 작업을 추가하세요.")
+                "'큐에 추가' 로 먼저 학습 작업을 추가하세요.")
             return
         # '현재 로드됨' 을 쓰는 작업이 있는데 모델이 없으면 경고
         needs_loaded = any(j.model_source == "loaded" for j in self._jobs
                            if j.status == "waiting")
         if needs_loaded and self._get_model() is None:
             QMessageBox.warning(self, "모델 없음",
-                "'🧠 현재 로드된 모델' 을 사용하는 작업이 있습니다.\n"
+                "'현재 로드된 모델' 을 사용하는 작업이 있습니다.\n"
                 "Model 탭에서 모델을 먼저 로드하거나, 각 작업의 모델을 프리셋으로 바꾸세요.")
             return
         # GPU 가용성 확인 — 사용 불가 시 CPU 로 계속할지 팝업
@@ -445,7 +445,7 @@ class TrainingTab(QWidget):
             if self._dialog:
                 self._dialog.set_done()
                 self._dialog.update_queue(self._jobs)
-            self._lbl_status.setText("✅ 모든 학습 완료")
+            self._lbl_status.setText("모든 학습 완료")
             return
 
         job = self._jobs[next_idx]
@@ -471,7 +471,7 @@ class TrainingTab(QWidget):
         self._metrics_table.setRowCount(0)
         self._progress.setMaximum(job.config.epochs)
         self._progress.setValue(0)
-        self._lbl_status.setText(f"🎯 '{job.name}' 학습 중…")
+        self._lbl_status.setText(f"'{job.name}' 학습 중…")
 
         if self._dialog:
             self._dialog.reset_running_state()
@@ -502,7 +502,7 @@ class TrainingTab(QWidget):
             return
         self._queue_stop_all = (reply == QMessageBox.StandardButton.Yes)
         self._worker.request_stop()
-        self._lbl_status.setText("⏸️ 중지 요청됨…")
+        self._lbl_status.setText("중지 요청됨…")
 
     # ── Worker 시그널 슬롯 ────────────────────────────────────────────────────
 
@@ -574,7 +574,7 @@ class TrainingTab(QWidget):
         self._metrics_table.scrollToBottom()
 
         self._lbl_status.setText(
-            f"🎯 '{job.name}'  Epoch {epoch}/{job.config.epochs}  "
+            f"'{job.name}'  Epoch {epoch}/{job.config.epochs}  "
             f"train={train_loss:.4f}  val={val_loss:.4f}  IoU={iou:.4f}  "
             f"· {epoch_time:.1f}s/epoch"
         )
@@ -659,13 +659,13 @@ class TrainingTab(QWidget):
     def _on_dialog_stop_current(self) -> None:
         if self._worker:
             self._worker.request_stop()
-            self._lbl_status.setText("⏸️ 현재 작업 중지 요청됨…")
+            self._lbl_status.setText("현재 작업 중지 요청됨…")
 
     def _on_dialog_stop_all(self) -> None:
         self._queue_stop_all = True
         if self._worker:
             self._worker.request_stop()
-        self._lbl_status.setText("⏸️ 전체 큐 중지 요청됨…")
+        self._lbl_status.setText("전체 큐 중지 요청됨…")
 
     # ── ETA 계산 ─────────────────────────────────────────────────────────────
 

@@ -108,7 +108,7 @@ class ProjectExportDialog(QDialog):
         root.setSpacing(10)
         root.setContentsMargins(16, 16, 16, 16)
 
-        header = QLabel(f"🧠  {self._project.name}")
+        header = QLabel(self._project.name)
         header.setStyleSheet("font-weight:bold; font-size:13px;")
         root.addWidget(header)
         path_lbl = QLabel(str(self._project.path))
@@ -116,7 +116,7 @@ class ProjectExportDialog(QDialog):
         path_lbl.setWordWrap(True)
         root.addWidget(path_lbl)
 
-        box = QGroupBox("📦  " + t("project_export.title"))
+        box = QGroupBox(t("project_export.title"))
         lay = QVBoxLayout(box)
 
         always = QLabel(t("project_export.always_included"))
@@ -143,7 +143,7 @@ class ProjectExportDialog(QDialog):
         self._lbl_out.setStyleSheet("color:#60a5fa;")
         self._lbl_out.setWordWrap(True)
         out_row.addWidget(self._lbl_out, stretch=1)
-        btn_pick = QPushButton("📂  " + t("project_export.choose_path"))
+        btn_pick = QPushButton(t("project_export.choose_path"))
         btn_pick.clicked.connect(self._on_pick_path)
         out_row.addWidget(btn_pick)
         lay.addLayout(out_row)

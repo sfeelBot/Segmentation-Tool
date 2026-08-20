@@ -66,8 +66,8 @@ class InferenceTab(QWidget):
         infer_mode_row = QHBoxLayout()
         infer_mode_row.addWidget(QLabel("추론 방식:"))
         self._infer_mode = QComboBox()
-        self._infer_mode.addItem("🔍 resize        (전체 이미지 축소)", "resize")
-        self._infer_mode.addItem("🔲 sliding_window (패치 학습 모델용, 원본 해상도)", "sliding_window")
+        self._infer_mode.addItem("resize        (전체 이미지 축소)", "resize")
+        self._infer_mode.addItem("sliding_window (패치 학습 모델용, 원본 해상도)", "sliding_window")
         self._infer_mode.setToolTip(
             "resize: 이미지 전체를 학습 크기로 줄여서 한 번에 추론\n"
             "sliding_window: 원본 해상도로 패치를 겹쳐가며 추론 후 병합\n"
@@ -283,20 +283,20 @@ class InferenceTab(QWidget):
             model = load_model_from_ckpt(ckpt_path)
             if model is not None:
                 self._auto_model = model
-                self._lbl_model_info.setText(f"🧠 {model_label}  (자동 준비됨)")
+                self._lbl_model_info.setText(f"{model_label}  (자동 준비됨)")
                 self._lbl_model_info.setStyleSheet(
                     "color:#34d399; font-size:11px; padding:2px 4px;"
                 )
                 log.info(f"추론 모델 자동 설정: {model_label}  ({ckpt_path.name})")
             else:
-                self._lbl_model_info.setText(f"⚠️ {model_label} 프리셋 로드 실패")
+                self._lbl_model_info.setText(f"{model_label} 프리셋 로드 실패")
                 self._lbl_model_info.setStyleSheet(
                     "color:#f87171; font-size:11px; padding:2px 4px;"
                 )
         elif source == "loaded":
             # 사용자가 Model 탭에서 직접 로드한 모델 → Model 탭 필요
             self._lbl_model_info.setText(
-                f"🧠 {model_label}  —  Model 탭에 같은 모델이 로드되어 있어야 합니다"
+                f"{model_label}  —  Model 탭에 같은 모델이 로드되어 있어야 합니다"
             )
             self._lbl_model_info.setStyleSheet(
                 "color:#fbbf24; font-size:11px; padding:2px 4px;"
@@ -304,7 +304,7 @@ class InferenceTab(QWidget):
         else:
             # 구형 체크포인트 (model_source 정보 없음)
             self._lbl_model_info.setText(
-                "⚠️ 모델 정보 없는 체크포인트 — Model 탭에서 모델을 로드해 주세요"
+                "모델 정보 없는 체크포인트 — Model 탭에서 모델을 로드해 주세요"
             )
             self._lbl_model_info.setStyleSheet(
                 "color:#fbbf24; font-size:11px; padding:2px 4px;"

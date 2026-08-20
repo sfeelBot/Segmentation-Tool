@@ -47,7 +47,7 @@ class LogPanel(QWidget):
 
         header = QHBoxLayout()
         header.setContentsMargins(2, 0, 2, 0)
-        title = QLabel("📝  로그")
+        title = QLabel("로그")
         title.setStyleSheet("font-weight:bold; color:#60a5fa;")
         header.addWidget(title)
         header.addStretch()

@@ -64,13 +64,13 @@ class ModelTab(QWidget):
         top = QHBoxLayout()
         top.addWidget(QLabel("PyTorch nn.Module 아키텍처 코드:"))
         top.addStretch()
-        self._btn_preset = QPushButton("📚  AI 모델 프리셋…")
+        self._btn_preset = QPushButton("AI 모델 프리셋…")
         self._btn_preset.setToolTip("프리셋 라이브러리를 열어 산업용 대표 모델을 에디터에 불러옵니다")
         self._btn_preset.setStyleSheet("background:#1e3a5f; font-weight:bold; padding:4px 12px;")
         self._btn_preset.clicked.connect(self._on_open_preset_dialog)
         top.addWidget(self._btn_preset)
 
-        self._btn_open = QPushButton("📂  파일 열기 (.py)")
+        self._btn_open = QPushButton("파일 열기 (.py)")
         top.addWidget(self._btn_open)
         root.addLayout(top)
 
@@ -110,8 +110,8 @@ class ModelTab(QWidget):
 
         # ── 검증 / 로드 버튼 ──────────────────────────────────────────────────
         btn_row = QHBoxLayout()
-        self._btn_validate = QPushButton("🔎  검증 (Validate)")
-        self._btn_load = QPushButton("✅  로드 (Load Model)")
+        self._btn_validate = QPushButton("검증 (Validate)")
+        self._btn_load = QPushButton("로드 (Load Model)")
         self._btn_load.setEnabled(False)
         self._btn_load.setStyleSheet("background:#065f46; font-weight:bold;")
         self._lbl_status = QLabel("")

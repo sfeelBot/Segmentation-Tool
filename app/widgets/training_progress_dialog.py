@@ -42,7 +42,7 @@ class TrainingProgressDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("🎯 학습 진행 상황")
+        self.setWindowTitle("학습 진행 상황")
         self.setModal(False)
         self.setMinimumWidth(420)
         self.setMinimumHeight(440)
@@ -87,7 +87,7 @@ class TrainingProgressDialog(QDialog):
         root.addWidget(cur_box)
 
         # ── ETA 정보 ─────────────────────────────────────────────────────────
-        eta_box = QGroupBox("⏱️  예상 소요 시간")
+        eta_box = QGroupBox("예상 소요 시간")
         eta_layout = QVBoxLayout(eta_box)
 
         self._lbl_eta_job   = QLabel("이 작업: —")
@@ -99,7 +99,7 @@ class TrainingProgressDialog(QDialog):
         root.addWidget(eta_box)
 
         # ── 큐 상태 ──────────────────────────────────────────────────────────
-        q_box = QGroupBox("📋  학습 큐")
+        q_box = QGroupBox("학습 큐")
         q_layout = QVBoxLayout(q_box)
         self._queue_list = QListWidget()
         self._queue_list.setAlternatingRowColors(True)
@@ -124,7 +124,7 @@ class TrainingProgressDialog(QDialog):
     # ── 공개 API ──────────────────────────────────────────────────────────────
 
     def set_current_job(self, job_name: str, total_epochs: int) -> None:
-        self._lbl_job.setText(f"🎯 {job_name}")
+        self._lbl_job.setText(job_name)
         self._progress.setMaximum(total_epochs)
         self._progress.setValue(0)
         self._lbl_epoch.setText(f"Epoch 0 / {total_epochs}")
@@ -157,7 +157,7 @@ class TrainingProgressDialog(QDialog):
             self._queue_list.addItem(item)
 
     def set_done(self) -> None:
-        self._lbl_job.setText("✅ 모든 학습 완료")
+        self._lbl_job.setText("모든 학습 완료")
         self._btn_stop_current.setEnabled(False)
         self._btn_stop_all.setEnabled(False)
 

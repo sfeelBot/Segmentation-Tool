@@ -274,11 +274,7 @@ def model_source_label(source: str) -> str:
             from app.model_presets import preset_by_key
             info = preset_by_key(key)
             if info:
-                # 이모지 제거 + 모델명만
-                title = info.title
-                for emoji in ("🧩", "⚡", "🚀", "🪶", "🎚"):
-                    title = title.replace(emoji, "").strip()
-                return title.split("(")[0].strip()
+                return info.title.split("(")[0].strip()
         except Exception:
             pass
         return key

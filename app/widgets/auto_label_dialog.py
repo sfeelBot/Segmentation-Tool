@@ -43,7 +43,7 @@ class AutoLabelDialog(QDialog):
         self._ckpt_metas: list[CheckpointMeta] = []
         # 종료 중인 워커 Python 참조 보관 — GC가 실행 중 QThread를 파괴하는 크래시 방지
         self._dying_workers: list = []
-        self.setWindowTitle("✨ 오토 라벨링")
+        self.setWindowTitle("오토 라벨링")
         self.setMinimumSize(620, 500)
         self._build_ui()
         self._refresh_checkpoints()
@@ -56,8 +56,8 @@ class AutoLabelDialog(QDialog):
         root.setSpacing(8)
 
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._build_quick_tab(),    "🚀  빠른 학습 + 자동 라벨링")
-        self._tabs.addTab(self._build_existing_tab(), "📂  기존 체크포인트 사용")
+        self._tabs.addTab(self._build_quick_tab(),    "빠른 학습 + 자동 라벨링")
+        self._tabs.addTab(self._build_existing_tab(), "기존 체크포인트 사용")
         root.addWidget(self._tabs)
 
         # ── 공용 진행 상태 ───────────────────────────────────────────────────
@@ -93,32 +93,32 @@ class AutoLabelDialog(QDialog):
         lay.setSpacing(10)
 
         info = QLabel(
-            "📝  라벨링된 이미지만으로 빠르게 학습한 뒤,\n"
-            "     아직 라벨링 안 된 이미지에 자동으로 어노테이션을 생성합니다."
+            "라벨링된 이미지만으로 빠르게 학습한 뒤,\n"
+            "아직 라벨링 안 된 이미지에 자동으로 어노테이션을 생성합니다."
         )
         info.setStyleSheet("color:#cbd5e1;")
         lay.addWidget(info)
 
-        count_box = QGroupBox("📊  현재 프로젝트 이미지 현황")
+        count_box = QGroupBox("현재 프로젝트 이미지 현황")
         cl = QVBoxLayout(count_box)
         self._lbl_counts = QLabel("— / —")
         self._lbl_counts.setStyleSheet("font-size:13px; color:#60a5fa;")
         cl.addWidget(self._lbl_counts)
         lay.addWidget(count_box)
 
-        model_box = QGroupBox("🧠  학습할 모델")
+        model_box = QGroupBox("학습할 모델")
         ml = QVBoxLayout(model_box)
         self._quick_model = QComboBox()
         for p in PRESETS:
             self._quick_model.addItem(p.title, f"preset:{p.key}")
         # 기본: 경량 모델 (U-Net)
         ml.addWidget(self._quick_model)
-        hint_m = QLabel("⚠️ 학습이 매번 새로 시작됩니다 (프리셋 = fresh weights)")
+        hint_m = QLabel("학습이 매번 새로 시작됩니다 (프리셋 = fresh weights)")
         hint_m.setStyleSheet("color:#9ca3af; font-size:11px;")
         ml.addWidget(hint_m)
         lay.addWidget(model_box)
 
-        cfg_box = QGroupBox("⚙️  고정 학습 설정")
+        cfg_box = QGroupBox("고정 학습 설정")
         cl2 = QVBoxLayout(cfg_box)
         cfg_text = QLabel(
             f"• Epochs: <b>{QUICK_EPOCHS}</b>\n"
@@ -174,7 +174,7 @@ class AutoLabelDialog(QDialog):
         labeled = [p for p in total if load_ann(p)]
         unlabeled = [p for p in total if not load_ann(p)]
         self._lbl_counts.setText(
-            f"전체 {len(total)}개  ·  🏷 라벨링됨 {len(labeled)}개  ·  ⬜ 미라벨 {len(unlabeled)}개"
+            f"전체 {len(total)}개  ·  라벨링됨 {len(labeled)}개  ·  미라벨 {len(unlabeled)}개"
         )
 
     def _refresh_checkpoints(self) -> None:
@@ -251,7 +251,7 @@ class AutoLabelDialog(QDialog):
         self._progress.setMaximum(QUICK_EPOCHS)
         self._progress.setValue(0)
         self._lbl_status.setText(
-            f"🎯 '{info.title if info else key}' 학습 중… (데이터 {len(labeled)}장, "
+            f"'{info.title if info else key}' 학습 중… (데이터 {len(labeled)}장, "
             f"{QUICK_EPOCHS} epochs)"
         )
         self._btn_start.setEnabled(False)
@@ -272,7 +272,7 @@ class AutoLabelDialog(QDialog):
         self._progress.setValue(epoch)
         iou = metrics.get("mean_iou", 0.0)
         self._lbl_status.setText(
-            f"🎯 학습 중  Epoch {epoch}/{QUICK_EPOCHS}  "
+            f"학습 중  Epoch {epoch}/{QUICK_EPOCHS}  "
             f"train={train_loss:.4f}  val={val_loss:.4f}  IoU={iou:.4f}"
         )
 
@@ -304,7 +304,7 @@ class AutoLabelDialog(QDialog):
         if not paths:
             QMessageBox.information(self, "완료",
                 "학습은 완료됐지만 라벨링할 미라벨 이미지가 없습니다.")
-            self._lbl_status.setText("✅ 학습만 완료")
+            self._lbl_status.setText("학습만 완료")
             self._btn_start.setEnabled(True)
             self._btn_cancel.setEnabled(False)
             self.accept()
@@ -312,7 +312,7 @@ class AutoLabelDialog(QDialog):
 
         self._progress.setMaximum(len(paths))
         self._progress.setValue(0)
-        self._lbl_status.setText(f"🏷 자동 라벨링 중… 0 / {len(paths)}")
+        self._lbl_status.setText(f"자동 라벨링 중… 0 / {len(paths)}")
         log.info(f"[빠른 학습] 학습 완료 → 자동 라벨링 시작 ({len(paths)}장)")
         self._worker = AutoLabelWorker(
             self._quick_trained_model, self._quick_trained_ckpt, paths,
@@ -352,7 +352,7 @@ class AutoLabelDialog(QDialog):
 
         self._progress.setMaximum(len(paths))
         self._progress.setValue(0)
-        self._lbl_status.setText(f"🏷 자동 라벨링 중… 0 / {len(paths)}")
+        self._lbl_status.setText(f"자동 라벨링 중… 0 / {len(paths)}")
         self._btn_start.setEnabled(False)
         self._btn_cancel.setEnabled(True)
 
@@ -369,18 +369,18 @@ class AutoLabelDialog(QDialog):
             self._trainer.request_stop()
         if self._worker:
             self._worker.request_stop()
-        self._lbl_status.setText("⏸ 중지 요청 중…")
+        self._lbl_status.setText("중지 요청 중…")
         self._btn_cancel.setEnabled(False)
 
     def _on_progress(self, done: int, total: int, name: str) -> None:
         self._progress.setValue(done)
-        self._lbl_status.setText(f"🏷 {done} / {total}  {name}")
+        self._lbl_status.setText(f"{done} / {total}  {name}")
 
     def _on_finished(self, count: int, results: list) -> None:
         self._retire_worker(self._worker)
         self._worker = None
         self._progress.setValue(self._progress.maximum())
-        self._lbl_status.setText(f"🔎 {count}개 생성됨 — 미리보기로 확인하세요.")
+        self._lbl_status.setText(f"{count}개 생성됨 — 미리보기로 확인하세요.")
         log.info(f"오토 라벨링 생성 완료: {count}개 (미리보기 대기)")
 
         if not results:
@@ -394,11 +394,11 @@ class AutoLabelDialog(QDialog):
         preview = AutoLabelPreviewDialog(results, parent=self)
         if preview.exec():
             saved = commit_results(results)
-            self._lbl_status.setText(f"✅ 프로젝트에 저장됨 — {saved}개 이미지")
+            self._lbl_status.setText(f"프로젝트에 저장됨 — {saved}개 이미지")
             log.info(f"오토 라벨링 적용: {saved}개 저장")
             self.accept()
         else:
-            self._lbl_status.setText("❌ 취소됨 — 저장하지 않았습니다.")
+            self._lbl_status.setText("취소됨 — 저장하지 않았습니다.")
             log.info("오토 라벨링 취소 (사용자가 합치기 거부)")
             self._btn_start.setEnabled(True)
             self._btn_cancel.setEnabled(False)

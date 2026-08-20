@@ -153,7 +153,7 @@ class ImageBrowser(QWidget):
 
         # ── 검색 바 ───────────────────────────────────────────────────────────
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("🔍 파일명 검색...")
+        self._search_edit.setPlaceholderText("파일명 검색...")
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setStyleSheet(
             "QLineEdit { background:#111418; border:1px solid #374151; "
@@ -433,7 +433,8 @@ class ImageBrowser(QWidget):
         UserRole 을 설정하지 않아 _get_item_path() 가 None 을 반환함.
         """
         item = QTreeWidgetItem()
-        item.setText(0, f"📁  {folder_name}  ({count})")
+        item.setText(0, f"  {folder_name}  ({count})")
+        item.setIcon(0, svg_icon("folder", "#60a5fa", _STATUS_ICON_SIZE))
         item.setForeground(0, QColor("#60a5fa"))
         item.setBackground(0, QColor("#1a2235"))
         item.setFont(0, _get_folder_font())
@@ -458,7 +459,7 @@ class ImageBrowser(QWidget):
         """폴더 기준 그룹화 트리 구성.
 
         images_dir 직계 파일 → 최상위 아이템 (헤더 없음).
-        하위폴더 파일          → 📁 폴더명 헤더 아래 (접기/펼치기 가능).
+        하위폴더 파일          → 폴더명 헤더 아래 (접기/펼치기 가능).
         """
         root_paths: list[Path] = []
         folder_groups: dict[str, list[Path]] = defaultdict(list)

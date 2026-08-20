@@ -34,14 +34,14 @@ class ConfigForm(QWidget):
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(8)
 
-        # ── 🔲 이미지 샘플링 (최상단 — 데이터보다 먼저) ─────────────────────────
+        # ── 이미지 샘플링 (최상단 — 데이터보다 먼저) ─────────────────────────
         patch_box = QGroupBox(t("cfg.sampling"))
         patch_form = QFormLayout(patch_box)
 
         self._sample_mode = QComboBox()
-        self._sample_mode.addItem("📦 random_crop  (패치 학습, 대형 이미지 권장)", "random_crop")
-        self._sample_mode.addItem("🔍 resize        (전체 이미지 축소)", "resize")
-        self._sample_mode.addItem("⬛ center_crop   (중앙 패치 크롭)", "center_crop")
+        self._sample_mode.addItem("random_crop  (패치 학습, 대형 이미지 권장)", "random_crop")
+        self._sample_mode.addItem("resize        (전체 이미지 축소)", "resize")
+        self._sample_mode.addItem("center_crop   (중앙 패치 크롭)", "center_crop")
         self._sample_mode.setCurrentIndex(0)
         self._sample_mode.setToolTip(
             "random_crop: 원본 해상도를 유지하며 패치 크기 단위로 잘라서 학습\n"

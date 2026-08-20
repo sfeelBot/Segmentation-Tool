@@ -24,7 +24,7 @@ class PresetInfo:
 PRESETS: list[PresetInfo] = [
     PresetInfo(
         key="simple_unet",
-        title="🧩 U-Net (2015) — 표준 베이스라인",
+        title="U-Net (2015) — 표준 베이스라인",
         tagline="가장 고전적이고 신뢰성 높은 세그멘테이션 네트워크",
         use_case="소량 데이터의 표면 결함·균열 검출, 의료영상, 산업 QC의 기본 베이스라인",
         params="≈ 2.0M",
@@ -33,7 +33,7 @@ PRESETS: list[PresetInfo] = [
     ),
     PresetInfo(
         key="unet_plusplus",
-        title="🧩 U-Net++ (2018) — 촘촘한 스킵 연결",
+        title="U-Net++ (2018) — 촘촘한 스킵 연결",
         tagline="중첩 디코더로 경계 품질과 세부 정확도 향상",
         use_case="미세 결함·작은 스크래치·PCB 인쇄 결함 등 세부 경계가 중요한 작업",
         params="≈ 9.0M",
@@ -42,7 +42,7 @@ PRESETS: list[PresetInfo] = [
     ),
     PresetInfo(
         key="attention_unet",
-        title="🧩 Attention U-Net (2018) — 관심영역 집중",
+        title="Attention U-Net (2018) — 관심영역 집중",
         tagline="스킵 연결에 Attention Gate 를 추가해 잡음에 강함",
         use_case="배경이 복잡한 현장(금속 표면, 직물, 용접부) 결함 탐지",
         params="≈ 3.0M",
@@ -51,7 +51,7 @@ PRESETS: list[PresetInfo] = [
     ),
     PresetInfo(
         key="deeplab_mobilenet",
-        title="⚡ DeepLabV3 + MobileNetV3 — 경량 다중스케일",
+        title="DeepLabV3 + MobileNetV3 — 경량 다중스케일",
         tagline="torchvision의 경량 DeepLab — 다양한 크기의 결함에 강함",
         use_case="엣지·임베디드 배포, 양·저품질 혼재 라인 검사, 실시간 요구",
         params="≈ 11M",
@@ -60,7 +60,7 @@ PRESETS: list[PresetInfo] = [
     ),
     PresetInfo(
         key="deeplab_resnet",
-        title="🚀 DeepLabV3 + ResNet50 — 고정확도",
+        title="DeepLabV3 + ResNet50 — 고정확도",
         tagline="산업 표준급 정확도, 넓은 수용영역",
         use_case="고정 설비의 고정확 검사(반도체, 디스플레이, 자동차 외판)",
         params="≈ 40M",
@@ -69,7 +69,7 @@ PRESETS: list[PresetInfo] = [
     ),
     PresetInfo(
         key="lraspp_mobilenet",
-        title="🪶 LR-ASPP + MobileNetV3 — 초경량 실시간",
+        title="LR-ASPP + MobileNetV3 — 초경량 실시간",
         tagline="추론 속도가 최우선인 생산 라인용",
         use_case="컨베이어·고속 카메라·드론 탑재 검사(실시간 FPS 중요)",
         params="≈ 3.2M",
@@ -78,7 +78,7 @@ PRESETS: list[PresetInfo] = [
     ),
     PresetInfo(
         key="fpn_segnet",
-        title="🎚 FPN-SegNet — 다중스케일 피라미드",
+        title="FPN-SegNet — 다중스케일 피라미드",
         tagline="서로 다른 크기의 결함을 동시에 잘 잡는 FPN 구조",
         use_case="결함 크기 편차가 큰 현장(작은 핀홀부터 큰 변형까지)",
         params="≈ 7M",
