@@ -71,8 +71,19 @@
 > 내보내기·단일파일 통합 — 신규 기능, `export_dialog.py`는 라벨데이터 export만 지원해서
 > 겹치지 않음). `QA.md` VOC 테이블에 4건 전부 기록. CUDA 설치 가이드는 리더가 직접 수정
 (README.md/requirements.txt/USER_MANUAL.md) 완료·커밋. 라운드2(라벨링탭) 독립 검증도
-통과(4연속 전체화면 토글 안정, 클래스 10개 스크롤 없이 표시). **기획 에이전트에게 GitHub
-#2(프로젝트 자동열기 재확인 + 전체 내보내기/가져오기 신규 기능) 스코프 산정 위임 중.**
+통과(4연속 전체화면 토글 안정, 클래스 10개 스크롤 없이 표시).
+>
+> **GitHub #2 기획 완료** — `docs/specs/voc-github-issues-2026-08-20.md`. 요청1(자동열기)은
+> 이미 더블클릭으로 지원되고 다른 번거로운 흐름도 없음을 코드로 확인 — 싱글클릭을 원하는
+> 명시적 요구인지 단순 미인지인지 이슈 원문만으론 판별 불가라 결정 대기 등록. 요청2(내보내기)는
+> 라운드 A(export, zip 패키징)+라운드 B(import, 더 리스크 큼 — A 완료 후 착수) 2라운드로
+> 스코프 산정. `decisions-needed.md`에 3건(싱글클릭 여부/체크박스 기본값/import 착수 여부)
+> 등록됨 — 아직 사용자 확인 전.
+>
+> **신규 요청 접수 — exe 패키징 + Setup Guide** (2026-08-20, "추후" 착수): CLAUDE.md에 이미
+> "PyInstaller 등 실행파일 패키징/배포는 범위 밖(별도 논의)"로 명시돼 있어 지금 바로 착수하지
+> 않고 `docs/roadmap.md`에 배경(torch/CUDA 런타임 번들링 난제, Setup Guide는 USER_MANUAL.md와
+> 성격이 다름)과 함께 기록만 해둠. 사용자에게 착수 시점 확인 필요.
 >
 > **미해결 결정 대기 없음**(`docs/decisions-needed.md` 비어있음). 커밋은 전부 로컬에만 있고
 > `git push` 안 함(사용자가 "push는 진행하지 말고" 확인한 상태 — origin/main은 여전히
@@ -154,4 +165,5 @@
 | "진행해" | 진행중 | 위 항목 이어서 — Explore 조사 → 기획 에이전트 스펙 수립 |
 | "이미지 로드하고 그랫을때 정보량이 부족해 폴더 sort 기능, 등등등 검색기능도 포함해줘." | 완료 | 추론 탭 이미지 목록(`_img_list`)에 검색/정렬/폴더 기능이 아예 없음을 확인 → 기획 에이전트에게 재위임(SendMessage로 진행 중이던 에이전트 재개) → 스펙에 반영(전용 경량 컴포넌트, `ImageBrowser` 재사용 기각) → 4건 결정 대기 등록 → 사용자 확인(AskUserQuestion) 전부 완료 → `docs/specs/ui-redesign-plan-2026-08-19.md`/`docs/roadmap.md`/`docs/decisions-needed.md` 반영 완료. 다음: 라운드 1 구현 + 라운드 2 디자인 목업 병행 착수. |
 | (목업 확인 중 인터럽트) "진행하기 전에 push 해줘고 라벨링탭만 진행해줘" | 완료 | `origin/main`에 20개 커밋 push(`1de27e6`→`ed24a42`) → 라운드 2를 라벨링 탭으로 좁혀 구현(`f086636`) → 검증 1차 시도 세션한도 실패 → 재시도로 검증 통과. `docs/roadmap.md` 체크 완료. 학습/추론 탭은 계속 보류. |
-| "이어서 진행해줘. 추가로 github issue에 몇가지 VOC 들이 있어 해당 VOC 확인 후 업데이트에 반영해" | 진행중 | GitHub #1·#2 이슈 확인(WebFetch) → `QA.md` VOC 테이블 4건 등록 → CPU전용 torch 설치 문제는 원인 파악해 리더가 직접 문서 수정(`README.md`/`requirements.txt`/`USER_MANUAL.md`)으로 해결 → 폴더정보 표시 요청은 기존 UI재편 계획으로 커버 확인 → 프로젝트 내보내기/자동열기 2건은 기획 에이전트에게 스코프 산정 위임 중 |
+| "이어서 진행해줘. 추가로 github issue에 몇가지 VOC 들이 있어 해당 VOC 확인 후 업데이트에 반영해" | 완료 | GitHub #1·#2 이슈 확인(WebFetch) → `QA.md` VOC 테이블 4건 등록 → CPU전용 torch 설치 문제는 원인 파악해 리더가 직접 문서 수정(`README.md`/`requirements.txt`/`USER_MANUAL.md`)으로 해결 → 폴더정보 표시 요청은 기존 UI재편 계획으로 커버 확인 → 프로젝트 내보내기/자동열기 2건은 기획 완료(`docs/specs/voc-github-issues-2026-08-20.md`), 결정 대기 3건 등록. 라운드2(라벨링탭) 독립검증도 통과. |
+| "추후에는 py파일로 실행이 아닌 exe 파일로 실행하게 하고 싶어. setup guide 관련된 문서도 필요할거야. 참고해줘." | 대기 | CLAUDE.md에 이미 "PyInstaller 등 범위 밖, 별도 논의" 명시돼있어 즉시 착수 안 함 — `docs/roadmap.md`에 배경과 함께 기록만. 착수 시점 사용자 확인 필요. |

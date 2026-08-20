@@ -93,11 +93,35 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   - ② RTX 4500 Ada GPU인데 CPU 전용 torch 설치됨 — 원인 파악 및 문서 수정 완료
     (`README.md`, `requirements.txt`, `docs/USER_MANUAL.md`). 코드 변경 아님.
 - [GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) "프로젝트 내보내기 기능"
-  - ① 프로젝트 클릭 시 자동 열기 — 현재 더블클릭은 이미 지원, 정확히 뭘 원하는지 기획에서
-    재확인 필요.
-  - ② 프로젝트 전체 내보내기/단일 파일 통합 — 신규 기능, 기획 스코프 산정 예정.
-  - [ ] 기획 착수 예정 (착수 시 `docs/agents/planning-log.md`·`docs/specs/`에 반영)
+  — 기획 완료: [docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md)
+  - ① 프로젝트 클릭 시 자동 열기 — 더블클릭은 이미 지원되고 번거로운 추가 흐름도 없음(코드
+    확인 완료). 싱글클릭을 원하는 건지 단순 미인지였는지는 이슈 원문만으로 판별 불가 →
+    `docs/decisions-needed.md` 등록, 리더가 GitHub 이슈에 재확인 코멘트 남긴 뒤 답변에 따라
+    처리(별도 라운드 불필요 — 초경량 수정 또는 안내로 종료).
+  - ② 프로젝트 전체 내보내기/단일 파일 통합 — export(라운드 A)+import(라운드 B) 2라운드로
+    스코프 산정. 라운드 A: `project_export_dialog.py` 신설(zip, `images/`+`annotations/`+
+    `classes.json`+`project.json` 항상 포함, `checkpoints/`·`user_models/`는 체크박스 선택 —
+    기본값 사용자 확인 대기), `_FolderImportWorker` 패턴을 따르는 백그라운드 압축 워커.
+    라운드 B: zip → 프로젝트 복원(import), 라운드 A 완료 후 착수(의존관계) — 이름 충돌 정책
+    등 사용자 확인 대기. 결정 대기 3건 `docs/decisions-needed.md` 등록.
+  - [ ] 다음: 리더가 사용자에게 decisions-needed 3건 확인 → 요청1 처리 + 요청2 라운드 A부터
+        디자인/구현 착수.
+
+## exe 패키징 + Setup Guide (2026-08-20 요청, 추후 착수)
+
+사용자 요청: "추후에는 py파일로 실행이 아닌 exe 파일로 실행하게 하고 싶어. setup guide 관련된
+문서도 필요할거야." — 지금 당장이 아니라 **추후** 착수. CLAUDE.md에 이미 이 범위 경계가
+명시돼 있음: "배포 에이전트 범위: 버전 태깅, CHANGELOG 갱신까지만 담당. PyInstaller 등
+실행파일 패키징/배포는 범위 밖 (별도 논의)." 착수 시 다음을 검토해야 함:
+- PyInstaller(또는 유사 도구)로 `main.py` → 단일 exe/설치본 패키징. torch/torchvision/CUDA
+  런타임 DLL을 exe에 어떻게 포함시킬지가 핵심 난제(용량·GPU 빌드별 분기 — [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1)
+  의 CPU-only 설치 문제와 같은 종류의 함정이 exe 배포에서도 재현될 수 있음).
+- Setup Guide 문서 — 현재 `docs/USER_MANUAL.md`는 "pip install"이 전제인 개발자용 설치
+  안내. exe 배포판 사용자는 pip/Python 환경 자체가 없을 수 있으므로 별도 성격의 문서(또는
+  같은 문서의 새 절)가 필요.
+- [ ] 착수 대기 — 사용자가 "추후" 착수 시점을 알려주면 스파이크(PyInstaller+torch/CUDA
+      번들링 실측)부터 시작. 지금은 기록만.
 
 ## 다음 후보
-- 위 UI/UX 재편·GitHub 이슈 VOC 외 추가 신규 기능 요청 없음. 새 요청은
+- 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징 외 추가 신규 기능 요청 없음. 새 요청은
   [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에 반영된다.
