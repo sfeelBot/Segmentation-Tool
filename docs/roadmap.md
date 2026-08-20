@@ -118,11 +118,26 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 **학습/추론 탭 UI 재편(라운드 2)과는 별개 트랙** — 저건 레이아웃, 이건 아이콘/텍스트/i18n.
 파일 겹침(`project_start_dialog.py` 등) 있을 수 있어 진행 중인 GitHub #2 라운드 B(가져오기)
 완료 후 그 파일은 순서를 조정할 것.
-- [x] 1단계 — Explore로 앱 전체 이모지/아이콘 사용처 + i18n(en) 커버리지 조사 착수
-- [ ] 2단계 — 디자인 에이전트가 조사 결과 기반으로 "유지할 아이콘(미니멀 재설계) vs 텍스트
-      전환" 안 + 목업 제안 (Artifact) → 사용자 승인
-- [ ] 3단계 — 구현: 아이콘 교체/텍스트 전환 + `i18n.py` en 키 완비 (파일이 많아 여러
-      라운드로 나눌 가능성 있음, 디자인 승인 후 기획에서 순서 확정)
+- [x] 1단계 — Explore 조사 완료. 핵심 발견:
+      - i18n(`app/core/i18n.py`): ko/en 193키 1:1 완전 대응, 누락 없음. **이모지가 번역
+        값 안에 박혀있어** 교체 시 문자열 하나만 고치면 두 언어 동시 반영됨(좋은 소식).
+      - **단, 3개 파일이 i18n 체계 밖에서 한국어+이모지를 직접 하드코딩**: `image_browser.py`,
+        `training_progress_dialog.py`, `main_window.py` — 이 파일들은 en 버전 자체가 없어
+        `t()` 전환 + en 키 추가가 별도로 필요.
+      - **"꼭 필요"로 분류된 기능적 아이콘 4그룹**(미니멀 재설계 대상): 라벨링 탭 툴바 7종
+        도구(`labeling_tab.py`, 텍스트 없이 이모지 단독+16px), `image_browser.py` 상태기호
+        3종(●✓○, 색상 대비 약함), `training_progress_dialog.py` STATUS_ICON 5종,
+        `log_panel.py` 로그 레벨 아이콘 3종.
+      - 나머지(다이얼로그 제목, 그룹박스 제목, 버튼 접두 이모지, 프리셋 카드 이모지 등,
+        `project_start_dialog.py`/`auto_label_dialog.py`/`settings_dialog.py`/
+        `model_presets/__init__.py` 등 다수)는 **장식 판정 — 텍스트만 남기고 이모지 제거**.
+      - 예외: `settings_dialog.py` 언어 콤보의 국기 이모지(🇰🇷🇺🇸)는 언어 식별에 실질적
+        도움 — 유지 후보.
+      상세: [docs/agents/design-log.md](agents/design-log.md) 예정 참고(디자인 단계에서 인용).
+- [ ] 2단계 — 디자인 에이전트가 목업 제안(Artifact) → 사용자 승인 — 착수 가능
+- [ ] 3단계 — 구현: 4그룹 아이콘 재설계 + 장식 이모지 제거 + i18n 밖 3개 파일 en 전환
+      (파일이 많아 여러 라운드로 나눌 가능성 있음, 디자인 승인 후 기획에서 순서 확정.
+      `project_start_dialog.py`는 GitHub #2 라운드B와 겹치니 그쪽 완료 후 순서 조정)
 
 ## exe 패키징 + Setup Guide (2026-08-20 요청, 추후 착수)
 
