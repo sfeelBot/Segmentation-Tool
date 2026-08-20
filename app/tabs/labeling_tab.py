@@ -121,9 +121,9 @@ class LabelingTab(QWidget):
 
         self._right_splitter.addWidget(ann_box)
         self._right_splitter.addWidget(self._log_panel)
-        self._right_splitter.setSizes([200, 300])  # 기존 stretch 2:3 재현
-        self._right_splitter.setStretchFactor(0, 2)
-        self._right_splitter.setStretchFactor(1, 3)
+        self._right_splitter.setSizes([400, 120])  # 로그 패널은 작게, 어노테이션 목록 위주
+        self._right_splitter.setStretchFactor(0, 1)
+        self._right_splitter.setStretchFactor(1, 0)
 
         right_layout.addWidget(self._right_splitter)
 
