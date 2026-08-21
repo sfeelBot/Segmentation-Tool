@@ -111,7 +111,9 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self._tabs)
 
-        self._status_label = QLabel(f"프로젝트: {proj_name}  ({proj.path if proj else '—'})")
+        self._status_label = QLabel(
+            t("project.status_bar").format(name=proj_name, path=proj.path if proj else "—")
+        )
         status_bar = QStatusBar()
         status_bar.addWidget(self._status_label)
         self.setStatusBar(status_bar)

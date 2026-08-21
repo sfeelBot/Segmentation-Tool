@@ -52,6 +52,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.switch":           "프로젝트 전환…",
         "project.switch.tip":       "앱을 다시 시작 없이 다른 프로젝트로 전환합니다.",
         "project.open_folder":      "프로젝트 폴더 열기",
+        "project.status_bar":       "프로젝트: {name}  ({path})",
         "menu.project":             "프로젝트",
         "menu.project.tip":         "현재 프로젝트: {name}",
 
@@ -180,6 +181,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "train.no_model_msg":     "Model 탭에서 모델을 먼저 로드하세요.",
         "train.no_model_title":   "모델 없음",
 
+        # ── 학습 진행 다이얼로그 ──────────────────────────────────────────
+        "train_progress.title":         "학습 진행 상황",
+        "train_progress.current_job":   "▶  현재 작업",
+        "train_progress.eta_title":     "예상 소요 시간",
+        "train_progress.eta_job":       "이 작업: {time}",
+        "train_progress.eta_total":     "전체 큐: {time}",
+        "train_progress.queue_title":   "학습 큐",
+        "train_progress.stop_current":  "■ 현재 작업만 중지",
+        "train_progress.stop_all":      "■■ 전체 중지",
+        "train_progress.close":         "창 닫기",
+        "train_progress.all_done":      "모든 학습 완료",
+
         # ── 설정 폼 ───────────────────────────────────────────────────────
         "cfg.data":               "데이터",
         "cfg.img_w":              "이미지 너비 (px)",
@@ -228,6 +241,30 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.add_folder.tip":      "폴더 내 이미지 전체 추가",
         "ui.delete":              "삭제",
         "ui.delete.tip":          "선택 이미지 삭제",
+
+        # ── 이미지 브라우저 (검색/정렬/가져오기) ──────────────────────────
+        "browser.search_placeholder":   "파일명 검색...",
+        "browser.sort_label":           "정렬:",
+        "browser.sort.name_asc":        "파일명 ↑",
+        "browser.sort.name_desc":       "파일명 ↓",
+        "browser.sort.folder":          "폴더",
+        "browser.sort.status_done":     "완료↑",
+        "browser.sort.status_todo":     "미완료↑",
+        "browser.legend_labeled":       "라벨링됨",
+        "browser.legend_ok":            "OK",
+        "browser.legend_unlabeled":     "미라벨",
+        "browser.add_file_dialog_title":   "이미지 추가",
+        "browser.add_folder_dialog_title": "폴더 선택",
+        "browser.no_images_title":      "이미지 없음",
+        "browser.no_images_msg":        "선택한 폴더에 지원되는 이미지가 없습니다.",
+        "browser.copying":              "{done} / {total}  복사 중…",
+        "browser.delete_confirm_title": "삭제 확인",
+        "browser.delete_confirm_single": "'{name}' 을 삭제하시겠습니까?\n(어노테이션도 함께 삭제됩니다)",
+        "browser.delete_confirm_multi": "선택한 {n}개 이미지를 모두 삭제하시겠습니까?\n\n{preview}\n\n(각 이미지의 어노테이션도 함께 삭제됩니다)",
+        "browser.delete_more_suffix":   ", … 외 {n}개",
+        "browser.import_done_title":    "추가 완료",
+        "browser.import_done_msg":      "{n}개 추가됨",
+        "browser.import_skipped_suffix": "  ({n}개 중복 건너뜀)",
 
         # ── 라벨링 탭 ─────────────────────────────────────────────────────
         "labeling.ann_list":      "어노테이션 목록",
@@ -294,6 +331,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "project.switch":           "Switch project…",
         "project.switch.tip":       "Switch to another project without restarting the app.",
         "project.open_folder":      "Open project folder",
+        "project.status_bar":       "Project: {name}  ({path})",
         "menu.project":             "Project",
         "menu.project.tip":         "Current project: {name}",
 
@@ -420,6 +458,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "train.no_model_msg":     "Please load a model in the Model tab first.",
         "train.no_model_title":   "No Model",
 
+        # ── Training progress dialog ────────────────────────────────────
+        "train_progress.title":         "Training Progress",
+        "train_progress.current_job":   "▶  Current Job",
+        "train_progress.eta_title":     "Estimated Time",
+        "train_progress.eta_job":       "This job: {time}",
+        "train_progress.eta_total":     "Total queue: {time}",
+        "train_progress.queue_title":   "Training Queue",
+        "train_progress.stop_current":  "■ Stop Current",
+        "train_progress.stop_all":      "■■ Stop All",
+        "train_progress.close":         "Close",
+        "train_progress.all_done":      "All Training Done",
+
         # ── Config form ───────────────────────────────────────────────────
         "cfg.data":               "Data",
         "cfg.img_w":              "Image Width (px)",
@@ -468,6 +518,30 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "ui.add_folder.tip":      "Add all images in a folder",
         "ui.delete":              "Delete",
         "ui.delete.tip":          "Delete selected images",
+
+        # ── Image browser (search/sort/import) ────────────────────────────
+        "browser.search_placeholder":   "Search filename...",
+        "browser.sort_label":           "Sort:",
+        "browser.sort.name_asc":        "Name ↑",
+        "browser.sort.name_desc":       "Name ↓",
+        "browser.sort.folder":          "Folder",
+        "browser.sort.status_done":     "Done↑",
+        "browser.sort.status_todo":     "To do↑",
+        "browser.legend_labeled":       "Labeled",
+        "browser.legend_ok":            "OK",
+        "browser.legend_unlabeled":     "Unlabeled",
+        "browser.add_file_dialog_title":   "Add Images",
+        "browser.add_folder_dialog_title": "Select Folder",
+        "browser.no_images_title":      "No Images",
+        "browser.no_images_msg":        "The selected folder has no supported images.",
+        "browser.copying":              "{done} / {total}  Copying…",
+        "browser.delete_confirm_title": "Confirm Delete",
+        "browser.delete_confirm_single": "Delete '{name}'?\n(Its annotations will also be deleted)",
+        "browser.delete_confirm_multi": "Delete all {n} selected images?\n\n{preview}\n\n(Each image's annotations will also be deleted)",
+        "browser.delete_more_suffix":   ", … and {n} more",
+        "browser.import_done_title":    "Import Done",
+        "browser.import_done_msg":      "{n} added",
+        "browser.import_skipped_suffix": "  ({n} duplicates skipped)",
 
         # ── Labeling tab ──────────────────────────────────────────────────
         "labeling.ann_list":      "Annotation List",

@@ -29,14 +29,8 @@ _STATUS_STYLE = {
     "unlabeled": ("status_ring", "#4b5563"),
 }
 
-# 정렬 기준 (mode_key, 표시 레이블)
-_SORT_MODES = [
-    ("name_asc",    "파일명 ↑"),
-    ("name_desc",   "파일명 ↓"),
-    ("folder",      "폴더"),
-    ("status_done", "완료↑"),
-    ("status_todo", "미완료↑"),
-]
+# 정렬 기준 mode_key — 표시 레이블은 i18n 키 "browser.sort.{mode_key}" 로 조회
+_SORT_MODE_KEYS = ["name_asc", "name_desc", "folder", "status_done", "status_todo"]
 
 _STATUS_KEY = {"labeled": 2, "ok": 1, "unlabeled": 0}
 
@@ -153,7 +147,7 @@ class ImageBrowser(QWidget):
 
         # ── 검색 바 ───────────────────────────────────────────────────────────
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("파일명 검색...")
+        self._search_edit.setPlaceholderText(t("browser.search_placeholder"))
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setStyleSheet(
             "QLineEdit { background:#111418; border:1px solid #374151; "
@@ -164,13 +158,13 @@ class ImageBrowser(QWidget):
 
         # ── 정렬 콤보 ─────────────────────────────────────────────────────────
         sort_row = QHBoxLayout()
-        sort_lbl = QLabel("정렬:")
+        sort_lbl = QLabel(t("browser.sort_label"))
         sort_lbl.setStyleSheet("font-size:11px; color:#9ca3af;")
         sort_row.addWidget(sort_lbl)
         self._sort_combo = QComboBox()
         self._sort_combo.setStyleSheet("font-size:11px;")
-        for _, label in _SORT_MODES:
-            self._sort_combo.addItem(label)
+        for mode_key in _SORT_MODE_KEYS:
+            self._sort_combo.addItem(t(f"browser.sort.{mode_key}"))
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         sort_row.addWidget(self._sort_combo, stretch=1)
         layout.addLayout(sort_row)
@@ -191,9 +185,11 @@ class ImageBrowser(QWidget):
         # ── 범례 ──────────────────────────────────────────────────────────────
         legend = QHBoxLayout()
         legend.setSpacing(3)
-        for icon_name, color, label in [("status_dot",  "#10b981", "라벨링됨"),
-                                         ("check",       "#60a5fa", "OK"),
-                                         ("status_ring", "#4b5563", "미라벨")]:
+        for icon_name, color, label in [
+            ("status_dot",  "#10b981", t("browser.legend_labeled")),
+            ("check",       "#60a5fa", t("browser.legend_ok")),
+            ("status_ring", "#4b5563", t("browser.legend_unlabeled")),
+        ]:
             icon_lbl = QLabel()
             icon_lbl.setPixmap(svg_pixmap(icon_name, color, 12))
             legend.addWidget(icon_lbl)
@@ -211,7 +207,7 @@ class ImageBrowser(QWidget):
         layout.addWidget(self._progress)
 
         self._lbl_status = QLabel()
-        self._lbl_status.setStyleSheet("color:#888; font-size:11px;")
+        self._lbl_status.setStyleSheet("color:#9ca3af; font-size:11px;")
         self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_status.hide()
         layout.addWidget(self._lbl_status)
@@ -294,12 +290,12 @@ class ImageBrowser(QWidget):
         self._search_debounce.start()
 
     def _on_sort_changed(self, idx: int) -> None:
-        self._sort_mode = _SORT_MODES[idx][0]
+        self._sort_mode = _SORT_MODE_KEYS[idx]
         self._apply_display()
 
     def _on_add(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
-            self, "이미지 추가", "",
+            self, t("browser.add_file_dialog_title"), "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tiff *.tif)"
         )
         if not files:
@@ -313,7 +309,7 @@ class ImageBrowser(QWidget):
         self.reload()
 
     def _on_add_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
+        folder = QFileDialog.getExistingDirectory(self, t("browser.add_folder_dialog_title"))
         if not folder:
             return
         sources = sorted(
@@ -321,15 +317,15 @@ class ImageBrowser(QWidget):
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
         )
         if not sources:
-            QMessageBox.information(self, "이미지 없음",
-                "선택한 폴더에 지원되는 이미지가 없습니다.")
+            QMessageBox.information(self, t("browser.no_images_title"),
+                t("browser.no_images_msg"))
             return
 
         self._set_buttons_enabled(False)
         self._progress.setRange(0, len(sources))
         self._progress.setValue(0)
         self._progress.show()
-        self._lbl_status.setText(f"0 / {len(sources)}  복사 중…")
+        self._lbl_status.setText(t("browser.copying").format(done=0, total=len(sources)))
         self._lbl_status.show()
 
         self._import_worker = _FolderImportWorker(sources, parent=self)
@@ -349,17 +345,15 @@ class ImageBrowser(QWidget):
 
         n = len(selected_paths)
         if n == 1:
-            msg = (f"'{selected_paths[0].name}' 을 삭제하시겠습니까?\n"
-                   "(어노테이션도 함께 삭제됩니다)")
+            msg = t("browser.delete_confirm_single").format(name=selected_paths[0].name)
         else:
             preview = ", ".join(p.name for p in selected_paths[:3])
             if n > 3:
-                preview += f", … 외 {n - 3}개"
-            msg = (f"선택한 {n}개 이미지를 모두 삭제하시겠습니까?\n\n"
-                   f"{preview}\n\n(각 이미지의 어노테이션도 함께 삭제됩니다)")
+                preview += t("browser.delete_more_suffix").format(n=n - 3)
+            msg = t("browser.delete_confirm_multi").format(n=n, preview=preview)
 
         reply = QMessageBox.question(
-            self, "삭제 확인", msg,
+            self, t("browser.delete_confirm_title"), msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -388,10 +382,10 @@ class ImageBrowser(QWidget):
         self._lbl_status.hide()
         self._set_buttons_enabled(True)
         self.reload()
-        msg = f"{copied}개 추가됨"
+        msg = t("browser.import_done_msg").format(n=copied)
         if skipped:
-            msg += f"  ({skipped}개 중복 건너뜀)"
-        QMessageBox.information(self, "추가 완료", msg)
+            msg += t("browser.import_skipped_suffix").format(n=skipped)
+        QMessageBox.information(self, t("browser.import_done_title"), msg)
 
     # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
 

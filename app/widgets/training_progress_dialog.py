@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 
 from app.widgets.icons import icon as svg_icon
+from app.core.i18n import t
 
 _QUEUE_ICON_SIZE = 14
 
@@ -42,7 +43,7 @@ class TrainingProgressDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("학습 진행 상황")
+        self.setWindowTitle(t("train_progress.title"))
         self.setModal(False)
         self.setMinimumWidth(420)
         self.setMinimumHeight(440)
@@ -55,7 +56,7 @@ class TrainingProgressDialog(QDialog):
         root.setContentsMargins(14, 14, 14, 14)
 
         # ── 현재 작업 정보 ────────────────────────────────────────────────────
-        cur_box = QGroupBox("▶  현재 작업")
+        cur_box = QGroupBox(t("train_progress.current_job"))
         cur_layout = QVBoxLayout(cur_box)
         cur_layout.setSpacing(6)
 
@@ -64,7 +65,7 @@ class TrainingProgressDialog(QDialog):
         cur_layout.addWidget(self._lbl_job)
 
         self._lbl_epoch = QLabel("Epoch —")
-        self._lbl_epoch.setStyleSheet("color:#ccc;")
+        self._lbl_epoch.setStyleSheet("color:#e5e7eb;")
         cur_layout.addWidget(self._lbl_epoch)
 
         self._progress = QProgressBar()
@@ -87,11 +88,11 @@ class TrainingProgressDialog(QDialog):
         root.addWidget(cur_box)
 
         # ── ETA 정보 ─────────────────────────────────────────────────────────
-        eta_box = QGroupBox("예상 소요 시간")
+        eta_box = QGroupBox(t("train_progress.eta_title"))
         eta_layout = QVBoxLayout(eta_box)
 
-        self._lbl_eta_job   = QLabel("이 작업: —")
-        self._lbl_eta_total = QLabel("전체 큐: —")
+        self._lbl_eta_job   = QLabel(t("train_progress.eta_job").format(time="—"))
+        self._lbl_eta_total = QLabel(t("train_progress.eta_total").format(time="—"))
         self._lbl_eta_job.setStyleSheet("color:#e5e7eb;")
         self._lbl_eta_total.setStyleSheet("color:#e5e7eb;")
         eta_layout.addWidget(self._lbl_eta_job)
@@ -99,7 +100,7 @@ class TrainingProgressDialog(QDialog):
         root.addWidget(eta_box)
 
         # ── 큐 상태 ──────────────────────────────────────────────────────────
-        q_box = QGroupBox("학습 큐")
+        q_box = QGroupBox(t("train_progress.queue_title"))
         q_layout = QVBoxLayout(q_box)
         self._queue_list = QListWidget()
         self._queue_list.setAlternatingRowColors(True)
@@ -109,9 +110,9 @@ class TrainingProgressDialog(QDialog):
 
         # ── 버튼 ─────────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
-        self._btn_stop_current = QPushButton("■ 현재 작업만 중지")
-        self._btn_stop_all     = QPushButton("■■ 전체 중지")
-        self._btn_close        = QPushButton("창 닫기")
+        self._btn_stop_current = QPushButton(t("train_progress.stop_current"))
+        self._btn_stop_all     = QPushButton(t("train_progress.stop_all"))
+        self._btn_close        = QPushButton(t("train_progress.close"))
         self._btn_stop_current.clicked.connect(self.stop_current_requested.emit)
         self._btn_stop_all.clicked.connect(self.stop_all_requested.emit)
         self._btn_close.clicked.connect(self.hide)
@@ -140,8 +141,8 @@ class TrainingProgressDialog(QDialog):
         self._lbl_train_loss.setText(f"Train: {train_loss:.4f}")
         self._lbl_val_loss.setText(f"Val: {val_loss:.4f}")
         self._lbl_iou.setText(f"IoU: {iou:.4f}")
-        self._lbl_eta_job.setText(f"이 작업: {_fmt_time(eta_job_sec)}")
-        self._lbl_eta_total.setText(f"전체 큐: {_fmt_time(eta_total_sec)}")
+        self._lbl_eta_job.setText(t("train_progress.eta_job").format(time=_fmt_time(eta_job_sec)))
+        self._lbl_eta_total.setText(t("train_progress.eta_total").format(time=_fmt_time(eta_total_sec)))
 
     def update_queue(self, jobs: list) -> None:
         """jobs: TrainingJob 리스트."""
@@ -157,7 +158,7 @@ class TrainingProgressDialog(QDialog):
             self._queue_list.addItem(item)
 
     def set_done(self) -> None:
-        self._lbl_job.setText("모든 학습 완료")
+        self._lbl_job.setText(t("train_progress.all_done"))
         self._btn_stop_current.setEnabled(False)
         self._btn_stop_all.setEnabled(False)
 
