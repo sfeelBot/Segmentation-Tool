@@ -66,7 +66,7 @@ def _check_imports(tree: ast.AST, result: ValidationResult) -> None:
                         f"Line {node.lineno}: '{alias.name}' import는 허용되지 않습니다."
                     )
                 elif not _is_allowed_module(alias.name):
-                    result.warnings.append(
+                    result.errors.append(
                         f"Line {node.lineno}: '{alias.name}' — 허용 목록에 없는 모듈입니다."
                     )
 
@@ -78,7 +78,7 @@ def _check_imports(tree: ast.AST, result: ValidationResult) -> None:
                     f"Line {node.lineno}: 'from {module} import ...' 는 허용되지 않습니다."
                 )
             elif not _is_allowed_module(module):
-                result.warnings.append(
+                result.errors.append(
                     f"Line {node.lineno}: '{module}' — 허용 목록에 없는 모듈입니다."
                 )
 
