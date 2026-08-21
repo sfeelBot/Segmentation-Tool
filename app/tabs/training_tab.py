@@ -148,11 +148,15 @@ class TrainingTab(QWidget):
             ) or "GPU"
             self._cuda_lbl.setText(f"CUDA  {gpu_str}")
             self._cuda_lbl.setStyleSheet("color:#6ddf6d; font-size:11px; font-weight:bold;")
-            self._cuda_banner.setStyleSheet("background:#0d1f0d; border-radius:4px;")
+            self._cuda_banner.setStyleSheet(
+                "background:#1f2329; border-radius:4px; border-left:3px solid #10b981;"
+            )
         else:
             self._cuda_lbl.setText(f"CUDA 사용 불가  |  {result.root_cause}")
             self._cuda_lbl.setStyleSheet("color:#f87171; font-size:11px; font-weight:bold;")
-            self._cuda_banner.setStyleSheet("background:#1f0d0d; border-radius:4px;")
+            self._cuda_banner.setStyleSheet(
+                "background:#1f2329; border-radius:4px; border-left:3px solid #f87171;"
+            )
 
         self._btn_diag.setEnabled(True)
 

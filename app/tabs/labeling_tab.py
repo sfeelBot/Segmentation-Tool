@@ -112,7 +112,7 @@ class LabelingTab(QWidget):
         ann_box_layout.addWidget(self._ann_list)
 
         self._lbl_sel_hint = QLabel(t("labeling.sel_hint"))
-        self._lbl_sel_hint.setStyleSheet("color:#888; font-size:10px;")
+        self._lbl_sel_hint.setStyleSheet("color:#9ca3af; font-size:10px;")
         self._lbl_sel_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_sel_hint.hide()
         ann_box_layout.addWidget(self._lbl_sel_hint)
