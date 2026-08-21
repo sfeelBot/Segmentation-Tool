@@ -325,20 +325,22 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         필터 해제 시 이전/다음 카운터가 갱신 안 되는 표시 버그(데이터 손상 없음) — Open,
         후속 라운드. **BUG-010(P3)** 폴더 트리 펼침 화살표 인디케이터 미표시(더블클릭은
         정상 동작, `image_browser.py` 기존 스타일 상속분) — Open, 저우선.
-  6. [ ] i18n 밖 3파일(`image_browser.py`/`training_progress_dialog.py`/`main_window.py`)
-        en 전환 — **구현 완료**, 커밋 `96b829c`(feat). `i18n.py`에 27개 신규 ko/en
-        키쌍(`project.status_bar` + `browser.*` 22개 + `train_progress.*` 10개) 추가,
-        3파일 전부 `t()` 호출로 이관. 로그/주석은 범위 밖으로 확인 후 제외.
-  7. [ ] 팔레트 토큰 정규화(발견 7·8, 저우선) — **구현 완료**, 커밋 `8f78f8a`(refactor).
-        발견 6(image_browser 상태기호 색상)은 라운드1에서 이미 해결 확인(재작업 불필요).
-        발견 7: `#888`→`#9ca3af`(`image_browser.py`/`labeling_tab.py`), `#ccc`→
-        `#e5e7eb`(`training_progress_dialog.py`), `inference_tab.py`는 이미 준수 확인.
-        `STATUS_COLOR` 딕셔너리의 회색들은 라운드1에서 확정된 상태범례 색상이라 의도적
-        보존. 발견 8: `training_tab.py` CUDA 배너 배경(`#0d1f0d`/`#1f0d0d`)→표준
-        `#1f2329` + 좌측 색상보더(`#10b981`/`#f87171`)로 교체, 신규 색상 미도입.
-        구현 로그 커밋 `001e7cf`(docs). **검증 대기** — ast.parse+headless 스모크만
-        수행, en 설정 시 3파일 실제 영문 렌더링·CUDA 배너 두 상태 시각 확인 필요.
+  6. [x] i18n 밖 3파일(`image_browser.py`/`training_progress_dialog.py`/`main_window.py`)
+        en 전환 — **구현+독립검증 통과**, 커밋 `96b829c`(feat). `i18n.py`에 27개 신규
+        ko/en 키쌍(`project.status_bar` + `browser.*` 22개 + `train_progress.*` 10개)
+        추가, 3파일 전부 `t()` 호출로 이관. 검증 에이전트가 실제 `python main.py`로
+        en/ko 양쪽 전환해 검색창·정렬콤보·범례·파일추가다이얼로그·삭제확인·상태바·학습
+        진행다이얼로그 전부 정상 렌더링(KeyError·잔존 한국어 없음) 확인.
+  7. [x] 팔레트 토큰 정규화(발견 7·8, 저우선) — **구현+독립검증 통과**, 커밋 `8f78f8a`
+        (refactor). 발견 6(image_browser 상태기호 색상)은 라운드1에서 이미 해결 확인.
+        발견 7: `#888`→`#9ca3af`, `#ccc`→`#e5e7eb` 정상 확인.
+        **부수 발견 BUG-015(P2, 검증 중 발견)**: 발견 8(CUDA 배너 좌측 색상보더)이
+        선택자 없는 스타일시트가 자식 QLabel까지 전파돼 보더가 두 개 막대로 이중
+        렌더링되는 문제 — 리더가 `banner.setObjectName("cudaBanner")`+ID선택자로
+        범위를 좁혀 즉시 수정, `py_compile` 확인 완료. **재검증 필요**(단일 보더 렌더링
+        픽셀 확인).
 - 각 라운드는 이전 성능개선 R1~R6과 동일하게 구현→독립검증 통과 후 다음 라운드로 진행.
+  **7단계 실행안 ①~⑦ 전체 구현+독립검증 통과** (BUG-015 재검증만 남음).
 
 ## exe 패키징 + Setup Guide (2026-08-20 요청, 추후 착수)
 

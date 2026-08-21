@@ -114,7 +114,8 @@ class TrainingTab(QWidget):
 
         self._cuda_lbl = QLabel("CUDA 환경 확인 중...")
         self._cuda_lbl.setStyleSheet("color:#9ca3af; font-size:11px; font-weight:bold;")
-        banner.setStyleSheet("background:#1f2329; border-radius:4px;")
+        banner.setObjectName("cudaBanner")
+        banner.setStyleSheet("QWidget#cudaBanner { background:#1f2329; border-radius:4px; }")
         row.addWidget(self._cuda_lbl, stretch=1)
 
         self._btn_diag = QPushButton("진단 보기")
@@ -149,13 +150,15 @@ class TrainingTab(QWidget):
             self._cuda_lbl.setText(f"CUDA  {gpu_str}")
             self._cuda_lbl.setStyleSheet("color:#6ddf6d; font-size:11px; font-weight:bold;")
             self._cuda_banner.setStyleSheet(
-                "background:#1f2329; border-radius:4px; border-left:3px solid #10b981;"
+                "QWidget#cudaBanner { background:#1f2329; border-radius:4px; "
+                "border-left:3px solid #10b981; }"
             )
         else:
             self._cuda_lbl.setText(f"CUDA 사용 불가  |  {result.root_cause}")
             self._cuda_lbl.setStyleSheet("color:#f87171; font-size:11px; font-weight:bold;")
             self._cuda_banner.setStyleSheet(
-                "background:#1f2329; border-radius:4px; border-left:3px solid #f87171;"
+                "QWidget#cudaBanner { background:#1f2329; border-radius:4px; "
+                "border-left:3px solid #f87171; }"
             )
 
         self._btn_diag.setEnabled(True)
