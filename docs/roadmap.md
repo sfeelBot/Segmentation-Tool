@@ -17,7 +17,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - [x] RGB 채널 분리 뷰어 + 픽셀 값 표시 (v1.6.0)
 - [x] 자동 라벨링 (`auto_labeler.py`, `auto_label_dialog.py`, `auto_label_preview_dialog.py`)
 - [x] 이미지 브라우저 검색/정렬 + 리사이즈 가능 패널(QSplitter)
-- [x] 폴더 접기/펼치기 그룹 헤더 (QTreeWidget 마이그레이션)
+- [ ] 폴더 그룹핑 — 미지원(단일 평탄 목록). 과거 `[x]` 표시는 오기였음: `_build_folder_tree`
+      코드는 있었지만 `reload()`가 비재귀 스캔만 하고 이미지 추가 경로도 전부 평탄 복사라
+      실제로는 어떤 사용자 동작으로도 도달 불가능했음(BUG-005, `QA.md` Closed). 2026-08-21
+      죽은 코드 제거 완료 — 필요 시 별도 기능 요청으로 재논의
 - [x] 다국어(i18n) 지원 (`app/core/i18n.py`)
 
 ## 학습 탭 (`app/tabs/training_tab.py`)
@@ -76,7 +79,8 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       추론 탭은 보류.
 - [x] 라운드 2 — 라벨링 탭: 좌/우 서브스플리터 전환 + `ClassPanel` 200px 상한 제거 — 구현+
       독립검증 통과, 커밋 `f086636`(feat)+`9901681`(docs). [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1)
-      폴더 정보 표시 요청 중 라벨링 탭 쪽은 기존부터 지원(이번 변경과 무관하게 이미 충족).
+      폴더 정보 표시 요청 중 라벨링 탭 쪽은 **정정(2026-08-21)**: "기존부터 지원"은 오답
+      이었음 — 라벨링 탭은 폴더 그룹핑 미지원(단일 평탄 목록), BUG-005 참고.
 - [x] 2026-08-20 사용자 재확인 — 학습/추론 탭 라운드 2 재개 확정. 단, 아래 "디자인 톤
       홀리스틱 재검토"를 먼저 거쳐 아이콘 목업과 함께 일관성 있게 다듬은 뒤 구현.
 - [ ] 라운드 2 — 학습 탭 큐 영역 서브스플리터 (재개 확정, 디자인 톤 재검토 반영 후 구현)
@@ -90,8 +94,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 ## GitHub 이슈 VOC (2026-08-20 접수)
 
 - [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1) "사용성 정리"
-  - ① 라벨링/추론 이미지 탭 폴더 정보 표시 — 위 "UI/UX 재편" 절에서 커버(라벨링 탭은 완료,
-    추론 탭은 라운드 2 보류분).
+  - ① 라벨링/추론 이미지 탭 폴더 정보 표시 — 위 "UI/UX 재편" 절에서 커버. **정정
+    (2026-08-21)**: 라벨링 탭은 폴더 그룹핑 미지원(단일 평탄 목록, BUG-005로 죽은 코드
+    제거 완료 — 필요 시 별도 기능 요청), 추론 탭은 라운드 2에서 실제 재귀 스캔 기반
+    트리형 폴더 그룹핑 구현 완료(`inference_image_list.py`).
   - ② RTX 4500 Ada GPU인데 CPU 전용 torch 설치됨 — 원인 파악 및 문서 수정 완료
     (`README.md`, `requirements.txt`, `docs/USER_MANUAL.md`). 코드 변경 아님.
 - [GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) "프로젝트 내보내기 기능"
