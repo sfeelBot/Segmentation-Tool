@@ -120,12 +120,14 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 
 기획 완료: [docs/specs/voc-github-issues-round2-2026-08-20.md](specs/voc-github-issues-round2-2026-08-20.md).
 [GitHub #3](https://github.com/sfeelBot/Segmentation-Tool/issues/3)(브러시 크기 조절 UX +
-입력창 잘림), [#4](https://github.com/sfeelBot/Segmentation-Tool/issues/4)(이미지명 복사 +
-오토라벨 patch training 확인), [#5](https://github.com/sfeelBot/Segmentation-Tool/issues/5)
-(모델 탭→학습 탭 "+" 모달 전환, 구조변경), [#6](https://github.com/sfeelBot/Segmentation-Tool/issues/6)
-(annotation 깜빡임 + 어노테이션 개수비례 로딩 지연 — 사용자가 "반드시 필요"로 추가 명시),
-[#7](https://github.com/sfeelBot/Segmentation-Tool/issues/7)(OK 처리 시 기존 라벨 삭제 확인
-팝업).
+입력창 잘림) — **완료+Closed**, [#4](https://github.com/sfeelBot/Segmentation-Tool/issues/4)
+(이미지명 복사 + 오토라벨 patch training 확인) — **완료+Closed**,
+[#5](https://github.com/sfeelBot/Segmentation-Tool/issues/5)(모델 탭→학습 탭 "+" 모달 전환,
+구조변경) — **사용자 결정으로 보류, Open 유지**(`decisions-needed.md` "보류된 항목"),
+[#6](https://github.com/sfeelBot/Segmentation-Tool/issues/6)(annotation 깜빡임 + 어노테이션
+개수비례 로딩 지연) — **완료+Closed**, [#7](https://github.com/sfeelBot/Segmentation-Tool/issues/7)
+(OK 처리 시 기존 라벨 삭제 확인 팝업) — **완료+Closed**. 2026-08-21 리더가 각 이슈에 해결
+내역 코멘트 남기고 GitHub에서 close 처리 완료(#5 제외).
 
 - [x] **#6-B 어노테이션 개수 증가 시 로딩 지연 (최우선, 사용자 명시)** — `labeling_tab.py`
       `_refresh_ann_list()`(매 편집마다 어노테이션 목록 전체 재생성) +
