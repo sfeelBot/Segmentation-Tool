@@ -2072,3 +2072,63 @@ warnings= []
    키보드 네비게이션) 회귀 없는지.
 3. 추론 탭의 폴더 트리(`InferenceImageList`, 정렬모드 "폴더")는 이번 변경과 무관하게
    그대로 정상 동작하는지(회귀 확인 차원).
+
+---
+
+## 2026-08-21 — BUG-003/BUG-014 수정 (annotation_canvas.py)
+
+### 변경
+- `app/widgets/annotation_canvas.py`
+
+**BUG-003 — Select 도구 드래그 후 유령 어노테이션**
+- `_translate_selected(dx, dy)`: `warpAffine`로 이동을 적용한 직후, `brush_mask`
+  타입 어노테이션 중 마스크가 전량 0이 된 것들의 `annotation_id`를 모아
+  `self._annotations`에서 제거하고 `self._selected_ids`에서도 함께 제거.
+  폴리곤 타입은 마스크가 없어 대상에서 제외(요구사항대로 무관).
+
+**BUG-014 — 브러시 undo 스택 deepcopy OOM 크래시**
+- `_push_undo()`의 `copy.deepcopy(self._annotations)` 호출을
+  `try/except MemoryError`로 감쌈. 실패 시 `app.core.logger.get_logger(__name__)`로
+  경고 로그를 남기고 `return` — 해당 undo 스텝은 스택에 추가하지 않고 건너뛰되,
+  호출부(브러시/지우개 페인트 시작 로직)는 그대로 진행되어 사용자의 편집 자체는
+  손실 없이 계속됨.
+- numpy `_ArrayMemoryError`는 `MemoryError`의 서브클래스임을 실제 설치된 numpy
+  2.4.4로 확인(`numpy._core._exceptions._ArrayMemoryError.__mro__`에 `MemoryError`
+  포함) — 버전마다 경로가 다른(`numpy.core` vs `numpy._core`) private 모듈을
+  별도 import할 필요 없이 표준 `MemoryError` 하나로 두 버전 모두 커버.
+
+### 검증 (스크립트, `python main.py` 미실행 — 순수 로직 단위 검증)
+- `_push_undo` 로직을 동일하게 재현해 `copy.deepcopy`를 `MemoryError`로 mock →
+  예외가 앱을 죽이지 않고 `return`으로 빠져나가며 undo 스택이 비어있는 그대로
+  유지됨을 확인.
+- `_translate_selected` 로직을 재현해 마스크가 전량 0이 되도록 큰 폭(-10,-10)
+  으로 이동 → 빈 마스크 어노테이션이 리스트와 선택 집합에서 모두 제거됨을 확인.
+- `python -m py_compile app/widgets/annotation_canvas.py` 통과.
+
+### 커밋
+- `251608e` — `fix: BUG-003/BUG-014 캔버스 유령 어노테이션·undo OOM 크래시 수정`
+  (`app/widgets/annotation_canvas.py`)
+- **git race 발생·해결 기록**: `git add app/widgets/annotation_canvas.py`로 내 파일만
+  스테이징했음에도, `git commit` 실행 시점에 동시 작업 중이던 다른 에이전트가
+  거의 같은 순간 `app/tabs/inference_tab.py`/`app/widgets/inference_image_list.py`를
+  스테이징해 인덱스에 함께 들어가 있었고, 이 두 파일이 내 커밋(`251608e`)에 의도치
+  않게 함께 반영됨. 이후 `git reset --soft`로 되돌리려다 그 사이 또 다른 에이전트가
+  `251608e` 위에 쌓은 커밋(`66efeaf`)까지 같이 떨어져 나갈 뻔한 상황을 reflog로
+  즉시 발견해 `git reset --soft 66efeaf`로 원상 복구. 이후 해당 두 파일은 git
+  히스토리를 재작성(rebase 등)하는 대신 — 지시받은 대로 그 파일들을 직접 건드리지
+  않는 범위 내에서 — Edit 도구로 스크래치패드에 백업해둔 원래 WIP 내용과 diff가
+  0임을 확인해 아무 손실 없이 원상태로 남겼음을 검증. 그 사이 BUG-009/BUG-010
+  구현 에이전트도 같은 race를 독립적으로 발견해 `ba0d487` 커밋으로 "코드는 251608e에
+  병합됨"을 기록함 — 두 기록이 서로 일치. 최종적으로 `git status`는 clean이며
+  파일 유실 없음.
+
+### 다음 단계 — 완료 보고 아님
+검증 에이전트가 다음을 확인해야 완료로 간주할 수 있다:
+1. `python main.py` 실행 → 라벨링 탭에서 Select 도구로 brush_mask 어노테이션을
+   캔버스 밖까지 완전히 드래그한 뒤, 어노테이션 목록에 렌더링되지 않는 항목이
+   남지 않는지(BUG-003 재현 시나리오).
+2. (재현이 번거로우면 스킵 가능) 대형 이미지에 brush_mask 어노테이션을 대량으로
+   쌓은 뒤 새 브러시 스트로크 시작 시 `MemoryError`가 실제로 발생하는 극단 상황을
+   인위적으로 만들기 어려우므로, 코드 리뷰로 `try/except` 범위와 로그 메시지가
+   요구사항과 일치하는지 확인.
+3. 기존 Select/브러시/지우개/undo 정상 동작(회귀) 확인.
