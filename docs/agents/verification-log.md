@@ -1750,3 +1750,93 @@ PIL.Image/torch/matplotlib를 PyQt6보다 먼저 로드하는 방어 로직을 �
 **통과(Pass)** — BUG-015가 의도한 대로 수정됨. 좌측 보더가 이제 성공/실패 두 상태 모두
 단일 3px 선으로만 렌더링되고, 배경·모서리·라벨·버튼 등 다른 요소는 회귀 없음. QA.md
 BUG-015 항목에 재검증 완료 반영.
+
+---
+
+## 2026-08-21 — 버그 일괄정리 6건 재검증 (BUG-003/BUG-005/BUG-006/BUG-009/BUG-010/BUG-014)
+
+커밋 `251608e`(BUG-003/BUG-014, BUG-009/BUG-010 코드 병합됨 — git race), `5af01ed`+`e8f1d7c`
+(BUG-005), `7e95ee0`(BUG-006). 구현 에이전트들이 대부분 정적 검토(`py_compile`, 단위 스크립트)만
+했던 6건을 대상으로, `QT_QPA_PLATFORM=offscreen` + `QTest`로 실제 프로덕션 위젯에 마우스/키보드
+이벤트를 주입해 검증(로직 재구현이 아니라 실제 이벤트 핸들러 경유 확인). 스크립트는 전부
+스크래치 디렉토리(`.../scratchpad/verify_canvas.py`, `verify_inference.py`, `verify_browser.py`,
+`verify_model_tab.py`, `verify_boot.py`)에만 작성, 프로젝트에 추가하지 않음. 인터프리터:
+`C:\Users\Feel\anaconda3\python.exe`.
+
+### BUG-003 — Select 도구로 캔버스 밖까지 드래그 시 유령 어노테이션
+`AnnotationCanvas` 단독 인스턴스에 `projects/nok/images/10번.bmp` 로드 → `QTest.mousePress/
+mouseMove/mouseRelease`로 브러시 도구 실제 스트로크 2회(진짜 `mousePressEvent`→
+`_paint_circle`→`_finish_brush` 경유, mask pixel count=3767) → Select 도구로 전환 후 첫 스트로크를
+클릭 선택 → 같은 지점에서 press 후 위젯 경계 밖(가상 좌표 +5000,+5000)까지 실제 드래그 이벤트로
+이동 → release. 결과: `canvas._annotations`에 `mask.any()==False`인 brush_mask 없음(0건),
+`canvas._selected_ids`에서도 제거됨 확인. **통과**.
+
+### BUG-014 — undo deepcopy MemoryError 가드
+`git show 251608e -- app/widgets/annotation_canvas.py` diff 직접 검토 — `_push_undo()`의
+`copy.deepcopy(self._annotations)` 호출이 정확히 `try/except MemoryError`로 감싸져 있고, 실패 시
+`app.core.logger`로 경고 후 `return`(스택 미추가, 호출부는 계속 진행)함을 확인. 실제 OOM 재현은
+이 환경에서 시도하지 않음(과거 구현자가 실측 재현했다는 보고를 신뢰, 이번 라운드는 구조 확인 +
+회귀 확인으로 범위 한정 — 작업 지시와 일치). 회귀: 위 BUG-003 스크립트 내에서 두 번째 브러시
+스트로크 후 `canvas.undo()`(정상 범위)를 실제 호출해 어노테이션 2개→1개로 정상 복귀, undo 스택
+깊이도 정상 — **회귀 없음, 통과**.
+
+### BUG-009 — 추론 탭 검색 필터 해제 시 카운터 미갱신
+`InferenceTab()` 단독 인스턴스 + 임시 폴더(루트 이미지 1장 + 하위 폴더 2개에 각 1장, 총 3장)를
+`img_list.load_folder()`로 로드. `QTest.keyClicks(search_edit, "child_a")` 후 디바운스 타이머
+`timeout` 강제 발화(200ms 대기와 동일 결과) → 카운터 "1 / 1"로 정정 확인 → `search_edit.clear()`
+후 디바운스 재발화 → **"다음" 버튼 누르지 않고도** 카운터가 즉시 "1 / 3"으로 정정됨을 확인
+(`tab._img_list.display_changed.connect(tab._update_nav_label)` 배선이 실제로 동작). **통과**.
+
+### BUG-010 — 추론 탭 트리 펼침/접힘 화살표
+`app.widgets.inference_image_list._TREE_STYLE`에 `QTreeWidget::branch` 규칙이 더 이상 없음을
+런타임에서 직접 import해 확인(diff 리뷰와 별개로 실제 로드된 모듈 상수 재확인). 정렬을 "폴더"로
+전환해 하위 폴더가 있는 항목(`sub1`, childCount=1)이 기본 펼침 상태임을 확인 후
+`setExpanded(False)/(True)` 토글 정상 동작 확인. 추가로 트리 좌측 인디케이터 영역
+(`QTest.mouseClick(tree.viewport(), pos=(x=3, row-center-y))`)을 실제 클릭해 `isExpanded()`가
+`True→False`로 토글됨을 확인 — 클릭 상호작용 자체는 정상. **한계**: 이 offscreen 헤드리스
+환경에서는 화살표 아이콘이 실제로 "보이는지"(픽셀 렌더링)까지는 직접 육안 확인하지 못함 —
+`QTreeWidget::branch { background: ... }` 규칙이 Qt 기본 화살표 렌더링을 억제한다는 것은 Qt의
+잘 알려진 동작이고, 해당 규칙 자체가 정확히 삭제됐음을 코드/런타임 양쪽에서 확인했으므로 원인
+제거는 확실하나 픽셀 단위 시각 확인은 사용자 환경에서의 육안 재확인을 권장. **조건부 통과**
+(메커니즘 확인 완료, 최종 시각 확인은 권장 사항으로 남김).
+
+### BUG-005 — image_browser.py 폴더 그룹핑 죽은 코드 제거
+`projects/nok`을 스크래치로 복사(원본 무변경, 실행 후 `git status --short -- projects/nok` 공백
+확인)한 프로젝트를 열어 `ImageBrowser()` 실제 인스턴스화. 정렬 콤보 항목이 정확히
+`['파일명 ↑', '파일명 ↓', '완료↑', '미완료↑']` 4개뿐(폴더 옵션 없음, 의도된 변경) 확인,
+`_SORT_MODE_KEYS`에도 `"folder"` 없음 확인, `t("browser.sort.folder")` 키 삭제 확인. 회귀
+확인 — 4개 정렬 모드 전환 예외 없음, `QTest.keyClicks`로 검색 "10" 입력(디바운스 발화) 시
+"10번.bmp" 1건만 필터링되고 해제 시 5장 전체 복원, 이미지 파일을 직접 복사해 넣고
+`reload()` 호출 시 브라우저에 나타남/삭제 후 사라짐 확인, `refresh_item()`이 예외 없이
+동작 확인. **통과**.
+
+### BUG-006 — 모델 검증기/로더 정책 불일치
+`ModelTab()` 실제 인스턴스화 → 에디터에 `import random` + 유효한 `nn.Module`(forward 포함)
+코드 입력 → `QTest.mouseClick(btn_validate)` 실제 클릭 → `_lbl_status.text() == "✗ 검증 실패"`,
+`_btn_load.isEnabled() == False` 확인. 회귀 — 허용 모듈만 쓰는 실제 프리셋(`simple_unet`)
+코드로 동일하게 검증 버튼 클릭 시 `"✓ SimpleUNet"` + 로드 버튼 활성화, 이어서
+`QTest.mouseClick(btn_load)`로 실제 로드까지 성공(`7,763,074 params`) 확인. `model_validator.
+validate()`의 `result.ok = len(result.errors) == 0`이 `_check_imports()` 등 전체 검사 이후에
+계산됨을 코드로 재확인해, errors로 옮긴 이번 수정이 `ok` 계산에 정상 반영됨(타이밍 버그 없음)도
+확인. **통과**.
+
+### 종합 회귀 — 전체 앱 부팅
+`QApplication` → `projects/nok` 오픈 → `MainWindow()`(라벨링/모델/학습/추론 4개 탭 전부 구성,
+이번 라운드가 건드린 `annotation_canvas.py`/`image_browser.py`/`inference_tab.py`/
+`inference_image_list.py`/`model_validator.py` 전부 로드) → `show()`까지 예외 없이 통과.
+(중간에 출력 버퍼링 문제로 `QtSvg` DLL 에러처럼 보이는 거짓 실패가 1회 있었으나, `-u`
+플래그로 stdout 버퍼링을 끄고 재실행하니 재현되지 않음 — 실제로는 파이프/tail 조합에서
+프로세스가 죽어 보인 것이지 진짜 DLL 실패가 아니었음. 앞선 BUG-015 검증 로그에 기록된
+"import 순서에 따른 QtSvg DLL 플레이키니스"와도 무관 — `main.py`와 동일하게 PyQt6 계열을
+먼저 import한 순서였음.) 프로세스 종료 코드 127은 기존 검증 로그(R1~R6, BUG-015 등)에
+반복 기록된 것과 동일한 비대화형 offscreen 환경의 알려진 노이즈로, 회귀 아님.
+
+### 판정
+6건 전부 **통과**(BUG-010만 "메커니즘 확인 완료 + 최종 시각 확인 권장"의 조건부 통과, 나머지
+5건은 완전 통과). 새로운 버그 발견 없음. `QA.md` Closed Issues 6개 항목에 "재검증 완료" 반영.
+
+### 비고
+`projects/nok/`은 읽기 전용으로만 사용(BUG-003/BUG-014 스크립트는 스크래치 프로젝트를 별도로
+쓰지 않고 `AnnotationCanvas` 단독 인스턴스라 애초에 저장 로직을 타지 않음), BUG-005/BUG-006
+스크립트는 각각 스크래치 사본 프로젝트를 사용해 원본 무변경. 세션 종료 시 `git status --short`
+로 `projects/nok` 등 실데이터 무변경 재확인.
