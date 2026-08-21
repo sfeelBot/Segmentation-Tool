@@ -1848,3 +1848,55 @@ BUG-014에 이번 라운드의 재확인 근거(deepcopy 없이도 대형 brush_
    (CUDA 미탑재 환경이면 "불가" 상태만이라도 확인).
 3. `#888`→`#9ca3af`, `#ccc`→`#e5e7eb` 교체 지점이 다른 라벨(로그 패널 등)과
    시각적으로 부드럽게 어울리는지 육안 확인.
+
+---
+
+## 2026-08-21 — BUG-006 수정: 허용목록 밖 import 검증 오탐(false pass)
+
+### 문제
+`model_validator.validate()`가 `ALLOWED_MODULES`에 없는 모듈 import를 `[WARN]`
++ `result.ok=True`로만 처리해 검증 통과(초록 상태) + 로드 버튼 활성화까지
+가지만, `model_loader.load_from_code()`의 `exec()` 샌드박스(`_make_safe_import`,
+`_ALLOWED_ROOTS`)는 허용목록 밖 모듈이면 무조건 `ImportError`를 던져 로드가
+항상 실패. 검증 결과와 로더 실제 동작이 불일치.
+
+### 수정
+- `app/core/model_validator.py` `_check_imports()` — `ast.Import`/`ast.ImportFrom`
+  두 분기에서 허용목록 밖 모듈에 대해 `result.warnings.append(...)` →
+  `result.errors.append(...)`로 변경. 메시지 문구는 그대로 유지.
+- 로더 쪽 샌드박스 제약(보안 경계)은 건드리지 않음 — 검증기만 로더 동작에
+  맞춤.
+- `app/tabs/model_tab.py`는 이미 `result.ok`로 `_btn_load.setEnabled(...)`를
+  제어하고 있어 별도 수정 불필요 — `ok=False` 전환만으로 로드 버튼이
+  자연히 비활성화됨. 확인만 하고 코드는 변경하지 않음.
+- `model_loader.py`의 `_ALLOWED_ROOTS`는 이미 `ALLOWED_MODULES`에서
+  파생(`{m.split(".")[0] for m in ALLOWED_MODULES}`)되므로 두 목록이 항상
+  동기화됨을 확인.
+
+### 검증 (직접 실행, python 3.14)
+`import random` + 유효한 `nn.Module` 서브클래스 코드로 `validate()` 호출:
+```
+ok= False
+errors= ["Line 2: 'random' — 허용 목록에 없는 모듈입니다."]
+warnings= []
+```
+`ok=False`이므로 `model_tab.py`의 `_on_validate()` else 분기(`_btn_load.setEnabled(False)`)를
+타는 것을 코드 확인함 — 실제 UI 조작(에디터에 `import random` 입력 → 검증
+버튼 클릭 → 로드 버튼 비활성화 + 빨간 "✗ 검증 실패" 라벨 확인)은 하지
+않았음.
+
+### 커밋
+- `7e95ee0` — fix: 허용목록 밖 import를 WARN이 아닌 ERROR로 처리 (BUG-006)
+
+### 다음 단계 — 완료 보고 아님
+검증(Verification) 에이전트가 다음을 확인해야 함:
+1. `python main.py` 실행 후 모델 탭에서 `import random`을 포함한 코드를
+   붙여넣고 검증 버튼 클릭 시 상태 라벨이 빨간 "✗ 검증 실패"로 뜨고
+   로드 버튼이 비활성화 상태를 유지하는지.
+2. `import numpy`, `import torch.nn as nn` 등 허용목록 안 모듈만 사용하는
+   기존 정상 코드가 여전히 통과(초록 라벨, 로드 버튼 활성화)하는지 —
+   회귀 확인.
+3. 허용목록 밖 import를 가진 코드로 실제 로드 버튼을 눌러도 이전처럼
+   `ImportError`로 실패하던 경로가, 이제는 애초에 로드 버튼이
+   비활성화되어 눌리지 않는지 (또는 강제로 활성화 우회 시도 없이 정상
+   플로우로 확인).
