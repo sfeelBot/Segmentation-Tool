@@ -1981,3 +1981,94 @@ warnings= []
    펼침/접힘 화살표 인디케이터가 보이는지, 클릭으로 펼침/접힘이 되는지
    (더블클릭 없이).
 를 실제 UI 조작으로 확인해야 완료로 간주할 수 있다.
+
+---
+
+## 2026-08-21 — BUG-005(P2) 처리: `image_browser.py` 폴더 그룹핑 죽은 코드 제거 + 문서 정정
+
+### 배경
+`docs/decisions-needed.md`에 등록돼 있던 BUG-005 처리 방향 3선택지 중, 리더가 "재귀
+폴더 스캔 기능을 실제로 만드는 대신, 도달 불가능한 죽은 코드를 제거하고 관련 문서
+주장을 정정"하는 방향으로 결정했다는 지시를 받아 진행. 근거: 진짜로 지원하려면
+`app/core/dataset.py`의 학습 스캔 로직까지 함께 바꿔야 하는데, 2026-05-27 커밋
+`00fd6779`가 `image_browser.py`를 의도적으로 비재귀로 맞춘 이유가 정확히 "학습 시
+제외되는 이미지가 브라우저엔 보이는 불일치 방지"였음 — 별도 기능 개발이라 "버그 수정"
+범위를 벗어난다고 판단.
+
+### 확인 절차
+1. `app/widgets/image_browser.py` 전체를 읽고 `_build_folder_tree`/`_make_folder_item`
+   과 정렬모드 "folder"가 정확히 어디까지 걸쳐 있는지 파악.
+2. 도달 가능한 다른 경로가 이 함수들에 의존하는지 확인 — `_apply_display()`가
+   `self._sort_mode == "folder"`일 때만 `_build_folder_tree()`를 호출하고, 이
+   sort_mode는 `_SORT_MODE_KEYS` 콤보에서만 설정 가능함을 확인. `reload()`는
+   `images_dir().glob(pat)` 비재귀 스캔만, `_on_add()`/`_on_add_folder()`도 전부
+   `images_dir()` 바로 아래로 평탄 복사만 하므로 `images_dir()` 하위에 서브폴더가
+   생성될 방법 자체가 없음(BUG-005 원 보고와 동일하게 재확인).
+3. **중요 — 별개 구현과의 혼동 방지**: `grep`으로 `_build_folder_tree`/`_make_folder_item`/
+   `_get_folder_font`를 전체 검색한 결과 `app/widgets/inference_image_list.py`에도
+   동일한 이름의 함수/전역이 존재함을 발견. 이쪽은 **별도 파일의 별도 구현**이며
+   `rglob("*")`로 실제 재귀 스캔을 수행해(로드맵 라운드2 step5 로그·BUG-010 기록 확인)
+   추론 탭에서 실사용 가능한 살아있는 기능임을 확인 — **image_browser.py 쪽만 삭제,
+   inference_image_list.py는 손대지 않음**.
+4. `browser.sort.folder` i18n 키(`app/core/i18n.py`)가 `image_browser.py`에서만
+   참조됨을 grep으로 확인 후 ko/en 양쪽 삭제.
+
+### 삭제/수정한 범위 (`app/widgets/image_browser.py`)
+- `_build_folder_tree()` 메서드 전체 삭제 — `_apply_display()`에서만 호출되던 죽은 코드
+- `_make_folder_item()` 메서드 전체 삭제 — `_build_folder_tree()`에서만 호출되던 죽은 코드
+- `_get_folder_font()` 함수 + 모듈 전역 `_folder_font` 삭제 — `_make_folder_item()`에서만 사용
+- `from collections import defaultdict` import 삭제 — `_build_folder_tree()`에서만 사용
+- `from PyQt6.QtGui import QFont` import 삭제 — `_get_folder_font()`에서만 사용
+- `_SORT_MODE_KEYS`에서 `"folder"` 제거 (콤보박스 "폴더" 옵션 자동 소멸)
+- `_apply_display()`: `elif self._sort_mode == "folder": filtered.sort(...)` 정렬 분기와
+  `if self._sort_mode == "folder": self._build_folder_tree(filtered) else: ...` 트리
+  분기 삭제, 항상 평탄 렌더링 루프만 실행하도록 단순화
+- `_select_by_index()`: `item.parent()`가 접힌 폴더면 자동 펼치던 로직 삭제(폴더 헤더
+  자식이 더 이상 생성되지 않으므로 `item.parent()`가 항상 `None`) — 도달 불가능해진
+  분기라 함께 정리, docstring도 "접힌 폴더는 자동 펼침" 문구 제거
+- `refresh_item()`: `display = path.name if item.parent() is not None else
+  self._rel_name(path)` → 항상 `self._rel_name(path)`로 단순화(같은 이유)
+- `current_path()`/`navigate()`/`_get_item_path()`/`_on_delete()` docstring·주석에서
+  "폴더 헤더" 관련 언급 제거(코드 동작은 변경 없음, 문구만 정정)
+
+### 안전성 판단
+- `_get_item_path()` 자체(None 반환 가능성 체크)는 유지 — 이 함수는 `self._tree.currentItem()`
+  이 `None`일 수 있는 일반적인 경우를 위한 방어 코드이기도 해서 폴더 헤더 전용 로직이
+  아님. 삭제하지 않음.
+- `QTreeWidget::branch { background: ... }` 스타일(`_TREE_STYLE`)은 그대로 유지 — 트리
+  위젯 자체(평탄 목록 렌더링)는 계속 쓰이므로 살아있는 코드.
+- `svg_icon("folder", ...)` 아이콘 리소스 자체(`app/resources/icons/`, `icons.py`)는
+  다른 곳(`main_window.py`, `log_panel.py`, `inference_image_list.py`)에서도 쓰이므로
+  건드리지 않음 — `image_browser.py`의 `_make_folder_item()`이 사용하던 호출부만 그
+  메서드와 함께 사라짐.
+- `python -m py_compile app/widgets/image_browser.py app/core/i18n.py` 통과 확인.
+
+### 문서 정정
+- `QA.md`: BUG-005를 Open Issues 표에서 삭제하고 Closed Issues 표로 이동(근본원인/
+  해결방법 기록), GitHub #1 VOC 응답 행을 "라벨링 탭은 폴더 그룹핑 미지원(단일 평탄
+  목록) — 필요 시 별도 기능 요청으로 재논의"로 정정
+- `docs/roadmap.md`: 라벨링 탭 "폴더 접기/펼치기 그룹 헤더" `[x]` 완료 표시를 `[ ]`
+  미지원으로 정정(오기였음을 명시), 라운드2 로그의 "라벨링 탭 기존부터 지원" 문구와
+  "GitHub 이슈 VOC" 절의 동일 문구를 함께 정정
+- `docs/decisions-needed.md`: BUG-005 처리 방향 결정 완료로 해당 항목 전체 삭제(선택지
+  1/2/3 중 사실상 "지금 별도 라운드로 고친다"의 변형 — 재귀 스캔 구현이 아니라 죽은
+  코드 제거로 리더가 판단·확정)
+
+### 커밋
+- `5af01ed` — `refactor: BUG-005 처리 — image_browser.py 폴더 그룹핑 죽은 코드 제거 + 문서 정정`
+  (`QA.md`, `app/core/i18n.py`, `app/widgets/image_browser.py`, `docs/decisions-needed.md`,
+  `docs/roadmap.md` 5개 파일). push는 하지 않음.
+- 커밋 시점에 작업 트리에 `app/tabs/inference_tab.py`/`app/widgets/inference_image_list.py`의
+  다른 에이전트발 변경사항이 unstaged로 섞여 있었음 — 내 작업과 무관한 파일이라 `git add`
+  대상에서 명시적으로 제외하고 위 5개 파일만 스테이징해 커밋. 커밋 직후 확인한 결과
+  해당 두 파일은 이미 다른 에이전트가 별도 커밋(`251608e`)으로 반영을 마친 상태였고
+  현재 작업 트리는 clean함(`git status --short` 빈 출력) — 파일 유실이나 누락 없음.
+
+### 다음 단계 — 완료 보고 아님
+검증 에이전트가 다음을 확인해야 완료로 간주할 수 있다:
+1. `python main.py` 실행 → 라벨링 탭 이미지 브라우저 정렬 콤보에 "폴더" 옵션이 더 이상
+   없는지(4개 옵션만: 파일명↑/파일명↓/완료↑/미완료↑).
+2. 기존 정상 기능(검색, 나머지 3개 정렬 모드, 이미지 추가/삭제, OK/라벨 상태 아이콘,
+   키보드 네비게이션) 회귀 없는지.
+3. 추론 탭의 폴더 트리(`InferenceImageList`, 정렬모드 "폴더")는 이번 변경과 무관하게
+   그대로 정상 동작하는지(회귀 확인 차원).
