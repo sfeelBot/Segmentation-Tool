@@ -1780,3 +1780,71 @@ BUG-014에 이번 라운드의 재확인 근거(deepcopy 없이도 대형 brush_
 2. 10,000장 프로젝트 정렬/검색 0.3~0.8초/회가 실사용에서 실제로 거슬리는 수준인지 육안
    판단(별도 개선 라운드 착수 여부는 사용자/리더 판단 필요 — 이번 라운드는 보고만 함).
 3. QA.md BUG-014 보강 내용이 기존 기록과 모순 없는지 확인.
+
+---
+
+## 2026-08-21 — 디자인 7단계 실행안 중 ⑥ i18n 밖 3파일 en 전환 + ⑦ 팔레트 토큰 정규화
+
+`docs/agents/design-log.md` "2026-08-20 — 4탭 디자인 톤 홀리스틱 재검토 완료" 항목의
+"실행 순서 제안 7단계" 중 마지막 두 단계(6·7) 구현. 라운드 1~5(아이콘 SVG화/장식 이모지
+제거/model_tab 팔레트/loss_chart 배색/학습·추론 서브스플리터)는 이미 완료+검증 완료 상태라
+재작업하지 않음.
+
+### ⑥ i18n 밖 3파일 en 전환
+`app/widgets/image_browser.py`, `app/widgets/training_progress_dialog.py`,
+`app/main_window.py` 3개 파일이 `app/core/i18n.py`의 `t()` 체계를 거치지 않고 직접
+하드코딩하던 한국어 UI 문자열(버튼/라벨/툴팁/다이얼로그 타이틀·메시지)을 전부 `t()` 호출로
+교체. `app/core/i18n.py`에 신규 키 **27개**를 ko/en 양쪽에 추가:
+- `project.status_bar` (1개) — 상태바 "프로젝트: {name} ({path})"
+- `browser.*` (22개) — 검색창 placeholder, 정렬 라벨·5개 정렬모드 라벨, 범례 3종
+  (라벨링됨/OK/미라벨), 파일·폴더 추가 다이얼로그 타이틀, "이미지 없음" 타이틀/메시지,
+  복사 중 진행 템플릿, 삭제 확인 타이틀·단일/다중 메시지·"…외 N개" 접미사, 가져오기 완료
+  타이틀·메시지·중복 건너뜀 접미사
+- `train_progress.*` (10개) — 다이얼로그 타이틀, 현재작업/ETA/큐 그룹박스 타이틀,
+  이 작업·전체 큐 ETA 템플릿, 중지(현재/전체)·닫기 버튼, "모든 학습 완료"
+
+`image_browser.py`의 `_SORT_MODES` 리스트(하드코딩 라벨 튜플)는 `_SORT_MODE_KEYS`
+문자열 리스트로 바꾸고 `t(f"browser.sort.{mode_key}")`로 런타임 조회하도록 변경 —
+`_on_sort_changed`의 인덱스 매핑도 함께 수정.
+
+로그 메시지·주석·docstring 내 한국어는 대상이 아니므로 그대로 둠(각 파일에 grep
+`[가-힣]`로 재확인, 남은 매치는 전부 주석/docstring뿐).
+
+### ⑦ 팔레트 토큰 정규화 (발견 7·8, 저우선)
+발견 6(`image_browser.py` 상태기호 색상)은 라운드 1에서 이미 `#10b981`/`#60a5fa`/
+`#4b5563`로 정규화 완료 확인 — 재작업 없음.
+- **발견 7**: `#888` → `#9ca3af` 2곳(`image_browser.py`의 `_lbl_status`,
+  `labeling_tab.py`의 `_lbl_sel_hint`), `#ccc` → `#e5e7eb` 1곳
+  (`training_progress_dialog.py`의 `_lbl_epoch`). `inference_tab.py`는 grep 결과
+  이미 `#9ca3af`만 사용 중이라 변경 없음(확인만). `STATUS_COLOR`/`STATUS_ICON_SIZE`류
+  딕셔너리에 남아있는 `#888888`/`#cccccc`(`training_progress_dialog.py`,
+  `training_tab.py`)는 라운드 1에서 확정된 상태-범례 색(waiting/fallback grey)이라
+  "이미 확정된 다른 라운드의 의도적 값"으로 판단해 건드리지 않음.
+- **발견 8**: `training_tab.py`의 CUDA 배너 성공/실패 배경 `#0d1f0d`/`#1f0d0d`(팔레트
+  밖 신규값)을 표준 그룹박스 배경 `#1f2329` + 좌측 3px 색상 보더(성공 `#10b981`, 실패
+  `#f87171`)로 교체 — 새 색상 도입 없이 최소 침습으로 동일 시각 효과 유지.
+  `cuda_diag_dialog.py`의 동일 배경값은 이번 지시 범위(training_tab.py의 CUDA
+  배너만) 밖이라 손대지 않음.
+
+### 검증
+- `ast.parse()`로 수정한 6개 파일 전부 구문 오류 없음 확인.
+- `QT_QPA_PLATFORM=offscreen` 환경에서 `app.core.i18n.t()` 포맷팅 결과(ko/en 양쪽)
+  수동 확인, `ImageBrowser`/`TrainingProgressDialog` 실제 인스턴스 생성 + 대표 메서드
+  (`set_current_job`/`update_epoch`/`set_done`) 호출까지 예외 없이 통과.
+- `MainWindow` 전체 골든 패스(en 설정 시 실제 탭 전환/각 위젯 렌더링)와 CUDA 배너
+  성공/실패 두 상태의 실제 시각 확인은 하지 않음 — 검증 에이전트 확인 필요.
+
+### 커밋
+- `96b829c` — feat: i18n 밖 3파일 en 전환 (+ image_browser.py `#888` 정규화 포함)
+- `8f78f8a` — refactor: 팔레트 토큰 정규화 - 보조텍스트 색상 + CUDA 배너 (발견 7·8)
+
+### 다음 단계 — 완료 보고 아님
+검증(Verification) 에이전트가 다음을 확인해야 함:
+1. 설정에서 언어를 en으로 바꾼 뒤 앱 재시작 시 `image_browser.py`/
+   `training_progress_dialog.py`/`main_window.py` UI 텍스트가 실제로 영문으로
+   표시되는지 (플레이스홀더, 정렬 콤보, 범례, 삭제/가져오기 다이얼로그, 학습 진행
+   팝업 전부 포함).
+2. CUDA 사용 가능/불가 두 상태에서 배너가 좌측 색상 보더로 정상 표시되는지
+   (CUDA 미탑재 환경이면 "불가" 상태만이라도 확인).
+3. `#888`→`#9ca3af`, `#ccc`→`#e5e7eb` 교체 지점이 다른 라벨(로그 패널 등)과
+   시각적으로 부드럽게 어울리는지 육안 확인.
