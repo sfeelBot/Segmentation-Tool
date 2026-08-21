@@ -1900,3 +1900,84 @@ warnings= []
    `ImportError`로 실패하던 경로가, 이제는 애초에 로드 버튼이
    비활성화되어 눌리지 않는지 (또는 강제로 활성화 우회 시도 없이 정상
    플로우로 확인).
+
+---
+
+## 2026-08-21 — BUG-009 (추론 탭 검색 필터 해제 시 카운터 미갱신) / BUG-010 (트리 펼침 화살표 미표시) 수정
+
+### 대상 파일
+- `app/tabs/inference_tab.py`
+- `app/widgets/inference_image_list.py`
+
+병렬 작업 중인 다른 구현 에이전트들이 담당한 `annotation_canvas.py` /
+`labeling_tab.py` / `image_browser.py` / `model_validator.py`는 건드리지
+않았다.
+
+### BUG-009 — 원인
+`InferenceImageList._apply_display()`는 필터/정렬이 바뀌어도 선택된
+경로(`new_path`)가 이전(`cur_path`)과 동일하면 `image_selected` 시그널을
+재발행하지 않는다. `inference_tab.py`의 `_update_nav_label()` 호출은
+`image_selected` 수신 슬롯(`_on_image_selected`)과 `_after_load()` /
+`_on_prev()` / `_on_next()`에만 연결돼 있어, "선택 이미지는 그대로인데
+전체 개수만 바뀌는" 케이스(검색어 입력 후 지우기 등)를 놓쳐 "N / M"
+표시가 갱신되지 않았다.
+
+### BUG-009 — 수정
+과설계 방지를 위해 새 getter 대신 시그널 하나만 추가:
+- `InferenceImageList`에 `display_changed = pyqtSignal()` 추가.
+- `_apply_display()` 마지막(선택 복원 후)에 선택 경로 변경 여부와 무관하게
+  항상 `display_changed.emit()` 호출 — 필터/정렬/`load_folder`/
+  `load_files`/`clear()` 등 표시 목록이 재구성되는 모든 경로를 한 곳에서
+  커버.
+- `inference_tab.py`에서 `self._img_list.display_changed.connect(self._update_nav_label)`
+  한 줄 연결.
+
+### BUG-010 — 원인
+`inference_image_list.py`의 `_TREE_STYLE`(`image_browser.py`의 기존
+스타일을 참고해 만든 사본)에 `QTreeWidget::branch { background: #111418; }`
+규칙이 있어 Qt의 OS 기본 펼침/접힘 화살표 렌더링을 억제했다. 커스텀
+화살표 이미지를 지정하지 않았기 때문에 화살표 자체가 사라진 것.
+
+### BUG-010 — 수정
+배경 지정이 다른 시각 효과와 결합돼 있지 않음을 확인 — `QTreeWidget::branch`
+규칙 자체를 삭제해 Qt 기본 화살표 렌더링이 복원되도록 함(커스텀 화살표
+아이콘 신규 제작 없음, 과설계 회피).
+
+### 검증
+- `python -c "import ast; ast.parse(...)"` 로 두 파일 구문 확인 — OK.
+- `QApplication` 컨텍스트에서 `InferenceImageList()` 인스턴스화 + `display_changed`
+  시그널 존재 확인 — OK.
+- 실제 UI 조작(검색어 입력→삭제 후 카운터 확인, 트리에서 화살표 렌더링
+  육안 확인)은 하지 않았음 — 검증 에이전트가 `python main.py`로 추론 탭에서
+  폴더 로드 → 검색창에 텍스트 입력 → 지우기 → "N / M" 라벨이 즉시
+  정정되는지, 하위 폴더가 있는 트리 항목 옆에 펼침/접힘 화살표가 보이는지
+  확인해야 함.
+
+### 커밋 — 주의 (git race)
+편집 완료 시점에 병렬로 작업 중이던 다른 구현 에이전트가 같은 작업
+디렉터리에서 `git commit`(전체 스테이징 포함 방식으로 추정)을 실행하면서,
+당시 아직 커밋하지 않고 워킹 트리에 남아 있던 이 작업의 변경분
+(`app/tabs/inference_tab.py`, `app/widgets/inference_image_list.py`)이
+그 에이전트의 커밋에 함께 쓸려 들어갔다:
+
+- 커밋 `251608e` — "fix: BUG-003/BUG-014 캔버스 유령 어노테이션·undo OOM
+  크래시 수정" (다른 에이전트 작업). `git show 251608e -- app/tabs/inference_tab.py
+  app/widgets/inference_image_list.py`로 diff를 대조해 BUG-009/BUG-010에
+  의도한 변경 내용과 정확히 일치함을 확인했다.
+
+이미 커밋된 내용을 다시 커밋할 수 없고(diff 없음), 병렬로 다른 에이전트가
+아직 작업 중인 공유 워킹 트리에서 이 커밋을 amend/rebase하는 것은 더 큰
+충돌 위험이 있어 시도하지 않았다. 코드 변경 자체는 완료·반영되어 있으며,
+커밋 메시지가 BUG-009/BUG-010을 언급하지 않는 점만 이 로그로 보완한다.
+리더는 필요 시 이 사실을 인지하고 커밋 히스토리 정리(예: 이후 별도
+`docs:` 커밋으로 참조 남기기) 여부를 판단하면 된다.
+
+### 다음 단계 — 완료 보고 아님
+검증 에이전트가 `python main.py`로 추론 탭을 열어:
+1. 폴더 로드 → 검색창에 임의 텍스트 입력(필터링 확인) → 지우기 → 하단
+   "N / M" 카운터가 "다음" 버튼을 누르지 않아도 즉시 전체 개수로
+   정정되는지.
+2. 정렬 모드를 "폴더"로 바꿔 하위 폴더가 있는 트리에서 폴더 항목 좌측에
+   펼침/접힘 화살표 인디케이터가 보이는지, 클릭으로 펼침/접힘이 되는지
+   (더블클릭 없이).
+를 실제 UI 조작으로 확인해야 완료로 간주할 수 있다.
