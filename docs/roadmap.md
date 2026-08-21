@@ -326,10 +326,18 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         후속 라운드. **BUG-010(P3)** 폴더 트리 펼침 화살표 인디케이터 미표시(더블클릭은
         정상 동작, `image_browser.py` 기존 스타일 상속분) — Open, 저우선.
   6. [ ] i18n 밖 3파일(`image_browser.py`/`training_progress_dialog.py`/`main_window.py`)
-        en 전환 — **구현 착수**(구현 에이전트에 위임, ⑦과 함께 진행 중)
-  7. [ ] 팔레트 토큰 정규화(발견 7·8, 저우선) — **구현 착수**. 발견 6(image_browser
-        상태기호 색상)은 라운드1에서 이미 해결 확인됨(재작업 불필요). 발견 7(`#888`/
-        `#ccc`→표준토큰)·발견 8(CUDA 배너 팔레트 밖 색상→표준배경+색상보더)만 처리.
+        en 전환 — **구현 완료**, 커밋 `96b829c`(feat). `i18n.py`에 27개 신규 ko/en
+        키쌍(`project.status_bar` + `browser.*` 22개 + `train_progress.*` 10개) 추가,
+        3파일 전부 `t()` 호출로 이관. 로그/주석은 범위 밖으로 확인 후 제외.
+  7. [ ] 팔레트 토큰 정규화(발견 7·8, 저우선) — **구현 완료**, 커밋 `8f78f8a`(refactor).
+        발견 6(image_browser 상태기호 색상)은 라운드1에서 이미 해결 확인(재작업 불필요).
+        발견 7: `#888`→`#9ca3af`(`image_browser.py`/`labeling_tab.py`), `#ccc`→
+        `#e5e7eb`(`training_progress_dialog.py`), `inference_tab.py`는 이미 준수 확인.
+        `STATUS_COLOR` 딕셔너리의 회색들은 라운드1에서 확정된 상태범례 색상이라 의도적
+        보존. 발견 8: `training_tab.py` CUDA 배너 배경(`#0d1f0d`/`#1f0d0d`)→표준
+        `#1f2329` + 좌측 색상보더(`#10b981`/`#f87171`)로 교체, 신규 색상 미도입.
+        구현 로그 커밋 `001e7cf`(docs). **검증 대기** — ast.parse+headless 스모크만
+        수행, en 설정 시 3파일 실제 영문 렌더링·CUDA 배너 두 상태 시각 확인 필요.
 - 각 라운드는 이전 성능개선 R1~R6과 동일하게 구현→독립검증 통과 후 다음 라운드로 진행.
 
 ## exe 패키징 + Setup Guide (2026-08-20 요청, 추후 착수)
