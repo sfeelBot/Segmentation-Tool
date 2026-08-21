@@ -220,6 +220,7 @@ class InferenceTab(QWidget):
         self._btn_prev.clicked.connect(self._on_prev)
         self._btn_next.clicked.connect(self._on_next)
         self._img_list.image_selected.connect(self._on_image_selected)
+        self._img_list.display_changed.connect(self._update_nav_label)
         self._viewer_panel.opacity_changed.connect(self._on_opacity_changed)
         self._ckpt_table.doubleClicked.connect(lambda: self._on_run())
         # 체크포인트 선택 → 즉시 모델 결정

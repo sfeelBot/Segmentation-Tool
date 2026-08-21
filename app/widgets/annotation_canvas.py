@@ -1319,6 +1319,16 @@ class AnnotationCanvas(QWidget):
                     ann.mask, M, (self._img_w, self._img_h),
                     flags=cv2.INTER_NEAREST, borderValue=0,
                 )
+        # 캔버스 밖까지 밀려나 마스크가 전량 0이 된 brush_mask는 제거한다 (BUG-003).
+        # 남겨두면 렌더링되지 않는 빈 어노테이션이 다음 이미지 전환 전까지 목록에
+        # 유령 항목으로 남는다.
+        empty_ids = {
+            a.annotation_id for a in self._annotations
+            if a.type == "brush_mask" and a.mask is not None and not a.mask.any()
+        }
+        if empty_ids:
+            self._annotations = [a for a in self._annotations if a.annotation_id not in empty_ids]
+            self._selected_ids -= empty_ids
         self._invalidate_overlay()
 
     # ── 내부 — 기타 ──────────────────────────────────────────────────────────
@@ -1342,7 +1352,19 @@ class AnnotationCanvas(QWidget):
         self.update()
 
     def _push_undo(self) -> None:
-        snap = copy.deepcopy(self._annotations)
+        # deepcopy(전체 dense 마스크 배열 포함)가 대형 이미지 + brush_mask 수백 개
+        # 상태에서 메모리 부족으로 실패할 수 있다(BUG-014, 실측 재현됨). 근본 원인은
+        # 어노테이션별 전체 해상도 마스크 저장 구조라 이번엔 재설계하지 않는다 —
+        # 대신 실패 시 앱이 죽는 대신 이번 undo 스텝만 건너뛰고 편집은 계속되게 한다.
+        # numpy의 _ArrayMemoryError는 MemoryError의 서브클래스라 별도 import 없이 잡힌다.
+        try:
+            snap = copy.deepcopy(self._annotations)
+        except MemoryError as exc:
+            from app.core.logger import get_logger
+            get_logger(__name__).warning(
+                f"undo 스냅샷 생성 실패(메모리 부족) — 이번 편집은 undo 불가: {exc}"
+            )
+            return
         self._undo_stack.append(snap)
         if len(self._undo_stack) > 30:
             self._undo_stack.pop(0)

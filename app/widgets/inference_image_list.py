@@ -54,9 +54,6 @@ QTreeWidget::item:selected {
 QTreeWidget::item:hover:!selected {
     background: #1f2937;
 }
-QTreeWidget::branch {
-    background: #111418;
-}
 """
 
 _PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -84,6 +81,7 @@ class InferenceImageList(QWidget):
     """검색·정렬·폴더 트리를 지원하는 경량 이미지 목록 위젯 (추론 탭 전용)."""
 
     image_selected = pyqtSignal(Path)
+    display_changed = pyqtSignal()   # 필터·정렬·목록 갱신 시 매번 emit (선택 경로 불변 케이스 포함)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -364,3 +362,5 @@ class InferenceImageList(QWidget):
             new_path = self._get_item_path(new_item)
             if new_path is not None and new_path != cur_path:
                 self.image_selected.emit(new_path)
+
+        self.display_changed.emit()
