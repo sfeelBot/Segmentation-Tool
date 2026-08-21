@@ -1605,3 +1605,148 @@ RAM 16GB+ 여유 있었음에도 재현 — 커밋/페이징 한도 문제로 �
 없음), #6-A/BUG-011/BUG-012 회귀 없음, 대규모(n=200) 체감 성능 개선(구현자 벤치마크와
 스케일 일치) 모두 확인됨. 별도 블로커 없음. 부수 발견 BUG-014(P3, 이번 라운드 무관 기존
 `_push_undo()` deepcopy 메모리 리스크)는 QA.md에 등록, 후속 라운드 판단 대상.
+
+---
+
+## 2026-08-21 — 디자인 7단계 실행안 ⑥ i18n 밖 3파일 en 전환 + ⑦ 팔레트 토큰 정규화 검증 (7단계 실행안 최종 라운드)
+
+`docs/agents/implementation-log.md` 2026-08-21 항목(커밋 `96b829c` feat + `8f78f8a` refactor)
+검증. Artifact 7876ed3e 7단계 실행안의 마지막 두 단계로, 이번 라운드가 통과하면 7단계
+실행안 전체가 완료된다.
+
+### 정적 검토
+- `git show 96b829c`/`8f78f8a` diff 전수 확인. `app/core/i18n.py`에 27개 신규 키
+  (`project.status_bar`, `browser.*` 22개, `train_progress.*` 10개)가 ko/en 양쪽에
+  1:1로 존재함을 직접 대조 확인 — 누락 없음.
+- `image_browser.py`/`training_progress_dialog.py`/`main_window.py` 3개 파일에 남은
+  한글을 `[가-힣]` 정규식으로 재검색(Grep) — 남은 매치는 전부 주석/docstring뿐, UI
+  문자열은 모두 `t()` 경유로 이관됨을 확인.
+- `training_progress_dialog.py`에 `from app.core.i18n import t` 임포트 정상 추가 확인.
+- `labeling_tab.py`/`training_tab.py`(⑦) diff: `#888`→`#9ca3af`, CUDA 배너
+  `background:#0d1f0d/#1f0d0d` → `background:#1f2329; border-left:3px solid
+  #10b981/#f87171`로 교체됨을 확인.
+
+### 실행 확인 — `python main.py` 실제 GUI 구동 (PowerShell 스크린샷/클릭 자동화)
+`projects/nok` 프로젝트로 실제 앱을 두 번(en/ko 각각) 기동해 확인.
+
+1. **en 모드 (`data/settings.json` language=en, 이 세션 시작 시점 이미 en으로 설정돼
+   있었음)** — 라벨링 탭: 이미지 브라우저 "Search filename..." placeholder, 정렬 콤보
+   드롭다운 5개 항목("Name ↑"/"Name ↓"/"Folder"/"Done↑"/"To do↑") 전부 정상 렌더링,
+   범례("Labeled"/"OK"/"Unlabeled"), 상태바 "Project: nok (D:\segmentation
+   model\projects\nok)"(`project.status_bar` 포맷) 전부 확인. "Folder"/"File" 추가
+   버튼 클릭 → 네이티브 파일 다이얼로그 제목이 각각 "Select Folder"/"Add Images"로
+   정상 표시(다이얼로그 본체는 OS 로케일이라 한글 유지, 이는 Qt 표준 동작이라 정상).
+   이미지 삭제 버튼 → "Confirm Delete" 타이틀 + "Delete '10번.bmp'?\n(Its annotations
+   will also be deleted)" 메시지 정확히 확인 후 **No로 취소해 nok 데이터 무변경 유지**.
+2. **ko 모드** — Settings 다이얼로그에서 언어를 한국어로 전환·저장(재시작 필요 안내
+   팝업 "재시작 필요"/"언어 설정이 저장되었습니다..." 정상 한글) 후 앱 재기동. 탭 이름
+   "라벨링/학습/추론/모델", 이미지 브라우저 "파일명 검색...", "정렬: 파일명 ↑",
+   범례 "라벨링됨/OK/미라벨", 상태바 "프로젝트: nok (D:\segmentation
+   model\projects\nok)" 전부 정상. 학습 탭도 "학습 큐"/"작업 이름"/"모두 실행"/
+   "체크포인트 주기 (epoch)" 등 전부 정상 한글 렌더링(회귀 없음).
+3. **`TrainingProgressDialog` 직접 검증** (실제 체크포인트 학습 없이, `set_current_job`/
+   `update_epoch`/`update_queue`/`set_done`을 실제 데이터로 호출 후 `QWidget.grab()`
+   스크린샷) — ko: "▶ 현재 작업"/"예상 소요 시간"/"이 작업: 05:40"/"전체 큐: 15:20"/
+   "학습 큐"/"■ 현재 작업만 중지"/"■■ 전체 중지"/"창 닫기" 전부 정상. en: "Current Job"/
+   "Estimated Time"/"This job: 05:40"/"Total queue: 15:20"/"Training Queue"/
+   "Stop Current"/"Stop All"/"Close" 전부 정상. `set_done()` 후 en에서 "All Training
+   Done" 정상 표시. 두 언어 모두 KeyError·깨진 텍스트 없음.
+4. **CUDA 배너** — 이 세션 실제 GPU(RTX 5060, CUDA 사용 가능) 환경이라 성공 상태만
+   실제 렌더링 확인(실패 상태는 코드 대칭 구조 확인으로 갈음). en/ko 두 모드 모두
+   "CUDA NVIDIA GeForce RTX 5060" 초록색 텍스트는 정상 표시되나, **좌측 색상 보더가
+   의도한 단일 선이 아니라 이중 막대로 렌더링되는 시각적 결함 발견 → BUG-015로 등록**
+   (아래 참고).
+5. **회귀 확인** — 검색창/정렬 드롭다운/범례/파일-폴더 추가 다이얼로그/삭제 확인
+   다이얼로그 골든 패스 전부 정상 동작(이번 라운드가 텍스트만 `t()`로 교체했을 뿐
+   로직은 안 건드렸으므로 예상대로 회귀 없음). `git status --porcelain -- projects/nok`
+   공백 확인 — 실제 데이터 변경 없음.
+
+### 발견 — BUG-015 (P2, QA.md 신규 등록)
+`training_tab.py` CUDA 배너의 `border-left:3px solid #10b981`(성공)/`#f87171`(실패)가
+단일 선이 아니라 ~7px 간격을 둔 두 개의 3px 막대("[[" 형태)로 이중 렌더링됨. 스크린샷
+픽셀 스캔(`PIL.Image.getpixel`)으로 확인: x=0~2, x=10~12 두 구간에 정확히 `#10b981`
+(16,185,129)이 반복되고 그 사이는 배경색 — 압축 아티팩트가 아니라 실제 이중 렌더링.
+격리된 최소 재현 스크립트(`QHBoxLayout(margins=(10,0,4,0))` + 자식 `QLabel`이 있는
+`QWidget`에 `border-left`만 지정)로 100% 재현, `border-radius` 유무와 무관함을 확인.
+원인: `banner.setStyleSheet(...)`가 선택자 없는 평문 속성이라 Qt가 자손 위젯에도
+전파하는데, 자식 `QLabel`이 `QFrame` 서브클래스라 `WA_StyledBackground` 없이도 부모와
+동일한 `border-left`를 레이아웃 마진만큼 오른쪽으로 밀린 위치에 스스로 그려 넣어
+발생. `WA_StyledBackground` 속성 추가만으로는 해결 안 됨을 별도 확인. 기능 크래시는
+없으나 "발견 8"이 의도한 "깔끔한 좌측 보더" 효과를 달성하지 못하고 이전(배경 틴트만)
+보다 시각적으로 더 눈에 띄는 결함을 만듦 — QA.md BUG-015에 해결책 후보(objectName+ID
+선택자 스코핑, 자식 QLabel에 빈 스타일시트 명시)까지 기록.
+
+### 정리
+스크래치 스크립트/스크린샷(`verify_train_progress_dialog.py`, `repro_cuda_banner*.py`,
+`v67_*.png` 등)은 전부 세션 scratchpad에만 저장, 프로젝트에 추가 안 함.
+`git status --porcelain`(저장소 루트) 확인 결과 `QA.md`·`docs/agents/verification-log.md`
+(이 항목)만 변경. `projects/nok`은 무변경.
+
+### 판정
+**조건부 통과(Pass with follow-up)** — ⑥ i18n 밖 3파일 en 전환은 en/ko 두 언어 모두
+실제 GUI에서 텍스트 깨짐·KeyError 없이 정상 동작 확인(핵심 목표 100% 달성). ⑦ 팔레트
+정규화 중 보조 텍스트 색상(`#9ca3af`/`#e5e7eb`) 교체는 육안상 자연스럽게 어울림을
+확인했으나, CUDA 배너 좌측 보더는 새로 발견된 BUG-015(P2, 시각적 결함이나 기능 크래시
+없음)로 인해 의도한 결과물과 차이가 있음. 데이터 손실·크래시·기능 회귀가 없어 이번
+라운드 자체는 통과로 판정하되, BUG-015는 후속 라운드에서 수정 필요.
+**이 라운드 통과로 Artifact 7876ed3e "디자인 톤 홀리스틱 재검토" 7단계 실행안
+(①~⑦) 전체가 구현+검증 완료 상태가 되었다** — 단, BUG-015(P2)가 Open 이슈로 남음.
+
+---
+
+## 2026-08-21 — BUG-015 재검증 (CUDA 배너 좌측 보더 이중 렌더링 수정 확인)
+
+커밋 `142d251`(fix) 검증. 디자인 7단계 실행안 전체 재검증은 이미 통과했으므로 이번
+라운드는 BUG-015 하나로 범위를 좁힘. 수정 내용: `banner.setObjectName("cudaBanner")`
+추가 + `_build_cuda_banner()`/`_on_cuda_diag_done()`의 스타일시트 3곳을
+`"QWidget#cudaBanner { ... }"` ID 선택자로 스코핑(자식 QLabel로의 서브트리 전파 차단).
+
+### 정적 검토
+`app/tabs/training_tab.py` 107~162행 직접 확인 — `objectName("cudaBanner")` 설정과
+`_build_cuda_banner()` 초기 스타일, `_on_cuda_diag_done()`의 성공(`#10b981`)/실패
+(`#f87171`) 두 분기 스타일시트 전부 `QWidget#cudaBanner { ... }` 패턴으로 일관되게
+수정됨을 확인. 세 곳 모두 동일 패턴이라 실패 분기도 성공 분기와 대칭적으로 고쳐졌음이
+코드만으로 확인됨.
+
+### 실행 확인 — 실제 `TrainingTab` 인스턴스 픽셀 스캔
+`python main.py`(anaconda 인터프리터, 실 GUI 모드)로 앱이 정상 기동함을 먼저 확인
+(575MB 메모리로 살아있는 프로세스, cp949 로깅 경고만 출력되는 기존 이슈는 이번 라운드와
+무관). 이어서 스크래치 스크립트(`verify_bug015.py`, 프로젝트에 추가 안 함)로 실제
+`TrainingTab()`을 생성해 `_on_cuda_diag_done()`을 성공/실패 두 `CudaDiagResult`로 직접
+호출한 뒤 `banner.grab()` → `QImage.pixelColor()`로 픽셀 스캔:
+
+- 텍스트 baseline과 겹치는 y=16 행에서는 라벨 글자("C" 시작 부분) 안티앨리어싱이 섞여
+  들어와 처음엔 오탐 여지가 있었음 — 배너 상/하단 근처(y=1,3,5,28,30, 텍스트 미겹침
+  구간)로 스캔 행을 바꿔 재측정.
+- 성공 상태: x=0~2에 `#10b981`(16,185,129) 단일 3px 보더만 존재, x=3부터 x=19까지는
+  배경색 `#1f2329`(31,35,41)로 완전히 균일. 실패 상태: 동일 위치에 `#f87171`(248,113,113)
+  단일 보더, 이후 균일 배경. **이전 발견됐던 x≈10~12의 두 번째 막대가 두 상태 모두에서
+  완전히 사라짐** — 이중 렌더링 재현 안 됨.
+- 배경색(`#1f2329`)·모서리 둥글기(코너 부근 x=3 행에서 안티앨리어싱 블렌드만 있고
+  별도 막대 없음, `border-radius:4px` 정상 유지) 확인.
+- 자식 위젯 geometry 확인: 라벨 `QRect(10, 0, 486, 32)`, 버튼 `QRect(504, 5, 66, 22)` —
+  이전 커밋과 비교해 밀리거나 잘린 흔적 없음(레이아웃 margin/spacing 변경이 없었으므로
+  예상대로). 라벨 텍스트("CUDA RTX 5060" / "CUDA 사용 불가 | 드라이버 미설치")와 "진단
+  보기" 버튼 모두 정상 표시, 버튼 `enabled=True`.
+- 전체 창 스크린샷(`fullwindow_success.png`/`fullwindow_fail.png`)으로도 배너가 학습
+  큐/손실 그래프 등 나머지 레이아웃과 자연스럽게 어울리며 다른 요소를 밀어내지 않음을
+  육안 확인.
+
+실패(빨강) 상태는 이 세션 실제 GPU(CUDA 사용 가능) 환경이라 자연 발생은 안 됐지만,
+`CudaDiagResult(cuda_available=False, ...)`를 직접 주입해 실제 코드 경로
+(`_on_cuda_diag_done()`의 else 분기)를 그대로 태워 확인했으므로 코드 확인만으로 갈음하지
+않고 실측했음.
+
+### 환경 메모 (이번 라운드와 무관, 참고용)
+스크립트를 PyQt6 → `app.tabs.training_tab` 순서로 단순 임포트하면 `QtSvg` DLL 로딩이
+실패하는 현상을 재현(5회 연속 재현, `app.core.trainer`가 끌어오는 cv2/torch 등이 먼저
+로드된 뒤 QtSvg를 임포트하면 실패). `main.py`가 이미 `_preload_libs()`로 numpy/cv2/
+PIL.Image/torch/matplotlib를 PyQt6보다 먼저 로드하는 방어 로직을 갖고 있는 걸 확인했고,
+스크립트에도 동일 순서를 적용하니 재현되지 않음 — 기존에 알려진 환경 플레이키니스
+(BUG-001과 같은 계열의 DLL 로드 순서 문제)이지 이번 커밋(`142d251`)이 만든 회귀 아님.
+새 버그로 등록하지 않음.
+
+### 판정
+**통과(Pass)** — BUG-015가 의도한 대로 수정됨. 좌측 보더가 이제 성공/실패 두 상태 모두
+단일 3px 선으로만 렌더링되고, 배경·모서리·라벨·버튼 등 다른 요소는 회귀 없음. QA.md
+BUG-015 항목에 재검증 완료 반영.
