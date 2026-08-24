@@ -2131,4 +2131,104 @@ warnings= []
    쌓은 뒤 새 브러시 스트로크 시작 시 `MemoryError`가 실제로 발생하는 극단 상황을
    인위적으로 만들기 어려우므로, 코드 리뷰로 `try/except` 범위와 로그 메시지가
    요구사항과 일치하는지 확인.
+
+---
+
+## 2026-08-24 — Windows exe + Inno Setup 인스톨러 빌드 도구 (build.spec / setup.iss / build.bat)
+
+### 배경
+앱 기능이 아닌 빌드/배포 툴링 작업. 로컬에 이미 설치된 PyInstaller 6.20(`py -3`),
+torch 2.11.0+cu128(CUDA 빌드), Inno Setup 6.7.3(ISCC.exe)을 그대로 사용해
+onedir 패키징 + 설치 마법사를 만드는 것이 목표. 실제 빌드 실행/검증은 범위 밖 —
+검증 서브에이전트가 별도로 수행.
+
+### 조사 (구현 전 코드 리딩)
+- `main.py`의 `_preload_libs()`가 `importlib.import_module()`로 numpy/cv2/PIL.Image/
+  torch/matplotlib를 동적 로드 — PyInstaller 정적 분석이 못 잡는 유일한 지점.
+- `app/core/dataset.py`, `inference_engine.py`, `auto_labeler.py`의 `torchvision...` 지연
+  import와 `app/core/augmentations.py`의 `albumentations` 지연 import는 함수 내부에
+  있어도 여전히 정적 `import` 문이라 PyInstaller가 자동 추적함 (importlib 동적 로드와
+  달리 안전) — 확인 후 hiddenimports에 안전망으로만 추가, 필수는 아님.
+- `pyinstaller-hooks-contrib`(로컬 설치됨, 2026.5)에 torch/torchvision/cv2 전용 hook이
+  이미 있음을 확인 — 수동 `collect_dynamic_libs` 등 불필요.
+- **`app/model_presets/__init__.py`의 `load_preset_code()`가 프리셋 `.py` 파일을
+  `read_text()`로 텍스트로 읽음** — import가 아니라서 PyInstaller가 코드로 인식하지
+  못하고, 데이터로도 안 넣으면 frozen 빌드에서 프리셋 드롭다운이 전부 빈 코드로
+  나오는 실제 버그가 될 뻔함 → `datas`에 `app/model_presets` 명시적 포함.
+- `app/widgets/icons.py`의 `_ICON_DIR`(`app/resources/icons/*.svg`)도 동일한 이유로
+  `datas`에 포함.
+- **PyInstaller onedir에서 `__file__`이 실제 파일이 없는 합성 경로를 가리키는지
+  직접 실험으로 검증**: 스크래치패드에 미니 패키지를 만들어 `py -3 -m PyInstaller
+  --onedir`로 빌드해 실행한 결과, frozen 상태에서 서브모듈의 `__file__`은
+  `dist/<name>/_internal/pkg/sub.py`처럼 실제 존재하지 않는 경로를 가리키고,
+  `Path(__file__).parent.parent...` 체이닝은 결국 실존하는 `_internal` 폴더로
+  귀결됨을 확인. `main.py: ensure_data_dirs()`와 `app/core/project.py:
+  get_projects_root()`가 이 패턴으로 데이터/프로젝트 루트를 계산하고 있어, 고치지
+  않으면 사용자 데이터가 `_internal`(PyInstaller 내부 라이브러리 폴더) 안에
+  생성되는 것 자체는 크래시는 아니지만 의미론적으로 잘못됨 — 지시받은 대로
+  `getattr(sys, 'frozen', False)` 분기로 `sys.executable` 기준 경로를 쓰도록 최소
+  수정. `icons.py`/`model_presets/__init__.py`는 같은 `__file__` 체이닝이지만
+  datas 배치 위치와 자연스럽게 일치해 문제 없음을 확인하고 그대로 둠(ponytail).
+- `app/core/logger.py`의 `LOG_DIR = Path("data/logs")`, `app/core/i18n.py`의
+  `SETTINGS_FILE = Path("data/settings.json")`은 `__file__`이 아니라 CWD 기준이라
+  코드 수정 대상은 아니지만, Inno Setup 바로가기에 `WorkingDir: {app}`을 명시해
+  CWD가 항상 설치 폴더가 되도록 함으로써 실행 방식(더블클릭/시작 메뉴)에 관계없이
+  일관되게 만듦.
+
+### 변경 (코드)
+- `main.py`: `ensure_data_dirs()` — frozen 시 `sys.executable` 기준으로 base 계산.
+- `app/core/project.py`: `_app_root()` 헬퍼 추가(frozen 분기), `default_projects_root()`
+  공개 함수로 분리, `get_projects_root()`가 이를 사용하도록 변경.
+- `app/widgets/settings_dialog.py`: `_on_reset_projects_root()`가 `Path(__file__)`
+  중복 계산 대신 `project.default_projects_root()`를 호출하도록 교체 (중복 로직
+  제거 — 같은 버그를 두 곳에서 고칠 필요 없게 함).
+
+### 신규 파일
+- `build.spec` — PyInstaller onedir spec. `name="SegmentationModelUI"`,
+  `console=False`(오류는 `data/logs/*.log` 파일 + `logger.py`의 GUI 예외 팝업으로
+  추적 가능하므로 콘솔 불필요 확인됨), hiddenimports(위 조사 내용 반영),
+  datas(`app/resources/icons`, `app/model_presets`).
+- `installer/setup.iss` — Inno Setup 스크립트. `PrivilegesRequired=lowest` 채택
+  (이유를 스크립트 내 주석으로 명시: `{autopf}`가 admin 권한 없이 쓰기 가능한
+  `{localappdata}\Programs`로 자동 해석되는 Inno 6 "Auto" 상수 동작을 이용 — 앱이
+  설치 폴더 밑에 `data/`·`projects/`를 직접 쓰기 때문에 Program Files에 admin
+  설치하면 표준 사용자 실행 시 쓰기 권한 문제가 생길 수 있음). 시작 메뉴 바로가기
+  기본 + 바탕화면 바로가기 선택적 체크박스, 설치 후 실행 옵션, 언인스톨러는 Inno
+  Setup 기본 기능 그대로 사용(추가 코드 없음).
+- `build.bat` — `build/`,`dist/` 정리 → `py -3 -m PyInstaller build.spec` →
+  `ISCC.exe installer\setup.iss` 순차 실행, 각 단계 `if errorlevel 1 goto :error`로
+  즉시 중단. 마지막에 `installer\output\*.exe`를 나열해 버전 번호를 하드코딩하지
+  않고도 정확한 산출물 경로를 출력.
+
+### 발견한 환경 이슈 (구현 범위 밖, 검증/사용자 확인 필요)
+- **`albumentations`와 `opencv-python-headless`가 로컬 `py -3`/`py -3.12` 환경 어디에도
+  설치돼 있지 않음** (`opencv-python`은 설치돼 있어 `cv2` import 자체는 됨).
+  `requirements.txt`엔 있지만 실제 pip 환경엔 없는 상태 — 지금 상태로 `build.bat`을
+  돌리면 `albumentations` hidden import를 못 찾는다는 경고까지는 나되 빌드 자체는
+  계속되지만(hiddenimports 미해결은 경고 수준), 실행 시점에 학습 탭에서 증강
+  파이프라인을 사용하면 `ModuleNotFoundError`가 날 가능성이 높음. 설치는 이번
+  작업 범위(빌드 도구 3개) 밖이라 손대지 않았고, 검증 단계에서 확인 필요.
+
+### 검증
+- `py -3 -m py_compile build.spec` 통과 (문법 검증만 — PyInstaller 런타임 이름
+  `Analysis`/`EXE`/`COLLECT` 해석은 실제 빌드 시에만 됨).
+- `installer/setup.iss`는 `dist/SegmentationModelUI/`가 실존해야 ISCC 전체 컴파일이
+  가능해 이번엔 문법 검토(수동)만 함 — 실제 `py -3 -m PyInstaller build.spec` 및
+  `build.bat` 전체 실행은 지시대로 하지 않음.
+- 별도 스크래치패드 미니 프로젝트로 PyInstaller onedir의 `__file__` 동작만 실측
+  검증(위 조사 항목 참고) — 실제 앱 빌드는 아님.
+
+### 커밋
+- `f3c5377` — `feat: Windows exe + Inno Setup 인스톨러 빌드 도구 추가 (build.spec/setup.iss/build.bat)`
+
+### 다음 단계 — 완료 보고 아님
+검증 에이전트가 다음을 확인해야 완료로 간주할 수 있다:
+1. `albumentations`, `opencv-python-headless` 설치 여부 확인(누락 시 사용자에게
+   설치 필요 안내).
+2. 프로젝트 루트에서 `build.bat` 실제 실행 → `dist/SegmentationModelUI/` 생성,
+   `SegmentationModelUI.exe` 정상 기동(라벨링/학습/추론 탭 스모크 테스트) 확인.
+3. `installer\output\SegmentationModelUI-Setup-*.exe` 실행 → 관리자 권한 프롬프트
+   없이(설계대로 `PrivilegesRequired=lowest`) 설치되는지, 설치 후 `data/`·`projects/`
+   폴더에 정상적으로 쓰기가 되는지(런타임에 이미지 추가·학습 실행 등) 확인.
+4. 언인스톨 시 파일이 깨끗이 제거되는지 확인.
 3. 기존 Select/브러시/지우개/undo 정상 동작(회귀) 확인.
