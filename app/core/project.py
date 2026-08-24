@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,8 +24,22 @@ SETTINGS_KEY = "projects_root"
 _current: "Project | None" = None
 
 
+def _app_root() -> Path:
+    """앱 루트 디렉터리. PyInstaller onedir 번들에서는 __file__이 실제 파일이
+    없는 합성 경로(추출되지 않은 _internal 내부)를 가리키므로 sys.executable
+    기준으로 잡는다 (PyInstaller 공식 권장 패턴)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent.parent.parent
+
+
+def default_projects_root() -> Path:
+    """설정 미저장 시 사용할 기본 프로젝트 저장 경로."""
+    return (_app_root() / "projects").resolve()
+
+
 def get_projects_root() -> Path:
-    """설정에서 프로젝트 기본 저장 경로를 반환. 미설정 시 './projects' 사용."""
+    """설정에서 프로젝트 기본 저장 경로를 반환. 미설정 시 기본 경로 사용."""
     try:
         from app.core.i18n import load_settings
         saved = load_settings().get(SETTINGS_KEY, "")
@@ -34,7 +49,7 @@ def get_projects_root() -> Path:
                 return p
     except Exception:
         pass
-    return (Path(__file__).parent.parent.parent / "projects").resolve()
+    return default_projects_root()
 
 
 def set_projects_root(path: Path) -> None:

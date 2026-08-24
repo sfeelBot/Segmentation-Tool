@@ -17,7 +17,7 @@ from app.core.i18n import (
 )
 from app.core.logger import log_file_path, error_log_file_path
 from app.core.perf_logger import PERF_LOG
-from app.core.project import get_projects_root, set_projects_root
+from app.core.project import get_projects_root, set_projects_root, default_projects_root
 from app.widgets.icons import icon as svg_icon
 
 
@@ -171,8 +171,7 @@ class SettingsDialog(QDialog):
             )
 
     def _on_reset_projects_root(self) -> None:
-        from pathlib import Path
-        default = (Path(__file__).parent.parent.parent / "projects").resolve()
+        default = default_projects_root()
         self._projects_root_field.setText(str(default))
         set_projects_root(default)
         QMessageBox.information(

@@ -326,7 +326,9 @@ QToolTip {
 
 
 def ensure_data_dirs() -> None:
-    base = Path(__file__).parent
+    # PyInstaller onedir 번들에서는 __file__이 실제 파일이 없는 합성 경로
+    # (_internal 내부)를 가리키므로 sys.executable 기준으로 잡는다.
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
     # 로그·설정만 글로벌, 프로젝트 단위 경로는 선택 후 생성됨
     for d in ("data/logs",):
         (base / d).mkdir(parents=True, exist_ok=True)
