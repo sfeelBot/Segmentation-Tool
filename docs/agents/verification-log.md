@@ -1840,3 +1840,102 @@ validate()`의 `result.ok = len(result.errors) == 0`이 `_check_imports()` 등 �
 쓰지 않고 `AnnotationCanvas` 단독 인스턴스라 애초에 저장 로직을 타지 않음), BUG-005/BUG-006
 스크립트는 각각 스크래치 사본 프로젝트를 사용해 원본 무변경. 세션 종료 시 `git status --short`
 로 `projects/nok` 등 실데이터 무변경 재확인.
+
+---
+
+## 2026-08-24 — Windows exe + Inno Setup 인스톨러 빌드 검증 (커밋 `f3c5377`)
+
+### 배경
+구현 에이전트가 만든 `build.spec`(PyInstaller onedir)/`installer/setup.iss`(Inno Setup)/
+`build.bat`을 실제로 실행해 exe·installer가 진짜로 빌드·설치·구동되는지 확인. 정적 리뷰만으로는
+"완료"로 간주하지 말라는 지시에 따라 전 과정을 직접 실행.
+
+### 환경 이슈 — D: 드라이브 공간 부족 (코드 버그 아님)
+`build.bat`을 그대로 실행하니 `py -3 -m PyInstaller build.spec` 도중
+`OSError: [Errno 28] No space left on device`로 실패. `df -h` 확인 결과 `D:` 드라이브가 이미
+390G/391G 사용 중(가용 1.8MB, 이번 빌드 시도로 생긴 것과 무관하게 이 프로젝트 외 다른 데이터로
+이미 거의 가득 참) — `C:` 드라이브도 4.6GB만 가용. `E:` 드라이브(3.2TB 가용)로 `--distpath`/
+`--workpath`(PyInstaller)와 `OutputDir`/`MyDistDir`(Inno Setup, 검증용 임시 사본 스크립트 사용,
+저장소의 `installer/setup.iss` 원본은 손대지 않음)를 우회 지정해 실제 빌드를 완주시킴.
+**이 이슈는 build.spec/setup.iss/build.bat 자체의 결함이 아니라 이 dev 머신의 D: 드라이브가
+이 프로젝트와 무관하게 이미 거의 가득 차 있던 상태 때문** — 사용자 환경에 따라 재발 가능하니
+리더에게 별도 보고(D: 드라이브 정리 필요 여부 사용자 확인 권장).
+
+### 환경 이슈 — 이 자동화 셸(Git Bash)에서 `cmd.exe /c "<cmd>"` 인자가 소실됨 (검증 셸의 특성, 앱 버그 아님)
+`build.bat`을 `./build.bat`/`cmd.exe /c build.bat`로 직접 실행하면 `/c` 뒤 인자가 스킵되고
+`cmd.exe`가 그냥 인터랙티브 배너만 찍고 아무 것도 실행하지 않음(`MSYS_NO_PATHCONV=1`을 줘도
+동일) — MSYS/Git-Bash의 `/`-경로 자동변환이 `cmd /c`류 스위치까지 오염시키는 것으로 추정.
+같은 이유로 `SegmentationModelUI-Setup-*.exe /VERYSILENT /SUPPRESSMSGBOXES ...`처럼 `=` 없는
+슬래시 스위치도 최초 시도에서 `"C:/Program Files/Git/VERYSILENT"`로 뭉개져 무인설치 모드가
+아니라 GUI 모드로 떠버렸음(설치 자체는 성공, 다음 검증에서 `MSYS_NO_PATHCONV=1` + 프로세스 직접
+실행으로 재시도해 정상 무인설치 확인). **다음 검증 에이전트를 위한 메모**: 이 환경에서
+Windows 배치파일/무인설치 스위치를 실행할 땐 `MSYS_NO_PATHCONV=1`을 반드시 같이 주고, `cmd.exe
+/c`류 래퍼보다 PyInstaller/ISCC/설치 exe를 직접 실행하는 편이 안전하다.
+
+### 실행 결과 — PyInstaller 빌드
+- `py -3 -m PyInstaller build.spec`(E: 드라이브로 출력 우회) **성공** — 총 170초.
+- `SegmentationModelUI.exe` 생성 확인(51MB), `dist/` 전체 4.5GB(CUDA torch 포함, onedir 특성상
+  예상 범위).
+- `warn-build.txt`(744줄) 전수 확인 — `app.*`/`cv2`/`torchvision`/`albumentations` 관련
+  "not found" 경고 **0건**. 실제 "Hidden import ... not found!" 경고는 `scipy._lib.array_api_
+  compat.numpy.fft`, `scipy.special._cdflib` 2건뿐이며 둘 다 scipy 내부 optional 서브모듈(이
+  앱의 augmentation 파이프라인이 실제로 쓰는 경로 아님)이라 무해. 나머지 "missing module"
+  목록도 전부 pydantic 선택적 hub 기능, torchvision 데이터셋 로더(coco/lsun/pcam 등 이 앱이
+  안 쓰는 것들), scipy.stats 내부 폴백 심볼 등 실제 우리 코드 경로 밖의 선택적 의존성.
+  → **리더 보고 사항 해소 확인**: implementation-log가 우려했던 "albumentations/opencv-python-
+  headless 로컬 미설치" 문제는 리더가 이번 세션 직전에 두 패키지를 직접 설치해 이미 해결된
+  상태였고, 이번 빌드에서 실제로 정상 번들됨을 재확인.
+- `app/model_presets/*.py`(코드 아닌 데이터로 필요), `app/resources/icons/*.svg` 모두
+  `_internal/app/...` 밑에 정상 포함 확인.
+
+### 실행 결과 — exe 기동
+- `dist/SegmentationModelUI/SegmentationModelUI.exe` 직접 실행 → 프로세스 정상 기동, 메모리
+  ~596MB(CUDA torch 로드 반영), `Get-Process ... | Select Responding` **True**.
+- PowerShell + `System.Drawing`으로 실제 스크린샷 캡처 — "Segmentation Model UI" 프로젝트
+  선택 다이얼로그("새 프로젝트"/"프로젝트 열기"/"가져오기...", 최근 프로젝트 없음)가 한글
+  깨짐 없이 정상 렌더링됨을 육안 확인(스크린샷 파일: 검증 세션 스크래치 디렉토리
+  `screenshot3.png`, 프로젝트에는 추가 안 함).
+- `data/logs/app.log`: 기동 로그(Python/PyTorch/CUDA 버전, GPU 정보) 정상 기록, 예외 없음.
+  `data/logs/errors.log`: **비어있음** — 크래시·예외 0건.
+- 콘솔(`sys.stdout`)로 유니코드 em-dash(`—`)가 cp949로 인코딩 안 되는 `UnicodeEncodeError`가
+  발생했으나, 이는 **검증 목적으로 exe의 stdout을 파일로 강제 리다이렉트했을 때만 나타나는
+  현상**이다 — 코드 확인 결과 `logging.StreamHandler.__init__`은 `stream=None`이면 자동으로
+  `sys.stderr`로 폴백하고, `Handler.handleError()`도 `sys.stderr`가 falsy(windowed 빌드에서
+  리다이렉트 없이 실행 시 `sys.stdout`/`sys.stderr`가 `None`이 되는 PyInstaller 표준 동작)면
+  아예 출력을 시도하지 않아 실사용(더블클릭 실행)에서는 크래시도 노출도 되지 않음 — 실버그
+  아님, QA.md 미등록.
+- **참고(코드 확인만, 실패 재현은 아님)**: `app/core/logger.py`의 `LOG_DIR = Path("data/logs")`
+  는 `sys.executable` 기준이 아니라 CWD 기준 상대경로다. `main.py:ensure_data_dirs()`/
+  `app/core/project.py:_app_root()`는 이번 라운드에서 frozen 분기로 고쳐졌지만 `logger.py`는
+  그대로다 — implementation-log가 이미 인지하고 "Inno Setup 바로가기에 `WorkingDir: {app}`을
+  명시했으니 문제없다"고 판단한 부분. 이번 검증에서 dist 폴더 직접 실행(exe 자체 더블클릭과
+  동일하게 CWD=exe 폴더)과 설치 후 실행 두 경우 모두 실제로 `data/logs/app.log`가 앱 설치
+  폴더 밑에 정확히 생성됨을 실측 확인 — 설계대로 동작. 다만 향후 만약 사용자가 다른 CWD에서
+  단축키/스크립트로 exe를 실행하는 특이 경로가 생기면 로그 위치가 어긋날 수 있는 잠재
+  리스크는 여전히 남아있음(발생 조건이 지금은 없어 QA.md 미등록, 참고용 기록만 남김).
+
+### 실행 결과 — Inno Setup 인스톨러
+- ISCC 컴파일(E: 드라이브 경로로 우회) **성공**(517초) — `SegmentationModelUI-Setup-1.6.0.exe`
+  생성(1.81GB).
+- **무인 설치**(`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=...`) 성공 — 로그(`install_log2.
+  txt`) 확인: `User privileges: None`(관리자 권한 요구 없음, `PrivilegesRequired=lowest` 설계
+  대로 동작), `Install mode root key: HKEY_CURRENT_USER`(per-user 설치), `Installation process
+  succeeded`, Start Menu 바로가기 2개(`Segmentation Model UI.lnk`, `... 제거.lnk`) 생성 확인.
+- 설치된 경로에서 exe 재실행 → 정상 기동(프로젝트 다이얼로그 응답, `data/logs/app.log`에 새
+  기동 기록 추가됨 확인) — **설치 폴더에 대한 쓰기 권한 정상**(관리자 권한 없이 로그/데이터
+  쓰기 가능, `PrivilegesRequired=lowest` 선택이 실제로 유효함을 실측 확인).
+- **무인 제거**(`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) 성공 — 로그에
+  `Uninstallation process succeeded`, `Removed all? Yes`. 설치 디렉토리와 Start Menu 바로가기
+  폴더 모두 완전히 삭제됨을 `ls` 재확인(No such file or directory).
+
+### 정리
+검증에 사용한 모든 산출물(exe/installer/설치본)은 `E:\pyi_build_scratch\` 스크래치 디렉토리
+및 임시 인스톨 경로에서만 생성·삭제했고, 저장소(`D:\segmentation model`)에는 `dist/`·`build/`
+잔여물이 없음을 `git status`(clean)로 재확인. `installer/setup.iss` 원본은 검증 중 한 번도
+직접 수정하지 않음(임시 사본만 스크래치 디렉토리에서 사용).
+
+### 판정
+**통과**. `build.spec`/`installer/setup.iss`/`build.bat`가 의도한 대로 동작함을 실제 빌드→설치
+→기동→제거 전 과정으로 확인. 코드 버그 신규 발견 없음(QA.md 변경 없음). 발견한 두 가지는
+모두 이 dev 머신/자동화 셸의 환경 특성(D: 드라이브 공간 부족, Git Bash의 `cmd /c` 인자 소실)
+이지 코드 결함이 아니므로 리더에게 별도 보고만 하고 QA.md에는 등록하지 않음.
