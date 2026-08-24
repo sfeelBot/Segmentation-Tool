@@ -2232,3 +2232,60 @@ onedir 패키징 + 설치 마법사를 만드는 것이 목표. 실제 빌드 �
    폴더에 정상적으로 쓰기가 되는지(런타임에 이미지 추가·학습 실행 등) 확인.
 4. 언인스톨 시 파일이 깨끗이 제거되는지 확인.
 3. 기존 Select/브러시/지우개/undo 정상 동작(회귀) 확인.
+
+## 2026-08-24 — "Vertex Frame" 로고 자산화 + 앱 전반 아이콘 적용
+
+### 배경
+사용자가 로고 디자인 3안 중 "Vertex Frame"(옵션 B)을 최종 확정. SVG 스펙을
+그대로 자산 파일로 만들고 윈도우 아이콘·타이틀바·exe·설치 프로그램에 적용하는
+작업.
+
+### 변경 (자산)
+- `app/resources/logo.svg` — 지시받은 SVG 그대로 저장 (색상·좌표 변경 없음).
+  `app/resources/icons/`가 아니라 `resources/` 바로 아래 배치 — 브랜드 마크는
+  `app/widgets/icons.py`의 `currentColor` 재색상 로직 대상이 아니라서 기존
+  아이콘 세트와 물리적으로 분리해 혼동을 방지.
+- `app/resources/app_icon.ico` — `scripts/gen_icon.py`로 생성한 멀티 해상도
+  (16/32/48/256) ICO.
+
+### 변경 (코드)
+- `scripts/gen_icon.py` (신규, 1회성 생성 스크립트 — 재사용 스캐폴딩이 아니라
+  로고가 바뀌면 재실행할 자산 생성 도구로 유지): `QSvgRenderer`로 256×256
+  1장만 투명 배경 렌더링 후 Pillow `Image.save(..., format="ICO", sizes=[...])`
+  로 각 크기 다운샘플링 — 처음엔 각 크기를 개별 렌더링해
+  `append_images=`로 묶으려 했으나 이 Pillow 버전(12.1.1)에서 16×16 프레임
+  1장만 저장되는 문제를 실측으로 확인(ICO 바이너리 헤더 직접 파싱해 entry
+  count=1 확인)하고, 표준적인 "최대 해상도 1장 + sizes 다운샘플" 방식으로
+  전환해 4개 프레임(count=4) 정상 생성 확인.
+- `main.py`: `QApplication` 생성 직후 `app.setWindowIcon(QIcon(str(icon_path)))`
+  추가. 경로는 `Path(__file__).resolve().parent / "app" / "resources" /
+  "app_icon.ico"` — main.py가 프로젝트 루트에 있으므로 `ensure_data_dirs()`의
+  `sys.frozen` 분기와 달리 여기선 `__file__` 체이닝만으로 충분(datas 배치
+  위치와 일치 — `icons.py`의 `_ICON_DIR` 패턴과 동일 근거, 이전 라운드에서
+  스크래치패드 실측으로 PyInstaller onedir의 `__file__`이 `_internal` 내
+  실제 파일로 귀결됨을 확인해둔 것을 재사용). 파일 없을 때는 조용히 스킵
+  (개발 환경에서 아이콘 생성 전에도 앱이 죽지 않도록).
+  `app/main_window.py`는 건드리지 않음 — `QApplication.setWindowIcon()`이
+  자체 아이콘 없는 모든 하위 윈도우의 기본값이 되므로 `MainWindow`에서
+  중복 호출할 필요 없음.
+- `build.spec`: `datas`에 `("app/resources/app_icon.ico", "app/resources")`
+  추가(코드가 아니라 경로로 읽는 리소스라 명시 필요 — `icons.py`/
+  `model_presets` 항목과 동일 이유), `EXE(...)` 호출에 `icon="app/resources/
+  app_icon.ico"` 추가해 exe 자체 아이콘 지정.
+- `installer/setup.iss`: `[Setup]`에 `SetupIconFile={#MyDistDir}\app\resources\
+  app_icon.ico` 추가(인스톨러 자체의 아이콘 — `UninstallDisplayIcon`은 기존대로
+  exe를 가리키므로 건드리지 않음).
+
+### 검증
+- `py -3 -m py_compile main.py app/main_window.py build.spec` 통과(문법 검증).
+- ICO 바이너리 헤더를 직접 파싱해 16/32/48/256 4개 프레임이 모두 들어있음을
+  확인.
+- 지시대로 실제 앱 구동(타이틀바/작업표시줄에 아이콘이 보이는지)까지는
+  검증하지 않음 — **별도 검증 서브에이전트 확인 필요**. 특히 실제
+  `build.bat` 전체 실행(exe/설치 프로그램 아이콘 반영 여부)은 이번 라운드
+  범위 밖.
+
+### 만든/수정한 파일
+- 신규: `app/resources/logo.svg`, `app/resources/app_icon.ico`,
+  `scripts/gen_icon.py`
+- 수정: `main.py`, `build.spec`, `installer/setup.iss`

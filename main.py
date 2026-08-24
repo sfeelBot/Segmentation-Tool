@@ -355,6 +355,14 @@ def main() -> None:
     app.setApplicationName("Segmentation Model UI")
     app.setStyleSheet(STYLESHEET)
 
+    from PyQt6.QtGui import QIcon
+    # PyInstaller onedir 번들에서도 __file__ 체이닝이 datas 배치 위치와 일치해
+    # 그대로 동작함 (app/widgets/icons.py의 _ICON_DIR과 동일한 근거 — 관련 검증은
+    # docs/agents/implementation-log.md 참고).
+    icon_path = Path(__file__).resolve().parent / "app" / "resources" / "app_icon.ico"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     # ── 프로젝트 선택 루프 ───────────────────────────────────────────────────
     from app.widgets.project_start_dialog import ProjectStartDialog
     from PyQt6.QtWidgets import QDialog as _QDialog

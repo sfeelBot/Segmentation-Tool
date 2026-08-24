@@ -47,6 +47,8 @@ hiddenimports = [
 datas = [
     # app/widgets/icons.py가 SVG를 런타임에 텍스트로 읽어 렌더링 (코드 추적 대상 아님)
     ("app/resources/icons", "app/resources/icons"),
+    # main.py가 QIcon(str(...))로 경로째 읽음 — 코드 추적 대상 아니라 데이터로 포함
+    ("app/resources/app_icon.ico", "app/resources"),
     # app/model_presets/__init__.py의 load_preset_code()가 .py를 텍스트로 읽음
     # (import가 아니라 read_text이므로 PyInstaller가 코드로 인식 못 함 — 데이터로도 포함 필요)
     ("app/model_presets", "app/model_presets"),
@@ -82,6 +84,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="app/resources/app_icon.ico",
 )
 
 coll = COLLECT(
