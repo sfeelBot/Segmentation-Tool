@@ -2011,3 +2011,126 @@ Windows 배치파일/무인설치 스위치를 실행할 땐 `MSYS_NO_PATHCONV=1
 `WM_GETICON(ICON_BIG)` API 레벨 확인으로 대체(육안 taskbar 스크린샷은 인접 고정 아이콘과
 혼동돼 확정 못함 — 필요시 다음 라운드에서 실제 hover 스크린샷 재시도 가능), 로그 무오류,
 build.spec/setup.iss 경로 정적 대조 일치, 로고 자산 분리 확인. QA.md 신규 등록 없음.
+
+## 2026-08-24 — build.bat 재빌드 검증 이어서 마무리 + 오프라인 설치/구동 테스트
+
+### 배경 · 중단 상황 수습
+직전 턴에서 "백그라운드 build.bat 작업이 끝나면 이어서 확인하겠다"고 말한 뒤 실제로는
+알림을 받지 못한 채(자신이 시작한 백그라운드 프로세스는 별도 알림이 오지 않음) 턴이
+끊겼음을 리더가 지적, 이어서 직접 상태 확인·완주하라는 재지시를 받아 재개.
+
+재개 시점에 확인한 것: `installer\output\SegmentationModelUI-Setup-1.6.0.exe`가 이미
+1.9GB로 존재했으나 `ISCC.exe` 프로세스가 여전히 그 파일에 계속 쓰는 중(두 번의 `ls` 사이
+파일 크기가 계속 증가)이었음 — 아직 안 끝난 상태였음. `until` 루프로 ISCC 프로세스 종료를
+기다려 최초 빌드(`build_log3.txt`, EXITCODE=0, "Successful compile")는 완료 확인.
+
+### 환경 충돌 — 동시 실행 중이던 다른 검증 에이전트와의 레이스
+스크래치 디렉토리에 이미 이번 라운드의 이전 작업 흔적(아이콘 자산화 `design-logo/`, exe
+단독 실행 로그, 1차 install/uninstall 테스트 로그, 3회의 `build_log*.txt`)이 남아있어
+조사해보니: 1차 시도(`build_log.txt`)는 `installer/setup.iss:36`의 `SetupIconFile=
+{#MyDistDir}\app\resources\app_icon.ico` 경로가 실제 PyInstaller onedir 빌드 후 산출물
+구조(datas가 `_internal\` 밑으로 들어감)와 안 맞아 ISCC가 아이콘 파일을 못 찾고 컴파일
+중단(이전 라운드 "Vertex Frame 아이콘 검증"에서 이 줄을 정적으로만 확인하고 "이상 없음"
+판정했던 것이 실제 빌드에서는 깨졌던 것 — 정적 검토의 한계를 보여주는 사례). 이 문제는
+이미 수정되어(`SetupIconFile=..\app\resources\app_icon.ico`, 저장소 경로 직접 참조) 이번
+재개 시점엔 커밋 `fa0d05e`로 반영돼 있었음.
+
+재개 후 설치→실행 테스트 도중, 갑자기 `dist\`·`installer\output\` 전체와 설치했던
+`C:\Users\Feel\AppData\Local\Programs\SegmentationModelUI\`가 통째로 사라지는 현상 발생
+— 조사 결과 **동시에 같은 저장소에서 별도의 검증 에이전트가 병행 실행 중**이었고(IDE
+화면 캡처에 그 세션의 Bash/Write 작업 로그가 실시간으로 보임), 그 세션이 자체적으로
+`build.bat`(clean 단계에서 `dist\` 삭제)나 별도 uninstall을 실행해 내가 만든 산출물과
+경쟁·충돌한 것으로 판단됨. 리더에게 즉시 보고했고 **리더가 해당 중복 에이전트를
+중지시킴** — 이후로는 나 혼자 처음부터 다시(clean rebuild) 진행해 신뢰할 수 있는 결과를
+확보.
+
+### 재빌드 실행 결과
+- `build.bat`을 `.bat` 래퍼 파일로 감싸 `run_in_background`로 재실행(직접 `cmd.exe /c
+  "build.bat > log 2>&1"`류 중첩 따옴표는 재현성 없이 실패 — 이전 라운드가 남긴
+  "Git Bash에서 `cmd /c` 인자가 소실될 수 있다" 경고와 일치하는 증상. `.bat` 파일을 만들어
+  Git Bash가 직접 실행하고 `>` 리다이렉트도 Bash 쪽에서 거는 방식이 안정적이었음).
+- PyInstaller 빌드 성공(`SegmentationModelUI.exe` 51MB, `dist/` 정상 생성).
+- ISCC 컴파일 성공(536.7초) — `installer\output\SegmentationModelUI-Setup-1.6.0.exe`
+  1.9GB 생성.
+- 빌드 로그 경고 전수 확인: `scipy._lib.array_api_compat.numpy.fft`/`scipy.special.
+  _cdflib` hidden-import 미발견 2건(앱 미사용 scipy 선택적 서브모듈), `torch.utils.
+  tensorboard` 서브모듈 수집 실패(tensorboard 미설치 — 앱이 안 씀), `torch.distributed.*`
+  Deprecation/SyntaxWarning 몇 건(torch/sympy 내부, 앱 코드 무관) — 전부 이전 라운드와
+  동일하게 무해함 확인. `app.*` 관련 "not found" 경고 0건.
+
+### 실행 결과 — exe 기동 + 아이콘
+- `dist\SegmentationModelUI\SegmentationModelUI.exe` 직접 실행 → 정상 기동, PowerShell
+  Win32 API(`SetForegroundWindow`+`GetWindowRect`)로 앱 창만 정밀 캡처 후 확대 → 타이틀바
+  아이콘에 "Vertex Frame" 로고(사각 프레임 + 청록 육각형 점 패턴)가 선명하게 렌더링됨을
+  육안 확인(`verify_titlebar_zoom.png`). 작업표시줄 아이콘도 동일 로고로 확대 캡처
+  확인(`verify_taskbar_zoom.png`) — 지난 라운드엔 API 레벨로만 간접 확인했던 taskbar
+  아이콘을 이번엔 실제 스크린샷 확대로 직접 확인 완료.
+
+### 실행 결과 — Inno Setup 무인 설치/제거
+- 무인 설치(`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, 직접 exe 실행 + `MSYS_NO_
+  PATHCONV=1` — `cmd.exe /c` 래퍼는 인자 소실로 실패함을 재확인) 성공. 로그: `User
+  privileges: None`, `Install mode root key: HKEY_CURRENT_USER`(관리자 권한 불필요,
+  per-user 설치 설계대로 동작), `Installation process succeeded`.
+- 설치된 exe를 Start Menu 바로가기와 동일한 조건(`WorkingDir={app}`)으로 실행 → 정상
+  기동, `data\logs\app.log`에 기동 로그 정상 기록(GPU: RTX 5060, CUDA 12.8, cuDNN 91900,
+  예외 없음). *(참고: 처음엔 Git Bash 현재 디렉터리(저장소 루트)에서 그대로 실행해
+  `data/logs/app.log`가 설치 폴더가 아닌 저장소 쪽에 생겼음 — 이는 `logger.py`의
+  `LOG_DIR = Path("data/logs")`가 CWD 기준이라는, 이전 라운드에 이미 "실사용 경로엔
+  문제없음"으로 기록된 알려진 특성을 검증 셸에서 재현한 것일 뿐, 새 버그 아님. CWD를
+  설치 폴더로 맞춰 재실행하니 정상적으로 설치 폴더 밑에 로그 생성됨을 재확인.)*
+- 무인 제거(`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) 실행 → 로그상
+  `Uninstallation process succeeded`, `Removed all? Yes`이지만 실제로는 설치 폴더와
+  `data\logs\`(런타임 생성 로그 2개)가 남음 — **기존 QA.md BUG-016과 동일 재현**(신규
+  등록 안 함). 검증 후 잔여 폴더는 직접 삭제해 머신 정리.
+
+### 오프라인 설치/구동 가능 여부 검증 (코디네이터 추가 지시)
+**실제 네트워크 차단 시도는 권한 문제로 불가**: 관리자 권한 없음(`IsInRole(Administrator)`
+= False 확인) + `Disable-NetAdapter`/`New-NetFirewallRule` 둘 다 Claude Code 세이프티
+분류기가 "시스템 레벨 네트워크 설정 변경"으로 차단(권한 요청 자체가 거부됨, 우회 시도
+안 함). 대신 다음 방법으로 대체 검증:
+
+1. **`installer\setup.iss` 정적 확인**: `[Files]` 섹션이 `Source: "{#MyDistDir}\*"`로
+   로컬 `dist\` 산출물만 복사(`grep`으로 `http`/`Download` 계열 지시문 0건 확인) — 인스톨러
+   자체는 100% 로컬 파일 복사만 수행, 외부 다운로드 없음.
+2. **CUDA/torch DLL 실물 확인**: `dist\...\_internal\torch\lib\`와 실제 설치된
+   `C:\...\Programs\SegmentationModelUI\_internal\torch\lib\` 양쪽 모두에서 `cublas*.dll`/
+   `cudnn*.dll`/`cudart*.dll`/`torch_cuda.dll` 등이 물리적으로 존재함을 `ls`로 직접
+   확인 — 런타임에 CUDA 라이브러리를 따로 받을 필요 없음.
+3. **런타임 네트워크 호출 코드 감사**: `app/` 전체에서 `requests.*`/`urllib`/`urlopen`/
+   `torch.hub`/`model_zoo` grep → 실제 호출은 0건. `device_info.py`/`cuda_diag.py`의
+   `http(s)://` 매치는 전부 사람이 읽는 로그/에러 메시지 안의 안내 URL 문자열(예: "pip
+   install ... --index-url https://...", "NVIDIA 드라이버: https://...")일 뿐 코드가
+   실행하는 요청이 아님. `app/model_presets/{deeplab_resnet,deeplab_mobilenet,
+   lraspp_mobilenet}.py`에 `pretrained: bool = False` 파라미터가 있고 `True`로 바꾸면
+   torchvision이 COCO 사전학습 가중치를 실제로 다운로드함(주석에 "네트워크 필요"라고
+   이미 명시) — 다만 **기본값이 False**라 기본 골든 패스(모델 프리셋 선택→학습)는
+   네트워크 없이 동작, 이 기능은 사용자가 명시적으로 옵트인해야만 네트워크를 요구하는
+   별개 기능으로 분류(설치·기본 구동과는 무관).
+4. **실측 대체 확인**: 설치된 exe를 정상 실행한 직후(프로젝트 선택 다이얼로그 상태) 해당
+   PID로 `netstat -ano`를 확인 — 매칭되는 TCP/UDP 연결·리슨 0건. 즉 설치 직후 기동 시점에
+   실제로 외부 네트워크 연결을 전혀 시도하지 않음을 실측으로 뒷받침.
+
+**결론**: 물리적 네트워크 완전 차단 상태에서의 실측은 권한 제약으로 수행하지 못했지만,
+(a) 인스톨러 자체에 다운로드 로직이 없고 (b) CUDA 포함 전체 의존성이 로컬에 이미
+번들되어 있으며 (c) 코드 감사상 실행되는 네트워크 호출이 없고(선택적 `pretrained=True`
+제외) (d) 실제 기동 시 네트워크 연결 시도가 0건이라는 4중의 근거로 "설치 파일 하나만으로
+오프라인 설치·기본 구동이 가능하다"는 결론에 대한 신뢰도는 높다고 판단. 다만 100%
+확정하려면 관리자 권한이 있는 별도 환경에서 실제 네트워크 차단 후 재현하는 것을 권장 —
+`docs/decisions-needed.md`에는 등록하지 않음(사용자 결정이 필요한 사안이 아니라 권한
+제약에 따른 검증 수단 대체일 뿐이므로).
+
+### 발견한 문제
+새 버그 없음. 재확인된 기존 항목: QA.md BUG-016(무인 제거 후 `data\logs\` 잔존)만
+동일하게 재현 — 이미 Open으로 추적 중이라 QA.md 추가 등록 없음.
+
+### 정리
+검증에 쓴 설치본(`C:\Users\Feel\AppData\Local\Programs\SegmentationModelUI\`)은 테스트
+후 직접 삭제해 머신을 정리. 저장소 쪽 `dist\`/`installer\output\`는 `.gitignore`로 이미
+제외 대상이라 그대로 둠(`git status` clean 확인).
+
+### 판정
+**통과**. exe/installer 정상 빌드·기동·무인 설치·무인 제거(BUG-016 범위 내) 전 과정 재확인,
+로고 아이콘 타이틀바+작업표시줄 실제 확대 스크린샷으로 재확인, 빌드 로그 경고 전부 무해
+확인. 오프라인 설치/구동 가능성은 실측 네트워크 차단은 권한 제약으로 불가했으나 정적
+근거(다운로드 로직 없음, 의존성 전량 번들, 실행되는 네트워크 호출 없음) + 실측
+netstat(연결 0건) 4중 근거로 사실상 확인.
