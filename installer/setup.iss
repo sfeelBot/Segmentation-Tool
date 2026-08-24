@@ -30,7 +30,10 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
-SetupIconFile={#MyDistDir}\app\resources\app_icon.ico
+; 소스 저장소 경로를 직접 참조 (dist\ 아래 레이아웃은 PyInstaller 버전에 따라
+; onedir datas가 _internal\ 하위로 들어가는 등 바뀔 수 있어 MyDistDir 기준으로
+; 잡으면 깨지기 쉽다 — app_icon.ico는 항상 저장소에 존재하므로 이쪽이 안전).
+SetupIconFile=..\app\resources\app_icon.ico
 
 [Languages]
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
