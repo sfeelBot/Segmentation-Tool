@@ -1939,3 +1939,75 @@ Windows 배치파일/무인설치 스위치를 실행할 땐 `MSYS_NO_PATHCONV=1
 →기동→제거 전 과정으로 확인. 코드 버그 신규 발견 없음(QA.md 변경 없음). 발견한 두 가지는
 모두 이 dev 머신/자동화 셸의 환경 특성(D: 드라이브 공간 부족, Git Bash의 `cmd /c` 인자 소실)
 이지 코드 결함이 아니므로 리더에게 별도 보고만 하고 QA.md에는 등록하지 않음.
+
+---
+
+## 2026-08-24 — "Vertex Frame" 앱 아이콘 실행 확인 (커밋 d0d0b30)
+
+### 배경
+구현 에이전트가 `app/resources/logo.svg` + `app/resources/app_icon.ico`(멀티 해상도)를
+만들고 `main.py`(`QApplication.setWindowIcon`), `build.spec`(EXE `icon=`), `installer/setup.iss`
+(`SetupIconFile`)에 적용. 구현 로그가 실제 앱 구동 확인은 검증 에이전트에게 명시적으로
+위임해둔 상태.
+
+### 검증 1 — ICO 파일 유효성
+- `py -3`으로 `PIL.Image.open('app/resources/app_icon.ico')` 후 `info['sizes']`를 확인:
+  `{(16,16),(32,32),(48,48),(256,256)}` 4개 프레임 모두 존재. 각 크기를 `im.size = (w,h); im.load()`로
+  개별 로드해 16/32/48/256 전부 정상 디코딩됨을 확인 — 구현 로그가 주장한 "이전 시도는
+  16×16 1프레임만 저장되는 버그가 있었고 이번엔 고쳤다"는 내용이 실측으로 재확인됨.
+
+### 검증 2 — 타이틀바 아이콘 실 렌더링
+- `py -3 main.py`로 앱을 백그라운드 구동(cwd: 프로젝트 루트, `Path(__file__)` 기준 상대 경로
+  그대로 사용 — 사용자가 명시한 실행 방법과 동일 조건).
+- `ProjectStartDialog`("프로젝트" 창)가 뜬 상태에서 전체 화면 스크린샷 후 타이틀바 아이콘
+  영역을 나침 확대(nearest-neighbor 400×400 업스케일) — 기본 Qt 회색 아이콘이 아니라 프레임
+  코너 마크 + 초록/파랑 폴리곤 꼭짓점 점들로 구성된 커스텀 "Vertex Frame" 로고가 선명하게
+  렌더링됨을 육안 확인.
+- 스크린샷: 원본 `screen1.png`, 확대본 `titlebar_zoom.png`
+  (스크래치패드: `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\185caeb5-815b-47f3-a579-7a735d844a98\scratchpad\`).
+
+### 검증 3 — 작업표시줄(taskbar) 아이콘
+- 화면 taskbar 스트립을 스크린샷으로 확인한 결과, 눈으로 짚은 위치의 아이콘은 파이썬
+  런처/터미널 아이콘으로 보여 육안으로는 판별이 애매했음(다른 고정 아이콘과 섞여 있어
+  실행 중인 우리 앱 버튼인지 확신 불가 — Windows 11 taskbar hover 미리보기는
+  `SetCursorPos`만으로는 트리거되지 않아 실제 마우스 이동 이벤트 없이는 스크린샷으로 특정이
+  어려웠음).
+- 대신 Win32 API를 직접 호출해(`EnumWindows`로 해당 프로세스(PID)의 최상위 가시 윈도우
+  hwnd를 찾고 `SendMessage(hwnd, WM_GETICON, ICON_BIG, 0)`) 그 윈도우에 실제로 바인딩된
+  32×32 큰 아이콘 핸들을 추출, `Icon.FromHandle().ToBitmap()`으로 PNG 저장해 확인한 결과
+  타이틀바에서 본 것과 동일한 "Vertex Frame" 로고였음(`window_big_icon.png`). `WM_GETICON`의
+  `ICON_BIG`은 Windows 작업표시줄이 실행 중 창 버튼에 사용하는 것과 동일한 아이콘 소스이므로,
+  taskbar에도 커스텀 로고가 정상 반영된다고 판단(육안 taskbar 스크린샷으로 100% 확정하지는
+  못했으나 API 레벨 근거로 충분히 신뢰 가능).
+
+### 검증 4 — 로그 확인
+- `data/logs/app.log` 최신 항목(`2026-08-24 14:31:18` 기동)에 아이콘 로드 관련 에러 없음.
+- `data/logs/errors.log`에 이번 실행 관련 항목 없음(마지막 기록은 2026-08-20, 무관한
+  구 버그 — `image_browser.py` `unhashable QTreeWidgetItem`, 이미 QA.md에서 별도 추적 중인
+  건과 무관하게 오래된 로그로 이번 라운드와 무관).
+- `main.py`의 `icon_path = Path(__file__).resolve().parent / "app" / "resources" / "app_icon.ico"`가
+  `py -3 main.py`를 프로젝트 루트에서 실행한 조건에서 정상적으로 파일을 찾아 로드함을 실제
+  타이틀바 렌더링 결과로 간접 확인(경로 관련 예외/조용한 스킵 로그 없음).
+
+### 검증 5 — build.spec / installer/setup.iss 정적 대조
+- `build.spec:51` `datas`에 `("app/resources/app_icon.ico", "app/resources")`,
+  `build.spec:87` `EXE(...)`에 `icon="app/resources/app_icon.ico"` — 실제 파일 존재 경로와 일치.
+- `installer/setup.iss:33` `SetupIconFile={#MyDistDir}\app\resources\app_icon.ico` —
+  `#define MyDistDir "..\dist\SegmentationModelUI"`(9행)과 `build.spec`의 datas 배치 대상 경로가
+  일치해 PyInstaller onedir 산출물 구조와 맞음. 문법·경로 모두 이상 없음.
+- 전체 PyInstaller 재빌드(CUDA torch 포함 20~30분)는 지시대로 이번 라운드에서 강제하지
+  않음 — 다음에 사용자가 `build.bat`을 돌릴 때 exe/설치 프로그램 아이콘이 자연히 검증됨.
+
+### 검증 6 — 로고 자산 분리
+- `app/widgets/icons.py` 등 `app/` 전체에서 `logo.svg`/`app_icon.ico`를 참조하는 코드가
+  없음을 grep으로 확인 — `currentColor` 재색상 아이콘 세트(`app/resources/icons/`)와 물리적으로
+  분리돼 있다는 구현 에이전트 주장이 사실과 일치.
+
+### 발견한 문제
+없음. 코드 수정 불필요.
+
+### 판정
+**통과**. ICO 4프레임 정상, 타이틀바에 커스텀 로고 실 렌더링 육안 확인, 작업표시줄은
+`WM_GETICON(ICON_BIG)` API 레벨 확인으로 대체(육안 taskbar 스크린샷은 인접 고정 아이콘과
+혼동돼 확정 못함 — 필요시 다음 라운드에서 실제 hover 스크린샷 재시도 가능), 로그 무오류,
+build.spec/setup.iss 경로 정적 대조 일치, 로고 자산 분리 확인. QA.md 신규 등록 없음.
