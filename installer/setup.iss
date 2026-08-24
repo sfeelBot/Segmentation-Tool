@@ -3,7 +3,7 @@
 ; 사용: "ISCC.exe installer\setup.iss" (build.bat이 dist\ 생성 후 자동 호출)
 
 #define MyAppName "Segmentation Model UI"
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "1.7.0"
 #define MyAppPublisher "Segmentation Model UI"
 #define MyAppExeName "SegmentationModelUI.exe"
 #define MyDistDir "..\dist\SegmentationModelUI"

@@ -5,6 +5,46 @@
 
 ---
 
+## [v1.7.0] 2026-08-24
+
+### 사용자 요청
+> "github에 installer 빌드된 것까지 포함해서 올려줘."
+
+v1.6.0 이후 161커밋 동안 버전 태깅이 누락된 채 기능 추가·GitHub 이슈 대응·성능
+개선·UI 재편이 누적됐다. 이번 릴리즈는 그 전체를 하나의 배포 단위로 묶어 정식
+버전을 매기고, 처음으로 Windows 설치 프로그램(exe installer)을 제공한다.
+
+### 추가
+- **Windows exe + Inno Setup 인스톨러**: `build.spec`(PyInstaller onedir) +
+  `installer/setup.iss`(Inno Setup) + `build.bat` 원클릭 빌드 스크립트. per-user
+  설치(관리자 권한 불필요), 앱 로고("Vertex Frame") 아이콘을 exe/설치 프로그램에 적용
+- **프로젝트 내보내기/가져오기** (GitHub #2): 프로젝트 전체(이미지·어노테이션·체크포인트·
+  classes.json)를 zip으로 내보내고 되가져오기
+- **UI 재편**: 라벨링/학습/추론 탭에 자유 리사이즈 서브스플리터 적용, 학습 탭 큐 영역·
+  추론 탭 이미지 목록(검색/정렬/트리형 폴더) 개편
+- **LR 스케줄러 9종**, **CUDA 종합 진단 팝업**, 단축키 왼손 QWER 재배치, 폴더 접기/펼치기
+  그룹 헤더, 앱 종료 전 확인 팝업, RGB 채널별 그레이스케일 뷰어 등 다수 UX 개선
+- **디자인 톤 정리**: 장식 이모지 제거 → 기능 아이콘 19종 SVG/QIcon화, i18n 전체 영어
+  전환, matplotlib 손실 그래프·모델 탭 에디터 팔레트를 앱 표준 배색으로 정규화
+
+### 수정 (성능)
+- 어노테이션 개수 증가 시 로딩 지연 8.6×/2.1× 개선(GitHub #6-B), 오버레이 재생성 중
+  깜빡임 제거(#6-A), 학습 데이터로더 이미지 캐시 + `num_workers` 자동 감지,
+  추론 결과 미리보기 다운스케일, 이미지 브라우저 검색 디바운스, 앱 기동 시
+  torchvision/albumentations 지연 임포트로 콜드 스타트 단축
+- `rle_encode` 언더플로우로 인한 데이터 유실(BUG-002), 캔버스 유령 어노테이션·undo
+  OOM 크래시(BUG-003/014), 서브스플리터 접힘·아이콘 stale 경쟁조건·브러시 크기
+  다이얼로그 stray 어노테이션 등 버그 다수 수정 (BUG-005~015)
+- `build.bat` 한글 텍스트 인코딩 깨짐(`chcp 65001`로도 못 잡던 파싱 오류) → ASCII 전환,
+  `SetupIconFile` 경로를 dist 레이아웃 대신 소스 저장소 기준으로 고정
+
+### 기술
+- `installer/setup.iss`: `MyAppVersion "1.7.0"`, `PrivilegesRequired=lowest`,
+  `SetupIconFile=..\app\resources\app_icon.ico`
+- `app/resources/app_icon.ico` 신규 자산 (앱/exe/설치 프로그램 공용 아이콘)
+
+---
+
 ## [v1.6.0] 2026-05-16
 
 ### 사용자 요청
