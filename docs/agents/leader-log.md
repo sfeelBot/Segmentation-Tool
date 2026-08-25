@@ -5,9 +5,34 @@
 
 ## 현재 상황 요약
 
-*(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다)*
+*(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다. 단, 이 로그 자체가 `feature/
+zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-analysis-tab`)에서
+갱신되는 사본이라, main 브랜치 워크트리(`D:\segmentation model`)의 같은 파일과는 병합
+전까지 내용이 갈라진다 — 아래 참고.)*
 
-> **[최신, 2026-08-21]** **디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
+> **[최신, 2026-08-25] 존(Zone) 분석 탭 — 라운드 1 구현 완료, 검증 진행 중 + 워크트리 분리**
+> `feature/zone-analysis-tab` 브랜치에서 진행 중인 신규 독립 기능(배터리 캡 녹 검사,
+> 스펙: [zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md)).
+> 기획(원 데이터모델 확정까지 2차례 정정 반영) 완료 → 라운드 1(탭 스켈레톤+체크포인트
+> 로드+추론, 커밋 `13f2952`) 구현 완료 → 검증 1차 시도 중 **동시 세션 충돌 발견**:
+> 다른 세션(`segmentation-model-92`)이 같은 워킹 디렉토리(`D:\segmentation model`)를
+> 공유해서 작업 중이었고, 그 세션의 무관한 커밋(어노테이션 삭제/내보내기/가져오기
+> 성능 수정 `46eb77b`+`aa330c1`)이 이 브랜치에 섞여 들어감 + 내 검증 에이전트의
+> `python main.py` 구동이 그 동시 파일 변경 때문에 중단·유실됨(결과 미기록). 사용자
+> 확인 후 **`git worktree add`로 분리**: 원래 디렉토리(`D:\segmentation model`)는
+> `main`으로 되돌려 다른 세션에 반환, 이 브랜치 전용 워크트리를 `D:\segmentation
+> model-zone-analysis-tab`에 새로 만듦(둘 다 같은 `.git` 저장소·원격 공유 — push는
+> 워크트리 무관하게 동일하게 동작). gitignore된 런타임 데이터 중 실사용 가치가 있는
+> `projects/nok/{images,checkpoints,user_models}`(배터리 캡 실사진 5장 포함, 마침 이
+> 기능의 실제 검사 대상과 동일 도메인)만 Windows 디렉토리 정션(junction)으로 원본과
+> 공유(복사 아님, 최신 상태 항상 동기화, `checkpoints`는 현재 비어있음 확인).
+> 라운드 1 검증은 이 새 워크트리에서 처음부터 다시 진행 중(진행 중, 결과 대기).
+> **주의**: 섞여 들어간 다른 세션 커밋 2개를 이 브랜치에서 정리(cherry-pick to main +
+> 이 브랜치에서 제거)할지 여부는 아직 미결정 — origin에는 아직 안 올라간 상태
+> (`origin/feature/zone-analysis-tab` 최신은 기획 완료 커밋 `73716dd`까지만) 확인함,
+> push 전에 정리 여부 사용자 확인 필요.
+>
+> **[2026-08-21] 디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
 > ([roadmap.md](../roadmap.md) 해당 절): ①아이콘SVG ②장식이모지제거 ③model_tab팔레트
 > ④loss_chart배색 ⑤학습/추론서브스플리터 ⑥i18n en전환(커밋`96b829c`) ⑦팔레트정규화
 > (커밋`8f78f8a`) — **① ~ ⑦ 전부 구현+독립검증 통과**. ⑦ 검증 중 발견된 **BUG-015**
