@@ -168,6 +168,10 @@ class InferenceImageList(QWidget):
     def count(self) -> int:
         return len(self._paths)
 
+    def paths(self) -> list[Path]:
+        """현재 표시 중(필터+정렬 후)인 전체 이미지 경로 — 일괄 처리용."""
+        return list(self._paths)
+
     def current_path(self) -> Path | None:
         return self._get_item_path(self._tree.currentItem())
 

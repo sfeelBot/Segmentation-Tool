@@ -2,10 +2,10 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
-    QPushButton, QLabel, QComboBox, QSpinBox,
+    QPushButton, QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
     QFileDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QGroupBox, QSplitter, QHeaderView,
-    QApplication,
+    QApplication, QProgressDialog,
 )
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, QSize
@@ -14,8 +14,8 @@ from app.widgets.icons import icon as svg_icon
 
 from app.core import inference_engine as engine
 from app.core.inference_engine import (
-    InferenceResult, list_checkpoints, load_checkpoint_meta, CheckpointMeta,
-    load_model_from_ckpt, model_source_label,
+    InferenceResult, BlobStat, list_checkpoints, load_checkpoint_meta, CheckpointMeta,
+    load_model_from_ckpt, model_source_label, export_blobs_to_excel,
 )
 from app.core.logger import get_logger
 from app.core.device_info import prompt_gpu_availability
@@ -74,6 +74,10 @@ class InferenceTab(QWidget):
         self._btn_run = QPushButton("▶  추론 실행")
         self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
         ctrl.addWidget(self._btn_run)
+
+        self._btn_export_excel = QPushButton(" Excel로 내보내기")
+        self._btn_export_excel.setIcon(svg_icon("export"))
+        ctrl.addWidget(self._btn_export_excel)
         top_layout.addLayout(ctrl)
 
         # ── 추론 방식 ─────────────────────────────────────────────────────────
@@ -97,6 +101,32 @@ class InferenceTab(QWidget):
         self._overlap_spin.setToolTip("패치 간 겹치는 픽셀 수 (sliding_window 모드)")
         infer_mode_row.addWidget(self._overlap_spin)
         top_layout.addLayout(infer_mode_row)
+
+        # ── AI 점수 / 픽셀 크기 threshold ─────────────────────────────────────
+        thresh_row = QHBoxLayout()
+        thresh_row.addWidget(QLabel("최소 AI 점수:"))
+        self._min_conf_spin = QDoubleSpinBox()
+        self._min_conf_spin.setRange(0, 100)
+        self._min_conf_spin.setValue(0)
+        self._min_conf_spin.setSuffix(" %")
+        self._min_conf_spin.setFixedWidth(90)
+        self._min_conf_spin.setToolTip(
+            "blob(연결 영역)의 평균 신뢰도가 이 값 미만이면 배경으로 제거"
+        )
+        thresh_row.addWidget(self._min_conf_spin)
+        thresh_row.addWidget(QLabel("최소 픽셀 크기:"))
+        self._min_px_spin = QSpinBox()
+        self._min_px_spin.setRange(0, 100000)
+        self._min_px_spin.setValue(0)
+        self._min_px_spin.setSuffix(" px")
+        self._min_px_spin.setFixedWidth(100)
+        self._min_px_spin.setToolTip("blob 면적(픽셀 수)이 이 값 미만이면 배경으로 제거")
+        thresh_row.addWidget(self._min_px_spin)
+        thresh_row.addStretch()
+        self._lbl_blob_count = QLabel("탐지된 blob 수: —")
+        self._lbl_blob_count.setStyleSheet("color:#9ca3af;")
+        thresh_row.addWidget(self._lbl_blob_count)
+        top_layout.addLayout(thresh_row)
 
         # ── 체크포인트 테이블 ──────────────────────────────────────────────────
         ckpt_header = QHBoxLayout()
@@ -217,6 +247,9 @@ class InferenceTab(QWidget):
         self._btn_file.clicked.connect(self._on_select_file)
         self._btn_folder.clicked.connect(self._on_select_folder)
         self._btn_run.clicked.connect(self._on_run)
+        self._btn_export_excel.clicked.connect(self._on_export_excel)
+        self._min_conf_spin.valueChanged.connect(self._on_threshold_changed)
+        self._min_px_spin.valueChanged.connect(self._on_threshold_changed)
         self._btn_prev.clicked.connect(self._on_prev)
         self._btn_next.clicked.connect(self._on_next)
         self._img_list.image_selected.connect(self._on_image_selected)
@@ -359,6 +392,8 @@ class InferenceTab(QWidget):
         self._btn_run.setText("추론 중…")
         try:
             mode = self._infer_mode.currentData()
+            min_confidence = self._min_conf_spin.value() / 100.0
+            min_pixel_size = self._min_px_spin.value()
             if mode == "sliding_window":
                 result = engine.run_sliding_window(
                     model           = model,
@@ -366,6 +401,8 @@ class InferenceTab(QWidget):
                     checkpoint_path = ckpt_path,
                     overlap         = self._overlap_spin.value(),
                     opacity         = self._viewer_panel.opacity,
+                    min_confidence  = min_confidence,
+                    min_pixel_size  = min_pixel_size,
                 )
             else:
                 result = engine.run(
@@ -373,6 +410,8 @@ class InferenceTab(QWidget):
                     image_path      = self._image_path,
                     checkpoint_path = ckpt_path,
                     opacity         = self._viewer_panel.opacity,
+                    min_confidence  = min_confidence,
+                    min_pixel_size  = min_pixel_size,
                 )
             self._last_result = result
             self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap)
@@ -385,21 +424,40 @@ class InferenceTab(QWidget):
             self._btn_run.setText("▶  추론 실행")
 
     def _on_opacity_changed(self, opacity: float) -> None:
-        if self._image_path is None:
-            return
-        ckpt_path: Path | None = self._get_selected_ckpt()
-        model = self._auto_model or self._get_model()
-        if ckpt_path is None or model is None:
+        # 모델 재실행 없이 캐시된 raw_class_map/confidence_map으로 즉시 재합성
+        # (threshold 필터도 함께 유지 — engine.run()으로 되돌리면 필터가 풀린다).
+        if self._last_result is None:
             return
         try:
-            result = engine.run(
-                model           = model,
-                image_path      = self._image_path,
-                checkpoint_path = ckpt_path,
-                opacity         = opacity,
+            result = engine.refilter(
+                self._last_result.raw_class_map,
+                self._last_result.confidence_map,
+                self._image_path,
+                min_confidence = self._min_conf_spin.value() / 100.0,
+                min_pixel_size = self._min_px_spin.value(),
+                opacity        = opacity,
             )
             self._last_result = result
             self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap)
+        except Exception:
+            pass
+
+    def _on_threshold_changed(self, *_args) -> None:
+        """AI 점수·픽셀 크기 threshold 변경 — 모델 재실행 없이 즉시 재필터링."""
+        if self._last_result is None:
+            return   # 아직 추론 전이면 다음 "추론 실행" 시 현재 값이 반영됨
+        try:
+            result = engine.refilter(
+                self._last_result.raw_class_map,
+                self._last_result.confidence_map,
+                self._image_path,
+                min_confidence = self._min_conf_spin.value() / 100.0,
+                min_pixel_size = self._min_px_spin.value(),
+                opacity        = self._viewer_panel.opacity,
+            )
+            self._last_result = result
+            self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap)
+            self._update_legend(result)
         except Exception:
             pass
 
@@ -451,9 +509,116 @@ class InferenceTab(QWidget):
             self._legend_table.setItem(row, 0, color_item)
             self._legend_table.setItem(row, 1, QTableWidgetItem(stat.name))
             self._legend_table.setItem(row, 2, QTableWidgetItem(f"{stat.pixel_pct:.1f}"))
+        self._lbl_blob_count.setText(f"탐지된 blob 수: {len(result.blobs)}개")
 
     def _get_model(self):
         win = self.window()
         if hasattr(win, "_model_tab"):
             return win._model_tab.loaded_model
         return None
+
+    # ── 슬롯 — Excel 내보내기 ────────────────────────────────────────────────
+
+    def _on_export_excel(self) -> None:
+        is_folder_mode = self._list_panel.isVisible() and self._img_list.count() >= 2
+        export_all = False
+        if is_folder_mode:
+            box = QMessageBox(self)
+            box.setWindowTitle("Excel로 내보내기")
+            box.setText("몇 개의 이미지에서 blob을 내보낼까요?")
+            btn_current = box.addButton("현재 이미지만", QMessageBox.ButtonRole.AcceptRole)
+            btn_all = box.addButton("목록 전체 일괄 추론", QMessageBox.ButtonRole.ActionRole)
+            box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is btn_all:
+                export_all = True
+            elif clicked is not btn_current:
+                return
+
+        if export_all:
+            self._export_all_images_to_excel()
+        else:
+            self._export_current_to_excel()
+
+    def _export_current_to_excel(self) -> None:
+        if self._last_result is None:
+            QMessageBox.warning(self, "추론 결과 없음", "먼저 추론을 실행하세요.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Excel로 내보내기", "blobs.xlsx", "Excel (*.xlsx)"
+        )
+        if not path:
+            return
+        img_name = self._image_path.name if self._image_path else ""
+        rows: list[tuple[str, BlobStat]] = [(img_name, b) for b in self._last_result.blobs]
+        try:
+            export_blobs_to_excel(rows, Path(path))
+        except Exception as exc:
+            log.exception("Excel 내보내기 실패")
+            QMessageBox.critical(self, "내보내기 오류", str(exc))
+            return
+        QMessageBox.information(
+            self, "내보내기 완료", f"{len(rows)}개 blob을 1개 이미지에서 내보냈습니다."
+        )
+
+    def _export_all_images_to_excel(self) -> None:
+        ckpt_path = self._get_selected_ckpt()
+        model = self._auto_model or self._get_model()
+        if ckpt_path is None or model is None:
+            QMessageBox.warning(self, "모델 없음", "체크포인트와 모델을 먼저 준비하세요.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Excel로 내보내기", "blobs.xlsx", "Excel (*.xlsx)"
+        )
+        if not path:
+            return
+
+        paths = self._img_list.paths()
+        mode = self._infer_mode.currentData()
+        min_confidence = self._min_conf_spin.value() / 100.0
+        min_pixel_size = self._min_px_spin.value()
+
+        progress = QProgressDialog("추론 및 blob 수집 중…", "취소", 0, len(paths), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        rows: list[tuple[str, BlobStat]] = []
+        for i, img_path in enumerate(paths):
+            if progress.wasCanceled():
+                return
+            progress.setLabelText(f"{i + 1} / {len(paths)}  {img_path.name}")
+            progress.setValue(i)
+            QApplication.processEvents()
+            try:
+                if img_path == self._image_path and self._last_result is not None:
+                    result = self._last_result
+                elif mode == "sliding_window":
+                    result = engine.run_sliding_window(
+                        model=model, image_path=img_path, checkpoint_path=ckpt_path,
+                        overlap=self._overlap_spin.value(), opacity=0.5,
+                        min_confidence=min_confidence, min_pixel_size=min_pixel_size,
+                    )
+                else:
+                    result = engine.run(
+                        model=model, image_path=img_path, checkpoint_path=ckpt_path,
+                        opacity=0.5,
+                        min_confidence=min_confidence, min_pixel_size=min_pixel_size,
+                    )
+            except Exception:
+                log.exception(f"일괄 추론 실패 — image={img_path}")
+                continue
+            rows.extend((img_path.name, b) for b in result.blobs)
+        progress.setValue(len(paths))
+
+        try:
+            export_blobs_to_excel(rows, Path(path))
+        except Exception as exc:
+            log.exception("Excel 내보내기 실패")
+            QMessageBox.critical(self, "내보내기 오류", str(exc))
+            return
+        QMessageBox.information(
+            self, "내보내기 완료",
+            f"{len(rows)}개 blob을 {len(paths)}개 이미지에서 내보냈습니다.",
+        )

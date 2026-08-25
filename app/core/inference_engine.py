@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,10 +25,31 @@ class ClassStat:
 
 
 @dataclass
+class BlobStat:
+    """연결 요소(blob) 하나의 통계 — Excel 내보내기·필터링에 쓰인다."""
+    blob_id: int
+    class_id: int
+    class_name: str
+    pixel_count: int
+    mean_confidence: float   # 0~1
+    min_confidence: float
+    max_confidence: float
+    centroid_x: float
+    centroid_y: float
+    bbox_x: int
+    bbox_y: int
+    bbox_w: int
+    bbox_h: int
+
+
+@dataclass
 class InferenceResult:
-    class_map: np.ndarray          # (H, W) int64 — 원본 이미지 해상도
+    class_map: np.ndarray          # (H, W) int64 — 필터 적용 후 원본 해상도
+    raw_class_map: np.ndarray      # (H, W) int64 — 필터 적용 전 원본 argmax 클래스맵 (재필터링용)
+    confidence_map: np.ndarray     # (H, W) float32 — 픽셀별 최고 클래스 확률 (재필터링용)
     overlay_pixmap: QPixmap        # 원본 + 컬러 마스크 블렌딩 결과
     class_stats: list[ClassStat]
+    blobs: list[BlobStat]
 
 
 def run(
@@ -35,10 +57,14 @@ def run(
     image_path: Path | str,
     checkpoint_path: Path | str,
     opacity: float = 0.5,
+    min_confidence: float = 0.0,
+    min_pixel_size: int = 0,
 ) -> InferenceResult:
     """
     Returns InferenceResult.
     opacity: 0.0 = 원본만, 1.0 = 마스크만
+    min_confidence: blob 평균 신뢰도 하한 (0~1) — 미달 blob은 배경으로 제거
+    min_pixel_size: blob 최소 픽셀 수 — 미달 blob은 배경으로 제거
     """
     classes  = load_classes()
     cls_map  = {c.class_id: c for c in classes}
@@ -67,15 +93,27 @@ def run(
     # ── 포워드 패스 ───────────────────────────────────────────────────────────
     with torch.no_grad():
         output = model(tensor)                 # (1, C, H, W)
+        probs  = torch.softmax(output, dim=1)
 
-    class_map_small = output.argmax(dim=1).squeeze(0).cpu().numpy()  # (h, w)
+    conf_small, class_map_small = probs.max(dim=1)   # 둘 다 (1, h, w)
+    conf_small      = conf_small.squeeze(0).cpu().numpy().astype(np.float32)
+    class_map_small = class_map_small.squeeze(0).cpu().numpy()
 
     # ── 원본 해상도로 리사이즈 ────────────────────────────────────────────────
-    class_map = np.array(
+    raw_class_map = np.array(
         Image.fromarray(class_map_small.astype(np.uint8)).resize(
             (orig_w, orig_h), Image.NEAREST
         ),
         dtype=np.int64,
+    )
+    confidence_map = np.array(
+        Image.fromarray(conf_small).resize((orig_w, orig_h), Image.BILINEAR),
+        dtype=np.float32,
+    )
+
+    # ── blob 분석 + threshold 필터링 ─────────────────────────────────────────
+    class_map, blobs = _compute_blobs_and_filter(
+        raw_class_map, confidence_map, classes, min_confidence, min_pixel_size
     )
 
     # ── 컬러화 + 블렌딩 ───────────────────────────────────────────────────────
@@ -93,8 +131,11 @@ def run(
 
     return InferenceResult(
         class_map=class_map,
+        raw_class_map=raw_class_map,
+        confidence_map=confidence_map,
         overlay_pixmap=overlay_pix,
         class_stats=stats,
+        blobs=blobs,
     )
 
 
@@ -104,6 +145,8 @@ def run_sliding_window(
     checkpoint_path: Path | str,
     overlap: int = 64,
     opacity: float = 0.5,
+    min_confidence: float = 0.0,
+    min_pixel_size: int = 0,
 ) -> InferenceResult:
     """패치 학습 모델용 슬라이딩 윈도우 추론.
 
@@ -167,9 +210,15 @@ def run_sliding_window(
             acc[:, y0:y0+ph, x0:x0+pw]  += probs[j]
             counts[y0:y0+ph, x0:x0+pw]  += 1.0
 
-    # 평균 → argmax
+    # 평균 → argmax / confidence
     counts = np.maximum(counts, 1.0)
-    class_map = (acc / counts[None]).argmax(axis=0).astype(np.int64)
+    probs_avg = acc / counts[None]
+    confidence_map = probs_avg.max(axis=0).astype(np.float32)
+    raw_class_map  = probs_avg.argmax(axis=0).astype(np.int64)
+
+    class_map, blobs = _compute_blobs_and_filter(
+        raw_class_map, confidence_map, classes, min_confidence, min_pixel_size
+    )
 
     overlay_pix = _colorize_and_blend(pil_img, class_map, cls_map, opacity)
     total = class_map.size
@@ -179,7 +228,88 @@ def run_sliding_window(
          for c in classes],
         key=lambda s: s.pixel_pct, reverse=True,
     )
-    return InferenceResult(class_map=class_map, overlay_pixmap=overlay_pix, class_stats=stats)
+    return InferenceResult(
+        class_map=class_map,
+        raw_class_map=raw_class_map,
+        confidence_map=confidence_map,
+        overlay_pixmap=overlay_pix,
+        class_stats=stats,
+        blobs=blobs,
+    )
+
+
+def refilter(
+    raw_class_map: np.ndarray,
+    confidence_map: np.ndarray,
+    image_path_or_pil: "Path | str | Image.Image",
+    min_confidence: float,
+    min_pixel_size: int,
+    opacity: float,
+) -> InferenceResult:
+    """모델 재실행 없이 threshold 만 바꿔 InferenceResult를 재계산.
+
+    UI(추론 탭)에서 min_confidence/min_pixel_size 슬라이더·스핀박스 값이 바뀔 때
+    호출한다 — numpy/cv2 연산만 수행하므로 opacity 슬라이더처럼 forward pass를
+    다시 돌리지 않는다.
+    """
+    classes = load_classes()
+    cls_map = {c.class_id: c for c in classes}
+    pil_img = (
+        image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
+        else Image.open(str(image_path_or_pil)).convert("RGB")
+    )
+
+    class_map, blobs = _compute_blobs_and_filter(
+        raw_class_map, confidence_map, classes, min_confidence, min_pixel_size
+    )
+    overlay_pix = _colorize_and_blend(pil_img, class_map, cls_map, opacity)
+
+    total = class_map.size
+    stats = sorted(
+        [ClassStat(c.class_id, c.name, c.color,
+                   round(float((class_map == c.class_id).sum()) / total * 100, 2))
+         for c in classes],
+        key=lambda s: s.pixel_pct, reverse=True,
+    )
+    return InferenceResult(
+        class_map=class_map,
+        raw_class_map=raw_class_map,
+        confidence_map=confidence_map,
+        overlay_pixmap=overlay_pix,
+        class_stats=stats,
+        blobs=blobs,
+    )
+
+
+def export_blobs_to_excel(rows: list[tuple[str, BlobStat]], out_path: Path) -> None:
+    """(이미지파일명, BlobStat) 목록을 xlsx로 저장 — 헤더만 볼드, 시트 1개."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "blobs"
+    headers = [
+        "이미지파일명", "blob_id", "class_id", "클래스명", "픽셀수(면적)",
+        "평균 신뢰도(%)", "최소 신뢰도(%)", "최대 신뢰도(%)",
+        "중심x", "중심y", "bbox_x", "bbox_y", "bbox_w", "bbox_h",
+    ]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    for image_name, b in rows:
+        ws.append([
+            image_name, b.blob_id, b.class_id, b.class_name, b.pixel_count,
+            round(b.mean_confidence * 100, 2),
+            round(b.min_confidence * 100, 2),
+            round(b.max_confidence * 100, 2),
+            round(b.centroid_x, 1), round(b.centroid_y, 1),
+            b.bbox_x, b.bbox_y, b.bbox_w, b.bbox_h,
+        ])
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(str(out_path))
 
 
 def _preprocess_patch(patch: Image.Image) -> torch.Tensor:
@@ -282,6 +412,76 @@ def model_source_label(source: str) -> str:
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────
+
+def _compute_blobs_and_filter(
+    class_map: np.ndarray,
+    confidence_map: np.ndarray,
+    classes: list[ClassDef],
+    min_confidence: float,
+    min_pixel_size: int,
+) -> tuple[np.ndarray, list[BlobStat]]:
+    """클래스별 연결 요소(blob)를 분리해 threshold 미달 blob은 배경(0)으로 되돌린다.
+
+    class_id == 0(배경)은 blob 대상에서 제외. 반환하는 class_map은 새 배열이며
+    인자로 받은 class_map은 mutate하지 않는다. blob_id는 이미지 전체 기준 1부터 순차 부여.
+    """
+    filtered = class_map.copy()
+    blobs: list[BlobStat] = []
+    name_by_id = {c.class_id: c.name for c in classes}
+    blob_id = 1
+
+    for cid in (int(c) for c in np.unique(class_map)):
+        if cid == 0:
+            continue
+        mask = (class_map == cid).astype(np.uint8)
+        n_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if n_labels <= 1:
+            continue
+
+        # per-blob mean/min/max confidence — 라벨별 O(H×W) 부울 인덱싱 대신
+        # bincount/ufunc.at 으로 전체 픽셀을 한 번씩만 훑는다 (blob 개수에 무관하게 O(H×W)).
+        flat_labels = labels.ravel()
+        flat_conf   = confidence_map.ravel().astype(np.float64)
+        cnt = np.bincount(flat_labels, minlength=n_labels)
+        sum_conf = np.bincount(flat_labels, weights=flat_conf, minlength=n_labels)
+        mean_per_label = sum_conf / np.maximum(cnt, 1)
+        min_per_label = np.full(n_labels, np.inf)
+        np.minimum.at(min_per_label, flat_labels, flat_conf)
+        max_per_label = np.full(n_labels, -np.inf)
+        np.maximum.at(max_per_label, flat_labels, flat_conf)
+
+        reject_labels: list[int] = []
+        for lbl in range(1, n_labels):   # 0 = 배경 라벨
+            pixel_count = int(stats[lbl, cv2.CC_STAT_AREA])
+            mean_conf = float(mean_per_label[lbl])
+
+            if mean_conf < min_confidence or pixel_count < min_pixel_size:
+                reject_labels.append(lbl)
+                continue
+
+            cx, cy = centroids[lbl]
+            blobs.append(BlobStat(
+                blob_id=blob_id,
+                class_id=cid,
+                class_name=name_by_id.get(cid, f"class_{cid}"),
+                pixel_count=pixel_count,
+                mean_confidence=mean_conf,
+                min_confidence=float(min_per_label[lbl]),
+                max_confidence=float(max_per_label[lbl]),
+                centroid_x=float(cx),
+                centroid_y=float(cy),
+                bbox_x=int(stats[lbl, cv2.CC_STAT_LEFT]),
+                bbox_y=int(stats[lbl, cv2.CC_STAT_TOP]),
+                bbox_w=int(stats[lbl, cv2.CC_STAT_WIDTH]),
+                bbox_h=int(stats[lbl, cv2.CC_STAT_HEIGHT]),
+            ))
+            blob_id += 1
+
+        if reject_labels:
+            filtered[np.isin(labels, reject_labels)] = 0
+
+    return filtered, blobs
+
 
 def _pick_device() -> torch.device:
     if torch.cuda.is_available():
