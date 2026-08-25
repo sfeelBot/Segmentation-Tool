@@ -2533,3 +2533,141 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 ### 관련
 - 리더 사전 설계 지시서 준수: 다중 시트 분리, 커스텀 스타일링, YAML 설정 등 과한
   옵션은 추가하지 않음(ponytail 원칙).
+
+---
+
+## 2026-08-25 — 존(Zone) 분석 탭 라운드 1: 탭 스켈레톤 + 체크포인트 로드 + 추론
+
+### 변경
+- `app/tabs/zone_analysis_tab.py` 신설 — `ZoneAnalysisTab(QWidget)`. 이미지/체크포인트
+  파일 직접 열기(`QFileDialog`, 프로젝트 시스템 미사용) + `load_checkpoint_meta()`로
+  `model_source` 확인 → `preset:*`는 `load_model_from_ckpt()`로 자동 인스턴스화, 그 외는
+  탭 안에 모델 코드 입력 박스를 노출해 `model_validator.validate()` +
+  `model_loader.load_from_code()`로 Validate → Load 2단계(모델 탭과 동일 패턴). 스펙
+  판단 3 지시대로 `model_loader.save_user_code()`는 호출하지 않음(디스크에 저장 안 함,
+  세션 메모리에만 유지).
+- `app/widgets/zone_canvas.py` 신설 — `ZoneCanvas(OverlayViewer)`. 라운드 1은 순수 뷰어
+  (원 검출/편집 UI 없음) — `overlay_viewer.OverlayViewer`의 줌/팬 QPainter 패턴을 그대로
+  상속 재사용. 라운드 2에서 원(circle) 오버레이·편집을 추가할 확장 지점으로 남겨둠.
+- `app/core/inference_engine.py` — `run()`/`run_sliding_window()`/`refilter()` 3곳에
+  `classes: list[ClassDef] | None = None` 선택 인자 추가(각 1~2줄). `None`이면 기존과
+  동일하게 `load_classes()` 폴백. `inference_tab.py`(기존 4탭)는 이 인자를 넘기지 않으므로
+  동작 변화 없음 — `grep`으로 `engine.run/run_sliding_window/refilter` 호출부가
+  `inference_tab.py`와 신규 `zone_analysis_tab.py` 두 곳뿐임을 확인해 회귀 위험 배제.
+- 타겟(녹) 클래스 즉석 구성(스펙 판단 4) — `classes=None`으로 1차 `engine.run()` 실행해
+  `raw_class_map` 확보 → 배경(0) 제외 고유 클래스 id 집계 → 1개면 자동 선택 + 편집 가능
+  `QLineEdit`(기본 이름 `class_1`), 2개 이상이면 `QComboBox` 드롭다운 → 선택/편집 변경 시
+  `engine.refilter(classes=[...])`로 재컬러화. 색상은 `annotation_store.DEFAULT_PALETTE`를
+  `class_id % len(DEFAULT_PALETTE)`로 인덱싱(`class_panel.py`의 기존 관례와 동일 방식).
+- `app/main_window.py` — 5번째 탭으로 `ZoneAnalysisTab` 등록.
+- `app/core/i18n.py` — `tab.zone_analysis` ko("존 분석")/en("Zone Analysis") 키 추가.
+
+### 확인
+- `py_compile`로 신규/수정 5개 파일 문법 오류 없음 확인.
+- `grep`으로 `engine.run/run_sliding_window/refilter` 호출부가 `inference_tab.py`(인자
+  미전달, 회귀 없음)와 `zone_analysis_tab.py`뿐임을 확인.
+- 실제 `python main.py` GUI 구동(존 분석 탭 preset/커스텀 체크포인트 양쪽 골든패스)은
+  아직 수행하지 않음 — 검증 서브에이전트가 이어서 확인해야 함, **아직 완료로 간주하지
+  않음**.
+
+### 커밋
+- `13f2952` — `feat: 존 분석 탭 라운드 1 — 탭 스켈레톤+체크포인트 로드+추론`
+- `2c7e031` — `docs: 존 분석 탭 스펙 2차 정정 반영 + 라운드 1 로드맵 갱신`
+  (계획 에이전트가 이미 완료로 기록한 스펙 2차 정정 세션분을 함께 커밋 + `roadmap.md`
+  R1 체크박스 완료 갱신)
+
+### 관련
+- 스펙: [docs/specs/zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md)
+  판단 1/3/4, 데이터 흐름, 파일 구조 제안 절.
+- 판단 2(원 검출/편집)는 이번 라운드 범위 밖 — `ZoneCanvas`는 원 그리기/편집 UI 없이
+  오버레이 표시만 하는 순수 뷰어로 유지.
+
+---
+
+## 2026-08-25 — 어노테이션 삭제/내보내기/가져오기 성능 병목 수정
+
+### 배경
+사용자 리포트: "annotation 삭제할 때 속도가 느려. annotation 내보내기와 불러오기 할 때도
+느리고 멈추는 듯한 느낌이 든다." 리더가 코드를 직접 조사해 근본 원인 3가지를 확정하고
+구체적인 수정 지시를 내림.
+
+### 원인 1 — `app/widgets/annotation_canvas.py::_push_undo()`
+- 기존: `copy.deepcopy(self._annotations)`로 undo 스냅샷 생성.
+- 변경: `_snapshot_annotations()` 신규 메서드 — `AnnotationItem`을 필드별로 직접
+  재구성하며 `points`는 `list(a.points)`(튜플은 불변이라 얕은 복사로 충분), `mask`는
+  `a.mask.copy()`(numpy 네이티브 복사)로 처리. `MemoryError` 폴백 로직은 그대로 유지.
+- **회귀 확인**: `_apply_eraser`, `_resolve_overlap_and_merge`, `_flood_erase`,
+  `_consolidate_class_region/_consolidate_class`, `_translate_selected` 등 `.mask`를
+  in-place mutate하는 모든 지점을 grep으로 확인 — 전부 해당 스트로크/드래그 시작 시점의
+  `_push_undo()`(mousePressEvent/mouseMoveEvent) 이후에만 실행되므로 스냅샷이 항상
+  독립된 배열을 갖고 있어 안전함을 확인. `.points`를 in-place mutate(`points[i]=...`)하는
+  코드는 없음(항상 리스트 재할당) — grep으로 확인, 추가 조치 불필요.
+  cause 1 스코프 밖 발견 사항 없음(모든 mutate 지점이 push_undo 보호 하에 있었음).
+- **벤치마크(사전 조사와 다른 실측 결과 — 반드시 리더에게 보고 필요)**: numpy 1.26+/2.x는
+  `ndarray.__deepcopy__`를 C 레벨로 구현하고 있어 `copy.deepcopy`가 이미 memcpy 수준으로
+  빠름. 실측(30개 브러시 마스크, 4000×6000): deepcopy 115ms vs 네이티브 스냅샷 99ms
+  (~16% 개선). 30개×1000×1000: 5.9ms vs 5.1ms(~16%), 100개×1000×1000: 20.1ms vs
+  19.1ms(~5%). 사전 가설("deepcopy가 pickle __reduce__ 경로를 타 numpy .copy()보다
+  훨씬 느림")은 이 프로젝트의 numpy 버전(요구사항 `numpy>=1.26.0`)에서는 성립하지 않음 —
+  그래도 변경 자체는 안전하고 소폭 빠르며 제네릭 dataclass deepcopy 오버헤드를 제거하므로
+  그대로 반영함. 사용자가 체감한 "삭제 시 렉"의 실제 병목은 원인 3(전체 재스캔)이거나
+  다른 경로(오버레이 rebuild 등)일 가능성이 높음 — 리더 판단 필요.
+- 검증: `undo_selfcheck.py`(스크래치패드) — 브러시 마스크 5개로 삭제→undo 6회 반복,
+  매번 `np.array_equal`로 픽셀 단위 완전 복원 확인 + 라이브 마스크 in-place mutate 후에도
+  스냅샷이 영향받지 않음(별개 배열 객체) 확인. 전부 통과.
+
+### 원인 2 — `export_dialog.py` / `import_dialog.py` 동기 실행
+- `ExportWorker(QThread)` 신설(export_dialog.py) — `_export_json/_export_yolo/_export_coco`
+  로직을 그대로(파일 I/O만) 워커로 이동, `self._progress.setValue()`/`self._lbl_status.setText()`
+  호출을 `progress.emit(current, total, filename)`으로 교체. `finished(int count)`,
+  `error(str message)` 시그널 추가. `ExportDialog._on_run()`은 pairs 빌드(기존 위치 유지)
+  후 워커를 생성해 `.start()`만 호출(non-blocking), 진행바/상태라벨/완료 메시지박스는
+  시그널 슬롯(`_on_worker_progress/_finished/_error`, 메인 스레드)에서 갱신. 실행 중
+  `_btn_run`/`_btn_close` 비활성화.
+- `ImportWorker(QThread)` 신설(import_dialog.py) — 이미지별 가져오기 루프를 동일 패턴으로
+  이동. 클래스 병합(`_merge_classes()`)은 가벼운 1회성 작업이라 메인 스레드에서 미리
+  실행한 뒤 결과(new_classes 개수)만 워커에 넘김(파일 I/O 루프 자체와는 무관, 스펙에
+  명시된 "클래스 병합 + 이미지별 가져오기 루프를 워커로" 중 무거운 후자만 이동 —
+  전자는 어차피 한 번의 JSON 읽기+쓰기라 블로킹 체감이 없음).
+- 취소 기능은 스펙대로 추가하지 않음.
+- **PyQt6 시그널 이름 주의사항 확인**: `QThread`의 내장 `finished` 시그널과 동일한 이름의
+  커스텀 `pyqtSignal(int)`을 서브클래스에 선언해도(스펙에 명시된 이름 `finished(count)`)
+  정상 동작함을 별도 스크립트로 검증(처음엔 이벤트 루프 미처리로 오작동처럼 보였으나
+  `processEvents()`/`exec()`로 큐드 커넥션을 처리하면 정상 emit됨 — 오탐 확인).
+- 검증: `export_import_selfcheck.py`(스크래치패드) — 임시 프로젝트 40장(라벨링 26장,
+  polygon/brush_mask 혼합) 생성 → `ExportWorker`로 JSON 포맷 내보내기(실제 QThread
+  `.start()` + `QEventLoop` 처리) → 결과 카운트/파일 수가 기존 동기 로직과 100% 일치
+  확인 + 워커 실행 중 5ms 간격 `QTimer`가 7회 tick(메인 스레드가 블로킹되지 않음을 증명)
+  → 내보낸 결과를 `ImportWorker`로 새 프로젝트에 가져오기 → imported=26, new_images=26
+  일치 확인. YOLO/COCO 포맷은 로직을 그대로(변경 없이) 옮겼으므로 별도 자동 검증은
+  생략 — 필요 시 검증 에이전트가 UI 골든패스로 추가 확인 권장.
+
+### 원인 3 — `image_browser.py::_on_delete()`
+- 확인 결과: `_on_delete()`가 삭제 후 정말 `reload()`(전체 재스캔, 이미지마다
+  `get_label_status()` 디스크 I/O)를 호출하고 있었음 — 삭제 건수와 무관하게 전체
+  이미지 수에 비례한 비용.
+- 수정: 삭제된 경로만 `self._all_paths`/`self._status_cache`에서 제거한 뒤
+  `self._apply_display()`(트리 위젯 갱신, 디스크 I/O 없음)만 호출하도록 변경.
+  `image_deleted` 시그널 구독자(`labeling_tab.py::_on_image_deleted`)는 캔버스 상태만
+  정리할 뿐 별도 reload를 트리거하지 않음을 grep으로 확인 — 부작용 없음.
+- 검증: `browser_delete_selfcheck.py`(스크래치패드) — 20장 프로젝트에서 3장 선택 삭제 시
+  `get_label_status` 호출 횟수 0회(패치로 카운팅), 남은 17장이 `_all_paths`/`_status_cache`/
+  트리 위젯 모두에서 정확히 일치함을 확인. 통과.
+
+### 파일
+- `app/widgets/annotation_canvas.py`
+- `app/widgets/export_dialog.py`
+- `app/widgets/import_dialog.py`
+- `app/widgets/image_browser.py`
+
+### 커밋
+- `46eb77b` — `perf: 어노테이션 삭제/내보내기/가져오기 성능 병목 수정`
+
+### 확인 필요 (검증 서브에이전트에게)
+- `python main.py` 실제 구동으로 라벨링 탭 골든패스(브러시 그리기→삭제→undo, 여러 장
+  삭제) + 내보내기/가져오기 다이얼로그 실제 조작(진행바가 여러 단계로 갱신되는지,
+  실행 중 메인 창이 여전히 반응하는지)까지 확인 필요 — 이번 구현 단계에서는 위젯을
+  직접 인스턴스화한 스크립트 기반 자동 검증만 수행했고 `python main.py`로 GUI를
+  띄워 수동 조작하지는 않았음. **아직 완료로 간주하지 않음**.
+- 원인 1의 벤치마크가 사전 가설과 다르게 나온 점(개선폭 5~16%에 불과, 사용자가 체감한
+  "삭제 시 렉"의 실제 원인은 다른 곳일 가능성)을 리더가 재검토할 필요가 있음.
