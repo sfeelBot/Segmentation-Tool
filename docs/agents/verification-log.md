@@ -2184,3 +2184,74 @@ diff 없음(`git status --short`로 미변경 확인) — 사용자 실데이터
 **통과**. 다중선택(Ctrl/Shift)·삭제 확인 다이얼로그(단/복수 문구)·이미지+어노테이션
 동시 삭제·목록 갱신·단일삭제 회귀 모두 실측으로 정상 동작 확인. 새 버그 없음 —
 QA.md 변경 없음.
+
+---
+
+## 2026-08-25 — GitHub #9 팬 드래그 중 휠 줌 초점 버그 수정 검증
+
+### 대상
+커밋 `629fe1d` — `app/widgets/annotation_canvas.py`의 `wheelEvent()`에 `_pan_active`일 때
+`_pan_start_mouse`/`_pan_start_offset`를 새 줌 결과로 갱신하는 6줄 추가. 회귀 테스트
+`tests/test_canvas_zoom_pan.py` 신규 추가.
+
+### 방법
+1. `tests/test_canvas_zoom_pan.py`는 pytest 미설치 환경이라(`py -3 -m pytest` →
+   `No module named pytest`, `py -3.12`도 동일) `py -3 tests/test_canvas_zoom_pan.py`로
+   `__main__` 블록의 assert 기반 자체 검사를 직접 실행 — 통과(`OK: zoom-during-pan
+   focal point preserved`).
+2. 구현 에이전트 주장("수정 전 코드로 stash하면 실패") 재검증 — `git show 629fe1d~1:...`로
+   수정 전 파일을 임시로 워킹트리에 덮어쓰고 동일 테스트 실행 → `AssertionError`로 실제
+   재현 확인 후 `git checkout --`로 즉시 원복(`git status --short`로 클린 확인).
+3. **실제 GUI 조작 검증(전체 앱 경로)** — `scratchpad/gui_verify_issue9.py` 작성:
+   `MainWindow()`를 실제로 생성(`app._labeling_tab._canvas`까지 실제 위젯 트리),
+   체커보드+빨간 마커 테스트 이미지(`qa_zoom_test.png`, 검증 후 삭제)를
+   `tab._on_image_selected()`로 실제 로드. `QTest.mousePress/mouseMove/mouseRelease`로
+   진짜 `QMouseEvent`를 캔버스에 전달하고, 휠은 실제 `QWheelEvent`를 만들어
+   `QApplication.sendEvent()`로 디스패치(OS 스크롤 입력을 Qt가 위젯에 전달하는 것과 동일
+   경로, monkeypatch 없음). `QT_QPA_PLATFORM=offscreen`로 실행(이 환경엔 대화형 디스플레이
+   드라이빙 도구가 없어 스크린샷 전후비교 + 좌표/색상 로그로 대체).
+
+### 확인한 시나리오 (전부 실제 이벤트 디스패치 경로로 실행)
+1. **Pan 도구 드래그 중 휠 줌**: 드래그 시작 → 이동 → 같은 화면 좌표에서 휠 줌인 →
+   커서 아래 이미지좌표 drift **0.0000px**, `canvas.grab()` 스크린샷(`issue9_1_before_wheel
+   .png`/`issue9_2_after_wheel.png`) 육안 비교로도 빨간 마커가 같은 화면 위치에 그대로
+   유지됨을 확인. 줌 직후 이어지는 `mouseMoveEvent` 1회 추가 발생시켜도 pan 점프
+   **0.0000px**(stale 기준값으로 안 되돌아감).
+2. **Space+좌클릭 팬 중 휠 줌아웃**: drift 0.0000px.
+3. **우클릭 드래그 팬 중 휠 줌인**: drift 0.0000px.
+4. **회귀 — 브러시 도구**: 페인팅 중(`_is_painting=True`, `_pan_active=False`) 휠 이벤트
+   발생시켜도 `_pan_start_mouse`가 전혀 변경되지 않음(이번 수정 분기가 `_pan_active`
+   조건이라 브러시 경로는 안 탐 확인) + 스트로크 정상 커밋(`_annotations` 1건 추가).
+5. **회귀 — 폴리곤 도구**: 점 3개 찍은 진행 중 상태에서 휠 줌 발생시켜도 `_poly_pts` 3개
+   그대로 보존(진행 중인 폴리곤이 취소되거나 깨지지 않음).
+6. (Select 도구는 이번 수정과 무관한 `_pan_active=False` 경로이며 시나리오 1~3에서 이미
+   pan_active 진입 조건 자체를 실제 이벤트로 재현했으므로 별도 스텁 불필요 판단.)
+
+### 대조군 (수정 전 코드로 동일 GUI 스크립트 재실행)
+`git show 629fe1d~1`로 수정 전 파일을 임시 적용 후 위와 동일한 시나리오 1 실행 →
+줌 직후 첫 프레임은 초점 유지(0.0000px, wheelEvent 자체 계산은 원래도 맞았음)이나,
+**이어지는 mouseMoveEvent에서 이미지좌표 45.68px 이동 + pan이 정확히 줌 이전 값
+(40.90, 52.68)으로 되돌아감**(`pan_jump_after_move_px` assert 실패) — 스크린샷 픽셀색도
+(30,30,30)→(220,220,220)로 명백히 바뀜(체커보드 한 칸 이상 어긋남). 버그가 실제 재현됨을
+전체 GUI 경로에서도 재확인 후 `git checkout --`로 원복.
+
+### 크래시 로그
+`data/logs/errors.log` 라인 수 검증 전후 동일(3662줄, 신규 항목 0건).
+
+### 뒷정리
+스크래치 테스트 이미지(`data/images/qa_zoom_test.png`)와 그로 인한 부산물(어노테이션 JSON
+없음, 자동저장 트리거 안 됨) 삭제 완료. `git status --short` 클린(`app/widgets/
+annotation_canvas.py` 무변경). 스크린샷 3장은 세션 scratchpad에만 저장.
+
+### 참고 — 별도로 관찰(등록 안 함)
+`py -3 main.py`를 이 세션 콘솔(cp949)에서 직접 실행하면 `device_info.log_environment()`의
+em-dash(—) 문자가 콘솔 `StreamHandler`에서 `UnicodeEncodeError`로 로깅 실패(내부적으로
+잡혀 앱 크래시는 아님, 파일 로그는 UTF-8이라 영향 없음). 2026-08-19 검증 로그에도 "기존에
+알려진 무해 이슈"로 이미 언급된 사항이라 중복 등록하지 않음. 이번 이슈 #9와 무관.
+
+### 판정
+**통과**. `tests/test_canvas_zoom_pan.py` 실행 통과 + 수정 전 코드에서 실패 재현으로
+구현 에이전트 주장 검증 완료. 전체 `MainWindow` 경로에서 실제 `QMouseEvent`/`QWheelEvent`
+디스패치로 Pan 도구·Space+좌클릭·우클릭 3가지 팬 진입 방식 전부 초점 유지(drift
+0.0000px) 확인, 이어지는 move에서도 안 튐. 브러시/폴리곤 도구는 `_pan_active` 분기를
+타지 않아 회귀 없음 확인. 새 버그 없음 — QA.md 변경 없음.
