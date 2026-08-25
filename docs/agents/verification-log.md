@@ -2401,3 +2401,122 @@ end-to-end 확인. push는 아직 안 된 상태 — 리더가 사용자 확인 
 **통과**. Export/Import 버튼 노출·툴팁, Export→충돌 조성→Import(기존 유지/덮어쓰기)
 전체 왕복, 라벨링 탭 실시간 갱신, 새 이미지 가져오기, 에러 폴더 처리까지 전부
 실제 위젯 클릭 경로로 확인. push는 하지 않음 — 리더가 사용자 확인 후 진행.
+
+
+---
+
+## 2026-08-25 — 추론 탭 AI점수/픽셀크기 threshold 필터 + blob별 Excel 내보내기 (커밋 `b07c1dd`, `97c0dc0`)
+
+### 검증 대상
+구현 에이전트가 추론 탭에 추가한 threshold 필터링(`app/core/inference_engine.py`의
+`BlobStat`/`_compute_blobs_and_filter()`/`refilter()`, `run()`/`run_sliding_window()`의
+`min_confidence`/`min_pixel_size` 파라미터)과 blob별 Excel 내보내기
+(`export_blobs_to_excel()`), 그리고 `app/tabs/inference_tab.py`의 신규 스핀박스 2개
+("최소 AI 점수"/"최소 픽셀 크기"), "탐지된 blob 수" 라벨, "Excel로 내보내기" 버튼
+(단일/일괄), opacity 슬라이더의 `engine.refilter()` 전환. 구현 로그(implementation-log.md
+`b07c1dd`)엔 blob 필터링·성능·Excel 구조·`refilter()`가 torch 미사용임을 스크립트로
+확인했다고만 나와 있고 **실제 GUI 클릭 경로(스핀박스 조작, 버튼 클릭, 다이얼로그 흐름)는
+전혀 확인되지 않은 상태**였음 — 이번 라운드에서 확인.
+
+### 방법
+`py -3 main.py`로 직접 조작하는 대신(라벨링→학습→추론 전 과정을 매번 수동 클릭으로
+재현하기엔 비효율적), 실사용 `projects/`를 건드리지 않도록 스크래치 폴더에 격리
+프로젝트(`app.core.project.Project` 직접 생성 + `project._current` 직접 대입 —
+`set_current()`가 건드리는 `settings.json`의 `recent_projects`/`last_project` 무변경)를
+만들고, 실제 `QApplication` + `QTest`로 **라벨링 탭 → 학습 탭 → 추론 탭 전 과정**을
+실제 프로덕션 위젯 이벤트 경로로 재현하는 스크립트
+(`…/scratchpad/qa_inference_threshold.py`, 최종본은 정리 시 함께 삭제)를 작성해 실행.
+`QT_QPA_PLATFORM=offscreen` + 실제 GPU(CUDA, RTX) 사용.
+
+- **라벨링**: 128×128 합성 이미지 3장(어두운 노이즈 배경 + 서로 다른 크기의 흰색
+  사각형 — 대/중/소)을 생성, `AnnotationCanvas`에 `QTest.mouseClick`/`mouseDClick`으로
+  실제 폴리곤 4점 클릭+더블클릭 닫기를 재현해 라벨링(annotation_id 1개씩 저장 확인).
+- **학습**: `TrainingTab`에서 `ConfigForm` 값을 실제 위젯에 `setValue()`로 세팅
+  (resize 128×128, epochs=80, lr=1e-3, batch=1 — 합성 데이터라 원본 1 epoch/기본 lr로는
+  전부 배경으로만 예측되어 threshold 테스트가 무의미했음, 대비를 극대화하고 epoch을
+  올려 실제로 학습되게 조정), 모델 콤보에서 `preset:simple_unet` 선택, "큐에 추가" +
+  "전체 실행" 버튼 실제 클릭 → `TrainerWorker` QThread 완료(9초) 대기 → 체크포인트
+  생성 확인.
+- **추론**: `InferenceTab` 실제 인스턴스 — 체크포인트 테이블 자동 선택→`_auto_model`
+  자동 준비 확인, `_img_list.load_folder()`+`_after_load()`(폴더 선택 버튼과 동일 코드
+  경로, 네이티브 `QFileDialog`만 우회)로 3장 로드 → 폴더 모드 목록 패널 노출 확인 →
+  "▶ 추론 실행" 버튼 실제 클릭.
+- **threshold 스핀박스**: `_min_conf_spin`/`_min_px_spin`에 실제 `setValue()`(Qt
+  내부적으로 위젯 드래그/키 입력과 동일한 `valueChanged` 시그널 경로를 탐)로 값을
+  바꿔가며 매번 `_lbl_blob_count` 텍스트와 `_last_result.blobs` 개수, 그리고
+  `raw_class_map is <최초 캐시>`(객체 identity)로 **모델 재실행 없이** 재필터링되는지
+  확인.
+- **Excel 내보내기**: `QFileDialog.getSaveFileName`만 임시 monkeypatch(고정 경로 반환),
+  폴더 모드 선택 다이얼로그·완료 정보 다이얼로그는 `QTimer.singleShot` +
+  `QApplication.activeModalWidget()` 탐색으로 실제 버튼(`QPushButton`)을
+  `QTest.mouseClick`으로 클릭(기존 `verify_import_gui.py` 패턴과 동일) — 다이얼로그
+  자체는 진짜 `QMessageBox.exec()`.
+
+### 확인한 것
+1. **추론 실행 → blob 수 표시**: 체크포인트 선택 즉시 "U-Net (자동 준비됨)" 라벨
+   확인(`_auto_model` 정상 설정), 추론 실행 후 `_lbl_blob_count`="탐지된 blob 수: 1개"
+   가 실제 `_last_result.blobs` 개수와 일치.
+2. **최소 AI 점수 threshold 실시간 반영**: 0%→50%→90%→99%로 올릴 때 blob 수가
+   1→1→1→0으로 단조 감소(모델이 예측한 blob의 평균 신뢰도가 90~99% 사이였음을
+   실측으로 확인), 0%로 되돌리면 정확히 원래 개수(1개)로 복원. 매 단계
+   `raw_class_map is <최초 캐시>`가 `True` — `refilter()`가 실제로 forward pass를
+   재실행하지 않고 캐시된 배열만 재사용함을 객체 identity로 확인.
+3. **최소 픽셀 크기 threshold 실시간 반영**: 현재 blob 픽셀 크기(4270px) 대비
+   mid(2135px)에서는 유지, huge(9270px, blob보다 큼)에서는 완전히 사라짐(0개), 0으로
+   되돌리면 복원.
+4. **Opacity 슬라이더 회귀 확인(구현 로그가 "opacity 전환하며 부수적으로 고쳤다"고
+   주장한 버그)**: threshold=90%로 걸어 blob 1개로 필터링해둔 상태에서 opacity
+   슬라이더를 20%→80%→50%로 실제 `QSlider.setValue()`(→`valueChanged`→
+   `opacity_changed`→`_on_opacity_changed`→`engine.refilter()`)로 조작해도 매번
+   blob 수가 필터링된 값(1개)으로 그대로 유지됨 — opacity 변경이 threshold 필터를
+   풀지 않음을 확인(과거 `engine.run()` 재호출 방식이었다면 threshold 파라미터가
+   기본값(0)으로 리셋돼 필터가 풀렸을 상황).
+5. **Excel 내보내기 — 단일 이미지**: threshold=50%(blob 1개 유지) 상태에서 "현재
+   이미지만" 선택 → 실제 `.xlsx` 생성, `openpyxl`로 열어 헤더
+   (이미지파일명/blob_id/class_id/클래스명/픽셀수/신뢰도 등 14열) 확인, 데이터 행 수
+   (1행)가 threshold 필터링된 blob 개수와 정확히 일치, 이미지파일명도 현재 이미지
+   1개로 정확히 한정됨(threshold로 걸러진 blob이 엑셀에도 없음을 행 수 일치로 간접
+   확인).
+6. **Excel 내보내기 — 폴더 전체 일괄**: "목록 전체 일괄 추론" 선택 → `QProgressDialog`
+   로 3장 순차 추론(캐시된 현재 이미지는 재추론 생략, 나머지 2장은 실제 `engine.run()`
+   재호출) → 완료 후 하나의 `.xlsx`에 3개 이미지파일명(img0/img1/img2.png)이 각자
+   실제 blob 1개씩(픽셀수 4270/1468/54 — 라벨링 시 그린 대/중/소 사각형 크기와
+   정성적으로 일치, 평균 신뢰도 95~99%)으로 정확히 구분되어 들어감을 확인 — 모델이
+   실제로 서로 다른 크기의 영역을 서로 다른 신뢰도로 예측했다는 의미 있는 데이터라
+   기계적인(빈 값) 테스트를 넘어 기능이 실질적으로 동작함을 뒷받침.
+7. **`data/logs/errors.log`**: 실행 전 베이스라인 3662줄 → 실행 후에도 3662줄, 신규
+   예외 0건.
+
+### 발견한 문제 — BUG-017 (직접 수정)
+검증 스크립트의 1단계(라벨링)에서 `canvas._image_path`가 이미지 선택 후에도 계속
+`None`으로 남는 현상을 발견. 원인 조사 결과 **이번 라운드 변경과 무관한 기존
+버그**: `ImageBrowser.__init__()`이 `reload()`로 프로젝트의 첫 이미지를 자동
+선택하며 `image_selected`를 즉시 발행하는데, 이 시점(`LabelingTab._build_ui()`
+내부)은 `LabelingTab._connect_signals()`(리스너 연결)보다 **먼저** 실행되어 신호가
+유실됨. `main.py`의 실제 기동 순서(`ProjectStartDialog`에서 `project.set_current()`를
+먼저 호출한 뒤 `MainWindow()` 생성 → `LabelingTab()`은 프로젝트가 이미 열려 있는
+상태로 생성됨, 게다가 라벨링 탭이 4개 탭 중 기본 활성 탭)상 **기존 이미지가 있는
+프로젝트를 열 때마다 항상 재현**되는 실사용 버그로 판단(라벨링 탭 진입 시 이미지
+목록 첫 항목이 하이라이트돼 있는데도 캔버스는 빈 화면 — 사용자가 아무 이미지나
+클릭해야 로드됨). 이번 라운드(추론 탭)와 무관한 다른 탭의 문제이지만 원인이
+명확하고 수정이 국소적(`labeling_tab.py` 1개 파일, `__init__()`에 4줄 추가)이라
+CLAUDE.md 지침대로 직접 수정: `_connect_signals()` 직후
+`self._image_browser.current_path()`가 있으면 `self._on_image_selected()`를 명시적으로
+1회 호출해 캔버스를 동기화. 재검증 스크립트(위 방법의 1단계)로 수정 전
+`AssertionError`(None) → 수정 후 정상 로드됨을 직접 확인. `QA.md`에 `BUG-017`(Closed)
+로 등록. `py_compile` 통과.
+
+### 회귀 확인
+- `git diff --stat` — 이번 라운드에서 검증 에이전트가 건드린 파일은
+  `app/tabs/labeling_tab.py` 1개뿐(BUG-017 수정). `docs/decisions-needed.md`,
+  `docs/roadmap.md`, `docs/agents/planning-log.md` 변경은 병행 세션(기획 에이전트로
+  추정)의 것으로 검증 세션에서 만든 변경이 아님 — 손대지 않음.
+- `projects/` 실사용 데이터: 무변경(스크래치 폴더에서만 프로젝트 생성, 테스트 종료 후
+  `qa_infer_proj`/생성된 `.xlsx` 2개 전부 삭제 완료).
+
+### 판정
+**통과**. threshold 필터(AI 점수/픽셀 크기) 실시간 재필터링(모델 재실행 없음),
+opacity 슬라이더가 threshold를 깨지 않는 회귀 수정 확인, Excel 단일/일괄 내보내기
+모두 실제 위젯 클릭 경로로 정상 동작 확인. 부수적으로 발견한 BUG-017(라벨링 탭
+첫 이미지 자동 로드 실패)은 직접 수정 후 재검증 완료. push는 하지 않음 — 리더가
+사용자 확인 후 진행.

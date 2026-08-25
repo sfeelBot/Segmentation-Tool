@@ -31,6 +31,13 @@ class LabelingTab(QWidget):
         self._ann_list_updating = False   # 재진입 방지 플래그
         self._build_ui()
         self._connect_signals()
+        # ImageBrowser는 생성 시점(_build_ui 내부, 시그널 연결 전)에 프로젝트에
+        # 이미지가 있으면 첫 항목을 이미 자동 선택하고 image_selected를 발행한다.
+        # 그 시점엔 아직 리스너가 연결되지 않아 신호가 유실되므로(BUG-017),
+        # 연결 완료 후 현재 선택 상태를 캔버스에 명시적으로 동기화한다.
+        initial_path = self._image_browser.current_path()
+        if initial_path is not None:
+            self._on_image_selected(initial_path)
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
