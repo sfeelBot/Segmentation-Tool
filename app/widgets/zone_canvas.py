@@ -10,10 +10,15 @@
 편집: 원 중심 드래그 = 이동, 테두리 드래그 = 반지름 조절, 빈 곳 드래그 = 신규
 생성, 선택 후 Delete/우클릭 메뉴 = 삭제. 폴리곤 정점 편집은 없음(스펙 확정 —
 원 모델만 다룸).
+
+라운드 4: "블랍 삭제 모드" 토글(`set_blob_delete_mode`) 활성화 시 좌클릭은 원
+편집이 아니라 블랍(연결요소) 클릭 삭제로 해석된다(스펙 "UX 흐름 상세 > 블랍
+삭제" — 같은 캔버스에서 두 조작이 충돌하지 않도록 최소한의 모드 토글만 둠).
 """
 import math
 from dataclasses import dataclass
 
+import numpy as np
 from PyQt6.QtWidgets import QMenu
 from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
@@ -43,6 +48,7 @@ class ZoneCanvas(OverlayViewer):
     circles_changed = pyqtSignal()          # 원 목록이 바뀔 때마다 (추가/이동/삭제 등)
     circle_selected = pyqtSignal(object)    # 선택된 원 id (없으면 None)
     zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스
+    blob_deleted = pyqtSignal(int)          # 블랍 삭제 모드에서 클릭으로 삭제된 블랍 라벨 id
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -53,6 +59,10 @@ class ZoneCanvas(OverlayViewer):
         self._img_orig_w = 0
         self._img_orig_h = 0
         self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링, N=바깥쪽
+        self._blob_delete_mode = False
+        self._blob_labels: np.ndarray | None = None   # (H, W) int32 라벨맵, 원본 이미지 좌표계
+        self._blob_stats: np.ndarray | None = None     # [label] = [x, y, w, h, area]
+        self._removed_blob_ids: set[int] = set()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # 클릭 후 Delete 키 삭제를 받으려면 필요
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
@@ -120,6 +130,51 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
         self.circle_selected.emit(None)
 
+    # ── 블랍 삭제 모드 (라운드 4) ────────────────────────────────────────────
+
+    def set_blob_delete_mode(self, enabled: bool) -> None:
+        """활성화 시 좌클릭은 원 편집 대신 블랍 클릭 삭제로 해석된다."""
+        self._blob_delete_mode = enabled
+        self.update()
+
+    def blob_delete_mode(self) -> bool:
+        return self._blob_delete_mode
+
+    def set_blob_data(self, labels: np.ndarray | None, stats: np.ndarray | None) -> None:
+        """타겟 클래스가 바뀔 때마다(새 추론/타겟 클래스 변경) 호출 — 라벨맵을
+        교체하고 이전 삭제 이력을 초기화한다(라벨 id는 마스크가 바뀌면 더 이상
+        의미가 없으므로)."""
+        self._blob_labels = labels
+        self._blob_stats = stats
+        self._removed_blob_ids = set()
+        self.update()
+
+    def blob_labels(self) -> np.ndarray | None:
+        """현재 라벨맵(원본 이미지 좌표계) — 탭이 존 퍼센티지 재계산 시 삭제된
+        라벨을 마스크에서 제외하는 데 사용."""
+        return self._blob_labels
+
+    def removed_blob_ids(self) -> set[int]:
+        """지금까지 삭제된 블랍 라벨 id 집합 — `selected_id()`/`highlighted_zone()`
+        와 동일한 getter 패턴(BUG-018/019 재발 방지: 캔버스가 상태의 단일 출처)."""
+        return self._removed_blob_ids
+
+    def _handle_blob_click(self, event) -> None:
+        if (self._pixmap is None or event.button() != Qt.MouseButton.LeftButton
+                or self._blob_labels is None):
+            return
+        img_pt = self._screen_to_orig(QPointF(event.position()))
+        x, y = int(img_pt.x()), int(img_pt.y())
+        h, w = self._blob_labels.shape
+        if not (0 <= y < h and 0 <= x < w):
+            return
+        label = int(self._blob_labels[y, x])
+        if label == 0 or label in self._removed_blob_ids:
+            return
+        self._removed_blob_ids.add(label)
+        self.update()
+        self.blob_deleted.emit(label)
+
     # ── 좌표 변환 (원본 이미지 스케일 <-> 픽스맵 스케일 <-> 화면 스케일) ────────
 
     def _orig_scale(self) -> tuple[float, float]:
@@ -182,10 +237,15 @@ class ZoneCanvas(OverlayViewer):
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
-        if self._pixmap is None or not self._circles:
+        if self._pixmap is None:
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._removed_blob_ids:
+            self._paint_removed_blobs(p)
+        if not self._circles:
+            p.end()
+            return
         if self._highlighted_zone is not None:
             self._paint_zone_highlight(p)
         for item in sorted(self._circles, key=lambda c: c.r):
@@ -226,9 +286,41 @@ class ZoneCanvas(OverlayViewer):
             path.addEllipse(c_i, r_i, r_i)
         p.fillPath(path, _COLOR_ZONE_HIGHLIGHT)
 
+    def _paint_removed_blobs(self, p: QPainter) -> None:
+        """삭제된 블랍을 바운딩 박스로 표시(시각 피드백).
+
+        ponytail: 정확한 블랍 형태(픽셀 단위)가 아니라 bounding box 근사 —
+        전체 해상도 마스크를 QImage로 합성하는 것보다 훨씬 단순하고, 오버레이
+        픽스맵을 다시 그리지 않으므로 `set_pixmap()`이 강제하는 줌/팬 리셋도
+        피한다(BUG-018/019와 같은 부류의 "조작 시 상태 리셋" 재발 방지).
+        블랍 모양까지 정확히 겹쳐 보여줘야 하면 그때 QImage 합성으로 승격.
+        """
+        if self._blob_stats is None:
+            return
+        sx, sy = self._orig_scale()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 60, 60, 110))
+        for label in self._removed_blob_ids:
+            if not (0 <= label < len(self._blob_stats)):
+                continue
+            x, y, w, h = self._blob_stats[label, :4]
+            rect = QRectF(
+                x * sx * self._zoom + self._pan.x(),
+                y * sy * self._zoom + self._pan.y(),
+                w * sx * self._zoom,
+                h * sy * self._zoom,
+            )
+            p.drawRect(rect)
+
     # ── 마우스 ───────────────────────────────────────────────────────────────
 
     def mousePressEvent(self, event) -> None:
+        if self._blob_delete_mode:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._handle_blob_click(event)
+            else:
+                super().mousePressEvent(event)   # 좌클릭 외(중클릭 팬 등)는 기존 동작 유지
+            return
         if self._pixmap is None or event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
@@ -251,6 +343,9 @@ class ZoneCanvas(OverlayViewer):
         self.update()
 
     def mouseMoveEvent(self, event) -> None:
+        if self._blob_delete_mode:
+            super().mouseMoveEvent(event)   # 팬 드래그(중클릭)는 계속 동작해야 함
+            return
         if self._drag_mode is None or self._selected_id is None:
             super().mouseMoveEvent(event)
             return
@@ -269,6 +364,9 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._blob_delete_mode:
+            super().mouseReleaseEvent(event)   # 팬 종료 처리(커서 복원 등)
+            return
         if self._drag_mode == "create" and self._selected_id is not None:
             item = self._find(self._selected_id)
             if item is not None:
@@ -291,13 +389,16 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
 
     def keyPressEvent(self, event) -> None:
+        if self._blob_delete_mode:
+            super().keyPressEvent(event)
+            return
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self._selected_id is not None:
             self.remove_selected()
         else:
             super().keyPressEvent(event)
 
     def contextMenuEvent(self, event) -> None:
-        if self._pixmap is None:
+        if self._pixmap is None or self._blob_delete_mode:
             return
         pt = QPointF(event.pos())
         hit = self._hit_test(pt)

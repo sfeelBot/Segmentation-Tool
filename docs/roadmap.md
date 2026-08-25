@@ -506,7 +506,26 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       `_recompute_zones()`가 재구성 전 하이라이트를 저장, `blockSignals`로 감싼 재구성 후
       복원하도록 수정(BUG-018 수정과 동일 패턴). `QA.md` BUG-019 Closed로 등록. 라운드1·2
       회귀 없음(탭 5개, preset 체크포인트 자동 인스턴스화, 원 생성/조절 정상).
-- [ ] R4 (블랍 클릭 삭제 + 재계산) — 착수 대기
+- [x] R4 (블랍 클릭 삭제 + 재계산) — **구현 완료, 독립검증 대기**(커밋은
+      `docs/agents/implementation-log.md` 참고). `zone_metrics.compute_blob_labels()`
+      신설 — `cv2.connectedComponentsWithStats(connectivity=8)`를 그대로 노출하는
+      작은 헬퍼(`inference_engine._compute_blobs_and_filter()`의 confidence/size
+      threshold 필터링은 가져오지 않음 — YAGNI). `ZoneCanvas`에 "블랍 삭제 모드"
+      토글(`set_blob_delete_mode`) 추가 — 활성화 시 좌클릭이 원 편집 대신
+      화면→이미지 좌표 역변환(`_screen_to_orig` 재사용) 후 라벨맵 조회→삭제
+      대상 id 집합(`_removed_blob_ids`)에 추가로 해석됨(원 편집과 클릭 충돌
+      방지, 스펙 "UX 흐름 상세 > 블랍 삭제"). 삭제된 블랍은 바운딩박스 반투명
+      오버레이로 시각 피드백(ponytail: 정확한 픽셀 형태 아닌 근사 — 필요해지면
+      QImage 합성으로 승격). 존 퍼센티지 재계산은 R3의 `zone_stats()`/
+      `zones_from_circles()`를 그대로 재사용, 타겟 마스크에서
+      `np.isin(labels, removed_ids)` 위치만 제외. **BUG-018/019 재발 방지
+      패턴 사전 적용**: `removed_blob_ids()`/`blob_labels()` getter를
+      `selected_id()`/`highlighted_zone()`과 동일하게 캔버스를 상태 단일
+      출처로 두고, 오버레이 재도색에 `set_pixmap()`(내부적으로 뷰 강제
+      리셋)을 쓰지 않고 캔버스 자체 `paintEvent`에 바운딩박스만 덧그리는
+      방식을 택해 줌/팬 상태 리셋 위험 자체를 원천 차단. 이 라운드가 스펙의
+      마지막 라운드 — 실제 GUI 구동 검증(검증 에이전트)이 통과해야 라운드
+      1~4 전체가 최종 완료로 확정된다.
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새

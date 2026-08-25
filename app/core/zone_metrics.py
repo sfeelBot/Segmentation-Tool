@@ -12,6 +12,7 @@ Qt 의존성 없음(core 규칙) — 순수 numpy 함수.
 """
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
 
@@ -64,6 +65,21 @@ def zone_stats(zone_mask: np.ndarray, target_class_mask: np.ndarray) -> float:
     return hit / area * 100.0
 
 
+def compute_blob_labels(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """타겟 클래스 이진 마스크 -> (라벨맵, stats). 라운드 4 블랍 클릭 삭제 전용 헬퍼.
+
+    `cv2.connectedComponentsWithStats(connectivity=8)`를 그대로 노출한다 —
+    `inference_engine._compute_blobs_and_filter()`와 API는 비슷하지만 confidence/
+    size threshold 필터링까지 가져오면 이 탭엔 불필요한 결합이 생겨(스펙 "블랍 삭제"
+    절) 별도로 둔다. 라벨 0 = 배경. `stats[label] = [x, y, w, h, area]`(OpenCV 표준
+    컬럼 순서, `CC_STAT_LEFT/TOP/WIDTH/HEIGHT/AREA`).
+    """
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(
+        mask.astype(np.uint8), connectivity=8
+    )
+    return labels, stats
+
+
 if __name__ == "__main__":
     # ── self-check: 5x5 합성 이미지, 원 1개(cx=2, cy=2, r=1) — 손계산 검산 ──────
     # (x-2)^2+(y-2)^2<=1 만족 픽셀: (2,1)(1,2)(2,2)(3,2)(2,3) = 5개 (전체 25개 중)
@@ -99,5 +115,17 @@ if __name__ == "__main__":
 
     # 원 0개 -> 존 없음
     assert zones_from_circles([], shape) == []
+
+    # ── compute_blob_labels: 서로 떨어진 블랍 2개 검산 ──────────────────────
+    blob_mask = np.zeros((6, 6), dtype=np.uint8)
+    blob_mask[0:2, 0:2] = 1   # 블랍 A, 면적 4
+    blob_mask[4:6, 4:6] = 1   # 블랍 B, 면적 4
+    labels, stats = compute_blob_labels(blob_mask)
+    assert labels.shape == blob_mask.shape
+    unique_labels = set(np.unique(labels).tolist()) - {0}
+    assert len(unique_labels) == 2, f"블랍 2개 예상, 실측 {len(unique_labels)}"
+    for lbl in unique_labels:
+        assert stats[lbl, 4] == 4, f"블랍 면적 4 예상, 실측 {stats[lbl, 4]}"
+    assert labels[0, 0] != labels[5, 5] and labels[0, 0] != 0 and labels[5, 5] != 0
 
     print("zone_metrics self-check OK")

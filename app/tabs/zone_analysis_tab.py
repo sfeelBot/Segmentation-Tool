@@ -10,7 +10,9 @@
 라운드 2: 원(circle) 자동 검출(`circle_detector.py`) + 수동 편집(추가/이동/
 반지름 조절/삭제) + 원 목록 사이드 패널.
 라운드 3: `zone_metrics.py`(원판 마스크 차집합) 기반 존 리스트 패널 + 퍼센티지
-실시간 계산·표시. 블랍 삭제는 이후 라운드.
+실시간 계산·표시.
+라운드 4: 블랍(연결요소) 클릭 삭제(`zone_metrics.compute_blob_labels`) + 존
+퍼센티지 재계산. "블랍 삭제 모드" 토글로 원 편집과 클릭 해석을 분리.
 """
 from pathlib import Path
 
@@ -32,7 +34,7 @@ from app.core.model_validator import validate
 from app.core.model_loader import load_from_code
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.core.circle_detector import detect_circles
-from app.core.zone_metrics import Circle, zones_from_circles, zone_stats
+from app.core.zone_metrics import Circle, zones_from_circles, zone_stats, compute_blob_labels
 from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
 
@@ -149,6 +151,13 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_sensitivity.setFixedWidth(36)
         circle_row.addWidget(self._lbl_sensitivity)
         circle_row.addStretch()
+        self._btn_blob_delete = QPushButton("블랍 삭제 모드")
+        self._btn_blob_delete.setCheckable(True)
+        self._btn_blob_delete.setEnabled(False)
+        self._btn_blob_delete.setToolTip(
+            "활성화하면 캔버스 좌클릭이 원 편집 대신 오검출 블랍 삭제로 동작합니다"
+        )
+        circle_row.addWidget(self._btn_blob_delete)
         root.addLayout(circle_row)
 
         # ── 캔버스 + 원 목록 사이드 패널 ─────────────────────────────────────
@@ -188,6 +197,8 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.circles_changed.connect(self._recompute_zones)
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
+        self._canvas.blob_deleted.connect(self._on_blob_deleted)
+        self._btn_blob_delete.toggled.connect(self._canvas.set_blob_delete_mode)
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
 
@@ -211,6 +222,9 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.set_image_size(*self._image_size)
         self._canvas.clear_circles()
         self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 캔버스에 표시할 배경 없음
+        self._canvas.set_blob_data(None, None)
+        self._btn_blob_delete.setChecked(False)
+        self._btn_blob_delete.setEnabled(False)
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -341,6 +355,9 @@ class ZoneAnalysisTab(QWidget):
             self._lbl_target_info.setText("배경 외 클래스가 검출되지 않았습니다.")
             self._canvas.set_pixmap(result.overlay_pixmap)
             self._target_class_id = None
+            self._canvas.set_blob_data(None, None)
+            self._btn_blob_delete.setChecked(False)
+            self._btn_blob_delete.setEnabled(False)
             self._recompute_zones()
             return
 
@@ -392,12 +409,38 @@ class ZoneAnalysisTab(QWidget):
             self._last_result = result
             self._target_class_id = cid
             self._canvas.set_pixmap(result.overlay_pixmap)
+            # 타겟 클래스가 (재)선택될 때마다 블랍 라벨맵을 새로 계산한다 — 라벨
+            # id는 마스크에 종속적이라 클래스가 바뀌면 이전 삭제 이력은 무의미
+            # (`ZoneCanvas.set_blob_data`가 삭제 이력도 함께 초기화).
+            target_mask = result.raw_class_map == cid
+            labels, stats = compute_blob_labels(target_mask)
+            self._canvas.set_blob_data(labels, stats)
+            self._btn_blob_delete.setEnabled(True)
             self._recompute_zones()
         except Exception as exc:
             log.exception("존 분석 타겟 클래스 재필터링 실패")
             QMessageBox.critical(self, "재필터링 오류", str(exc))
 
     # ── 슬롯 — 존(zone) 퍼센티지 계산/표시 (라운드 3) ────────────────────────
+
+    def _current_target_mask(self) -> np.ndarray | None:
+        """타겟 클래스 마스크에서 삭제된 블랍(라운드 4)을 배경 처리해 제외한
+        "표시 마스크"(스펙 "블랍 삭제" 절). 삭제 이력·라벨맵은 `ZoneCanvas`가
+        단일 출처로 들고 있다(`removed_blob_ids()`/`blob_labels()` — 원 선택/존
+        하이라이트와 동일한 getter 패턴, BUG-018/019 재발 방지)."""
+        if self._last_result is None or self._target_class_id is None:
+            return None
+        mask = self._last_result.raw_class_map == self._target_class_id
+        removed = self._canvas.removed_blob_ids()
+        labels = self._canvas.blob_labels()
+        if removed and labels is not None:
+            mask = mask & ~np.isin(labels, list(removed))
+        return mask
+
+    def _on_blob_deleted(self, _label_id: int) -> None:
+        # ZoneCanvas가 이미 removed_blob_ids에 반영·재도색까지 마친 뒤 emit한다
+        # (라운드 3의 circles_changed와 동일하게, 여기선 재계산만 트리거).
+        self._recompute_zones()
 
     def _recompute_zones(self) -> None:
         # circles_changed 는 원 드래그 이동/반지름조절 중에도 mouseMoveEvent마다 emit된다
@@ -416,7 +459,7 @@ class ZoneAnalysisTab(QWidget):
         circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
         h, w = self._last_result.raw_class_map.shape
         zones = zones_from_circles(circles, (h, w))
-        target_mask = self._last_result.raw_class_map == self._target_class_id
+        target_mask = self._current_target_mask()
         for zone in zones:
             pct = zone_stats(zone.mask, target_mask)
             self._zone_list.addItem(f"{zone.name}  —  {pct:.2f}%")
