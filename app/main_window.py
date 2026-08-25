@@ -11,6 +11,7 @@ from app.tabs.model_tab import ModelTab
 from app.tabs.labeling_tab import LabelingTab
 from app.tabs.training_tab import TrainingTab
 from app.tabs.inference_tab import InferenceTab
+from app.tabs.zone_analysis_tab import ZoneAnalysisTab
 from app.widgets.settings_dialog import SettingsDialog
 from app.widgets.export_dialog import ExportDialog
 from app.widgets.import_dialog import ImportAnnotationDialog
@@ -34,11 +35,13 @@ class MainWindow(QMainWindow):
         self._labeling_tab  = LabelingTab()
         self._training_tab  = TrainingTab()
         self._inference_tab = InferenceTab()
+        self._zone_tab       = ZoneAnalysisTab()
 
         self._tabs.addTab(self._labeling_tab,  t("tab.labeling"))
         self._tabs.addTab(self._training_tab,  t("tab.training"))
         self._tabs.addTab(self._inference_tab, t("tab.inference"))
         self._tabs.addTab(self._model_tab,     t("tab.model"))
+        self._tabs.addTab(self._zone_tab,      t("tab.zone_analysis"))
 
         # ── 우측 상단 코너 위젯: 프로젝트명 + 전환 + 설정 ──────────────────
         corner = QWidget()
