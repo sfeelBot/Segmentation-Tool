@@ -1,20 +1,23 @@
-"""존(Zone) 분석 탭 — 배터리 캡 녹 검사 도구. 라운드 1: 탭 스켈레톤.
+"""존(Zone) 분석 탭 — 배터리 캡 녹 검사 도구.
 
 기존 4탭(모델/라벨링/학습/추론)과 완전히 독립된 도구 — `app.core.project`의
 프로젝트 시스템(images/annotations/checkpoints/user_models)을 사용하지 않는다.
 이미지·체크포인트를 임의 경로에서 직접 열고, 그 자리에서 모델을 재구성해
 추론한다. 자세한 스펙: docs/specs/zone-analysis-tab-2026-08-25.md
 
-라운드 1 범위: 이미지/체크포인트 로드 + 모델 재구성(preset 자동 / 커스텀 코드
+라운드 1: 이미지/체크포인트 로드 + 모델 재구성(preset 자동 / 커스텀 코드
 붙여넣기) + 추론 실행 + 타겟(녹) 클래스 즉석 구성 + ZoneCanvas 순수 뷰어 표시.
-원 검출/편집·존 퍼센티지·블랍 삭제는 이후 라운드.
+라운드 2: 원(circle) 자동 검출(`circle_detector.py`) + 수동 편집(추가/이동/
+반지름 조절/삭제) + 원 목록 사이드 패널. 존 퍼센티지·블랍 삭제는 이후 라운드.
 """
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
-    QSplitter,
+    QSplitter, QSlider, QListWidget, QListWidgetItem,
 )
 from PyQt6.QtCore import Qt
 import torch.nn as nn
@@ -26,6 +29,7 @@ from app.core.inference_engine import (
 from app.core.model_validator import validate
 from app.core.model_loader import load_from_code
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
+from app.core.circle_detector import detect_circles
 from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
 
@@ -42,6 +46,7 @@ class ZoneAnalysisTab(QWidget):
         self._model: nn.Module | None = None
         self._last_result: InferenceResult | None = None
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
+        self._image_size: tuple[int, int] = (0, 0)   # (w, h) — 원본 이미지 픽셀 크기
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -124,9 +129,38 @@ class ZoneAnalysisTab(QWidget):
         target_row.addStretch()
         root.addLayout(target_row)
 
-        # ── 캔버스 ───────────────────────────────────────────────────────────
+        # ── 원 검출/편집 컨트롤 ──────────────────────────────────────────────
+        circle_row = QHBoxLayout()
+        self._btn_detect = QPushButton("자동 검출")
+        circle_row.addWidget(self._btn_detect)
+        circle_row.addWidget(QLabel("민감도:"))
+        self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sensitivity_slider.setRange(0, 100)
+        self._sensitivity_slider.setValue(50)
+        self._sensitivity_slider.setFixedWidth(140)
+        circle_row.addWidget(self._sensitivity_slider)
+        self._lbl_sensitivity = QLabel("50%")
+        self._lbl_sensitivity.setFixedWidth(36)
+        circle_row.addWidget(self._lbl_sensitivity)
+        circle_row.addStretch()
+        root.addLayout(circle_row)
+
+        # ── 캔버스 + 원 목록 사이드 패널 ─────────────────────────────────────
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         self._canvas = ZoneCanvas()
-        root.addWidget(self._canvas, stretch=1)
+        splitter.addWidget(self._canvas)
+
+        side = QWidget()
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(4, 0, 0, 0)
+        side_layout.addWidget(QLabel("검출된 원 (반지름 오름차순)"))
+        self._circle_list = QListWidget()
+        side_layout.addWidget(self._circle_list, stretch=1)
+        splitter.addWidget(side)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([700, 180])
+        root.addWidget(splitter, stretch=1)
 
         # ── 시그널 ───────────────────────────────────────────────────────────
         self._btn_image.clicked.connect(self._on_select_image)
@@ -136,6 +170,13 @@ class ZoneAnalysisTab(QWidget):
         self._btn_run.clicked.connect(self._on_run)
         self._target_name_edit.editingFinished.connect(self._on_target_changed)
         self._target_combo.currentIndexChanged.connect(self._on_target_changed)
+        self._btn_detect.clicked.connect(self._on_auto_detect)
+        self._sensitivity_slider.valueChanged.connect(
+            lambda v: self._lbl_sensitivity.setText(f"{v}%")
+        )
+        self._canvas.circles_changed.connect(self._refresh_circle_list)
+        self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
+        self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
 
     # ── 슬롯 — 이미지 / 체크포인트 선택 ─────────────────────────────────────
 
@@ -149,6 +190,13 @@ class ZoneAnalysisTab(QWidget):
         self._image_path = Path(path)
         self._lbl_image.setText(self._image_path.name)
         self._lbl_image.setStyleSheet("color:#e5e7eb;")
+        try:
+            with Image.open(str(self._image_path)) as im:
+                self._image_size = im.size   # (w, h)
+        except Exception:
+            self._image_size = (0, 0)
+        self._canvas.set_image_size(*self._image_size)
+        self._canvas.clear_circles()
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -329,3 +377,53 @@ class ZoneAnalysisTab(QWidget):
         except Exception as exc:
             log.exception("존 분석 타겟 클래스 재필터링 실패")
             QMessageBox.critical(self, "재필터링 오류", str(exc))
+
+    # ── 슬롯 — 원(circle) 자동 검출 (라운드 2) ──────────────────────────────
+
+    def _on_auto_detect(self) -> None:
+        if self._image_path is None:
+            QMessageBox.warning(self, "이미지 없음", "이미지를 먼저 선택하세요.")
+            return
+        sensitivity = self._sensitivity_slider.value() / 100.0
+        try:
+            with Image.open(str(self._image_path)) as im:
+                rgb = np.array(im.convert("RGB"))
+            bgr = rgb[:, :, ::-1].copy()
+            circles = detect_circles(bgr, sensitivity=sensitivity)
+        except Exception as exc:
+            log.exception(f"존 분석 원 자동 검출 실패 — image={self._image_path}")
+            QMessageBox.critical(self, "자동 검출 오류", str(exc))
+            return
+        self._canvas.set_circles(circles)
+        if not circles:
+            QMessageBox.information(self, "검출 결과 없음", "원을 찾지 못했습니다. 민감도를 조절하거나 수동으로 추가하세요.")
+
+    # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
+
+    def _refresh_circle_list(self) -> None:
+        self._circle_list.blockSignals(True)
+        self._circle_list.clear()
+        for i, (circle_id, cx, cy, r) in enumerate(self._canvas.circles_with_ids(), start=1):
+            item = QListWidgetItem(f"원 {i}  r={r:.1f}px  중심=({cx:.0f}, {cy:.0f})")
+            item.setData(Qt.ItemDataRole.UserRole, circle_id)
+            self._circle_list.addItem(item)
+        self._circle_list.blockSignals(False)
+
+    def _on_canvas_circle_selected(self, circle_id) -> None:
+        self._circle_list.blockSignals(True)
+        for i in range(self._circle_list.count()):
+            item = self._circle_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == circle_id:
+                self._circle_list.setCurrentRow(i)
+                break
+        else:
+            self._circle_list.setCurrentRow(-1)
+        self._circle_list.blockSignals(False)
+
+    def _on_list_row_selected(self, row: int) -> None:
+        if row < 0:
+            self._canvas.select_circle(None)
+            return
+        item = self._circle_list.item(row)
+        circle_id = item.data(Qt.ItemDataRole.UserRole) if item else None
+        self._canvas.select_circle(circle_id)
