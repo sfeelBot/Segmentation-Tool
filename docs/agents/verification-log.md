@@ -2711,3 +2711,113 @@ emit하는 모든 경로에 동시 적용(개별 호출부마다 패치하지 �
 라운드 1 회귀 없음.
 - 리더에게: **라운드 2 검증 통과. 라운드 3(zone_metrics — 존 리스트+퍼센티지 계산) 착수 가능.**
 - `QA.md`에 BUG-018 등록(Closed, 수정+재검증 완료 상태로 기록) — 후속 재작업 불필요.
+
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 3 검증: 존 리스트 + 퍼센티지 계산
+
+### 범위
+`docs/specs/zone-analysis-tab-2026-08-25.md` "존 계산 로직"·"UX 흐름 상세 > 존 선택 및
+네이밍" 절, 커밋 `d0fcfd9`(feat) + `5691791`(구현 로그). 라운드 1(탭 스켈레톤+체크포인트
+로드+추론, 커밋 `13f2952`)·라운드 2(원 검출/편집, 커밋 `1815921`+`b1f05bc`, BUG-018 수정
+포함)는 이미 독립검증 통과 — 재검증 대상 아님, 회귀만 확인. 블랍 삭제(라운드4)는 범위 밖.
+**워크트리**: `D:\segmentation model-zone-analysis-tab`(`D:\segmentation model`은 다른
+세션이 `main` 브랜치로 동시 사용 중이라 미접촉).
+
+### 방법
+- 정적 리뷰: `zone_metrics.py`(원판 마스크 벡터화 거리식 차집합, `Circle`/`Zone`
+  데이터클래스, `zone_stats`) + `zone_canvas.py`(`zone_clicked`, `set_highlighted_zone`,
+  `_paint_zone_highlight` OddEven 채우기) + `zone_analysis_tab.py`(`_recompute_zones`,
+  캔버스↔리스트 동기화 슬롯) 전체 코드 리딩. `py -3 app/core/zone_metrics.py` self-check
+  (5×5 합성 이미지 손계산 검산 + 원 2개 파티션 불변식)이 실제로 통과함을 재확인.
+- 실제 GUI(QTest) 골든패스: `python main.py`와 동일한 임포트 순서(numpy/cv2/PIL/torch/
+  matplotlib 선행 → PyQt6.QtWidgets → QApplication)로 `MainWindow` 실구동. 스크래치
+  프로젝트(`zone_r3_dummy`, `projects/nok`과 무관)를 열어 5개 탭 구성만 재사용하고, 존
+  계산 자체는 학습된 모델의 노이즈 있는 예측 대신 **손계산 가능한 합성
+  `raw_class_map`**(300×300, 중심 (150,150) 반지름 60 디스크가 타겟 클래스)을 쓰기 위해
+  `engine.run`/`engine.refilter`를 몽키패치(모델 자체는 `preset:lraspp_mobilenet` 체크포인트
+  로 실제 `load_model_from_ckpt()` 경로를 그대로 태워 실제 아키텍처 인스턴스화까지 확인,
+  다만 실제 순전파 결과 대신 합성 클래스맵으로 대체 — 이번 라운드 검증 목표가 "퍼센티지
+  계산·리스트 표시·동기화 로직"이라 모델 정확도는 무관). `QFileDialog`만 몽키패치, 원
+  생성/이동/반지름조절은 전부 `QTest.mousePress`/합성 `mouseMoveEvent`(`QApplication.
+  sendEvent`)/`QTest.mouseRelease`로 실제 캔버스 이벤트 발생.
+
+### 확인한 것 (수정 후 31개 assertion 전부 통과)
+1. **탭/회귀** — `QTabWidget.count()==5`, 존 분석 탭이 5번째, 탭 전환 정상. preset
+   체크포인트(`model_source="preset:lraspp_mobilenet"`) 선택 시 자동 인스턴스화(코드박스
+   숨김), 추론 실행 후 타겟 클래스 단일 검출→텍스트필드 노출, 자동검출 버튼 활성화까지
+   라운드 1·2 골든패스 재확인.
+2. **존 계산 정확성** — 원 1개(중심 (150,150), r≈50)를 실제 드래그로 생성 → 존 리스트
+   항목 정확히 2개(`중심부`/`바깥쪽`) 표시. 표시된 퍼센티지를 **`zone_metrics.py`를 거치지
+   않는 독립 numpy 오라클**(원판 마스크 차집합을 스크립트 안에서 별도로 재구현)과 대조 —
+   완전 일치(`중심부=100.00%`, `바깥쪽=4.19%`, 오차 0.5%p 미만). 손으로 유도한 수식
+   (`바깥쪽 % = (타겟면적 − 중심원과 겹치는 면적) / (전체면적 − 중심원면적)`)과도 소수점
+   6자리까지 일치(`hand=4.187% vs oracle=4.187%`) — `zone_stats()`의 산술 자체와 GUI
+   와이어링(캔버스 원 → `zone_metrics.Circle` 변환 → `raw_class_map` AND → 표시) 양쪽
+   모두 정확함을 확인.
+3. **실시간 재계산** — 기존 원의 테두리를 실제 드래그(반지름 50→~80px)한 직후 존 리스트
+   텍스트가 즉시 변경됨을 확인, 새 반지름 기준 오라클 재계산값(`56.16%`)과 GUI 표시가
+   일치. 반지름 변경 시 "중심부"가 이제 원 자체 디스크(타겟 디스크보다 커짐)를 뜻하게
+   되어 100%에서 56.16%로 정확히 낮아지는 것도 기하학적으로 타당함을 확인.
+4. **타겟 클래스 전환 재계산** — 이번 합성 시나리오는 타겟 클래스가 1개뿐이라 드롭다운
+   분기(2개 이상)는 라운드 1 검증에서 이미 확인된 범위 — 이번엔 텍스트필드 이름 변경
+   (`class_1`→`rust`) 후 `editingFinished`로 재필터링이 실행돼도 `target_class_id`가
+   유지되고 존 리스트가 여전히 정상 표시됨을 확인(재필터링 경로도 `_recompute_zones()`를
+   타는지 확인하는 목적).
+5. **캔버스↔리스트 양방향 하이라이트 동기화 — BUG-019 발견** (아래 참고).
+6. **크래시 없음** — `py_compile` 3개 파일 통과, 학습된 체크포인트 로드+추론 몽키패치+
+   전체 GUI 골든패스 세션 동안 예외 0건.
+
+### 발견한 버그 — BUG-019 (수정 완료, `QA.md` Closed로 등록)
+BUG-018과 동일한 근본 원인이 라운드 3 신규 코드(`_recompute_zones()`)에 재발했다.
+`ZoneCanvas.mouseReleaseEvent()`는 원 편집·생성·단순 클릭 등 모든 경로에서 무조건
+`circles_changed`를 emit하는데(라운드 2부터 있던 기존 동작), 라운드 3이 이 신호에 새로
+연결한 `_recompute_zones()`가 `blockSignals` 없이 `self._zone_list.clear()`로 리스트를
+통째로 비워 `currentRowChanged(-1)`을 발생시키고, 이것이 `_on_zone_row_selected(-1)` →
+`canvas.set_highlighted_zone(None)`으로 이어져 캔버스 하이라이트까지 지워버린다. 실측으로
+재현한 두 갈래:
+- **캔버스 빈 곳 클릭으로 존 선택하는 기능 자체가 사실상 전혀 동작하지 않음** — 클릭 시
+  `mouseReleaseEvent` 안에서 `set_highlighted_zone(zone_idx)` + `zone_clicked` emit까지는
+  정상 실행되지만, 같은 메서드 끝의 `circles_changed.emit()`이 **같은 이벤트 처리 안에서
+  곧바로** 그 하이라이트를 지운다(디버그 로그로 press 직후 임시 원 생성 → release 시
+  `_zone_index_at()`가 정확한 인덱스(1="바깥쪽")를 계산해 emit하는 것까지 단계별 재현,
+  최종 `_canvas._highlighted_zone`은 `None`으로 남는 것까지 확인).
+- **존 하이라이트가 유지된 상태에서 무관한 원을 이동해도 하이라이트가 사라짐** — 리스트에서
+  "바깥쪽" 항목을 선택해둔 뒤(캔버스 하이라이트=1) 기존 원을 살짝 드래그 이동하면
+  `mouseMoveEvent`/`mouseReleaseEvent`가 emit하는 `circles_changed`마다 리스트가 재구성돼
+  하이라이트가 `None`/리스트 선택이 `-1`로 리셋됨(수정 전: `canvas_highlight=1,list_row=1`
+  → 이동 후 `canvas_highlight=None,list_row=-1`).
+
+**수정(검증 에이전트가 직접, BUG-018과 동일한 패턴 재사용)**: `ZoneCanvas`에
+`highlighted_zone()` getter 추가(기존 `selected_id()`와 동일 용도) + `_recompute_zones()`가
+재구성 전 `self._canvas.highlighted_zone()`을 읽어두고 `self._zone_list.blockSignals(True)`로
+감싼 채 `clear()`+재구성한 뒤, 존 개수가 여전히 유효한 범위면 `setCurrentRow()`로 복원,
+무효(원 삭제 등으로 존 개수 자체가 줄어든 경우)면 리스트 선택(`-1`)과 캔버스 하이라이트
+(`None`)를 명시적으로 정리하도록 수정 — 공유 함수 1곳만 고쳐 원 추가/이동/크기조절/삭제·
+타겟 클래스 전환 등 `_recompute_zones()`를 타는 모든 경로에 동시 적용. `py_compile` 통과,
+전체 31개 assertion 재실행으로 재검증 통과(수정 전: 캔버스 클릭 존 선택 실패 2건 + 하이라이트
+유지 실패 2건, 수정 후: 0건 실패).
+
+### 회귀 확인
+- 라운드 1·2 골든패스 재확인 — 탭 5개, preset 체크포인트 자동 인스턴스화+추론, 원 생성/
+  반지름조절 정상.
+- `py_compile` 통과, 런타임 크래시 0건.
+
+### 프로세스 정리
+- 스크래치 자산(`zone_r3_assets/` — 합성 이미지, 가짜 체크포인트, 더미 프로젝트)은 전용
+  스크래치 디렉토리에만 생성 후 검증 종료 시 삭제. `projects/nok/`은 이번 라운드에서 아예
+  열지 않음(합성 데이터로 충분).
+- 헤드리스 환경에서 `win.close()`가 `QMessageBox.question()` 모달로 무한 대기하는 기존에
+  문서화된 제약(R1~R6/라운드1·2 검증 로그에서 반복 확인)을 이번엔 아예 `win.close()`를
+  호출하지 않고 `os._exit(0)`로 스크립트를 종료하는 방식으로 회피(모든 assertion이 이미
+  출력된 뒤). `tasklist`로 좀비 python 프로세스 0건 확인.
+- `git status --short` 결과 `app/tabs/zone_analysis_tab.py`, `app/widgets/zone_canvas.py`만
+  변경(BUG-019 수정), `projects/nok/`은 무변경.
+
+### 판정
+**통과(조건부 아님 — 발견된 버그를 검증 에이전트가 즉시 수정하고 재검증까지 완료)**. 존
+계산 정확성(독립 오라클 대조 완전 일치)·실시간 재계산·타겟 클래스 전환 시 재계산·캔버스↔
+리스트 양방향 동기화(수정 후) 전부 실제 GUI 조작으로 확인. 라운드 1·2 회귀 없음.
+- 리더에게: **라운드 3 검증 통과. 라운드 4(블랍 클릭 삭제 + 재계산) 착수 가능.**
+- `QA.md`에 BUG-019 등록(Closed, 수정+재검증 완료 상태로 기록) — 후속 재작업 불필요.

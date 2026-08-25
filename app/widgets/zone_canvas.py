@@ -104,6 +104,12 @@ class ZoneCanvas(OverlayViewer):
         self._highlighted_zone = zone_index
         self.update()
 
+    def highlighted_zone(self) -> int | None:
+        """현재 하이라이트된 존 인덱스(없으면 None) — 사이드 패널이 존 리스트를
+        재구축(퍼센티지 재계산)한 뒤 하이라이트를 복원할 때 조회한다
+        (`selected_id()`와 동일한 용도, BUG-018과 같은 재구축발 리셋 방지)."""
+        return self._highlighted_zone
+
     def remove_selected(self) -> None:
         if self._selected_id is None:
             return

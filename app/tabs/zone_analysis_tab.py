@@ -400,9 +400,17 @@ class ZoneAnalysisTab(QWidget):
     # ── 슬롯 — 존(zone) 퍼센티지 계산/표시 (라운드 3) ────────────────────────
 
     def _recompute_zones(self) -> None:
+        # circles_changed 는 원 드래그 이동/반지름조절 중에도 mouseMoveEvent마다 emit된다
+        # (BUG-018과 동일한 근본 원인) -- blockSignals 없이 clear()+재구성하면 QListWidget의
+        # currentRow가 -1로 리셋되며 그 currentRowChanged(-1)이 _on_zone_row_selected를 타고
+        # 캔버스 존 하이라이트까지 지워버린다. 재구성 전 현재 하이라이트를 읽어두고 재구성
+        # 후 복원한다(_refresh_circle_list의 selected_id 복원과 동일 패턴).
+        highlighted = self._canvas.highlighted_zone()
+        self._zone_list.blockSignals(True)
         self._zone_list.clear()
         circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r)
         if not circles_raw or self._last_result is None or self._target_class_id is None:
+            self._zone_list.blockSignals(False)
             self._canvas.set_highlighted_zone(None)
             return
         circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
@@ -412,6 +420,13 @@ class ZoneAnalysisTab(QWidget):
         for zone in zones:
             pct = zone_stats(zone.mask, target_mask)
             self._zone_list.addItem(f"{zone.name}  —  {pct:.2f}%")
+        if highlighted is not None and 0 <= highlighted < self._zone_list.count():
+            self._zone_list.setCurrentRow(highlighted)
+        else:
+            self._zone_list.setCurrentRow(-1)
+            if highlighted is not None:
+                self._canvas.set_highlighted_zone(None)   # 존 개수가 바뀌어 인덱스가 더 이상 유효하지 않음
+        self._zone_list.blockSignals(False)
 
     def _on_canvas_zone_clicked(self, zone_index: int) -> None:
         self._zone_list.blockSignals(True)
