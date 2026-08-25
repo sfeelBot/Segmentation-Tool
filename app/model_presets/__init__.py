@@ -85,6 +85,33 @@ PRESETS: list[PresetInfo] = [
         pros="스케일 변동에 강건, 균형잡힌 성능",
         cons="커스텀 구현 — 튜닝 여지 있음",
     ),
+    PresetInfo(
+        key="segformer",
+        title="SegFormer (2021) — 경량 트랜스포머",
+        tagline="계층적 트랜스포머 인코더 + all-MLP 디코더, 위치인코딩 없이 Mix-FFN으로 대체",
+        use_case="조명·질감 변화가 큰 현장에서 전역 문맥이 중요한 대형 이물·넓은 얼룩·표면 패턴 이상 검출",
+        params="≈ 3.7M",
+        pros="넓은 수용영역, 해상도에 강건한 Efficient Self-Attention",
+        cons="CNN 계열보다 학습에 더 많은 데이터·시간이 필요할 수 있음",
+    ),
+    PresetInfo(
+        key="segnext",
+        title="SegNeXt (2022) — 대형 커널 conv attention",
+        tagline="Self-attention 없이 MSCA(멀티스케일 스트립 conv)로 트랜스포머급 문맥 포착",
+        use_case="실시간성이 필요하면서도 넓은 수용영역이 필요한 도장·코팅면 얼룩, 직물 패턴 결함 검출",
+        params="≈ 3.4M",
+        pros="연산 대비 성능 우수, self-attention보다 가볍고 빠름",
+        cons="원 논문의 Hamburger 디코더를 경량 concat-fuse 디코더로 단순화 — 정확도는 원 논문보다 낮을 수 있음",
+    ),
+    PresetInfo(
+        key="pidnet",
+        title="PIDNet (2023) — 실시간 3-브랜치",
+        tagline="Detail/Context/Boundary 3-브랜치, 경계 attention 게이트로 융합하는 실시간 구조",
+        use_case="컨베이어·고속 라인 등 실시간 처리량이 중요하면서 경계가 뚜렷한 스크래치·크랙 검출",
+        params="≈ 0.9M",
+        pros="매우 가볍고 빠름, boundary attention으로 경계 품질 보완",
+        cons="단일 출력 계약상 boundary는 내부 게이트로만 사용 — 원 논문의 auxiliary loss 학습은 미지원",
+    ),
 ]
 
 
