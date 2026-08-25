@@ -2255,3 +2255,71 @@ em-dash(—) 문자가 콘솔 `StreamHandler`에서 `UnicodeEncodeError`로 로�
 디스패치로 Pan 도구·Space+좌클릭·우클릭 3가지 팬 진입 방식 전부 초점 유지(drift
 0.0000px) 확인, 이어지는 move에서도 안 튐. 브러시/폴리곤 도구는 `_pan_active` 분기를
 타지 않아 회귀 없음 확인. 새 버그 없음 — QA.md 변경 없음.
+
+---
+
+## 2026-08-25 — SegFormer/SegNeXt/PIDNet 프리셋 3종 검증 (커밋 c9f49e6, 37ab955)
+
+### 대상
+구현 에이전트가 추가한 신규 모델 프리셋 3개(`app/model_presets/segformer.py`,
+`segnext.py`, `pidnet.py`) + `__init__.py` 등록분. "주요 기능 추가" 라운드로 판단해
+모델/학습/추론 탭 전부 실제 UI 조작으로 골든패스를 확인.
+
+### 방법
+스크래치 스크립트(`scratchpad/verify_new_presets.py`, 저장소에는 추가하지 않음)로
+`MainWindow()`를 실제로 생성하고, `QTest.mouseClick`/`QTimer.singleShot`으로 실제
+버튼 클릭·모달 다이얼로그 상호작용·시그널 흐름을 그대로 태웠다(내부 상태를 직접
+세팅하는 우회 없이, 모델 탭 프리셋 팝업 → 검증 → 로드 → 학습 탭 큐 추가 → 실행 →
+추론 탭 체크포인트 선택 → 추론 실행까지 전부 프로덕션 코드 경로). 실사용
+`projects/`·`data/settings.json`은 건드리지 않기 위해 `app.core.project.set_current()`
+대신 `_project._current`를 스크래치 프로젝트(`qa_preset_project`, 64×64 합성 이미지
+3장 + 클래스 2개 + 폴리곤 어노테이션)로 직접 지정. `QMessageBox.question/warning/
+information/critical`을 모니터링용으로 monkeypatch(호출 로그만 남기고 자동 응답) —
+이번 실행에서는 실제로 한 번도 호출되지 않음(GPU 사용 가능이라 CPU 폴백 확인 팝업도
+안 뜸).
+
+### 확인한 항목
+1. **모델 탭 — 프리셋 팝업**: `ModelPresetDialog`(리스트+설명 패널, 드롭다운이 아니라
+   좌측 리스트 방식임을 확인)를 실제로 `_btn_preset` 클릭으로 열어 SegFormer/SegNeXt/
+   PIDNet 3개 항목이 리스트에 모두 존재함을 확인, 각각 실제 선택 후 "에디터에
+   불러오기" 버튼 클릭으로 에디터에 코드가 로드됨(빈 에디터 아님, 기대 클래스명 포함)
+   확인.
+2. **검증 버튼**: 3개 전부 `_btn_validate` 클릭 → 상태 라벨에 "✓" 표시, `_btn_load`
+   활성화 확인(AST 검증 실제 통과).
+3. **로드 버튼**: 3개 전부 `_btn_load` 클릭 → `loaded_model` 정상 인스턴스화,
+   파라미터 수가 구현 로그 수치와 **정확히 일치**: SegFormer 3,714,658 / SegNeXt
+   3,404,098 / PIDNet 915,746.
+4. **학습 탭 — 실제 학습 스모크 (배치 크기 1 포함, PIDNet 회귀 확인 목적)**: 학습
+   탭의 모델 콤보(프리셋 직접 선택 가능)로 3개 프리셋을 각각 별도 잡으로 큐에 추가
+   (`resize` 모드, img 64×64, epochs=1, batch_size=1, num_workers=0, ckpt_every=1),
+   "전체 실행" 버튼 실제 클릭 → `TrainerWorker` QThread가 실제로 3개 잡을 순차
+   실행. 3개 전부 `status == "done"`으로 정상 종료(train_loss/val_loss 유한값 산출:
+   SegFormer 0.597/0.550, SegNeXt 0.649/0.714, PIDNet 0.622/0.721). 손실 그래프
+   (`LossChart`)에 실제 배치 포인트가 누적됨을 확인. **PIDNet이 batch_size=1로
+   예외 없이 완료** — 구현 에이전트가 이번 라운드에서 고친 PPM
+   BatchNorm→GroupNorm 수정의 회귀 확인 완료(수정 전이었다면 "more than 1 value
+   per channel" RuntimeError로 즉시 실패했을 지점).
+5. **체크포인트 저장**: `pid_test_epoch_0001.pt`, `sf_test_epoch_0001.pt`,
+   `sn_test_epoch_0001.pt` 3개 전부 스크래치 프로젝트의 `checkpoints/`에 실제 저장됨
+   확인.
+6. **추론 탭 — 실제 추론 (3개 모델 전부)**: "↺ 새로고침" 클릭으로 방금 저장된
+   체크포인트 3개가 테이블에 표시됨 확인 → 각 체크포인트 행 선택 시
+   `model_source`(`preset:*`)를 읽어 `_auto_model`이 자동으로 인스턴스화됨(프리셋
+   기반 체크포인트 자동 매칭 경로) 확인 → 이미지 로드 후 "▶ 추론 실행" 버튼 실제
+   클릭 → 3개 전부 `overlay_pixmap`이 비어있지 않은(`isNull()==False`) 64×64
+   결과 생성, 클래스 범례 테이블에 background/defect 비율까지 정상 표시.
+7. **`data/logs/errors.log`**: 검증 전후 라인 수 동일(3662 → 3662, 신규 항목 0건) —
+   크래시·미처리 예외 없음.
+8. **부수 확인**: `git status --short`로 저장소 무변경, `git diff --stat -- data/
+   settings.json` 무변경, `git status --short -- projects/` 무변경 — 실사용 데이터·
+   설정에 영향 없음 확인. 스크래치 테스트 프로젝트(`qa_preset_project`)는 검증 후
+   삭제.
+
+### 발견한 문제
+새 버그 없음. QA.md 변경 없음.
+
+### 판정
+**통과**. 모델 탭(프리셋 3종 로드/검증/로드) · 학습 탭(큐 추가·실행·손실그래프·
+체크포인트 저장, batch_size=1 PIDNet 회귀 포함) · 추론 탭(체크포인트 자동 매칭·
+실제 추론·오버레이 표시) 전 과정을 실제 위젯 클릭/시그널 경로로 3개 모델 모두
+end-to-end 확인. push는 아직 안 된 상태 — 리더가 사용자 확인 후 진행.
