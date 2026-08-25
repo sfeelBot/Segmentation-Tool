@@ -395,6 +395,51 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - [ ] 착수 대기 — 사용자가 "추후" 착수 시점을 알려주면 스파이크(PyInstaller+torch/CUDA
       번들링 실측)부터 시작. 지금은 기록만.
 
+## 존(Zone) 분석 탭 — 배터리 캡 녹 검사 독립 도구 (2026-08-25 요청)
+
+브랜치 `feature/zone-analysis-tab`. 기존 4탭(모델/라벨링/학습/추론)과 완전히 독립된
+신규 5번째 탭 — 삼성SDI 원통형 배터리 캡 이미지에서 동심원 구역(존)별 녹 검출 면적
+비율(%)을 계산하는 도구. 기획 완료: [docs/specs/zone-analysis-tab-2026-08-25.md](specs/zone-analysis-tab-2026-08-25.md).
+
+- 확정 요구사항(재질문 불필요): ① 프로젝트 시스템 미사용, 이미지/체크포인트 직접 로드 후
+  즉석 추론 ② 동심원 형태의 경계 자동검출(**2026-08-25 수정**: Hough 원 검출 아님 —
+  Canny+findContours 기반 컨투어 검출) + 수동 편집(정점 드래그/추가/삭제) ③ 존별 클릭
+  선택 + 녹 마스크 면적비율(%) ④ 추론 마스크 블랍(connected component) 클릭 삭제 + 재계산
+  ⑤ main 병합은 추후 확인.
+- 탭 배치: 기존 `QTabWidget` 5번째 탭(별도 진입점 아님) — "독립"은 데이터 모델(프로젝트
+  시스템 미사용) 독립을 뜻하는 것으로 판단, core 신규 모듈은 `app.core.project` 미참조로
+  보장. 근거 상세는 스펙 문서 "판단 1" 절.
+- 핵심 기술 판단: **2026-08-25 수정** — 경계(컨투어)는 폐곡선 점 목록
+  `Contour(id, points: list[(x,y)])`로 저장(당초 `(cx, cy, r)` 원 모델은 사용자가 직접
+  정정 — 참고 이미지의 빨간 라인이 완벽한 수학 원이 아니라 실제 크림핑/가스켓 링 에지를
+  따라가는 울퉁불퉁한 폐곡선이었음). 자동검출은 `cv2.Canny`→`cv2.findContours`→원형도
+  (4π·area/perimeter²)+면적 필터→면적 내림차순 정렬(당초 Hough 단독 방식 폐기). 존 계산은
+  `cv2.fillPoly` 이진 마스크의 집합 차집합(`AND NOT`)으로 재정의, 경계들이 대략 nested라는
+  전제(배터리 캡 실제 구조상 항상 성립) — 스펙 "판단 2"·"존 계산 로직". 수동 편집은
+  `annotation_canvas.py`의 "클릭으로 점 추가+스냅으로 폐곡선 닫기" 패턴은 신규 폐곡선
+  그리기에 재사용하되, 이미 닫힌 폴리곤의 정점 드래그/삽입/삭제는 이 코드베이스에 선례가
+  없어 신규 구현 필요(조사 결과, 스펙 "파일 구조 제안" 참고). 체크포인트→모델 재구성은
+  `load_model_from_ckpt()`(preset)를 그대로 재사용하되 커스텀("loaded") 체크포인트는 모델
+  탭 상태에 기대지 않고 탭 안에서 `model_validator`/`model_loader`로 코드 재입력
+  (Validate→Load) — 스펙 "판단 3"(변경 없음). 타겟 클래스는 프로젝트 `classes.json` 미참조,
+  `inference_engine.run()` 등 3개 함수에 선택 인자 `classes`만 추가(기존 4탭 회귀 없는
+  최소 침습)해 추론 결과의 고유 클래스 id로 즉석 구성 — 스펙 "판단 4"(변경 없음).
+- 신규 파일(예정): `app/tabs/zone_analysis_tab.py`, `app/widgets/zone_canvas.py`,
+  `app/core/contour_detector.py`(당초 `circle_detector.py`에서 개명), `app/core/zone_metrics.py`.
+  기존 파일 최소 수정: `app/core/inference_engine.py`(옵션 인자 3곳), `app/main_window.py`
+  (탭 등록), `app/core/i18n.py`(키 추가).
+- 실행 순서(라운드 4개, 스펙 "라운드 분할 제안" 절): R1 탭 스켈레톤+파일로드+모델재구성+
+  추론실행(경계 편집 없음) → R2 경계 자동검출/수동편집(**서브스텝 2a: 실제 예시 이미지로
+  Canny/원형도/면적 파라미터 스크립트 프로토타입 선행** → 2b: 위젯 구현) → R3 존 리스트+
+  퍼센티지 계산 → R4 블랍 클릭 삭제+재계산. 각 라운드 구현 후 `python main.py` 실제 구동 검증.
+- [ ] 결정 대기 1건 등록 — 타겟 클래스 2개 이상 검출 시 v1 범위(단일 드롭다운 vs
+      다중 비교표). [docs/decisions-needed.md](decisions-needed.md) 참고.
+- [ ] R1 (탭 스켈레톤 + 파일 로드 + 모델 재구성 + 추론 실행) — 착수 대기
+- [ ] R2 (경계 자동검출/수동편집, 2a 스크립트 프로토타입 → 2b 위젯 구현) — 착수 대기
+- [ ] R3 (존 리스트 + 퍼센티지 계산) — 착수 대기
+- [ ] R4 (블랍 클릭 삭제 + 재계산) — 착수 대기
+
 ## 다음 후보
-- 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징 외 추가 신규 기능 요청 없음. 새 요청은
-  [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에 반영된다.
+- 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
+  요청은 [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에
+  반영된다.
