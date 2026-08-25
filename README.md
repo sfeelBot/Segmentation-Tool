@@ -3,7 +3,11 @@
 PyTorch 세그멘테이션 모델을 위한 로컬 데스크탑 GUI. 라벨링 → 학습 → 추론 전 과정을 하나의
 앱에서 수행합니다.
 
-## 설치
+## 다운로드
+
+Windows용 설치 프로그램(exe)은 [Releases](https://github.com/sfeelBot/Segmentation-Tool/releases/latest) 페이지에서 받을 수 있습니다. 소스 빌드 없이 바로 설치해서 쓰려면 이쪽을 이용하세요.
+
+## 설치 (소스에서 직접 실행)
 
 ```powershell
 # 1) 가상환경
