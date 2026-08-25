@@ -2450,3 +2450,86 @@ onedir 패키징 + 설치 마법사를 만드는 것이 목표. 실제 빌드 �
 ### 관련
 - YOLO/COCO 포맷 import는 스코프 밖(요청서 명시) — JSON 포맷만 지원.
 - 새 SVG 아이콘을 만들지 않고 기존 `clipboard.svg` 재사용.
+
+---
+
+## 2026-08-25 — 추론 결과 AI score/픽셀 크기 threshold 필터 + blob별 Excel 내보내기
+
+### 배경
+사용자 요청: 추론할 때 AI 신뢰도 점수와 blob(연결 요소) 픽셀 크기 기준으로 threshold를
+걸고, 각 blob별 통계를 Excel로 내보낼 수 있게 해달라. 리더가 사전에 코드를 조사해
+설계(InferenceResult에 raw_class_map/confidence_map 보관 → 모델 재실행 없는
+refilter()로 재필터링)를 확정해 구현 지시서로 전달.
+
+### 변경
+- `app/core/inference_engine.py`
+  - 신규 dataclass `BlobStat`(blob_id, class_id, class_name, pixel_count,
+    mean/min/max_confidence, centroid_x/y, bbox_x/y/w/h).
+  - `InferenceResult`에 `raw_class_map`(필터 전 원본 argmax 클래스맵),
+    `confidence_map`(픽셀별 최고 클래스 확률, float32), `blobs: list[BlobStat]` 필드 추가.
+  - `run()`: `torch.softmax` + `probs.max(dim=1)`로 confidence까지 계산해 원본
+    해상도로 BILINEAR 리사이즈(class_map은 기존대로 NEAREST). `min_confidence`,
+    `min_pixel_size` 파라미터 추가.
+  - `run_sliding_window()`: 이미 갖고 있던 `acc`/`counts`에서 `probs_avg.max(axis=0)`로
+    confidence_map 계산(추가 forward pass 없음). 동일한 threshold 파라미터 추가.
+  - 신규 `_compute_blobs_and_filter()`: 클래스별 `cv2.connectedComponentsWithStats`
+    (connectivity=8, class_id==0 배경 제외)로 blob 분리, threshold 미달 blob은
+    배경으로 되돌리고 blob 리스트에서 제외. blob_id는 이미지 전체 기준 1부터 순차 부여.
+    최초 구현은 blob마다 `confidence_map[comp_mask]` 부울 인덱싱(O(H·W) per blob)이라
+    blob이 많을 때(500개, 2000×3000 합성 테스트) 872ms까지 걸려 `np.bincount` +
+    `np.minimum/maximum.at`로 라벨별 mean/min/max를 픽셀 1회 순회로 계산하도록
+    최적화(552ms로 단축, 클래스 수에 비례할 뿐 blob 수와 무관 — 나머지는 cv2/컬러화
+    자체 비용으로 스펙에서 명시한 "수백 ms" 범위 내).
+  - 신규 `refilter(raw_class_map, confidence_map, image_path_or_pil, min_confidence,
+    min_pixel_size, opacity) -> InferenceResult`: 모델 재실행 없이 순수 numpy/cv2/PIL
+    연산만으로 필터+오버레이+class_stats 재계산 (코드 리뷰로 torch 참조 0건 확인).
+  - 신규 `export_blobs_to_excel(rows, out_path)`: openpyxl로 (이미지파일명, BlobStat)
+    목록을 xlsx 1개 시트에 저장, 헤더만 볼드.
+- `app/tabs/inference_tab.py`
+  - "최소 AI 점수"(QDoubleSpinBox, 0~100%) / "최소 픽셀 크기"(QSpinBox, 0~100000px)
+    스핀박스 추가 → `valueChanged` 시 `_on_threshold_changed()`가 `engine.refilter()`
+    호출(추론 전이면 no-op, 다음 실행 시 반영). "탐지된 blob 수: N개" 라벨 추가.
+  - **기존 `_on_opacity_changed()` 버그 수정**: 기존엔 opacity만 바꿔도 `engine.run()`을
+    통째로 재실행해 threshold=0으로 리셋되는 문제가 생길 뻔했음(신규 필터 기능과
+    충돌) — `engine.refilter()`로 교체해 forward pass 없이, 현재 threshold를 유지한
+    채 재합성하도록 수정. 부수적으로 opacity 슬라이더의 기존 성능 문제도 해결됨.
+  - "Excel로 내보내기" 버튼(기존 `export.svg` 아이콘 재사용) 추가. 폴더 모드+이미지
+    2장 이상이면 "현재 이미지만" vs "목록 전체 일괄 추론" QMessageBox 커스텀 버튼으로
+    질의. 전체 선택 시 `QProgressDialog`(Qt 내장 위젯, 별도 다이얼로그 클래스 신설
+    안 함)로 진행률 표시하며 순차 추론(현재 선택 이미지는 캐시된 `_last_result` 재사용).
+    `openpyxl` 컬럼: 이미지파일명/blob_id/class_id/클래스명/픽셀수/평균·최소·최대
+    신뢰도(%)/중심x·y/bbox_x·y·w·h.
+- `app/widgets/inference_image_list.py`: 일괄 내보내기용 `paths()` 접근자 추가
+  (현재 필터+정렬된 전체 경로 리스트 반환).
+- `requirements.txt`: `openpyxl>=3.1.0` 추가, `py -3 -m pip install openpyxl`로 실제
+  설치 확인(이미 3.1.5 설치돼 있었음).
+
+### 검증 (구현 단계)
+- `py_compile`로 3개 수정 파일 구문 확인.
+- `_compute_blobs_and_filter()` 단위 테스트: 20×20 합성 class_map에 blob 3개(낮은
+  신뢰도 1개, 작은 픽셀 1개, 정상 1개) 배치 → threshold 없이 3개 모두 탐지, 신뢰도
+  0.5·픽셀 5 threshold 적용 시 정상 blob 1개만 남고 나머지는 배경(0)으로 전환됨을
+  확인. 입력 `class_map` 배열이 mutate되지 않음(원본 유지)도 확인.
+- 성능: `QApplication` 인스턴스 생성 후(QPixmap 생성에 필요) 2000×3000 합성 이미지 +
+  500개 산개 blob(고의적 최악 케이스)로 `refilter()` 552ms, 30개 blob(현실적 케이스)도
+  ~520ms — cv2 connectedComponents + bincount/ufunc.at 고정 비용이 클래스 수(3~4개)에
+  비례하는 구조라 blob 개수와 무관. 요청서의 "이미지 크기에 따라 수백 ms 수준" 기준
+  내에 있음.
+- `inspect.getsource(engine.refilter)` AST에서 `torch` 참조 0건으로 forward pass
+  없음을 코드 리뷰로 확인.
+- `InferenceTab()` 위젯을 QApplication 하에서 직접 생성해 에러 없이 초기화되는지,
+  `_on_threshold_changed()`/`_on_opacity_changed()`를 `_last_result=None` 상태로
+  호출해도 예외 없이 no-op으로 처리되는지 확인.
+- `export_blobs_to_excel()`로 3개 행(2개 이미지) 샘플 데이터를 xlsx로 저장한 뒤
+  `openpyxl.load_workbook()`으로 재로드 — 헤더 14개 컬럼·볼드 서식·데이터 값(신뢰도
+  0~1 → % 변환 등)이 모두 정확히 일치함을 확인.
+- 실제 GUI 클릭(스핀박스 조작, Excel 버튼 클릭 후 다이얼로그 흐름, 폴더 모드 일괄
+  추론 진행바)까지는 검증 서브에이전트가 이어서 확인해야 함 — **아직 완료로
+  간주하지 않음**.
+
+### 커밋
+`b07c1dd` — `feat: 추론 결과 AI score/픽셀 크기 threshold 필터 + blob별 Excel 내보내기 추가`
+
+### 관련
+- 리더 사전 설계 지시서 준수: 다중 시트 분리, 커스텀 스타일링, YAML 설정 등 과한
+  옵션은 추가하지 않음(ponytail 원칙).
