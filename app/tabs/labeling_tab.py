@@ -462,6 +462,12 @@ class LabelingTab(QWidget):
                 self._canvas._do_save(sync=True)
         self._canvas.toggle_ok()
 
+    def reload_after_import(self) -> None:
+        """어노테이션 가져오기(Import) 완료 후 이미지 목록·현재 캔버스 갱신."""
+        if self._canvas._image_path:
+            self._canvas.load_image(self._canvas._image_path)
+        self._image_browser.reload()
+
     def _on_auto_label(self) -> None:
         # 모델 미로드여도 '빠른 학습' 모드에서는 프리셋으로 자체 인스턴스 생성.
         model = self._get_model()

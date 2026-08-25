@@ -13,6 +13,7 @@ from app.tabs.training_tab import TrainingTab
 from app.tabs.inference_tab import InferenceTab
 from app.widgets.settings_dialog import SettingsDialog
 from app.widgets.export_dialog import ExportDialog
+from app.widgets.import_dialog import ImportAnnotationDialog
 from app.widgets.icons import icon as svg_icon
 from app.core.i18n import t
 from app.core import project as _project
@@ -94,6 +95,19 @@ class MainWindow(QMainWindow):
         self._btn_export.clicked.connect(self._on_open_export)
         cl.addWidget(self._btn_export)
 
+        self._btn_import = QPushButton()
+        self._btn_import.setIcon(svg_icon("clipboard"))
+        self._btn_import.setIconSize(QSize(16, 16))
+        self._btn_import.setFlat(True)
+        self._btn_import.setToolTip(t("menu.import_ann.tip"))
+        self._btn_import.setFixedWidth(30)
+        self._btn_import.setStyleSheet(
+            "QPushButton { padding:4px; }"
+            "QPushButton:hover { background:#374151; border-radius:4px; }"
+        )
+        self._btn_import.clicked.connect(self._on_open_import_ann)
+        cl.addWidget(self._btn_import)
+
         self._btn_settings = QPushButton()
         self._btn_settings.setIcon(svg_icon("gear"))
         self._btn_settings.setIconSize(QSize(16, 16))
@@ -130,6 +144,13 @@ class MainWindow(QMainWindow):
             return
         dlg = ExportDialog(self)
         dlg.exec()
+
+    def _on_open_import_ann(self) -> None:
+        if _project.current() is None:
+            return
+        dlg = ImportAnnotationDialog(self)
+        if dlg.exec() and dlg.imported_any:
+            self._labeling_tab.reload_after_import()
 
     def closeEvent(self, event) -> None:
         from PyQt6.QtWidgets import QMessageBox

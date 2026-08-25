@@ -136,6 +136,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "export.done":                 "완료 — {n}개 이미지를 내보냈습니다.",
         "export.failed":               "내보내기 실패",
 
+        # ── 어노테이션 가져오기 ──────────────────────────────────────────────
+        "import_ann.title":            "어노테이션 가져오기",
+        "menu.import_ann.tip":         "내보낸 어노테이션 데이터를 가져오기",
+        "import_ann.choose_dir":       "가져올 폴더 선택",
+        "import_ann.conflict":         "동일 이미지에 어노테이션이 이미 있는 경우",
+        "import_ann.conflict.overwrite": "가져온 데이터로 덮어쓰기",
+        "import_ann.conflict.skip":    "기존 데이터 유지 (건너뛰기)",
+        "import_ann.include_new_images": "새 이미지도 함께 가져오기",
+        "import_ann.run":              "▶  가져오기 시작",
+        "import_ann.invalid_dir":      "선택한 폴더에 annotations 폴더가 없습니다. 내보내기(JSON 포맷)로 만든 폴더를 선택하세요.",
+        "import_ann.no_data":          "가져올 어노테이션이 없습니다.",
+        "import_ann.done":             "완료 — 가져옴 {imported}개, 유지(건너뜀) {skipped_existing}개, "
+                                        "이미지 없음(건너뜀) {skipped_missing}개, 새 이미지 {new_images}개, 새 클래스 {new_classes}개",
+        "import_ann.failed":           "가져오기 실패",
+
         # ── 라벨링 툴바 (툴팁) ──────────────────────────────────────────────
         "tool.polygon.tip":       "폴리곤 [Q]\n클릭해 꼭짓점을 추가하고 더블클릭으로 닫습니다.",
         "tool.brush.tip":          "브러시 [W]\n드래그로 픽셀을 칠합니다.\n같은 클래스끼리 연결되면 자동 병합됩니다.",
@@ -411,6 +426,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "export.no_data":              "No labeled data to export.",
         "export.done":                 "Done — exported {n} images.",
         "export.failed":               "Export failed",
+
+        # ── Import annotations ─────────────────────────────────────────────
+        "import_ann.title":            "Import annotations",
+        "menu.import_ann.tip":         "Import previously exported annotation data",
+        "import_ann.choose_dir":       "Select folder to import",
+        "import_ann.conflict":         "When an image already has local annotations",
+        "import_ann.conflict.overwrite": "Overwrite with imported data",
+        "import_ann.conflict.skip":    "Keep existing data (skip)",
+        "import_ann.include_new_images": "Also import new images",
+        "import_ann.run":              "▶  Start import",
+        "import_ann.invalid_dir":      "The selected folder has no annotations subfolder. Select a folder created by Export (JSON format).",
+        "import_ann.no_data":          "No annotations to import.",
+        "import_ann.done":             "Done — imported {imported}, kept existing (skipped) {skipped_existing}, "
+                                        "skipped (image missing) {skipped_missing}, new images {new_images}, new classes {new_classes}",
+        "import_ann.failed":           "Import failed",
 
         # ── Labeling toolbar tooltips ─────────────────────────────────────
         "tool.polygon.tip":       "Polygon [P]\nClick to add vertices, double-click to close.",
