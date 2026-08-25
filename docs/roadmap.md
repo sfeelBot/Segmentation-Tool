@@ -223,6 +223,31 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       에이전트와 파일 겹침 없게 분리). #6-B(성능)는 두 라운드 검증 통과 후 별도 착수
       (같은 함수 영역이라 순서 충돌 방지).
 
+## GitHub 이슈 VOC 라운드3 (2026-08-25 접수, #8~#9)
+
+기획 완료: [docs/specs/voc-github-issues-round3-2026-08-25.md](specs/voc-github-issues-round3-2026-08-25.md).
+사용자 지시대로 처리 순서 **#9(버그) 먼저 → #8(신규 기능)**.
+
+- [ ] [GitHub #9](https://github.com/sfeelBot/Segmentation-Tool/issues/9) "줌인/줌아웃 초점
+      안 맞음" — 원인 코드로 확정: `annotation_canvas.py`의 좌클릭 패닝 드래그
+      (`_pan_active`) 도중 마우스 휠로 줌하면 `mousePressEvent()`가 캡처해둔
+      `_pan_start_mouse`/`_pan_start_offset`이 갱신되지 않아, 휠 직후 `mouseMoveEvent()`가
+      휠이 방금 계산한 커서-고정 pan을 옛 기준값으로 덮어씀. 정지 상태 휠 줌·Select
+      도구 드래그·브러시 스트로크 도중 줌은 이 결함의 영향 없음(패닝 드래그만 해당). 앱
+      전체에서 줌 진입점은 `wheelEvent()`(휠 스크롤) 하나뿐임도 확인. 구현 범위는
+      `annotation_canvas.py` 단일 파일, 저리스크. 재현조건 재확인용 질문 3건은 스펙 문서에
+      정리(결정 대기 등록은 아님 — 구현 진행 막을 필요 없다고 판단).
+- [ ] [GitHub #8](https://github.com/sfeelBot/Segmentation-Tool/issues/8) "이미지탭
+      다중선택+삭제" — **코드 조사 결과 이미 구현되어 있음**: `image_browser.py`의
+      `_tree`가 이미 `ExtendedSelection`(Ctrl/Shift 다중선택)이고, `_on_delete()`가 이미
+      다중 선택 전체를 순회해 이미지+대응 어노테이션 JSON을 함께 삭제 + 확인 다이얼로그
+      (1개/2개 이상 요약)까지 갖춤. 과거 `unhashable QTreeWidgetItem` 크래시(2026-05-27
+      로그)는 그 원인 코드 패턴(`_item_to_path[item]=...`)이 현재 구조에서 완전히
+      사라져 재현 불가로 판단(현재는 Path가 dict 키, 아이템→Path는 UserRole 역조회).
+      이번 라운드는 **검증 우선**(실제 GUI로 다중선택+삭제+어노테이션 정리 확인) — 문제
+      발견 시에만 최소 보강. 저비용 선택 갭 1건(키보드 `Delete` 단축키 없음, 버튼만 가능)
+      기록해둠. 결정 대기 없음.
+
 ## 아이콘/이모지 → 미니멀 디자인 + i18n(en) 완비 (2026-08-20 요청)
 
 사용자 요청: "아이콘 가시성이 떨어진다 — 남길 아이콘은 깔끔·미니멀하게, 불필요한 건 글자로

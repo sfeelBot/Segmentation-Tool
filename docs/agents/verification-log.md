@@ -2134,3 +2134,53 @@ build.spec/setup.iss 경로 정적 대조 일치, 로고 자산 분리 확인. Q
 확인. 오프라인 설치/구동 가능성은 실측 네트워크 차단은 권한 제약으로 불가했으나 정적
 근거(다운로드 로직 없음, 의존성 전량 번들, 실행되는 네트워크 호출 없음) + 실측
 netstat(연결 0건) 4중 근거로 사실상 확인.
+
+---
+
+## 2026-08-25 — GitHub 이슈 #8 검증: 이미지탭 다중선택 + 삭제
+
+### 배경
+기획 에이전트가 `docs/specs/voc-github-issues-round3-2026-08-25.md`에서 이미 구현돼
+있는 것으로 판단(`app/widgets/image_browser.py`). 새로 구현하지 말고 실측만 하라는
+지시에 따라 코드 리뷰 + 실제 위젯 조작으로 검증.
+
+### 방법
+GUI 자동화/스크린샷 도구가 주어지지 않아(`Read, Grep, Glob, Bash, Write`만 가용),
+`main.py`를 우선 백그라운드로 띄워 앱이 정상 기동하는지 확인한 뒤(콘솔 cp949 인코딩
+경고만 있고 크래시 없음 — 기존에 알려진 무해 이슈), 실제 인터랙션 검증은 `ImageBrowser`
+위젯을 직접 인스턴스화하고 `QTest.mouseClick(..., Qt.KeyboardModifier.ControlModifier/
+ShiftModifier, ...)`로 진짜 마우스 이벤트를 트리 위젯에 보내는 스크립트로 수행
+(`scratchpad/test_delete_issue8.py`). `QMessageBox.question`은 자동 Yes 응답하도록
+monkeypatch해 모달 블로킹만 우회했고, 그 외 전 경로(`_on_delete`, `reload`,
+`_apply_display`)는 실제 프로덕션 코드 그대로 실행. 사용자의 실제 프로젝트
+(`projects/nok`)나 `data/settings.json`은 건드리지 않기 위해 `_project.set_current()`
+대신 `_project._current`를 스크래치 프로젝트로 직접 지정(recent_projects/last_project
+갱신 회피), 이미지 5장 + 어노테이션 JSON 2개는 스크래치 디렉터리에만 생성.
+
+### 확인한 항목
+1. **Ctrl+클릭 다중선택**: 실제 클릭 2회(NoModifier→item1, ControlModifier→item3)로
+   `selectedItems()` == 2건, 스크린샷(`shot_ctrl_multiselect.png`)으로 파란 하이라이트
+   육안 확인.
+2. **Shift+클릭 범위선택**: NoModifier→item0, ShiftModifier→item2 클릭으로 0~2번 3건
+   범위선택, 스크린샷(`shot_shift_multiselect.png`)으로 확인.
+3. **삭제 버튼 실제 클릭**(`QTest.mouseClick(browser._btn_del, ...)`) → 확인 다이얼로그
+   문구가 복수형("선택한 3개 이미지를...")으로 정확히 분기, 이미지 3장(`test_del_0/1/2
+   .png`) + 대응 어노테이션 JSON 2개(`test_del_0/2.json`) 모두 삭제, 트리 아이템 수
+   5→2 갱신 확인.
+4. **단일선택 삭제 회귀**: item0(`test_del_3.png`) 1건 선택 후 삭제 → 단수형 문구("
+   'test_del_3.png' 를 삭제하시겠습니까?")로 정확히 분기, 파일 삭제 및 트리 갱신(2→1)
+   정상.
+5. **크래시 확인**: 스크립트 실행 중 예외 없음(`ALL CHECKS PASSED`), `data/logs/
+   errors.log`에 신규 항목 없음 — 과거 기록된 "unhashable type: 'QTreeWidgetItem'"
+   크래시(2026-05-27 항목, `self._item_to_path[item] = p` 구식 패턴)는 현재 코드
+   (`_PATH_ROLE` UserRole + `Path`를 dict 키로 쓰는 구조)에서 재현되지 않음 — 이미
+   해소된 것으로 최종 확인.
+
+### 정리
+스크래치 프로젝트(`scratchpad/issue8_project`)는 검증 후 삭제. `data/settings.json`
+diff 없음(`git status --short`로 미변경 확인) — 사용자 실데이터 무영향.
+
+### 판정
+**통과**. 다중선택(Ctrl/Shift)·삭제 확인 다이얼로그(단/복수 문구)·이미지+어노테이션
+동시 삭제·목록 갱신·단일삭제 회귀 모두 실측으로 정상 동작 확인. 새 버그 없음 —
+QA.md 변경 없음.
