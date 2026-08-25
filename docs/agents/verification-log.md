@@ -2520,3 +2520,95 @@ opacity 슬라이더가 threshold를 깨지 않는 회귀 수정 확인, Excel �
 모두 실제 위젯 클릭 경로로 정상 동작 확인. 부수적으로 발견한 BUG-017(라벨링 탭
 첫 이미지 자동 로드 실패)은 직접 수정 후 재검증 완료. push는 하지 않음 — 리더가
 사용자 확인 후 진행.
+
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 1 검증 (커밋 `13f2952`, 별도 워크트리)
+
+기획 산출물: [docs/specs/zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md).
+구현 로그: [implementation-log.md](implementation-log.md) "2026-08-25 — 존(Zone) 분석 탭
+라운드 1" 항목. **동시 세션 충돌로 이전 검증 시도가 중단·유실**되어(2026-08-25 leader-log
+"워크트리 분리" 기록 참고) 원본 디렉토리(`D:\segmentation model`)와 완전히 분리된 전용
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치)에서
+처음부터 재검증. 이번 라운드는 신규 5번째 탭 추가라 "주요 기능 추가" 기준으로 실제 GUI
+골든패스까지 확인.
+
+### 정적 검토
+- `git show 13f2952 --stat` — `app/core/i18n.py`(+2), `app/core/inference_engine.py`(+16/-3),
+  `app/main_window.py`(+3), `app/tabs/zone_analysis_tab.py`(신규, 331줄),
+  `app/widgets/zone_canvas.py`(신규, 19줄) 5개 파일만 변경. 스펙 "라운드 1" 범위와 일치.
+- `app/core/inference_engine.py`의 `run()`/`run_sliding_window()`/`refilter()` 3곳에 추가된
+  `classes: list[ClassDef] | None = None`가 전부 `classes = classes if classes is not None
+  else load_classes()` 패턴으로 기존 동작을 보존함을 코드로 확인.
+- `grep -rn "classes="  app/tabs/inference_tab.py`(및 `engine.run/run_sliding_window/refilter`
+  호출부 3곳 확인) 결과 **`classes=` 인자를 넘기는 곳이 전혀 없음** — 기존 4탭 호출부는
+  이번 변경으로 시그니처만 늘어났을 뿐 인자 미전달 시 완전히 동일하게 동작.
+- `app/main_window.py` — `ZoneAnalysisTab`이 5번째 탭으로 등록(`t("tab.zone_analysis")`),
+  `app/core/i18n.py`에 ko("존 분석")/en("Zone Analysis") 키 정상 추가됨을 확인.
+- `zone_analysis_tab.py` 판단 3(체크포인트→모델 재구성)·판단 4(타겟 클래스 즉석 구성) 로직을
+  코드로 직접 읽어 스펙과 일치함을 확인. `model_loader.save_user_code()`를 호출하는 지점이
+  없음(커스텀 코드는 세션 메모리에만 유지)도 확인.
+
+### 실제 GUI(QTest) 골든패스 검증
+스크래치 프로젝트 2개(`zone_verify_preset`, `zone_verify_custom`, `projects/nok`의 실제
+배터리 캡 사진 `7번.bmp`를 복사해 사용 — `projects/nok` 원본은 읽기 전용, 무변경 확인)에
+동일 이미지 2장 + 사각형 폴리곤 어노테이션을 만들어 `TrainerWorker.run()`(QThread를
+`.start()` 대신 동기 직접 호출)으로 실제 체크포인트 2종을 학습 생성:
+- **preset 체크포인트**(`lraspp_mobilenet`, `model_source="preset:lraspp_mobilenet"`,
+  타겟 클래스 1개만 존재하도록 이미지 왼쪽 60%만 라벨링) — 25 epoch CPU 학습.
+- **custom 체크포인트**(직접 작성한 `TinyCustomNet`, `model_source="loaded"`, 타겟 클래스
+  2개(좌/우 절반)가 모두 검출되도록 라벨링) — 25 epoch CPU 학습.
+- 학습 후 `engine.run()`으로 직접 raw_class_map을 조회해 preset은 `{0, 1}`(단일 타겟),
+  custom은 `{1, 2}`(2개 타겟)가 실제로 검출됨을 사전 확인 — 목표한 두 분기(텍스트필드 vs
+  드롭다운)를 재현 가능한 테스트 데이터임을 검증.
+
+`python main.py`와 동일한 임포트 순서(`numpy/cv2/PIL/torch/matplotlib` 선행 임포트 후
+`QApplication` 생성 — 이 순서를 지키지 않고 `torch`만 단독으로 먼저 임포트하면 이 conda
+환경에서 `QtSvg` DLL 임포트가 깨지는 것을 이번 세션에서 발견했으나, main.py와 동일한 순서로
+맞추면 재현되지 않음을 별도로 확인함 — **실제 `main.py` 실행에는 영향 없는, 이 테스트
+스크립트 자체의 임포트 순서 이슈**였으므로 QA.md에 등록하지 않음)로 `MainWindow`를 오프스크린
+`QApplication`에서 실제 구동, `QFileDialog.getOpenFileName`만 몽키패치(헤드리스 환경에서
+모달 다이얼로그 자체가 불가)하고 나머지는 전부 `QTest.mouseClick`/`QTest.keyClicks`로 실제
+위젯 이벤트를 발생시켜 골든패스 31개 assertion 전부 통과:
+
+1. **탭 표시/전환** — `QTabWidget.count()==5`, `tabText`=="존 분석", `QTest.mouseClick`으로
+   탭바를 실제 클릭해 `currentWidget()`이 `ZoneAnalysisTab`으로 전환됨을 확인.
+2. **preset 체크포인트 경로** — 이미지 선택 → 체크포인트 선택(`QFileDialog` 몽키패치 후
+   실제 버튼 클릭) → `load_checkpoint_meta()`가 `preset:lraspp_mobilenet`을 읽어 자동
+   인스턴스화(`_model is not None`, 코드박스 숨김, 라벨에 "자동 준비됨") → 추론 실행 버튼
+   클릭 → 실제 추론 결과 반환, 단일 타겟 클래스 → 텍스트필드 표시(드롭다운 숨김), 기본 이름
+   `class_1`, 캔버스에 오버레이 표시 → 텍스트필드 값을 `QTest.keyClicks`로 "rust"로 실제
+   편집 후 Enter(`editingFinished`) → `refilter()` 재실행 정상.
+3. **커스텀("loaded") 체크포인트 경로** — 체크포인트 선택 시 `model_source="loaded"`를 읽어
+   `_model`이 `None`으로 유지되고 코드박스가 노출됨(라벨에 "사용자 정의 모델") 확인 →
+   `_code_editor.setPlainText()`로 커스텀 코드 입력 → Validate 버튼 실제 클릭 → 로그에
+   `[OK]` + Load 버튼 활성화 → Load 버튼 실제 클릭 → `_model` 준비됨(라벨에 "커스텀 모델
+   로드됨") → 추론 실행 → 실제 결과에 타겟 클래스 2개 검출 → 드롭다운 표시(텍스트필드 숨김,
+   항목 2개) → `setCurrentIndex(1)`로 실제 전환 → `refilter()` 재실행 정상, 오버레이 갱신.
+4. **타겟 클래스 즉석 구성** — 위 2/3에서 단일→텍스트필드, 2개 이상→드롭다운 분기가 실제
+   추론 결과 기반으로 정확히 스위칭됨을 확인(스펙 판단 4 그대로 동작).
+5. **기존 4탭 회귀 없음** — `inference_tab.py`가 `classes=`를 넘기지 않는 것을 정적 확인한
+   데 더해, 동일한 방식(`classes` 인자 생략)으로 `engine.run()`을 실제 실행해 예외 없이
+   `load_classes()` 폴백(nok 프로젝트의 기본 `classes.json`, `class_stats`에 `object`/
+   `background` 정상 표시)으로 동작함을 실행 확인. `win._inference_tab`도 `MainWindow` 내
+   정상 생성됨을 확인.
+6. **크래시 없음** — `py_compile` 통과는 구현 로그에서 이미 확인됐고, 이번 세션은 실제
+   런타임(체크포인트 학습 2회 + GUI 골든패스 전체)에서 예외/크래시 0건.
+
+### 프로세스 정리
+- `win.close()` 호출 시 이 헤드리스(offscreen) 환경 특성상 모달 확인 다이얼로그가 뜨면
+  응답 없이 대기하는 기존에 문서화된 제약(R1/R2 검증 로그 등에 반복 기록됨)이 이번에도
+  재현되어 스크립트 프로세스가 자연 종료되지 않았음 — **모든 assertion이 이미 로그 파일에
+  기록된 뒤**의 후행 정리 단계였음을 출력 로그(`ALL CHECKS PASSED`까지 출력됨)로 확인한 뒤
+  `taskkill`로 명시적으로 종료, `tasklist`로 좀비 프로세스 없음 재확인. 이 라운드가 만든
+  회귀가 아니라 기존부터 있던 헤드리스 환경 제약(GUI 자동화 셸이 아닌 대화형 데스크톱에서는
+  발생하지 않을 것으로 추정)이라 QA.md에 신규 등록하지 않음.
+- 스크래치 학습 산출물(`zone_verify_preset/`, `zone_verify_custom/`, 체크포인트 2개)은 전부
+  스크래치 디렉토리에만 생성, `projects/nok/`은 이미지 읽기 전용 참고만 하고 무수정
+  (`git status --short`로 재확인).
+
+### 판정
+- 구현 로그의 주장과 코드가 전부 일치, 실제 GUI 골든패스(preset/커스텀 체크포인트 양쪽,
+  타겟 클래스 단일/복수 양쪽) 전부 통과, 기존 4탭 회귀 없음. **버그 발견 없음 — 라운드 1
+  검증 통과.**
+- 리더에게: **라운드 1 검증 통과, 라운드 2(원 자동검출/수동편집) 착수 가능.**
+- `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 라운드 1 체크박스를
+  "구현 완료, 검증 대기"에서 "구현+독립검증 통과"로 갱신.

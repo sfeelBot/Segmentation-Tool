@@ -440,10 +440,20 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   구현 후 `python main.py` 실제 구동 검증.
 - [ ] 결정 대기 1건 등록 — 타겟 클래스 2개 이상 검출 시 v1 범위(단일 드롭다운 vs
       다중 비교표). [docs/decisions-needed.md](decisions-needed.md) 참고.
-- [x] R1 (탭 스켈레톤 + 파일 로드 + 모델 재구성 + 추론 실행) — 구현 완료(커밋
-      `13f2952`), 검증 대기. `ZoneAnalysisTab`/`ZoneCanvas`(순수 뷰어) 신설,
+- [x] R1 (탭 스켈레톤 + 파일 로드 + 모델 재구성 + 추론 실행) — 구현+독립검증 통과,
+      커밋 `13f2952`(feat). `ZoneAnalysisTab`/`ZoneCanvas`(순수 뷰어) 신설,
       `inference_engine.run/run_sliding_window/refilter`에 `classes` 옵션 인자 추가
       (기존 4탭 호출부 영향 없음), 타겟(녹) 클래스 즉석 구성(raw_class_map 기반) 반영.
+      **검증 완료(2026-08-26, 별도 워크트리 `D:\segmentation model-zone-analysis-tab`)** —
+      스크래치 프로젝트로 preset(`lraspp_mobilenet`)/커스텀(`loaded`) 체크포인트 2종을 직접
+      학습 생성 후, `python main.py`와 동일한 임포트 순서로 `MainWindow`를 실제 구동해
+      `QTest` 실제 클릭/키입력으로 골든패스 31개 항목 전부 통과: 5번째 탭 표시+이름+탭바
+      클릭 전환, preset 체크포인트 자동 인스턴스화(코드박스 숨김), 커스텀 체크포인트
+      Validate→Load 2단계(코드박스 노출), 타겟 클래스 단일(텍스트필드, 편집 반영)/2개
+      이상(드롭다운, 전환 반영) 즉석 구성 양쪽, 오버레이 캔버스 표시. 회귀 확인:
+      `inference_tab.py`가 `classes=` 인자를 전혀 넘기지 않는 것을 정적 grep으로 확인 +
+      실제 `engine.run()`을 인자 생략 호출로 실행해 `load_classes()` 폴백이 기존과 동일하게
+      동작함을 실행 확인. 버그 발견 없음(QA.md 신규 등록 없음).
 - [ ] R2 (원 자동검출/수동편집, 2a 스크립트 프로토타입 → 2b 위젯 구현) — 착수 대기
 - [ ] R3 (존 리스트 + 퍼센티지 계산) — 착수 대기
 - [ ] R4 (블랍 클릭 삭제 + 재계산) — 착수 대기
