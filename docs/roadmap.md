@@ -454,7 +454,20 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       `inference_tab.py`가 `classes=` 인자를 전혀 넘기지 않는 것을 정적 grep으로 확인 +
       실제 `engine.run()`을 인자 생략 호출로 실행해 `load_classes()` 폴백이 기존과 동일하게
       동작함을 실행 확인. 버그 발견 없음(QA.md 신규 등록 없음).
-- [ ] R2 (원 자동검출/수동편집, 2a 스크립트 프로토타입 → 2b 위젯 구현) — 착수 대기
+- [x] R2 (원 자동검출/수동편집, 2a 스크립트 프로토타입 → 2b 위젯 구현) — 구현 완료,
+      커밋 `1815921`(2a `circle_detector.py`+`scripts/zone_circle_proto.py`),
+      `b1f05bc`(2b `zone_canvas.py`+`zone_analysis_tab.py` UI 연결).
+      2a: 실제 샘플 5장(`projects/nok/images/7~11번.bmp`)으로 파라미터 튜닝 — 1차
+      시도에서 큰 원(케이스 테두리 등)이 글레어/그림자로 인한 에지 끊김 때문에 전혀
+      검출 안 되는 문제를 발견해 Canny 직후 모폴로지 CLOSE(15×15, 2회)를 추가해 해결,
+      먼지/스크래치발 가짜 원 제거를 위해 `min_area_frac` 상향. 녹 변색이 있는 구간에서도
+      피팅된 원이 실제 원형 경계를 벗어나지 않음을 5장 전부 육안 확인(스펙 핵심 확인
+      목표 충족). 2b: `ZoneCanvas`에 원 렌더링+편집(중심 드래그 이동/테두리 드래그
+      반지름 조절/빈 곳 드래그 생성/Delete·우클릭 삭제) 추가, 탭에 자동 검출 버튼+민감도
+      슬라이더+원 목록 사이드 패널 연결. **검증 대기** — `py_compile`+자가 점검
+      스크립트(`circle_detector.py::demo()`)+`QApplication` 스모크 테스트만 수행,
+      `python main.py` 실제 GUI 골든패스(자동 검출+수동 편집 4종 왕복)는 미실시.
+      상세: [docs/agents/implementation-log.md](agents/implementation-log.md) 2026-08-26 항목.
 - [ ] R3 (존 리스트 + 퍼센티지 계산) — 착수 대기
 - [ ] R4 (블랍 클릭 삭제 + 재계산) — 착수 대기
 

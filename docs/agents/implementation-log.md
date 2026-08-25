@@ -2671,3 +2671,102 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
   띄워 수동 조작하지는 않았음. **아직 완료로 간주하지 않음**.
 - 원인 1의 벤치마크가 사전 가설과 다르게 나온 점(개선폭 5~16%에 불과, 사용자가 체감한
   "삭제 시 렉"의 실제 원인은 다른 곳일 가능성)을 리더가 재검토할 필요가 있음.
+
+
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 2: 원(circle) 검출 파이프라인 + 수동 편집
+
+### 배경
+- 스펙: `docs/specs/zone-analysis-tab-2026-08-25.md` 판단 2(최종본) — Canny+findContours
+  로 링 후보 컨투어를 뽑은 뒤 강건한(outlier-resistant) 원피팅으로 `(cx, cy, r)`을
+  확정하는 파이프라인. 폴리곤/컨투어 저장은 폐기, 원(circle)이 정본.
+- 리더 지시대로 2개 서브스텝(2a 헤드리스 스크립트 프로토타입 → 2b 위젯 구현) 순서로 진행.
+
+### 2a — 헤드리스 파라미터 튜닝 (Qt 없음, 순수 OpenCV)
+- `scripts/zone_circle_proto.py` 작성 — `projects/nok/images/{7~11}번.bmp`(junction 공유,
+  읽기 전용) 5장을 `np.fromfile`+`cv2.imdecode`로 로드(Windows 비-ASCII 경로에서
+  `cv2.imread`가 실패하는 문제 우회 — 앱 본체에서는 이 문제가 없음, `Image.open()` 이
+  이미 유니코드 경로를 정상 처리하기 때문에 `zone_analysis_tab.py`는 PIL로 읽어 BGR로
+  변환하는 방식을 씀).
+- **1차 시도(파라미터 기본값)로는 원본 케이스 테두리·크림핑(가스켓) 링 등 바깥쪽 큰
+  원이 전혀 검출되지 않는 문제 발견** — 디버그 스크립트(스크래치패드)로 원인 조사:
+  `cv2.Canny` 출력에서 큰 원들의 에지가 글레어/그림자/미세 스크래치로 국소적으로
+  끊겨 있어 `cv2.findContours`가 닫힌 루프가 아니라 여러 개의 열린 호(arc)로 쪼개
+  잡음 → `circularity = 4π·area/perimeter²` 계산이 열린 호에 대해 크게 왜곡되어
+  필터를 통과 못 함 (`cv2.contourArea`가 호를 직선으로 강제로 닫아 면적을 계산하기
+  때문). 안쪽의 작은 원(원판 개구부 등)은 국소 왜곡이 적어 우연히 닫힌 루프로 잡혀
+  검출되고 있었음.
+- **해결**: Canny 직후, `findContours` 이전에 `cv2.morphologyEx(edges, MORPH_CLOSE,
+  kernel, iterations=2)`를 추가해 국소 끊김을 이어붙임 — 커널 크기 9/15/21/25를
+  실측 비교한 결과 15×15가 큰 원의 닫힘과 인접한 별개 링끼리의 과도한 병합 사이의
+  균형점(21 이상부터 서로 다른 물리적 링이 하나로 뭉개지는 조짐 확인).
+- 이 조치 후 5장 전부에서 4~5개의 동심원이 정상 검출됨(케이스 테두리, 크림핑/가스켓
+  링, 원판 가장자리, 원판 개구부). 특히 8번/11번/9번 이미지에는 가스켓 링 부근에
+  실제 황갈색 변색(녹 의심)이 육안으로 보이는데도, 피팅된 원이 해당 구간에서 실제
+  원형 경계를 벗어나지 않음을 오버레이 이미지로 육안 확인 — **이번 2차 스펙 수정의
+  핵심 확인 목표 충족**.
+- 부수적으로 먼지/스크래치 등 잔 노이즈가 만드는 매우 작은 가짜 원이 1~2개씩 섞여
+  나와 `min_area_frac`을 0.0008 → 0.003으로 상향(실측 최소 링도 면적비 4~5% 이상이라
+  여유 있게 구분됨)해 제거.
+- 9번 이미지는 원판 가장자리 링이 검출되지 않음(해당 구간 에지 손상이 더 심해 모폴로지
+  CLOSE로도 못 이음) — v1은 자동 검출 실패 시 수동 추가로 보완하는 것을 전제로 하므로
+  허용 범위로 판단, 추가 파라미터 완화는 하지 않음(YAGNI — 5장 중 1장의 1개 링만
+  누락, 나머지는 전부 정상).
+- **확정 기본 파라미터**(`app/core/circle_detector.py::DetectParams`): `canny_low=40,
+  canny_high=120, circularity_min=0.55, circularity_max=1.35, min_area_frac=0.003,
+  max_area_frac=0.98, min_contour_points=30, close_kernel_size=15, close_iterations=2,
+  outlier_iterations=2, outlier_keep_frac=0.85, max_residual_ratio=0.12,
+  merge_center_frac=0.02, merge_radius_frac=0.05`. 민감도 슬라이더(0~1)는
+  `_params_for_sensitivity()`에서 `canny_low`(70→20)와 `circularity_min`(0.70→0.40)에만
+  매핑 — 나머지는 v1에서 UI 노출하지 않음(스펙 "향후 확장 후보"와 일치).
+
+### 2b — 위젯 구현
+- `app/core/circle_detector.py` 신설 — `detect_circles(bgr_np, sensitivity, params=None)
+  -> list[(cx,cy,r)]`, Kasa 대수적 최소자승 원피팅 + 잔차 상위 제외 재피팅(1~2회) +
+  중복 후보 병합. `_MAX_DETECT_DIM=2048` 다운스케일 후 좌표 역산(`annotation_canvas.py`/
+  `inference_engine.py`의 `_MAX_OVERLAY_DIM` 관례 재사용). `demo()` 자가 점검 포함 —
+  합성 이미지에 링 둘레 일부만 반지름을 부풀린 "녹 침범" 모사 후 강건 피팅이 원래
+  반지름을 복원하는지 assert로 확인(`python app/core/circle_detector.py`로 직접 실행 가능).
+- `app/widgets/zone_canvas.py` 확장 — `ZoneCanvas(OverlayViewer)`에 원 렌더링(선택 시
+  강조색) + 편집(중심 근처 드래그=이동, 테두리 근처 드래그=반지름 조절, 빈 곳
+  드래그=신규 생성, Delete/우클릭 메뉴=삭제) 추가. 원 좌표는 항상 "원본 이미지 픽셀
+  좌표"로 저장하고, 오버레이 픽스맵 스케일(`_MAX_OVERLAY_DIM`으로 다운스케일될 수
+  있음)과 줌/팬을 모두 거쳐 화면에 투영하는 좌표 변환 헬퍼(`_orig_to_screen`/
+  `_screen_to_orig`)를 추가 — 픽스맵 해상도와 원본 해상도가 다를 수 있다는 점을
+  놓치지 않도록 명시적으로 분리.
+- `app/tabs/zone_analysis_tab.py` — "자동 검출" 버튼 + 민감도 슬라이더(0~100%) +
+  반지름 오름차순 원 목록 사이드 패널(`QSplitter`) 연결. 이미지 선택 시 `PIL.Image`로
+  원본 크기를 읽어 `ZoneCanvas.set_image_size()`에 전달(체크포인트/추론과 무관하게
+  이미지 선택 직후 바로 알 수 있는 값). 자동 검출은 PIL로 이미지를 열어 RGB→BGR
+  변환 후 `detect_circles()` 호출(Windows 유니코드 경로 문제 없음). 목록↔캔버스 선택
+  양방향 동기화(`circle_selected`/`circles_changed` 시그널, `blockSignals`로 순환 방지).
+
+### 검증
+- `python -m py_compile` 통과(`circle_detector.py`, `zone_canvas.py`,
+  `zone_analysis_tab.py`, `scripts/zone_circle_proto.py`).
+- `python app/core/circle_detector.py` 자가 점검(`demo()`) 통과.
+- `QApplication` 하에 `ZoneAnalysisTab`/`ZoneCanvas` 직접 인스턴스화 + `set_circles`/
+  `get_circles`/`circles_with_ids`/`select_circle`/`remove_selected` 왕복 스모크 테스트
+  통과(스크래치패드 임시 스크립트, 저장소에는 없음).
+- **`python main.py` 실제 GUI 구동으로 자동 검출 버튼/민감도 슬라이더 조작 + 원 드래그
+  이동·반지름 조절·생성·삭제 왕복은 아직 하지 않았음 — 검증 서브에이전트 확인 필요.**
+  특히 실제 이미지 로드 시 `set_image_size()`가 호출되는 시점(이미지 선택 직후)과
+  오버레이 픽스맵이 설정되는 시점(추론 실행 후)이 분리되어 있어, 추론 실행 전에
+  자동 검출을 누르면 캔버스에 표시할 배경 픽스맵이 없어 원이 그려지지 않는(그러나
+  내부 데이터는 정상 보관되는) 상태가 될 수 있음 — 실사용 흐름상 문제 없는지
+  실제 조작으로 확인 필요.
+
+### 파일
+- `app/core/circle_detector.py` (신규)
+- `scripts/zone_circle_proto.py` (신규, 재현 가능한 튜닝 스크립트로 저장소에 유지)
+- `app/widgets/zone_canvas.py`
+- `app/tabs/zone_analysis_tab.py`
+
+### 커밋
+- `1815921` — `feat: 존 분석 원 검출 파이프라인(circle_detector) + 파라미터 튜닝 프로토타입`
+- `b1f05bc` — `feat: 존 분석 캔버스에 원 자동 검출/수동 편집 UI 연결`
+
+### 확인 필요 (검증 서브에이전트에게)
+- 위 "검증" 절의 `python main.py` 실제 GUI 골든패스(자동 검출 + 수동 편집 4종 —
+  이동/반지름 조절/생성/삭제) 확인 필수 — 구현 단계에서는 미수행.
+- 이미지 선택 직후 vs 추론 실행 후 `set_image_size`/픽스맵 설정 시점 분리로 인한
+  UX 흐름(추론 전 자동 검출 클릭 시 동작) 실제 확인.
