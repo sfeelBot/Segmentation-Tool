@@ -2389,3 +2389,64 @@ onedir 패키징 + 설치 마법사를 만드는 것이 목표. 실제 빌드 �
 - 이번 라운드는 구현만 수행. 모델 탭 드롭다운에서 실제로 선택되는지,
   라벨링→학습→추론 골든패스에서 세 모델이 실제로 학습·추론까지 도는지는
   **검증 서브에이전트 확인 필요** — 아직 완료로 간주하지 않음.
+
+---
+
+## 2026-08-25 — 어노테이션 가져오기(Import) 기능 추가
+
+### 배경
+`app/widgets/export_dialog.py`(어노테이션만 내보내기, JSON 포맷)의 짝이 되는
+가져오기 기능이 없었음. 프로젝트 전체 zip 백업/복원
+(`project_export_dialog.py`/`project_import_dialog.py`)과는 별개 기능.
+
+### 변경
+- `app/widgets/import_dialog.py` (신규) — `ImportAnnotationDialog(QDialog)`.
+  - 입력 폴더 선택 (`classes.json` + `annotations/` 구조 기대, 없으면
+    `import_ann.invalid_dir` 에러).
+  - 충돌 정책 라디오: 덮어쓰기 / 기존 유지(건너뛰기). 로컬에 어노테이션이
+    없는 이미지는 정책과 무관하게 가져옴.
+  - "새 이미지도 함께 가져오기" 체크박스(기본 켜짐) — 켜져 있고
+    `images/{파일명}`이 있을 때만 `_project.images_dir()`로 복사.
+  - `classes.json` 병합: 로컬에 이미 있는 `class_id`는 유지(이름/색 보존),
+    없는 것만 추가 후 `save_classes()`.
+  - `annotations/*.json` 순회 — `coords=="relative"`면 polygon 점을
+    현재 실제 이미지 크기(`PIL.Image.open`)로 절대화, `brush_mask`는
+    RLE 디코드 후 크기가 다르면 `cv2.resize(..., cv2.INTER_NEAREST)`로
+    맞춤.
+  - 완료 후 결과 요약 메시지박스(가져옴/기존유지/이미지없음/새이미지/새클래스
+    카운트), 진행바, `get_logger` 로깅.
+- `app/main_window.py` — Export 버튼 옆에 Import 버튼 추가
+  (`clipboard` 아이콘 재사용, 새 아이콘 안 만듦). `_on_open_import_ann()`
+  슬롯에서 다이얼로그 실행, accept + 실제 변경 있으면
+  `self._labeling_tab.reload_after_import()` 호출.
+- `app/tabs/labeling_tab.py` — `reload_after_import()` 공개 메서드 추가
+  (기존 `_on_auto_label()`의 현재 이미지 재로드 + `_image_browser.reload()`
+  패턴 재사용).
+- `app/core/i18n.py` — `import_ann.*`, `menu.import_ann.tip` 키를
+  한국어/영어 둘 다 추가 (`project_import.*`와 네임스페이스 충돌 없음).
+
+### 검증 (구현 단계)
+- 문법 검증: `ast.parse()`로 4개 변경 파일 통과.
+- 라운드트립 스크립트(스크래치패드, 저장소 밖)로 실제 실행 검증:
+  - 임시 프로젝트 A에서 polygon(class 1) + brush_mask(class 2) 어노테이션
+    2장 생성 → `ExportDialog._export_json(relative=True, include_images=True)`
+    로 내보냄.
+  - 임시 프로젝트 B(이미지 1장은 기존 어노테이션 있음, 이미지 1장은 없음)에
+    SKIP 정책으로 가져오기 → 기존 어노테이션 유지 확인, 새 이미지는 복사되고
+    brush_mask가 원본과 정확히 일치(`np.array_equal`) 확인, `class_id=2`
+    (`extra`)가 새로 추가되고 로컬 `class_id=1`(`object`) 이름은 안 바뀜 확인.
+  - 같은 프로젝트에 OVERWRITE 정책으로 재실행 → 기존 어노테이션이 가져온
+    polygon 좌표로 정확히 교체됨 확인(절대좌표 역산 오차 1e-6 이내).
+  - 새 프로젝트 C에서 export 당시(60×40)와 다른 크기(120×80)의 이미지에
+    가져오기 → `cv2.resize` 리사이즈된 mask shape/내용 확인.
+  - `ImportAnnotationDialog()`를 여러 번 인스턴스화해도 에러 없음
+    (QMessageBox는 모킹해 모달 블로킹 회피, offscreen platform 사용).
+- 실제 GUI 클릭(버튼 위치, 다이얼로그 레이아웃, 라벨링 탭 실시간 갱신)은
+  검증 서브에이전트가 확인해야 함 — **아직 완료로 간주하지 않음**.
+
+### 커밋
+`2837c5c` — `feat: 어노테이션 가져오기(Import) 기능 추가`
+
+### 관련
+- YOLO/COCO 포맷 import는 스코프 밖(요청서 명시) — JSON 포맷만 지원.
+- 새 SVG 아이콘을 만들지 않고 기존 `clipboard.svg` 재사용.
