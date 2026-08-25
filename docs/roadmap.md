@@ -481,7 +481,19 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       클릭 시 캔버스에 아무것도 안 보여 혼란"도 확인돼 `_btn_detect`를 추론 완료 전까지
       비활성화하도록 추가. `QA.md` BUG-018 Closed로 등록. 상세: [implementation-log.md](agents/implementation-log.md)
       2026-08-26 항목, [verification-log.md](agents/verification-log.md) 2026-08-26 항목.
-- [ ] R3 (존 리스트 + 퍼센티지 계산) — 착수 대기
+- [x] R3 (존 리스트 + 퍼센티지 계산) — 구현 완료, 검증 대기. `app/core/zone_metrics.py`
+      신설(`Circle`/`Zone` 데이터클래스, `zones_from_circles()` 원판 마스크 벡터화 거리식
+      차집합, `zone_stats()` 존 면적 대비 타겟 클래스 픽셀 비율). `zone_canvas.py`에
+      `zone_clicked` 시그널(원이 아닌 빈 곳 단순 클릭 시 클릭 지점이 속한 존 인덱스를
+      기하 조건만으로 계산해 emit) + `set_highlighted_zone()`(원 경로 짝수-홀수 채우기
+      규칙으로 반투명 하이라이트, 별도 비트맵 없이 기존 원 렌더링 좌표변환 재사용) 추가.
+      `zone_analysis_tab.py`에 존 리스트 사이드 패널 추가 — 항상 전체 존 퍼센티지를
+      한번에 표시, 리스트 클릭↔캔버스 하이라이트 양방향 동기화, 원 추가/이동/크기조절/
+      삭제(`circles_changed`) 및 타겟 클래스 전환(`_on_target_changed`) 시 실시간 재계산.
+      검증: `zone_metrics.py` self-check(5×5 합성 마스크 손계산 검산 + 원 2개 파티션
+      불변식) 통과, `py_compile` 3개 파일 통과, `QApplication` 하 스모크 테스트(원 좌표
+      기하 hit-test와 마스크 기반 `zones_from_circles` 결과 일치 확인) 통과 — **`python
+      main.py` 실제 GUI 골든패스는 미수행, 검증 서브에이전트 확인 필요**.
 - [ ] R4 (블랍 클릭 삭제 + 재계산) — 착수 대기
 
 ## 다음 후보

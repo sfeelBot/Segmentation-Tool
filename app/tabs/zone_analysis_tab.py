@@ -8,7 +8,9 @@
 라운드 1: 이미지/체크포인트 로드 + 모델 재구성(preset 자동 / 커스텀 코드
 붙여넣기) + 추론 실행 + 타겟(녹) 클래스 즉석 구성 + ZoneCanvas 순수 뷰어 표시.
 라운드 2: 원(circle) 자동 검출(`circle_detector.py`) + 수동 편집(추가/이동/
-반지름 조절/삭제) + 원 목록 사이드 패널. 존 퍼센티지·블랍 삭제는 이후 라운드.
+반지름 조절/삭제) + 원 목록 사이드 패널.
+라운드 3: `zone_metrics.py`(원판 마스크 차집합) 기반 존 리스트 패널 + 퍼센티지
+실시간 계산·표시. 블랍 삭제는 이후 라운드.
 """
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from app.core.model_validator import validate
 from app.core.model_loader import load_from_code
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.core.circle_detector import detect_circles
+from app.core.zone_metrics import Circle, zones_from_circles, zone_stats
 from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
 
@@ -46,6 +49,7 @@ class ZoneAnalysisTab(QWidget):
         self._model: nn.Module | None = None
         self._last_result: InferenceResult | None = None
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
+        self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._image_size: tuple[int, int] = (0, 0)   # (w, h) — 원본 이미지 픽셀 크기
         self._build_ui()
 
@@ -158,6 +162,10 @@ class ZoneAnalysisTab(QWidget):
         side_layout.addWidget(QLabel("검출된 원 (반지름 오름차순)"))
         self._circle_list = QListWidget()
         side_layout.addWidget(self._circle_list, stretch=1)
+        side_layout.addWidget(QLabel("존별 타겟 클래스 비율 (%)"))
+        self._zone_list = QListWidget()
+        self._zone_list.setToolTip("클릭하면 캔버스에서 해당 존이 하이라이트됩니다")
+        side_layout.addWidget(self._zone_list, stretch=1)
         splitter.addWidget(side)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
@@ -177,8 +185,11 @@ class ZoneAnalysisTab(QWidget):
             lambda v: self._lbl_sensitivity.setText(f"{v}%")
         )
         self._canvas.circles_changed.connect(self._refresh_circle_list)
+        self._canvas.circles_changed.connect(self._recompute_zones)
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
+        self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
+        self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
 
     # ── 슬롯 — 이미지 / 체크포인트 선택 ─────────────────────────────────────
 
@@ -329,6 +340,8 @@ class ZoneAnalysisTab(QWidget):
         if not ids:
             self._lbl_target_info.setText("배경 외 클래스가 검출되지 않았습니다.")
             self._canvas.set_pixmap(result.overlay_pixmap)
+            self._target_class_id = None
+            self._recompute_zones()
             return
 
         if len(ids) == 1:
@@ -377,10 +390,36 @@ class ZoneAnalysisTab(QWidget):
                 classes=classes,
             )
             self._last_result = result
+            self._target_class_id = cid
             self._canvas.set_pixmap(result.overlay_pixmap)
+            self._recompute_zones()
         except Exception as exc:
             log.exception("존 분석 타겟 클래스 재필터링 실패")
             QMessageBox.critical(self, "재필터링 오류", str(exc))
+
+    # ── 슬롯 — 존(zone) 퍼센티지 계산/표시 (라운드 3) ────────────────────────
+
+    def _recompute_zones(self) -> None:
+        self._zone_list.clear()
+        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r)
+        if not circles_raw or self._last_result is None or self._target_class_id is None:
+            self._canvas.set_highlighted_zone(None)
+            return
+        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
+        h, w = self._last_result.raw_class_map.shape
+        zones = zones_from_circles(circles, (h, w))
+        target_mask = self._last_result.raw_class_map == self._target_class_id
+        for zone in zones:
+            pct = zone_stats(zone.mask, target_mask)
+            self._zone_list.addItem(f"{zone.name}  —  {pct:.2f}%")
+
+    def _on_canvas_zone_clicked(self, zone_index: int) -> None:
+        self._zone_list.blockSignals(True)
+        self._zone_list.setCurrentRow(zone_index)
+        self._zone_list.blockSignals(False)
+
+    def _on_zone_row_selected(self, row: int) -> None:
+        self._canvas.set_highlighted_zone(row if row >= 0 else None)
 
     # ── 슬롯 — 원(circle) 자동 검출 (라운드 2) ──────────────────────────────
 

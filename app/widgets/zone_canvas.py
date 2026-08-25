@@ -15,8 +15,8 @@ import math
 from dataclasses import dataclass
 
 from PyQt6.QtWidgets import QMenu
-from PyQt6.QtGui import QPainter, QPen, QColor
-from PyQt6.QtCore import Qt, QPointF, pyqtSignal
+from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 
 from app.widgets.overlay_viewer import OverlayViewer
 
@@ -26,6 +26,7 @@ _MIN_CREATE_R_PX = 6.0  # 이보다 작게 드래그하고 놓으면 생성 취�
 
 _COLOR_NORMAL = QColor(0, 230, 140)
 _COLOR_SELECTED = QColor(255, 200, 0)
+_COLOR_ZONE_HIGHLIGHT = QColor(255, 255, 0, 90)
 
 
 @dataclass
@@ -41,6 +42,7 @@ class ZoneCanvas(OverlayViewer):
 
     circles_changed = pyqtSignal()          # 원 목록이 바뀔 때마다 (추가/이동/삭제 등)
     circle_selected = pyqtSignal(object)    # 선택된 원 id (없으면 None)
+    zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -50,6 +52,7 @@ class ZoneCanvas(OverlayViewer):
         self._drag_mode: str | None = None   # None | "move" | "resize" | "create"
         self._img_orig_w = 0
         self._img_orig_h = 0
+        self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링, N=바깥쪽
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # 클릭 후 Delete 키 삭제를 받으려면 필요
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
@@ -62,6 +65,7 @@ class ZoneCanvas(OverlayViewer):
     def clear_circles(self) -> None:
         self._circles = []
         self._selected_id = None
+        self._highlighted_zone = None
         self.update()
         self.circles_changed.emit()
         self.circle_selected.emit(None)
@@ -73,6 +77,7 @@ class ZoneCanvas(OverlayViewer):
         ]
         self._next_id += len(circles)
         self._selected_id = None
+        self._highlighted_zone = None
         self.update()
         self.circles_changed.emit()
 
@@ -94,11 +99,17 @@ class ZoneCanvas(OverlayViewer):
         하이라이트를 복원할 때 조회한다."""
         return self._selected_id
 
+    def set_highlighted_zone(self, zone_index: int | None) -> None:
+        """존 리스트 패널 클릭 등 외부에서 존 하이라이트만 갱신(원 선택과 별개)."""
+        self._highlighted_zone = zone_index
+        self.update()
+
     def remove_selected(self) -> None:
         if self._selected_id is None:
             return
         self._circles = [c for c in self._circles if c.id != self._selected_id]
         self._selected_id = None
+        self._highlighted_zone = None
         self.update()
         self.circles_changed.emit()
         self.circle_selected.emit(None)
@@ -150,6 +161,17 @@ class ZoneCanvas(OverlayViewer):
                 return c
         return None
 
+    def _zone_index_at(self, x: float, y: float) -> int:
+        """원본 이미지 좌표 (x, y)가 속한 존 인덱스. 존 개수 정의는
+        `zone_metrics.zones_from_circles`와 동일한 규칙(반지름 오름차순 정렬,
+        0=중심부, N=바깥쪽) — 원을 포함한 개수만 세면 되므로 마스크 배열 없이
+        기하 조건만으로 계산 가능(원이 nested라는 전제는 core 모듈과 동일)."""
+        n = len(self._circles)
+        contained = sum(
+            1 for c in self._circles if (x - c.cx) ** 2 + (y - c.cy) ** 2 <= c.r ** 2
+        )
+        return n - contained
+
     # ── paintEvent ───────────────────────────────────────────────────────────
 
     def paintEvent(self, event) -> None:
@@ -158,6 +180,8 @@ class ZoneCanvas(OverlayViewer):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._highlighted_zone is not None:
+            self._paint_zone_highlight(p)
         for item in sorted(self._circles, key=lambda c: c.r):
             center, r = self._orig_to_screen(item.cx, item.cy, item.r)
             color = _COLOR_SELECTED if item.id == self._selected_id else _COLOR_NORMAL
@@ -169,6 +193,32 @@ class ZoneCanvas(OverlayViewer):
             p.setBrush(color)
             p.drawEllipse(center, 4, 4)
         p.end()
+
+    def _paint_zone_highlight(self, p: QPainter) -> None:
+        """존 하이라이트를 짝수-홀수 채우기 규칙의 원 경로 차집합으로 그린다 —
+        zone_metrics의 마스크 차집합과 같은 원판 기하를 Qt 경로로 그대로 재사용
+        (별도 비트맵/numpy 왕복 불필요, 존 경계 = 원 경계 그 자체이므로)."""
+        sorted_c = sorted(self._circles, key=lambda c: c.r)
+        n = len(sorted_c)
+        idx = self._highlighted_zone
+        if idx is None or not (0 <= idx <= n):
+            return
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.OddEvenFill)
+        if idx == 0:
+            center, r = self._orig_to_screen(sorted_c[0].cx, sorted_c[0].cy, sorted_c[0].r)
+            path.addEllipse(center, r, r)
+        elif idx == n:
+            path.addRect(QRectF(self.rect()))
+            center, r = self._orig_to_screen(sorted_c[-1].cx, sorted_c[-1].cy, sorted_c[-1].r)
+            path.addEllipse(center, r, r)
+        else:
+            outer, inner = sorted_c[idx], sorted_c[idx - 1]
+            c_o, r_o = self._orig_to_screen(outer.cx, outer.cy, outer.r)
+            c_i, r_i = self._orig_to_screen(inner.cx, inner.cy, inner.r)
+            path.addEllipse(c_o, r_o, r_o)
+            path.addEllipse(c_i, r_i, r_i)
+        p.fillPath(path, _COLOR_ZONE_HIGHLIGHT)
 
     # ── 마우스 ───────────────────────────────────────────────────────────────
 
@@ -218,9 +268,17 @@ class ZoneCanvas(OverlayViewer):
             if item is not None:
                 _, r_screen = self._orig_to_screen(item.cx, item.cy, item.r)
                 if r_screen < _MIN_CREATE_R_PX:
+                    click_x, click_y = item.cx, item.cy
                     self._circles.remove(item)
                     self._selected_id = None
                     self.circle_selected.emit(None)
+                    # 드래그 없는 단순 클릭이었던 것으로 간주 -- 원 생성 대신
+                    # 클릭 위치가 속한 존을 선택한다(원이 하나도 없으면 존 개념이
+                    # 성립하지 않으므로 발생시키지 않음).
+                    if self._circles:
+                        zone_idx = self._zone_index_at(click_x, click_y)
+                        self.set_highlighted_zone(zone_idx)
+                        self.zone_clicked.emit(zone_idx)
         self._drag_mode = None
         super().mouseReleaseEvent(event)
         self.update()
