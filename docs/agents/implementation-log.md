@@ -2533,3 +2533,51 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 ### 관련
 - 리더 사전 설계 지시서 준수: 다중 시트 분리, 커스텀 스타일링, YAML 설정 등 과한
   옵션은 추가하지 않음(ponytail 원칙).
+
+---
+
+## 2026-08-25 — 존(Zone) 분석 탭 라운드 1: 탭 스켈레톤 + 체크포인트 로드 + 추론
+
+### 변경
+- `app/tabs/zone_analysis_tab.py` 신설 — `ZoneAnalysisTab(QWidget)`. 이미지/체크포인트
+  파일 직접 열기(`QFileDialog`, 프로젝트 시스템 미사용) + `load_checkpoint_meta()`로
+  `model_source` 확인 → `preset:*`는 `load_model_from_ckpt()`로 자동 인스턴스화, 그 외는
+  탭 안에 모델 코드 입력 박스를 노출해 `model_validator.validate()` +
+  `model_loader.load_from_code()`로 Validate → Load 2단계(모델 탭과 동일 패턴). 스펙
+  판단 3 지시대로 `model_loader.save_user_code()`는 호출하지 않음(디스크에 저장 안 함,
+  세션 메모리에만 유지).
+- `app/widgets/zone_canvas.py` 신설 — `ZoneCanvas(OverlayViewer)`. 라운드 1은 순수 뷰어
+  (원 검출/편집 UI 없음) — `overlay_viewer.OverlayViewer`의 줌/팬 QPainter 패턴을 그대로
+  상속 재사용. 라운드 2에서 원(circle) 오버레이·편집을 추가할 확장 지점으로 남겨둠.
+- `app/core/inference_engine.py` — `run()`/`run_sliding_window()`/`refilter()` 3곳에
+  `classes: list[ClassDef] | None = None` 선택 인자 추가(각 1~2줄). `None`이면 기존과
+  동일하게 `load_classes()` 폴백. `inference_tab.py`(기존 4탭)는 이 인자를 넘기지 않으므로
+  동작 변화 없음 — `grep`으로 `engine.run/run_sliding_window/refilter` 호출부가
+  `inference_tab.py`와 신규 `zone_analysis_tab.py` 두 곳뿐임을 확인해 회귀 위험 배제.
+- 타겟(녹) 클래스 즉석 구성(스펙 판단 4) — `classes=None`으로 1차 `engine.run()` 실행해
+  `raw_class_map` 확보 → 배경(0) 제외 고유 클래스 id 집계 → 1개면 자동 선택 + 편집 가능
+  `QLineEdit`(기본 이름 `class_1`), 2개 이상이면 `QComboBox` 드롭다운 → 선택/편집 변경 시
+  `engine.refilter(classes=[...])`로 재컬러화. 색상은 `annotation_store.DEFAULT_PALETTE`를
+  `class_id % len(DEFAULT_PALETTE)`로 인덱싱(`class_panel.py`의 기존 관례와 동일 방식).
+- `app/main_window.py` — 5번째 탭으로 `ZoneAnalysisTab` 등록.
+- `app/core/i18n.py` — `tab.zone_analysis` ko("존 분석")/en("Zone Analysis") 키 추가.
+
+### 확인
+- `py_compile`로 신규/수정 5개 파일 문법 오류 없음 확인.
+- `grep`으로 `engine.run/run_sliding_window/refilter` 호출부가 `inference_tab.py`(인자
+  미전달, 회귀 없음)와 `zone_analysis_tab.py`뿐임을 확인.
+- 실제 `python main.py` GUI 구동(존 분석 탭 preset/커스텀 체크포인트 양쪽 골든패스)은
+  아직 수행하지 않음 — 검증 서브에이전트가 이어서 확인해야 함, **아직 완료로 간주하지
+  않음**.
+
+### 커밋
+- `13f2952` — `feat: 존 분석 탭 라운드 1 — 탭 스켈레톤+체크포인트 로드+추론`
+- `2c7e031` — `docs: 존 분석 탭 스펙 2차 정정 반영 + 라운드 1 로드맵 갱신`
+  (계획 에이전트가 이미 완료로 기록한 스펙 2차 정정 세션분을 함께 커밋 + `roadmap.md`
+  R1 체크박스 완료 갱신)
+
+### 관련
+- 스펙: [docs/specs/zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md)
+  판단 1/3/4, 데이터 흐름, 파일 구조 제안 절.
+- 판단 2(원 검출/편집)는 이번 라운드 범위 밖 — `ZoneCanvas`는 원 그리기/편집 UI 없이
+  오버레이 표시만 하는 순수 뷰어로 유지.
