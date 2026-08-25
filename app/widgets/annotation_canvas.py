@@ -203,7 +203,6 @@ class AnnotationCanvas(QWidget):
 
         # 브러시 진행 중
         self._brush_np: np.ndarray | None = None
-        self._brush_trail: list[tuple[int, int]] = []   # TOOL_BRUSH_FILL 궤적
         self._brush_bbox: list[int] | None = None       # [x0, y0, x1, y1] — 실제로 칠해진 영역
         self._is_painting = False
         self._last_paint_pos: QPointF | None = None     # 보간용 직전 페인트 위치
@@ -647,8 +646,6 @@ class AnnotationCanvas(QWidget):
             self._brush_bbox = None
             self._is_painting = True
             self._last_paint_pos = img_pos   # 보간 기준점 초기화
-            if self._tool == TOOL_BRUSH_FILL:
-                self._brush_trail = [(int(img_pos.x()), int(img_pos.y()))]
             self._paint_circle(img_pos)
             self.update()
 
@@ -731,8 +728,6 @@ class AnnotationCanvas(QWidget):
         if buttons & Qt.MouseButton.LeftButton:
             if self._is_painting:
                 self._paint_stroke(img_pos)   # 선형 보간 → 빠른 이동에도 끊김 없음
-                if self._tool == TOOL_BRUSH_FILL:
-                    self._brush_trail.append((int(img_pos.x()), int(img_pos.y())))
                 self.update()
             elif self._tool == TOOL_SELECT and self._press_img_pos is not None \
                     and not self._move_active and not self._select_active:
@@ -927,7 +922,6 @@ class AnnotationCanvas(QWidget):
                 self._resolve_overlap_and_merge(ann)
         self._brush_np = None
         self._brush_bbox = None
-        self._brush_trail = []
         self._is_painting = False
         self._last_paint_pos = None
         self._invalidate_overlay()
@@ -935,17 +929,12 @@ class AnnotationCanvas(QWidget):
             self._schedule_save()
 
     def _fill_enclosed(self) -> None:
-        """브러시 궤적을 자동으로 닫고 내부를 채운다."""
+        """브러시 궤적으로 실제 닫힌 영역의 내부만 채운다 (시작·끝점을 억지로 잇지 않음)."""
         if self._brush_np is None or not self._brush_np.any():
             return
 
         mask = self._brush_np.copy()
         h, w = mask.shape
-
-        # 시작점·끝점 연결 (작은 틈 자동 보정)
-        if len(self._brush_trail) >= 2:
-            thickness = max(1, self._brush_size)
-            cv2.line(mask, self._brush_trail[0], self._brush_trail[-1], 1, thickness)
 
         # 외부에서 flood fill — 경계에 닫히지 않은 부분이 없으면 내부는 도달 불가
         seed = None
