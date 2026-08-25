@@ -345,6 +345,7 @@ class ImageBrowser(QWidget):
             return
 
         ann_dir = _project.annotations_dir()
+        deleted: set[Path] = set()
         for p in selected_paths:
             try:
                 ann_path = ann_dir / f"{p.stem}.json"
@@ -352,9 +353,17 @@ class ImageBrowser(QWidget):
                     ann_path.unlink()
                 self.image_deleted.emit(p)
                 p.unlink()
+                deleted.add(p)
             except Exception:
                 continue
-        self.reload()
+
+        # 삭제된 항목만 캐시에서 제거 — reload()(전체 재스캔 + 이미지마다
+        # get_label_status() 디스크 I/O)를 다시 부르면 남은 이미지 수에 비례한
+        # 비용이 드는데, 이미 상태를 알고 있는 항목이라 재조회가 불필요하다.
+        self._all_paths = [p for p in self._all_paths if p not in deleted]
+        for p in deleted:
+            self._status_cache.pop(p, None)
+        self._apply_display()
 
     # ── 임포트 워커 슬롯 ──────────────────────────────────────────────────────
 

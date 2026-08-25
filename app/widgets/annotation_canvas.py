@@ -1346,14 +1346,34 @@ class AnnotationCanvas(QWidget):
         self._schedule_save()
         self.update()
 
+    def _snapshot_annotations(self) -> list[AnnotationItem]:
+        """self._annotations 의 독립적인 딥카피 동등물을 numpy 네이티브 복사로 생성.
+        copy.deepcopy는 numpy 배열을 pickle 경로(__reduce__)로 복사해 .copy()(memcpy)
+        보다 훨씬 느리다 — brush_mask 전체 해상도 마스크가 여러 개 있으면 체감 지연의
+        직접 원인이었다(GitHub 성능 리포트). points는 튜플 리스트라 얕은 리스트 복사로도
+        완전히 독립적(튜플은 불변, 원본 리스트를 in-place mutate하는 코드 없음 — grep 확인됨)."""
+        return [
+            AnnotationItem(
+                annotation_id=a.annotation_id,
+                class_id=a.class_id,
+                type=a.type,
+                order=a.order,
+                points=list(a.points),
+                mask=(a.mask.copy() if a.mask is not None else None),
+                width=a.width,
+                height=a.height,
+            )
+            for a in self._annotations
+        ]
+
     def _push_undo(self) -> None:
-        # deepcopy(전체 dense 마스크 배열 포함)가 대형 이미지 + brush_mask 수백 개
-        # 상태에서 메모리 부족으로 실패할 수 있다(BUG-014, 실측 재현됨). 근본 원인은
-        # 어노테이션별 전체 해상도 마스크 저장 구조라 이번엔 재설계하지 않는다 —
-        # 대신 실패 시 앱이 죽는 대신 이번 undo 스텝만 건너뛰고 편집은 계속되게 한다.
+        # 대형 이미지 + brush_mask 수백 개 상태에서 스냅샷이 메모리 부족으로 실패할
+        # 수 있다(BUG-014, 실측 재현됨). 근본 원인은 어노테이션별 전체 해상도 마스크
+        # 저장 구조라 이번엔 재설계하지 않는다 — 대신 실패 시 앱이 죽는 대신 이번
+        # undo 스텝만 건너뛰고 편집은 계속되게 한다.
         # numpy의 _ArrayMemoryError는 MemoryError의 서브클래스라 별도 import 없이 잡힌다.
         try:
-            snap = copy.deepcopy(self._annotations)
+            snap = self._snapshot_annotations()
         except MemoryError as exc:
             from app.core.logger import get_logger
             get_logger(__name__).warning(
