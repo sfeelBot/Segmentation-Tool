@@ -1523,7 +1523,7 @@ class AnnotationCanvas(QWidget):
         cls_map = {c.class_id: c.color for c in load_classes()}
         color = QColor(*cls_map.get(self._class_id, (200, 200, 200)))
         if self._tool == TOOL_ERASER:
-            color = QColor(255, 80, 80)
+            color = QColor(156, 163, 175)   # 앱 표준 중립 회색(#9ca3af) — 삭제 경고색(빨강) 대신
         color.setAlpha(OVERLAY_ALPHA)
         # 전체 이미지가 아닌 bbox 서브영역만 렌더링 — 거대 이미지에서 수백 배 빠름
         sub = self._brush_np[y0:y1, x0:x1]
