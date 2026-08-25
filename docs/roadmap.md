@@ -454,8 +454,8 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       `inference_tab.py`가 `classes=` 인자를 전혀 넘기지 않는 것을 정적 grep으로 확인 +
       실제 `engine.run()`을 인자 생략 호출로 실행해 `load_classes()` 폴백이 기존과 동일하게
       동작함을 실행 확인. 버그 발견 없음(QA.md 신규 등록 없음).
-- [x] R2 (원 자동검출/수동편집, 2a 스크립트 프로토타입 → 2b 위젯 구현) — 구현 완료,
-      커밋 `1815921`(2a `circle_detector.py`+`scripts/zone_circle_proto.py`),
+- [x] R2 (원 자동검출/수동편집, 2a 스크립트 프로토타입 → 2b 위젯 구현) — 구현+독립검증
+      통과, 커밋 `1815921`(2a `circle_detector.py`+`scripts/zone_circle_proto.py`),
       `b1f05bc`(2b `zone_canvas.py`+`zone_analysis_tab.py` UI 연결).
       2a: 실제 샘플 5장(`projects/nok/images/7~11번.bmp`)으로 파라미터 튜닝 — 1차
       시도에서 큰 원(케이스 테두리 등)이 글레어/그림자로 인한 에지 끊김 때문에 전혀
@@ -464,10 +464,23 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       피팅된 원이 실제 원형 경계를 벗어나지 않음을 5장 전부 육안 확인(스펙 핵심 확인
       목표 충족). 2b: `ZoneCanvas`에 원 렌더링+편집(중심 드래그 이동/테두리 드래그
       반지름 조절/빈 곳 드래그 생성/Delete·우클릭 삭제) 추가, 탭에 자동 검출 버튼+민감도
-      슬라이더+원 목록 사이드 패널 연결. **검증 대기** — `py_compile`+자가 점검
-      스크립트(`circle_detector.py::demo()`)+`QApplication` 스모크 테스트만 수행,
-      `python main.py` 실제 GUI 골든패스(자동 검출+수동 편집 4종 왕복)는 미실시.
-      상세: [docs/agents/implementation-log.md](agents/implementation-log.md) 2026-08-26 항목.
+      슬라이더+원 목록 사이드 패널 연결.
+      **검증 완료(2026-08-26, 별도 워크트리 `D:\segmentation model-zone-analysis-tab`)** —
+      스크래치 프로젝트로 `lraspp_mobilenet` preset 체크포인트를 실제 학습 생성 후
+      `python main.py`와 동일 임포트 순서로 `MainWindow` 실구동, `QTest` 실제 이벤트로
+      37개 assertion 전부 통과: 자동 검출(민감도 50%→2개/90%→4개 원, 배터리 캡 동심원
+      구조와 개연성 일치, 원본 5472×3648 스케일 좌표 역산 정확) + 수동 편집 4종(중심
+      드래그 이동/테두리 드래그 반지름 조절/빈 곳 드래그 생성/Delete·우클릭 삭제) 전부
+      실제 조작으로 확인 + 사이드 패널 반지름 오름차순·양방향 동기화(수정 후) + 라운드1
+      회귀 없음. **BUG-018 발견+즉시 수정+재검증 통과**: 캔버스에서 원을 클릭 선택/이동/
+      반지름조절/생성해도 `mouseReleaseEvent`가 매번 `circles_changed`를 emit해
+      `_refresh_circle_list()`가 리스트를 `clear()`하며 `currentRow`가 -1로 리셋 →
+      사이드 패널 하이라이트가 사라지는 버그(원 데이터 자체는 정상). `ZoneCanvas.
+      selected_id()` getter 추가 + `_refresh_circle_list()`가 재구성 후 선택을 복원하도록
+      수정(공유 함수 1곳 수정으로 모든 경로에 동시 적용). 부수적으로 "추론 전 자동 검출
+      클릭 시 캔버스에 아무것도 안 보여 혼란"도 확인돼 `_btn_detect`를 추론 완료 전까지
+      비활성화하도록 추가. `QA.md` BUG-018 Closed로 등록. 상세: [implementation-log.md](agents/implementation-log.md)
+      2026-08-26 항목, [verification-log.md](agents/verification-log.md) 2026-08-26 항목.
 - [ ] R3 (존 리스트 + 퍼센티지 계산) — 착수 대기
 - [ ] R4 (블랍 클릭 삭제 + 재계산) — 착수 대기
 

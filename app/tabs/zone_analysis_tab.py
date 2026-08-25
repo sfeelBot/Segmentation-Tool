@@ -132,6 +132,8 @@ class ZoneAnalysisTab(QWidget):
         # ── 원 검출/편집 컨트롤 ──────────────────────────────────────────────
         circle_row = QHBoxLayout()
         self._btn_detect = QPushButton("자동 검출")
+        self._btn_detect.setEnabled(False)
+        self._btn_detect.setToolTip("추론을 먼저 실행하면 검출된 원이 캔버스에 표시됩니다")
         circle_row.addWidget(self._btn_detect)
         circle_row.addWidget(QLabel("민감도:"))
         self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
@@ -197,6 +199,7 @@ class ZoneAnalysisTab(QWidget):
             self._image_size = (0, 0)
         self._canvas.set_image_size(*self._image_size)
         self._canvas.clear_circles()
+        self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 캔버스에 표시할 배경 없음
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -318,6 +321,7 @@ class ZoneAnalysisTab(QWidget):
     def _setup_target_classes(self, result: InferenceResult) -> None:
         ids = sorted(int(i) for i in set(result.raw_class_map.ravel().tolist()) if i != 0)
         self._detected_ids = ids
+        self._btn_detect.setEnabled(True)   # 추론 완료 -- 캔버스에 배경 pixmap이 생겨 원이 보임
 
         self._target_name_edit.hide()
         self._target_combo.hide()
@@ -401,12 +405,22 @@ class ZoneAnalysisTab(QWidget):
     # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
 
     def _refresh_circle_list(self) -> None:
+        # circles_changed 는 클릭 선택 직후(드래그 없는 단순 선택 포함)에도 매번
+        # 발생한다(mouseReleaseEvent 가 무조건 emit) -- clear() 로 리스트를 통째로
+        # 재구성하면 QListWidget 의 currentRow 가 -1 로 리셋돼 캔버스 선택과 사이드
+        # 패널 하이라이트가 어긋난다(BUG). 재구성 후 캔버스의 현재 선택을 그대로
+        # 복원해 양방향 동기화를 유지한다.
+        selected = self._canvas.selected_id()
         self._circle_list.blockSignals(True)
         self._circle_list.clear()
+        selected_row = -1
         for i, (circle_id, cx, cy, r) in enumerate(self._canvas.circles_with_ids(), start=1):
             item = QListWidgetItem(f"원 {i}  r={r:.1f}px  중심=({cx:.0f}, {cy:.0f})")
             item.setData(Qt.ItemDataRole.UserRole, circle_id)
             self._circle_list.addItem(item)
+            if circle_id == selected:
+                selected_row = i - 1
+        self._circle_list.setCurrentRow(selected_row)
         self._circle_list.blockSignals(False)
 
     def _on_canvas_circle_selected(self, circle_id) -> None:

@@ -89,6 +89,11 @@ class ZoneCanvas(OverlayViewer):
         self._selected_id = circle_id
         self.update()
 
+    def selected_id(self) -> int | None:
+        """현재 선택된 원 id(없으면 None) — 사이드 패널이 목록 재구축 후 선택
+        하이라이트를 복원할 때 조회한다."""
+        return self._selected_id
+
     def remove_selected(self) -> None:
         if self._selected_id is None:
             return
