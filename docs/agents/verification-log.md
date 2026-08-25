@@ -2323,3 +2323,81 @@ information/critical`을 모니터링용으로 monkeypatch(호출 로그만 남�
 체크포인트 저장, batch_size=1 PIDNet 회귀 포함) · 추론 탭(체크포인트 자동 매칭·
 실제 추론·오버레이 표시) 전 과정을 실제 위젯 클릭/시그널 경로로 3개 모델 모두
 end-to-end 확인. push는 아직 안 된 상태 — 리더가 사용자 확인 후 진행.
+
+---
+
+## 2026-08-25 — 어노테이션 가져오기(Import) 실제 GUI 왕복 검증 (커밋 2837c5c, 16a1e7e)
+
+### 검증 대상
+구현 에이전트가 추가한 어노테이션 Import 기능(`app/widgets/import_dialog.py`
+`ImportAnnotationDialog`, `app/main_window.py`의 Import 버튼 + `_on_open_import_ann()`,
+`app/tabs/labeling_tab.py`의 `reload_after_import()`). 구현 단계에서는 스크립트
+레벨 로직 테스트만 통과했고 실제 GUI 클릭 경로는 미확인 상태였음 — 이번 라운드에서
+확인.
+
+### 방법
+`py -3 main.py`로 직접 조작하는 대신, 실사용 `projects/` 디렉터리를 건드리지 않기
+위해 스크래치 폴더(`…/scratchpad/ImportQA`)에 격리 프로젝트를 만들고
+`app.core.project.create/set_current`로 프로젝트를 설정한 뒤 실제 `MainWindow`를
+띄워 **실제 위젯 이벤트 경로**(`QTest.mouseClick`)로 전체 왕복 시나리오를 재현하는
+스크립트(`verify_import_gui.py`)를 작성해 실행. `QDialog.exec()`를 임시로 감싸
+`QTimer.singleShot`으로 모달 진입 후 실제 버튼 클릭을 스케줄링하는 방식(기존
+`gui_verify_issue9.py`와 동일한 패턴)으로 네이티브 `QFileDialog`만 우회(필드 직접
+세팅)하고 나머지는 전부 실제 버튼 클릭. `QMessageBox.information/critical/warning`은
+비차단 캡처로 임시 패치(테스트 스크립트 내에서만, 소스코드 변경 없음).
+
+### 확인한 것
+1. **툴바 버튼**: MainWindow 코너에 Export(내보내기 화살표) 옆 clipboard 아이콘의
+   Import 버튼이 실제로 보이고, 툴팁("내보낸 어노테이션 데이터를 가져오기")도
+   정상 표시됨. 스크린샷(`import_qa_toolbar.png`)으로 육안 확인.
+2. **전체 왕복 시나리오** (4개 이미지: img1=polygon/cat, img2=brush_mask/dog,
+   img3=무라벨, img4=polygon/cat):
+   - Export 버튼 실제 클릭 → `ExportDialog`에서 JSON 포맷으로 스크래치 폴더에
+     내보내기 실행(labeled_only 기본값 유지) → 라벨된 3개(img1,2,4) 내보내짐,
+     완료 메시지("완료 — 3개 이미지를 내보냈습니다.") 확인.
+   - 충돌 조성: img1 폴리곤 좌표 변경, img2 브러시 마스크 다른 영역으로 변경,
+     img4는 프로젝트에서 이미지+어노테이션 파일 자체를 제거(새 이미지 시나리오),
+     로컬 classes.json에서 "dog" 클래스 제거(클래스 병합 시나리오).
+   - Import 버튼 실제 클릭 → "기존 유지"(skip, 기본값) 정책으로 실행 → 완료
+     메시지("가져옴 1개, 유지(건너뜀) 2개, 새 이미지 1개, 새 클래스 1개") →
+     img1/img2는 변경된 상태 그대로 유지(덮어써지지 않음), img4는 이미지+
+     원본 어노테이션 그대로 복원, classes.json에 "dog" 병합됨 — 전부 확인.
+   - 다시 Import → "덮어쓰기" 정책으로 실행 → 완료 메시지("가져옴 3개") →
+     img1 폴리곤 좌표가 내보낼 때 원본과 **정확히 일치**, img2 브러시 마스크가
+     `np.array_equal`로 원본과 **정확히 일치**함을 확인.
+   - 완료 메시지박스에 imported/skipped_existing/skipped_missing/new_images/
+     new_classes 요약 숫자가 실제로 표시됨 확인 (위 인용).
+3. **라벨링 탭 실시간 갱신**: skip 정책 import 완료 직후(탭 재오픈 없이)
+   `labeling_tab._image_browser._all_paths`를 조회 — img4.png가 즉시 포함돼
+   있음을 확인. `reload_after_import()`가 `main_window._on_open_import_ann()`에서
+   `dlg.imported_any` True일 때 자동 호출되는 경로가 실제로 동작함.
+4. **새 이미지 가져오기**: img4.png가 `images_dir`에 실제로 복사되고 이미지
+   브라우저 목록에도 반영됨 확인.
+5. **에러 케이스**: `annotations/` 서브폴더가 없는 빈 폴더를 선택 → 크래시 없이
+   `QMessageBox.critical`(제목 "어노테이션 가져오기", "…annotations 폴더가
+   없습니다…")가 뜸. 단, 이 경우 다이얼로그가 닫히지 않고 계속 열려있는(사용자가
+   다른 폴더를 다시 고를 수 있도록) 의도된 동작임을 확인 — 테스트 스크립트가 이걸
+   놓쳐 처음엔 모달 대기로 멈췄다가 원인 파악 후 스크립트에서 close 버튼 클릭을
+   추가해 통과시킴 (앱 버그 아님, 테스트 스크립트 버그).
+6. **`data/logs/errors.log`**: 검증 전후 라인 수 동일(3662 → 3662, 신규 항목 0건).
+   로그 끝부분에 있던 `TypeError: unhashable type: 'QTreeWidgetItem'` 트레이스백은
+   2026-05-27자 과거 기록으로, 이번 세션과 무관함을 날짜 헤더로 확인.
+7. **부수 확인**: `git status --porcelain` 무변경, `projects/`(실사용 프로젝트
+   루트)에는 기존 `nok` 외 변화 없음 — 스크래치 프로젝트/내보내기 폴더는 검증
+   완료 후 삭제.
+
+### 발견한 문제
+새 버그 없음. QA.md 변경 없음.
+
+참고(버그 아님, 설계상 특이사항으로만 기록): "기존 유지" 정책 판정은
+`load_annotations(img_path)`가 반환한 리스트의 **truthiness**로 "기존 어노테이션
+있음"을 판단한다(`app/widgets/import_dialog.py`의 `existing and not overwrite`).
+즉 어노테이션 JSON 파일이 존재하더라도 그 안의 annotations 배열이 비어있으면
+(라벨을 전부 지운 상태) "충돌 없음"으로 취급되어 skip 정책이어도 새로 가져온
+데이터로 채워진다. 사용자 관점에서는 "빈 라벨 = 미라벨과 동일 취급"이라는
+합리적 해석이라 버그로 등록하지 않음.
+
+### 판정
+**통과**. Export/Import 버튼 노출·툴팁, Export→충돌 조성→Import(기존 유지/덮어쓰기)
+전체 왕복, 라벨링 탭 실시간 갱신, 새 이미지 가져오기, 에러 폴더 처리까지 전부
+실제 위젯 클릭 경로로 확인. push는 하지 않음 — 리더가 사용자 확인 후 진행.
