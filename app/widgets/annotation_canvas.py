@@ -606,6 +606,12 @@ class AnnotationCanvas(QWidget):
             mouse_img.x() * self._zoom,
             mouse_img.y() * self._zoom,
         )
+        if self._pan_active:
+            # 드래그 중 휠 줌: mouseMoveEvent가 절대 오프셋 기준으로
+            # self._pan을 재계산하므로, 그 기준점도 새 줌 결과로 갱신해야
+            # 다음 move 이벤트가 줌 이전 상태로 되돌리지 않는다.
+            self._pan_start_mouse = mouse_canvas
+            self._pan_start_offset = QPointF(self._pan)
         self._schedule_repaint()
 
     def mousePressEvent(self, event) -> None:

@@ -2289,3 +2289,35 @@ onedir 패키징 + 설치 마법사를 만드는 것이 목표. 실제 빌드 �
 - 신규: `app/resources/logo.svg`, `app/resources/app_icon.ico`,
   `scripts/gen_icon.py`
 - 수정: `main.py`, `build.spec`, `installer/setup.iss`
+
+---
+
+## 2026-08-25 — GitHub #9: 팬 드래그 중 휠 줌 초점 어긋남 수정
+
+### 배경
+- 기획 결과: `docs/specs/voc-github-issues-round3-2026-08-25.md`.
+- 원인: `AnnotationCanvas.mousePressEvent()`가 팬 드래그 시작 시
+  `_pan_start_mouse`/`_pan_start_offset`를 한 번만 캡처하고, 이후
+  `mouseMoveEvent()`는 항상 이 절대 기준값으로 `self._pan`을 재계산한다.
+  드래그 도중 `wheelEvent()`가 커서 기준으로 `self._zoom`/`self._pan`을
+  올바르게 갱신해도, 바로 다음 `mouseMoveEvent()`가 줌 이전 시점의 stale한
+  기준값으로 덮어써 초점이 틀어졌다.
+
+### 변경
+- `app/widgets/annotation_canvas.py` `wheelEvent()` — `self._pan_active`가
+  True일 때 줌 갱신 직후 `_pan_start_mouse`/`_pan_start_offset`도 새
+  커서 위치/`self._pan`으로 함께 갱신하도록 3줄 추가. `_pan_active`가
+  False일 때(다른 도구)는 기존 로직 그대로 — 회귀 없음.
+
+### 검증
+- `py tests/test_canvas_zoom_pan.py` — 신규 회귀 테스트, 통과 확인.
+  수정 전 코드로 `git stash`해서 동일 테스트를 돌리면 `AssertionError`로
+  실패하는 것도 확인함 (버그 재현 → 수정 후 통과 순서로 검증).
+- 브러시/폴리곤/셀렉트 도구는 `_pan_active`가 항상 False라 이번 변경
+  분기를 타지 않음 — 코드 레벨로 회귀 없음 확인.
+- 실제 GUI 마우스 드래그+휠 조작 실측은 하지 않음 — **검증 서브에이전트
+  확인 필요**.
+
+### 만든/수정한 파일
+- 수정: `app/widgets/annotation_canvas.py`
+- 신규: `tests/test_canvas_zoom_pan.py`
