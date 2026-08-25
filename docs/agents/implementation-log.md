@@ -2321,3 +2321,71 @@ onedir 패키징 + 설치 마법사를 만드는 것이 목표. 실제 빌드 �
 ### 만든/수정한 파일
 - 수정: `app/widgets/annotation_canvas.py`
 - 신규: `tests/test_canvas_zoom_pan.py`
+
+---
+
+## 2026-08-25 — 최신 논문/기업 공개 모델 프리셋 3종 추가 (SegFormer/SegNeXt/PIDNet)
+
+### 배경
+- 리더가 웹서치로 기획 조사, 사용자가 최종 확정: SegFormer, SegNeXt, PIDNet.
+- 샌드박스 제약(허용 import: torch/torch.nn/torch.nn.functional/torch.nn.init,
+  torchvision, numpy, math, typing, collections, functools, itertools 등,
+  `einops`/`timm`/`transformers` 등 외부 라이브러리 금지) 안에서 순수
+  `torch.nn` 프리미티브로 직접 구현.
+
+### 변경
+- `app/model_presets/segformer.py` (신규) — SegFormer (Xie et al., NeurIPS
+  2021). MiT 계층적 트랜스포머 인코더 4단계(OverlapPatchEmbed →
+  EfficientSelfAttention[SR ratio로 K/V 시퀀스 축소] → Mix-FFN[depthwise
+  3x3 conv로 위치 인코딩 대체]) + all-MLP 디코더(각 스테이지를 공통 차원으로
+  투영 → 1/4 해상도로 concat → fuse). MiT-B0 스케일을 채널
+  [32,64,160,256]/depth [2,2,2,2]로 경량화. ≈3.71M 파라미터.
+- `app/model_presets/segnext.py` (신규) — SegNeXt (Guo et al., NeurIPS
+  2022). MSCAN 인코더 4단계, 각 블록은 depthwise 5x5 conv →
+  1x7+7x1/1x11+11x1/1x21+21x1 스트립 conv 브랜치 합산 → 1x1 conv로
+  attention weight 생성 → 입력에 elementwise 곱(MSCA) → conv 기반 FFN.
+  원 논문의 Hamburger(행렬분해) 디코더는 구현하지 않고 마지막 3단계
+  특징을 공통 채널로 투영·upsample·concat·conv하는 경량 디코더로
+  단순화(docstring에 명시). ≈3.40M 파라미터.
+- `app/model_presets/pidnet.py` (신규) — PIDNet (Xu et al., CVPR 2023).
+  공유 stem(1/8 해상도) → P(Detail, 1/8 유지 residual block)/I(Context,
+  1/16→1/32 다운샘플 + PPM)/D(Boundary, 1/8 얕은 conv) 3-브랜치.
+  이 앱의 모델 계약이 `forward(x) -> Tensor` 단일 반환만 허용해 원 논문의
+  boundary auxiliary loss/멀티 출력은 쓸 수 없으므로, D 브랜치는 최종
+  반환값에 포함하지 않고 `sigmoid(D 특징 conv)`를 P/I 융합
+  pixel-attention 게이트로만 내부 사용(docstring에 설계 결정 명시).
+  ≈0.92M 파라미터.
+  - 구현 중 발견: `_PPM`의 bin=1 풀링(출력 1x1) 뒤에 `BatchNorm2d`를 쓰면
+    배치 크기 1 학습 시 "Expected more than 1 value per channel" 오류가
+    남 (N*H*W=1). 배치/공간 크기에 무관한 `GroupNorm(1, C)`로 교체해 해결.
+- `app/model_presets/__init__.py` — `PresetInfo` 3개 등록(기존 프리셋들
+  뒤에 추가, key/title/tagline/use_case/params/pros/cons 필드 구성 동일
+  패턴 유지). 총 프리셋 10개.
+
+### 검증 (구현 단계 최소 검증 — 스크래치 스크립트, 저장소 미포함)
+- 세 파일 모두 `app/core/model_validator.py`의 AST 검증(`validate()`)을
+  실제로 통과함 확인 (허용 import만 사용, 금지 호출 없음, forward 있는
+  nn.Module 서브클래스 존재).
+- `app/core/model_loader.py`의 `load_from_code()`로 실제 로드 —
+  마지막에 정의된 클래스(SegFormer/SegNeXt/PIDNet)가 정확히 선택됨
+  확인(헬퍼 클래스는 모두 그 이전에 정의).
+- `torch.randn(1, 3, 256, 256)` 더미 입력으로 forward pass:
+  num_classes=2, 5 각각에서 출력 shape이 정확히
+  `(1, num_classes, 256, 256)`임을 확인.
+- `loss = out.mean(); loss.backward()`로 그래디언트 확인 — 모든 파라미터
+  그래디언트에 NaN 없음, 정상적으로 흐름 확인 (`model.train()` 모드에서
+  배치 크기 1로 실행해 PPM 수정 이후 정상 동작 재확인).
+- `py -3 -m py_compile`로 4개 파일 문법 검증 통과.
+- 커밋: `c9f49e6`
+
+### 실제 파라미터 수 (기본 num_classes=2 기준)
+| 모델 | 파라미터 수 |
+|---|---|
+| SegFormer | 3,714,658 (≈3.7M) |
+| SegNeXt | 3,404,098 (≈3.4M) |
+| PIDNet | 915,746 (≈0.9M) |
+
+### 관련
+- 이번 라운드는 구현만 수행. 모델 탭 드롭다운에서 실제로 선택되는지,
+  라벨링→학습→추론 골든패스에서 세 모델이 실제로 학습·추론까지 도는지는
+  **검증 서브에이전트 확인 필요** — 아직 완료로 간주하지 않음.
