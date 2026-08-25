@@ -2770,3 +2770,97 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
   이동/반지름 조절/생성/삭제) 확인 필수 — 구현 단계에서는 미수행.
 - 이미지 선택 직후 vs 추론 실행 후 `set_image_size`/픽스맵 설정 시점 분리로 인한
   UX 흐름(추론 전 자동 검출 클릭 시 동작) 실제 확인.
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 3: 존 리스트 + 퍼센티지 계산
+
+작업 지시: 리더가 `docs/specs/zone-analysis-tab-2026-08-25.md` "판단 2"(원 정렬 규칙)·
+"존 계산 로직"(원판 마스크 집합 차집합)·"UX 흐름 상세 > 존 선택 및 네이밍"·"라운드
+분할 제안 3번"에 따라 라운드 3 구현을 위임. 워크트리: `D:\segmentation model-zone-analysis-tab`
+(브랜치 `feature/zone-analysis-tab`, `main`과 공유 금지).
+
+### 변경
+- `app/core/zone_metrics.py` 신설(Qt 의존성 없음, 순수 numpy):
+  - `Circle(id, cx, cy, r)` / `Zone(index, name, mask)` 데이터클래스 — `zone_canvas.py`의
+    기존 `_CircleItem` 필드 이름을 그대로 따름(일관성).
+  - `_disk_mask(cx, cy, r, img_shape)` — `(x-cx)^2+(y-cy)^2<=r^2` 벡터화 거리식(`np.ogrid`)
+    으로 원판 마스크 생성. `cv2.circle`/`fillPoly` 모두 아닌, 이미 원 방정식이 있으므로
+    numpy만으로 더 단순한 쪽을 선택(스펙이 명시한 두 옵션 중 하나, YAGNI 상 cv2 불필요).
+  - `zones_from_circles(circles, img_shape) -> list[Zone]` — 반지름 오름차순 정렬 후
+    `Zone_center=mask(C_0)`, `Zone_i=mask(C_{i+1}) AND NOT mask(C_i)`(i=0..N-2),
+    `Zone_outside=전체 AND NOT mask(C_{N-1})`. 이름: `중심부`/`링 k`/`바깥쪽`. 원 0개면
+    빈 리스트 반환(존 개념 자체가 성립하지 않는 경우를 단순 처리).
+  - `zone_stats(zone_mask, target_class_mask) -> float` — 존 면적 대비 (존 AND 타겟)
+    픽셀 비율(%). 존 면적 0이면 0.0 반환(0-division 가드).
+  - `if __name__ == "__main__"` self-check: 5×5 합성 이미지에 원 1개(cx=2,cy=2,r=1)를
+    올려 마스크에 속하는 5개 픽셀 좌표를 직접 손계산 후 `assert`(픽셀 카운트 수작업
+    검산 — 스펙의 라운드 3 검증 기준과 정확히 일치하는 형태), 원 2개 중첩 케이스에서
+    "존 면적 합 = 전체 픽셀 수, 존끼리 겹침 없음" 파티션 불변식 assert, 원 0개 케이스도
+    포함.
+- `app/widgets/zone_canvas.py` 확장:
+  - `zone_clicked(int)` 시그널 추가 — 기존 `mouseReleaseEvent`가 "빈 곳 클릭 후 드래그
+    없이 놓으면(반지름이 `_MIN_CREATE_R_PX` 미만) 생성 취소" 처리를 이미 하고 있던
+    지점을 그대로 활용: 그 클릭을 "존 선택 클릭"으로 재해석해 클릭 지점이 속한 존
+    인덱스를 계산해 emit한다. 새 위젯/모드 추가 없이 기존 생성 취소 경로 재사용(라더:
+    이미 있는 이벤트 흐름 재활용이 새 클릭 모드 구현보다 단순).
+  - `_zone_index_at(x, y) -> int` — 원 포함 개수(`contained`)만 세어 `n - contained`로
+    존 인덱스 산출(존 마스크 배열 생성 없이 기하 조건만으로 zone_metrics와 동일한
+    인덱싱 규칙 재현 — nested 전제도 core 모듈과 동일하게 그대로 둠).
+  - `set_highlighted_zone(int | None)` + `_paint_zone_highlight()` — 존 하이라이트를
+    `QPainterPath`의 짝수-홀수(OddEven) 채우기 규칙으로 그린다(외부 원 경로 + 내부 원
+    경로를 한 path에 추가하면 고리 모양이 자동으로 나옴). numpy 마스크를 QImage로
+    변환해 그리는 방식은 채택하지 않음 — 존 경계가 정확히 원 경계이므로 기존 원
+    렌더링에 쓰던 `_orig_to_screen()` 좌표 변환을 그대로 재사용하는 쪽이 대용량
+    이미지(5472×3648)에서도 비트맵 왕복 없이 더 가볍고 코드도 짧음.
+  - 원 목록이 바뀌는 지점(`clear_circles`/`set_circles`/`remove_selected`)마다
+    `_highlighted_zone`을 `None`으로 리셋해 존 개수가 바뀐 뒤 stale 인덱스를 참조하지
+    않도록 함.
+- `app/tabs/zone_analysis_tab.py`:
+  - 존 리스트 사이드 패널(`QListWidget`) 추가 — 항상 전체 존의 이름+퍼센티지를 함께
+    표시(스펙 "리스트는 항상 전체 존의 퍼센티지를 한번에 보여준다"). 리스트 클릭 →
+    `_on_zone_row_selected` → `canvas.set_highlighted_zone()`. 캔버스 빈 곳 클릭 →
+    `zone_clicked` 시그널 → `_on_canvas_zone_clicked`가 리스트의 `currentRow`만 동기화
+    (양방향, `blockSignals`로 순환 방지 — 라운드 2 원 목록 동기화와 동일 패턴).
+  - `_recompute_zones()` — 캔버스의 `circles_with_ids()`(반지름 오름차순, id 포함)를
+    `zone_metrics.Circle`로 변환 → `zones_from_circles()` → 각 존과
+    `raw_class_map == target_class_id`(판단 4의 즉석 타겟 마스크, 필터링 없는 원본
+    argmax) AND → `zone_stats()`로 퍼센티지 산출해 리스트 재구성. 원이 없거나 추론
+    결과/타겟 클래스가 아직 없으면 리스트를 비움.
+  - `_recompute_zones()` 호출 지점: `circles_changed`(원 추가/이동/크기조절/삭제마다),
+    `_on_target_changed()` 끝(타겟 클래스 전환/이름 변경 재필터 후), 클래스가 검출되지
+    않은 경우(`_setup_target_classes`의 `not ids` 분기) — 모두 "타겟 마스크 또는 원
+    구성이 바뀔 수 있는 지점"이라는 공통 조건으로 한 함수에 모아 회귀 위험을 줄임.
+  - `self._target_class_id` 인스턴스 변수 신설 — 기존에는 `_on_target_changed()`
+    지역변수로만 있던 현재 타겟 id를 저장해 `_recompute_zones()`에서 재사용(공유
+    상태를 signal 콜백 지역변수에서 인스턴스 상태로 승격한 유일한 구조 변경).
+
+### 검증(구현 단계 — self-check + 정적 실행 확인만, GUI 골든패스는 검증 서브에이전트 몫)
+- `py -3 app/core/zone_metrics.py` self-check 통과("zone_metrics self-check OK").
+- `py -3 -m py_compile` 통과(`zone_metrics.py`, `zone_canvas.py`, `zone_analysis_tab.py`).
+- `QApplication` 하 스모크 스크립트(스크래치패드, 저장소에는 없음): `ZoneCanvas`에 원
+  2개(동심, r=20/50) 등록 → `_zone_index_at()`(기하 hit-test)와 `zones_from_circles()`
+  (마스크 기반)가 3개 지점(중심부/링1/바깥쪽 각 1곳)에서 서로 일치함을 확인, 존별
+  `zone_stats()` 산출값 확인, `select_circle`/`remove_selected`/`set_highlighted_zone`
+  왕복 확인 — 전부 통과.
+- `ZoneAnalysisTab()` 단독 인스턴스화(존 리스트 패널 포함) 성공 확인.
+- **`python main.py` 실제 GUI 구동으로 존 리스트 표시/클릭↔캔버스 하이라이트 동기화/
+  원 편집 시 실시간 재계산 확인은 아직 하지 않았음 — 검증 서브에이전트 확인 필요.**
+
+### 파일
+- `app/core/zone_metrics.py` (신규)
+- `app/widgets/zone_canvas.py`
+- `app/tabs/zone_analysis_tab.py`
+- `docs/roadmap.md` (R3 항목 갱신)
+
+### 커밋
+- `d0fcfd9` — `feat: 존 분석 존별 퍼센티지 계산 + 존 리스트 패널 추가 (라운드 3)`
+
+### 확인 필요 (검증 서브에이전트에게)
+- `python main.py` 실제 GUI 골든패스: 자동 검출/수동 원 편집 후 존 리스트에 올바른
+  개수·이름(중심부/링 N/바깥쪽)·퍼센티지가 표시되는지, 원 추가/이동/반지름조절/삭제
+  각각에 실시간 재계산되는지, 타겟 클래스 전환 시 재계산되는지, 캔버스 빈 곳 클릭과
+  리스트 클릭 양방향 하이라이트 동기화가 실제로 맞물리는지.
+- 스펙이 명시한 "원이 서로 교차하는 비정상 입력"(nested 전제 위반) 케이스는 v1에서
+  방지 로직이 없다는 점 — 검증 시 버그로 취급하지 말 것(스펙에 이미 명시된 의도적
+  범위 제외, 재확인만 필요).
