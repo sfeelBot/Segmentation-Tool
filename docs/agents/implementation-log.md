@@ -3041,3 +3041,92 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
   — 검증 시 이 판단이 실제로 맞는지만 가볍게 확인.
 - 체크포인트가 이미 로드된 상태/추론이 이미 실행된 상태 등 메인 탭의 다양한 상태에서
   팝업을 열어도 매번 동일하게(빈 상태로) 시작하는지.
+
+---
+
+## 2026-08-26 — 존 분석 탭 R-B: threshold 무시 근본원인 수정 + AI신뢰도/픽셀크기 UI (`22c9e60`)
+
+브랜치 `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+스펙: `docs/specs/zone-analysis-tab-features-2026-08-26.md` "판단 B". 지시대로 R-B
+2가지(근본원인 버그 수정 + Threshold UI)만 구현, R-C(폴더 일괄처리)는 손대지 않음.
+
+### 근본원인 확인 (구현 전 코드 추적)
+- `app/core/inference_engine.py`의 `InferenceResult`는 `class_map`(threshold 적용
+  후, `refilter()`/`run()`이 `_compute_blobs_and_filter()`로 매번 갱신)과
+  `raw_class_map`(threshold 적용 전 원본 argmax, 재필터링용으로만 보존)을 별도
+  필드로 갖고 있다.
+- `zone_analysis_tab.py`의 `_on_target_changed()`(L388 부근, 타겟 클래스 선택마다
+  블랍 라벨맵 재계산)와 `_current_target_mask()`(존 퍼센티지 계산용 마스크 getter)
+  둘 다 `raw_class_map`을 마스크 기준으로 쓰고 있었다 — 스펙이 지목한 그대로.
+- 지금까지 `_on_target_changed()`가 `refilter(..., min_confidence=0.0,
+  min_pixel_size=0, ...)`를 하드코딩 호출해왔기 때문에 `class_map == raw_class_map`이
+  항상 성립해 드러나지 않았을 뿐 — threshold UI를 붙이는 순간 "오버레이는 바뀌는데
+  숫자는 그대로"인 버그가 됐을 것.
+
+### 변경
+- 수정 `app/tabs/zone_analysis_tab.py`(단일 커밋 `22c9e60`, 버그 수정과 UI 추가를
+  분리하지 않음 — 두 변경이 같은 두 함수 안에서 맞물려 있어 분리 커밋이 diff만
+  복잡해지고 실익이 없다고 판단):
+  1. **root-cause 수정(2줄)**: `_on_target_changed()`의
+     `target_mask = result.raw_class_map == cid` → `result.class_map == cid`,
+     `_current_target_mask()`의 `mask = self._last_result.raw_class_map == ...`
+     → `class_map`으로 교체.
+  2. **Threshold UI 추가**: 모듈 상단에 `_DEFAULT_MIN_CONFIDENCE = 0.0`/
+     `_DEFAULT_MIN_PIXEL_SIZE = 0` 상수 2개(설정 UI 없이 이 상수만으로 초기 고정값
+     노출 — YAGNI, 스펙 지시대로). 기존 `circle_row`(자동검출/민감도/블랍삭제모드/
+     오프라인테스트 버튼이 있던 행)에 AI 신뢰도 `QSlider`(0~100)+값 `QLabel`,
+     픽셀 크기 `QSpinBox`(0~100000, `inference_tab.py`의 `_min_px_spin`과 동일
+     range/suffix)를 승인된 순서(타겟클래스 → AI신뢰도 → 픽셀크기 → 자동검출 →
+     블랍삭제모드 → 오프라인테스트)대로 자동검출 버튼 **앞**에 삽입.
+  3. 두 컨트롤의 `valueChanged`를 새 슬롯 없이 기존 `_on_target_changed()`에 그대로
+     연결 — `refilter(min_confidence=self._conf_slider.value()/100.0,
+     min_pixel_size=self._min_px_spin.value(), ...)`로 하드코딩된 0.0/0 두 자리만
+     교체(스펙이 지시한 그대로, refilter → class_map 갱신 → 블랍 재계산 →
+     `_recompute_zones()` 경로가 타겟 클래스 전환 시 하던 일과 완전히 동일).
+
+### 레이아웃 관련 의도적 축소 (범위 밖으로 남긴 것)
+- 스펙의 "승인된 UI 레이아웃" 절은 상단 툴바 완전 통합(체크포인트/이미지 버튼까지
+  한 줄로) + 좌·중·우 3-way `QSplitter`(좌측 `InferenceImageList` 패널)까지 포함하지만,
+  이번 지시는 R-B(threshold 2건)로 명시적으로 좁혀졌고 R-A(직전 라운드)도 동일하게
+  레이아웃 리팩터링 없이 최소 삽입만 했다(선례 확인, `docs/agents/implementation-log.md`
+  R-A 항목 참고). 이번에도 기존 `circle_row`/`target_row` 행 구조를 유지한 채 새
+  컨트롤 2개만 승인된 상대 순서로 삽입했다 — 이미지열기/체크포인트열기 버튼 통합,
+  3-way 스플리터, 좌측 `InferenceImageList` 패널은 R-C(폴더 일괄처리, 스펙상 이미
+  이 항목들을 담당하는 라운드) 착수 시 한 번에 잡는 것이 재작업이 적다(스펙도
+  "레이아웃을 나중에 또 갈아엎는 재작업 방지"를 위해 라운드 1에서 뼈대를 잡으라고
+  했으나, 실제로는 R-A/R-B 모두 최소 삽입으로 진행돼 R-C에서 뼈대 작업이 필요함 —
+  다음 라운드 착수 에이전트에게 인계).
+
+### 검증 (구현 단계, 실행 검증 아님)
+- `py -3 -m py_compile app/tabs/zone_analysis_tab.py` 통과.
+- 근본원인 수정 자체를 core 레벨에서 직접 검산하는 1회성 스크립트 작성·실행(스크래치패드,
+  커밋 대상 아님) — 합성 `raw_class_map`(9px 고신뢰도 blob + 4px 저신뢰도 blob)에
+  `inference_engine._compute_blobs_and_filter()`를 threshold 0%/60%로 각각 호출해
+  `class_map`이 13px→9px로 실제로 달라짐을 확인하고, `zone_metrics.zone_stats()`로
+  퍼센티지도 함께 달라짐을 assert. 대조군으로 `raw_class_map` 기준 퍼센티지는
+  threshold와 무관하게 항상 13px 그대로임을 재확인해, 수정 전 코드가 정확히 이
+  증상(오버레이만 바뀌고 숫자는 안 바뀜)이었을 것임을 교차 검증. 전부 통과.
+- `py -3 -m app.core.zone_metrics` 기존 self-check도 재실행해 회귀 없음 확인(통과).
+- **지시에 따라 `python main.py` 실제 GUI 구동 검증은 수행하지 않음** — 검증
+  에이전트 몫으로 남김.
+
+### 관련 문서
+- `docs/roadmap.md` "신규 기능 3건" 절 R-B 체크박스를 `[x]`로 갱신(구현 완료, 검증 대기).
+
+### 확인 필요 (검증 서브에이전트에게)
+- `python main.py` 실제 GUI 골든패스: 존 분석 탭 → 체크포인트+이미지 로드 → 추론
+  실행 → 타겟 클래스 선택 → 원 자동검출/편집 → **AI 신뢰도 슬라이더를 0%→50%→100%로
+  움직이며 우측 존 리스트 퍼센티지가 실제로 바뀌는지**(고정된 채면 회귀) + 캔버스
+  오버레이도 함께 바뀌는지 → **픽셀 크기 스핀박스**도 동일하게 확인.
+- **BUG-018/019 재발 방지 재확인**: threshold 슬라이더/스핀박스를 조작하는 동안
+  (a) 우측 원 목록의 현재 선택된 원이 유지되는지, (b) 존 리스트에서 하이라이트된
+  존이 유지되는지(개수가 안 바뀌면 유지, threshold 변화로 블랍 구성이 달라져도 존
+  개수 자체는 원 개수에만 의존하므로 대부분 유지될 것으로 예상) — `_recompute_zones()`의
+  기존 `highlighted` getter+`blockSignals` 패턴을 그대로 타므로 유지될 것으로 예상되나
+  실제 조작으로 재확인 필요.
+- 블랍 삭제 모드에서 삭제한 블랍이 있는 상태에서 threshold를 바꾸면 삭제 이력이
+  초기화되는지(스펙에서 "맞는 동작"으로 이미 판단한 부분 — `ZoneCanvas.set_blob_data`가
+  호출될 때마다 초기화되므로 자동으로 그렇게 될 것, 회귀 아님을 확인만).
+- R1~R4, R-A 골든패스 회귀 없음(체크포인트 로드+추론, 자동검출, 존 리스트, 블랍삭제,
+  오프라인 팝업) — 이번 변경은 `circle_row`에 컨트롤 2개 삽입 + 마스크 소스 교체뿐이라
+  회귀 범위가 좁지만 실제 조작으로 확인 권장.
