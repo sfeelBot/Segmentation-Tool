@@ -3836,3 +3836,91 @@ BUG-022 수정 자체와는 무관.
 스펙 전체 완료를 명시. `QA.md`는 이번 라운드에서 신규 버그 발견 없음(갱신 없음).
 - 리더에게: **존(Zone) 분석 탭 신규 기능 3건 스펙(zone-analysis-tab-features-2026-08-26.md)
   전체가 검증까지 완료됐습니다. 다음 작업 판단 바랍니다.**
+
+---
+
+## 2026-08-27 — 존 분석 탭 라운드3 R3-1(단일 이미지 Excel)+R3-2(wide format 뷰) 검증: 통과
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치).
+리더가 맡긴 R3-1/R3-2 검증 — 스펙
+[zone-analysis-tab-features-round3-2026-08-27.md](../specs/zone-analysis-tab-features-round3-2026-08-27.md)
+판단 3/4, 커밋 `6bd7226`(feat)+`c3aa943`(docs). R1~R4/R-A~R-C는 이전 세션들에서 전부 검증
+통과+push 완료 상태라 이번은 R3-1/R3-2 신규 부분 + 회귀만 확인.
+
+### 정적 검토
+- `app/core/zone_metrics.py`: `_disk_mask()` → `disk_mask()` 공개 전환, 내부 유일 호출부
+  (`zones_from_circles()`)도 새 이름으로 갱신 확인(`grep`으로 구/신 이름 잔존 여부 확인 —
+  `_disk_mask` 잔존 0건). `pivot_wide_format()`은 Qt 의존 없는 순수 함수, 열 정렬 키
+  (`_zone_name_sort_key`)가 중심부(0,0)→링N(1,N)→바깥쪽(2,0) 순으로 정확히 구현됨.
+  `export_zone_percentages_to_excel()`이 시그니처 불변으로 `zones`(기존)+`zones_wide`(신규)
+  두 시트를 쓰도록 애디티브 확장됨 — 기존 호출부(배치 처리) 무변경 확인.
+- `app/tabs/zone_analysis_tab.py`: `_compute_zone_percentages()` 헬퍼가 `_recompute_zones()`
+  존 계산 로직을 순수 추출(동작 변화 없음), 신규 `_on_export_single()`이 이 헬퍼를 그대로
+  재사용해 `export_zone_percentages_to_excel()` 호출. 우측 패널에 "Excel로 내보내기" 버튼
+  추가, 시그널 배선 확인.
+- `app/widgets/zone_batch_result_dialog.py`: `QTabWidget`으로 "목록별 (Long)"/"이미지별
+  (Wide)" 2탭 구성, Wide 탭이 `pivot_wide_format()` 결과로 `QTableWidget` 채움 + 안내 라벨.
+  Excel 버튼 로직은 변경 없음(zone_metrics 확장 덕에 자동으로 wide 시트 포함).
+
+### 실행 확인 (`python -m py_compile`, self-check)
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe -m py_compile app/core/zone_metrics.py
+  app/widgets/zone_batch_result_dialog.py app/tabs/zone_analysis_tab.py
+  app/widgets/zone_canvas.py app/widgets/circle_detect_preview_dialog.py` 전부 통과.
+- `python app/core/zone_metrics.py` self-check(구현자가 이미 추가한 `pivot_wide_format`
+  케이스 포함) → `zone_metrics self-check OK`.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QTest`/실제 위젯 조작, 저장소에 포함 안 함)
+`QT_QPA_PLATFORM=offscreen`, numpy/cv2/torch/PIL 선행 임포트 후 PyQt6(기존 관례).
+`engine.run`/`engine.refilter`/`load_checkpoint_meta`/`load_model_from_ckpt`/
+`detect_circles`만 몽키패치(결정론적 합성 40x40 이미지, 클래스1 원판 r=8), `QMessageBox.*`
+no-op, `QFileDialog.get*`는 고정 경로 반환으로 몽키패치. 나머지 실제 프로덕션 코드
+(`zone_metrics.zones_from_circles`/`zone_stats`/`pivot_wide_format`,
+`ZoneAnalysisTab._on_export_single`/`_on_batch_process`, `ZoneBatchResultDialog` 전체,
+`export_zone_percentages_to_excel`)는 몽키패치 없이 그대로 실행.
+
+1. **체크포인트 열기 → 이미지 3장 열기 → ▶ 추론 실행** 버튼 전부 `QTest.mouseClick`으로
+   실클릭 — `_model`/`_last_result`/`_target_class_id==1` 확정.
+2. **시나리오1(R3-1, 단일 이미지 Excel)**: 캔버스에 원 2개(`set_circles([(20,20,12),
+   (20,20,5)])`, 존 3개: 중심부/링1/바깥쪽) → `_compute_zone_percentages()`/화면
+   `_zone_list` 텍스트를 numpy 오라클과 대조(전부 `<1e-6` 일치) → "Excel로 내보내기" 버튼
+   실클릭(`QFileDialog.getSaveFileName` 고정 경로 몽키패치) → 저장된 xlsx를 `openpyxl`로
+   재오픈, **`zones`/`zones_wide` 두 시트 모두 값이 화면 존 리스트·오라클과 일치**(단일
+   이미지라 `zones_wide`는 1행)함을 셀 단위로 확인. 완료 `QMessageBox.information` 호출
+   확인.
+3. **시나리오2/3(R3-2, wide format 피벗)**: "1번째 이미지 원을 전체에 적용" 체크 해제(개별
+   자동검출 모드) → 이미지마다 `detect_circles`가 **다른 원 개수**를 반환하도록 몽키패치
+   (img1=1개→존2개, img2=2개→존3개, img3=1개(다른 반지름)→존2개) → "▶ 선택 이미지 일괄
+   처리" 버튼 실클릭(선택 없음=전체 3장, 기존 관례) → 캐시 최적화(현재 로드된 img1은
+   재추론 생략) 유지 확인(`call_log`로 `run`이 img2/img3에만 호출됨 실증) →
+   `ZoneBatchResultDialog` 캡처, long rows(7행)를 numpy 오라클과 전부 대조(`<1e-6` 일치) →
+   `QTabWidget` 탭 순서/제목("목록별 (Long)"/"이미지별 (Wide)") 확인 → Wide 탭
+   `QTableWidget`이 `pivot_wide_format()` 반환값(이미지 3개×열 3개: 중심부/링1/바깥쪽,
+   합집합 정렬)과 정확히 일치, **img1/img3처럼 "링 1" 데이터가 없는 이미지의 셀이 정확히
+   공란("")으로 렌더링**됨을 확인 → Long 탭과 Wide 탭 화면 값 교차 대조(표시 반올림
+   오차만 존재, `<5e-3` 일치) → "Excel로 내보내기" 버튼 실클릭 → 저장된 xlsx의
+   `zones_wide` 시트가 화면 Wide 탭과 열 합집합·공란 처리 포함 정확히 일치함을 확인.
+4. **회귀**: `disk_mask()` 공개 전환 후 `zones_from_circles()` 호출부 정상 동작(오프라인
+   팝업 `circle_detect_preview_dialog.py`는 애초에 `zone_metrics`를 import하지 않아 영향
+   없음, `grep`으로 확인). 배치 처리의 "현재 로드된 이미지는 재추론 캐시 재사용" 최적화가
+   개별 자동검출(원 개수 상이) 모드에서도 깨지지 않음(위 3번에서 실증). `main.py`와 동일한
+   구성으로 `MainWindow()` 전체(5탭 전부, `ZoneAnalysisTab` 포함) 생성 확인 — 크래시 없음.
+
+총 assertion 다수 전부 PASS(실패 0건, 중간에 발견한 실패 1건은 화면 표시 반올림(2자리)과
+비반올림 오라클을 `1e-6`로 비교한 테스트 설계 실수 — 허용오차를 `5e-3`로 조정 후 재확인,
+구현 버그 아님).
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지/xlsx는 전용 세션 스크래치 디렉토리에만 생성, 저장소에는
+  포함하지 않음.
+- `MainWindow` 스모크 확인은 `QApplication.exec()`(이벤트 루프)를 호출하지 않는 동기
+  스크립트로 수행 — 백그라운드 프로세스 생성 없음. `tasklist`로 `python.exe`/`pythonw.exe`
+  잔존 프로세스 0건 확인(좀비 프로세스 없음).
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션 문서 갱신 제외).
+
+### 판정
+**통과 — R3-1(단일 이미지 Excel 내보내기) + R3-2(일괄 처리 wide format 뷰) 구현+검증
+완료.** 신규 버그 발견 없음(`QA.md` 갱신 없음). `docs/roadmap.md`의 R3-1/R3-2 항목을
+"구현 완료, 검증 대기"에서 "구현+독립검증 통과"로 갱신.
+- 리더에게: **R3-1/R3-2 검증 통과. 다음은 R3-3(브러시 지우기, `zone_canvas.py` 신규
+  3-way 모드) 착수 가능 — 스펙에 명시된 대로 성능(스트로크 종료 시에만 존 재계산) 실측이
+  이 라운드 검증의 핵심 포인트가 될 것.**
