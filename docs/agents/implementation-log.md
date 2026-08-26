@@ -2864,3 +2864,102 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - 스펙이 명시한 "원이 서로 교차하는 비정상 입력"(nested 전제 위반) 케이스는 v1에서
   방지 로직이 없다는 점 — 검증 시 버그로 취급하지 말 것(스펙에 이미 명시된 의도적
   범위 제외, 재확인만 필요).
+
+---
+
+## 2026-08-26 — 존 분석 탭 블랍 클릭 삭제 + 재계산 (라운드 4, 스펙 마지막 라운드)
+
+작업 지시: 리더 → 구현 서브에이전트, 스펙 `docs/specs/zone-analysis-tab-2026-08-25.md`
+"UX 흐름 상세 > 블랍 삭제"·"라운드 분할 제안 4번". 워크트리
+`D:\segmentation model-zone-analysis-tab`(main과 분리, `feature/zone-analysis-tab` 브랜치).
+
+### 변경
+- `app/core/zone_metrics.py` — `compute_blob_labels(mask) -> (labels, stats)` 신설.
+  `cv2.connectedComponentsWithStats(connectivity=8)`를 그대로 노출하는 얇은 헬퍼 —
+  스펙 지시대로 `inference_engine._compute_blobs_and_filter()`의 confidence/size
+  threshold 필터링 로직은 가져오지 않음(YAGNI, 이 탭은 "단일 이진 마스크+클릭 삭제
+  전용"). self-check에 서로 떨어진 블랍 2개 합성 마스크 검산 추가.
+- `app/widgets/zone_canvas.py`:
+  - `blob_deleted(int)` 시그널, `_blob_delete_mode`/`_blob_labels`/`_blob_stats`/
+    `_removed_blob_ids` 상태 추가.
+  - `set_blob_delete_mode(enabled)` — 토글 활성화 시 좌클릭을 원 편집이 아니라
+    블랍 클릭 삭제로 해석(같은 캔버스에서 두 조작 충돌 방지, 스펙 지시대로 토글
+    버튼 하나만 추가 — 과한 툴바 시스템 없음).
+  - `set_blob_data(labels, stats)` — 타겟 클래스가 바뀔 때마다 라벨맵 교체 +
+    이전 삭제 이력 초기화(라벨 id는 마스크에 종속적이므로).
+  - `_handle_blob_click()` — 기존 `_screen_to_orig()` 좌표 역변환(줌/팬 반영,
+    원 편집에 쓰던 것과 동일 패턴, 스펙이 명시한 `overlay_viewer.py`의 `mc`→`mi`
+    변환과 같은 계열) 후 라벨맵 조회 → 배경(0)/이미 삭제된 라벨이 아니면
+    `_removed_blob_ids`에 추가 + `blob_deleted` emit.
+  - `removed_blob_ids()`/`blob_labels()` getter 추가 — **`selected_id()`/
+    `highlighted_zone()`과 동일한 getter 패턴**(사용자 지시로 BUG-018/019 재발
+    방지를 사전 점검한 결과, 캔버스를 상태 단일 출처로 유지하는 이 패턴을 그대로
+    재사용하는 것이 맞다고 판단).
+  - 삭제된 블랍 시각 피드백은 `_paint_removed_blobs()`로 캔버스 자체
+    `paintEvent`에 반투명 바운딩박스만 덧그림 — **의도적으로 `engine.refilter()`로
+    오버레이 픽스맵을 재생성해 `set_pixmap()`을 다시 호출하는 경로를 쓰지
+    않았다**. 이유: `OverlayViewer.set_pixmap()`은 내부적으로 `_fit_view()`를
+    호출해 줌/팬을 강제로 리셋하는데, 블랍을 하나씩 클릭할 때마다 이게 발생하면
+    "조작할 때마다 뷰가 리셋된다"는 BUG-018/019와 같은 부류의 회귀가 된다.
+    ponytail 코멘트로 명시(정확한 블랍 형태 아닌 bounding box 근사, 필요해지면
+    QImage 합성으로 승격).
+  - `mousePressEvent`/`mouseMoveEvent`/`mouseReleaseEvent`/`keyPressEvent`/
+    `contextMenuEvent`에 블랍 삭제 모드 가드 추가 — 좌클릭 외(중클릭 팬)는
+    기존 `OverlayViewer` 동작(팬)을 그대로 유지하도록 `super()` 위임.
+- `app/tabs/zone_analysis_tab.py`:
+  - "블랍 삭제 모드" 체크 가능 토글 버튼 1개 추가(`circle_row`에 배치) —
+    `toggled` 시그널을 `ZoneCanvas.set_blob_delete_mode`에 직결.
+  - 타겟 클래스가 (재)선택될 때마다(`_on_target_changed`) `compute_blob_labels()`로
+    라벨맵을 새로 계산해 `ZoneCanvas.set_blob_data()`에 전달, 토글 버튼 활성화.
+    새 이미지 선택/클래스 미검출 시에는 라벨맵 초기화 + 토글 비활성화·해제.
+  - `_current_target_mask()` 신설 — 타겟 클래스 마스크에서 `removed_blob_ids`에
+    해당하는 라벨 위치를 `np.isin()`으로 배경 처리한 "표시 마스크"(스펙 문구
+    그대로) 반환. 삭제 이력·라벨맵 조회는 전부 `ZoneCanvas` getter를 통해서만
+    수행(탭이 별도로 상태를 들고 있지 않음 — 단일 출처 원칙 유지).
+  - `_recompute_zones()`가 기존 `raw_class_map == target_class_id` 인라인 계산
+    대신 `_current_target_mask()`를 사용하도록 1줄 교체 — **R3의 `zone_stats()`/
+    `zones_from_circles()`는 그대로 재사용, 신규 계산 로직 추가 없음**(사용자
+    지시 그대로).
+  - `_on_blob_deleted()` — `blob_deleted` 시그널 수신 시 `_recompute_zones()`
+    호출(R3의 `circles_changed` 트리거와 동일한 재계산 경로 재사용).
+
+### BUG-018/019 재발 여부 사전 점검(사용자 명시 지시)
+- 이번 라운드가 캔버스에 새 시그널(`blob_deleted`)을 추가하고 기존 재계산 함수
+  (`_recompute_zones`)를 다시 타는 구조라 재점검 필수였음. 점검 결과:
+  - `_recompute_zones()` 자체는 R3에서 이미 `highlighted_zone()` getter로 하이라이트를
+    보존하는 패턴이 적용돼 있어 추가 수정 없이 블랍 삭제 트리거에도 그대로 안전.
+  - 새로 추가한 삭제 이력(`removed_blob_ids`)도 같은 getter 패턴으로 캔버스에 유지 —
+    탭이 별도 사본을 들고 있지 않아 "리스트 재구성 시 상태 유실" 부류의 버그가 애초에
+    발생할 지점이 없음.
+  - 오버레이 재도색을 피하고 캔버스 자체에 바운딩박스만 덧그리는 설계 선택 자체가
+    "조작 시 상태(줌/팬) 리셋"이라는 근본원인을 원천 차단(위 "변경" 절 참고) — 이번
+    라운드에서 새로 발견된 버그는 없음(사전 설계로 회피).
+
+### 검증(구현 단계 — self-check + 정적 실행 확인만, GUI 골든패스는 검증 서브에이전트 몫)
+- `zone_metrics.py` self-check 통과("zone_metrics self-check OK", 블랍 라벨 검산 포함).
+- `py -3 -m py_compile` 통과(`zone_metrics.py`, `zone_canvas.py`, `zone_analysis_tab.py`).
+- **`python main.py` 실제 GUI 구동으로 블랍 삭제 모드 토글/클릭 삭제/존 퍼센티지
+  재계산/원 편집·존 하이라이트 회귀 없음 확인은 아직 하지 않았음 — 검증 서브에이전트
+  확인 필요.**
+
+### 파일
+- `app/core/zone_metrics.py`
+- `app/widgets/zone_canvas.py`
+- `app/tabs/zone_analysis_tab.py`
+- `docs/roadmap.md` (R4 항목 갱신 — 스펙 마지막 라운드, 구현 완료·독립검증 대기로 표기)
+
+### 커밋
+- `80405fd` — `feat: 존 분석 탭 블랍 클릭 삭제 + 존 퍼센티지 재계산 (라운드 4)`
+
+### 확인 필요 (검증 서브에이전트에게)
+- `python main.py` 실제 GUI 골든패스: 추론 실행 → 타겟 클래스 선택 → "블랍 삭제 모드"
+  토글 활성화 → 캔버스에서 블랍(예: 인위적으로 여러 개 만든 합성 마스크) 클릭 시
+  해당 블랍만 삭제되고 존 퍼센티지가 정확히 갱신되는지, 같은 블랍을 다시 클릭해도
+  아무 일 없는지(idempotent), 토글 비활성화 시 원 편집(이동/반지름조절/생성/삭제)이
+  정상 복귀하는지, 블랍 삭제 모드 중 중클릭 팬이 여전히 동작하는지.
+- **R2/R3 회귀 여부 특히 주의**: 블랍 삭제 후 원 선택 상태(`selected_id`)나 존
+  하이라이트(`highlighted_zone`)가 리셋되지 않는지, 줌/팬이 블랍 클릭 때마다
+  리셋되지 않는지(구현 단계에서 설계로 회피했다고 주장한 부분이므로 실사용
+  기준으로 반드시 재확인 필요).
+- 삭제된 블랍의 시각 표시가 정확한 픽셀 형태가 아니라 바운딩박스 근사라는 점은
+  의도된 v1 범위(YAGNI) — 버그로 취급하지 말 것.
