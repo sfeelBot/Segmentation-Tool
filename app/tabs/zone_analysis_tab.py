@@ -746,9 +746,39 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_open_offline_test(self) -> None:
         """체크포인트 준비 여부와 무관하게 항상 열 수 있는 독립 팝업 — 이 탭의
-        상태(이미지/체크포인트/추론결과)를 전혀 참조·변경하지 않는다."""
+        상태(이미지/체크포인트/추론결과)를 전혀 참조·변경하지 않는다(단, "메인 탭에
+        적용" 버튼을 눌러 dialog.exec()가 accept로 끝난 경우는 예외 — R3-5)."""
         dialog = CircleDetectPreviewDialog(self)
-        dialog.exec()
+        if dialog.exec():
+            circles = dialog.result_circles()
+            if circles:
+                self._apply_circles_from_popup(circles, *dialog.result_image_size())
+
+    def _apply_circles_from_popup(
+        self, circles: list[tuple[float, float, float]], pop_w: int, pop_h: int
+    ) -> None:
+        """오프라인 검출 팝업에서 확정한 원을 메인 탭 캔버스로 라운드트립(R3-5).
+
+        팝업 이미지와 메인 탭 이미지 해상도가 다를 수 있어(다른 사진일 수 있음)
+        비례 스케일로 방어한다 — 배치 처리(3b)의 해상도 방어 로직과 동일한 근거.
+        """
+        if self._image_path is None or self._image_size == (0, 0):
+            QMessageBox.warning(self, "이미지 없음", "메인 탭에 이미지를 먼저 여세요.")
+            return
+        ref_w, ref_h = self._image_size
+        note = ""
+        if pop_w > 0 and pop_h > 0 and (pop_w, pop_h) != (ref_w, ref_h):
+            sx, sy = ref_w / pop_w, ref_h / pop_h
+            circles = [(cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles]
+            note = f" (해상도가 달라 비례 스케일 적용됨: {pop_w}x{pop_h} → {ref_w}x{ref_h})"
+        if self._canvas.get_circles():
+            reply = QMessageBox.question(
+                self, "원 덮어쓰기",
+                f"메인 탭에 이미 정의된 원이 있습니다. 팝업에서 가져온 원으로 교체할까요?{note}",
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        self._canvas.set_circles(circles)
 
     # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
 

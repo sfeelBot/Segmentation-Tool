@@ -107,6 +107,8 @@ class CircleDetectPreviewDialog(QDialog):
 
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
+        self._btn_apply = QPushButton("메인 탭에 적용")
+        bottom_row.addWidget(self._btn_apply)
         self._btn_close = QPushButton("닫기")
         bottom_row.addWidget(self._btn_close)
         root.addLayout(bottom_row)
@@ -116,8 +118,19 @@ class CircleDetectPreviewDialog(QDialog):
             lambda v: self._lbl_sensitivity.setText(f"{v}%")
         )
         self._btn_redetect.clicked.connect(self._on_redetect)
+        self._btn_apply.clicked.connect(self.accept)
         self._btn_close.clicked.connect(self.close)
         btn_close_x.clicked.connect(self.close)
+
+    # ── 결과 getter (R3-5) — 메인 탭이 exec() 이후 이 값들을 읽어감 ──────────
+    # 이 다이얼로그는 여전히 메인 탭 상태를 전혀 읽지 않는다 — 실제로 메인 탭
+    # 상태를 바꾸는 코드는 호출부(ZoneAnalysisTab)에 있다(스펙 판단 5).
+
+    def result_circles(self) -> list[tuple[float, float, float]]:
+        return self._canvas.get_circles()
+
+    def result_image_size(self) -> tuple[int, int]:
+        return self._orig_size
 
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 

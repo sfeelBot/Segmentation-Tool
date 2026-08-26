@@ -751,7 +751,16 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       반지름조절·삭제/블랍삭제/브러시지우기 각각의 undo, no-op(빈 곳 클릭) 엔트리 미적재,
       LIFO 혼합 순서, Undo 버튼 활성/비활성, `set_blob_data` 스택 리셋, 오프라인 팝업
       Ctrl+Z 부가혜택, R3-1 회귀, `MainWindow` 5탭 부팅까지 전부 재현·통과 확인.
-- [ ] R3-5 — 오프라인 팝업→메인 탭 라운드트립. R3-4 완료 후 착수 권장.
+- [x] R3-5 — 오프라인 팝업→메인 탭 라운드트립. 구현 완료(검증 에이전트 확인 대기). 구현
+      로그 참고. `CircleDetectPreviewDialog`에 "메인 탭에 적용" 버튼(`self.accept()`) +
+      `result_circles()`/`result_image_size()` getter만 추가(완전 독립 유지, 상태를
+      바꾸는 코드는 전부 호출부에 있음). `ZoneAnalysisTab._on_open_offline_test()`가
+      `auto_label_dialog.py`와 동일한 `if dialog.exec(): ...` 패턴으로 결과를 읽어
+      `_apply_circles_from_popup()`(신규)에서 해상도 비례 스케일(3b 로직 재사용, 방향
+      반대) + 이미지 없음 차단 + 기존 원 있으면 확인 다이얼로그 후 `set_circles()` 호출 —
+      R3-4에서 만든 `_push_undo()` 경로를 그대로 타므로 적용도 자동으로 undo 가능.
+      **이 라운드로 신규 기능 라운드3(R3-1~R3-5) 전체 완료** — 검증 에이전트의 실 GUI
+      확인만 남음.
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
