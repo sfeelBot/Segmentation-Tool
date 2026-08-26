@@ -3322,3 +3322,69 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - `docs/roadmap.md` "존(Zone) 분석 탭" 절 R-C 3b 항목을 완료(검증 대기)로 갱신, 3c는
   별도 대기 항목으로 분리.
 - 커밋: `b391075`(기능), `ca83829`(툴팁 안내).
+
+---
+
+## 2026-08-26 — BUG-022 수정: 다중선택 모드 Ctrl/Shift 클릭 시 기준 이미지 원 소실
+
+### 배경
+- `feature/zone-analysis-tab` 브랜치 R-C 3b(일괄 처리) 검증 중 발견된 P1 버그.
+  `InferenceImageList.set_multi_select(True)`(존 분석 탭 배치 대상 지정용) 상태에서
+  Ctrl/Shift 클릭으로 2번째 이미지를 추가 선택하면, `QTreeWidget`이 해당 클릭에도
+  `currentItem`을 바꿔 `currentItemChanged` → `image_selected` 시그널이 함께 발화됨.
+  `ZoneAnalysisTab._on_list_image_selected()`가 이를 "새 기준 이미지로 전환"으로
+  해석해 `canvas.clear_circles()`를 호출 — 방금 정의해둔 기준 이미지의 원이 전부
+  사라지고 배치 버튼이 비활성화됨.
+
+### 근본 원인
+- `QTreeWidget`의 `ExtendedSelection`(다중선택) 모드에서는 "현재 항목이 바뀜"(Qt
+  내부 포커스 이동)과 "사용자가 새 기준 이미지로 보고 싶어함"(단일 선택 클릭)이
+  서로 다른 의도인데, 기존 `_on_current_item_changed()`는 이 둘을 구분하지 않고
+  항상 `image_selected`를 emit했음.
+
+### 변경
+- `app/widgets/inference_image_list.py`
+  - `__init__()`에 `self._multi_select = False` 플래그 추가.
+  - `set_multi_select(enabled)`에서 이 플래그를 함께 갱신.
+  - `_on_current_item_changed()`(= `currentItemChanged` 슬롯)에 가드 추가: 다중선택
+    모드이면서 `self._tree.selectedItems()` 개수가 정확히 1이 아니면(0개 또는
+    2개+) `image_selected`를 emit하지 않고 조기 반환.
+  - `SingleSelection`(기본값, `inference_tab.py`가 계속 사용 중인 모드)은 선택
+    개수가 항상 정확히 1이라 이 가드가 절대 트리거되지 않음 — 순수 애디티브 수정,
+    회귀 없음.
+
+### 검증(구현 단계, 정적+헤드리스 스크립트)
+- `python -m py_compile`로 `inference_image_list.py`/`zone_analysis_tab.py`/
+  `inference_tab.py` 3개 파일 문법 확인 완료.
+- `inference_tab.py`가 `set_multi_select()`를 호출하지 않음을 grep으로 재확인
+  (기본값 `SingleSelection` 그대로 유지 — 영향 없음).
+- 스크래치 헤드리스 PyQt 스크립트로 `_on_current_item_changed()`를 실제
+  `selectedItems()` 상태별로 직접 호출해 확인:
+  - 다중선택 모드, 2개 선택 상태에서 호출 → `image_selected` 미발화.
+  - 다중선택 모드, 0개 선택 상태에서 호출 → 미발화.
+  - 다중선택 모드, 1개로 좁힌 상태에서 호출 → 정상 발화(기준 이미지 전환 허용).
+  - `selected_paths()`는 이 가드와 무관하게 여전히 실제 다중선택 목록을 정확히
+    반환.
+  - 기본 `SingleSelection` 모드(= `inference_tab.py` 실사용 조건)에서는 항상
+    정상 발화 — 회귀 없음 확인.
+- **주의**: `QTest.mouseClick(..., Qt.KeyboardModifier.ControlModifier)`로 실제
+  마우스 Ctrl/Shift 클릭 시퀀스를 재현한 것은 아니고, Qt가 내부적으로 만드는
+  "다중선택 중 currentItemChanged 발화" 상태를 `setSelected()` + 슬롯 직접 호출로
+  재현한 것. 실제 GUI 조작(`QTest.mouseClick` + 모디파이어)으로 재확인은 검증
+  에이전트 몫.
+
+### 미완료 / 검증 에이전트에게
+- `python main.py` 실제 GUI에서 존 분석 탭 열고 이미지1 클릭(기준 지정, 원
+  1개 이상 그리기) → 이미지2 Ctrl+클릭(배치 대상 추가) 후 캔버스 원 유지 +
+  배치 버튼 활성화 유지 확인 필요.
+- 다중선택 상태에서 다시 이미지 1개로 좁혔을 때(단일 클릭) 기준 이미지가 정상
+  전환되는지(원 리셋 포함) 확인 필요.
+- `inference_tab.py` 골든패스(폴더 열기/이전·다음/검색)에 회귀가 없는지 실행
+  확인 권장.
+- **이 라운드는 "완료"로 보고하지 않음** — 검증 에이전트의 실제 GUI 확인 후
+  `QA.md` BUG-022를 Closed로 옮기는 것은 검증 에이전트 몫.
+
+### 관련 문서
+- `QA.md` BUG-022 상태를 "Open" → "수정함, 검증 필요"로 갱신(Closed로 옮기지
+  않음 — 관례대로 검증 에이전트가 재현 안 됨을 확인한 뒤 이동).
+- 커밋: `9b28987`(수정), `86f66ac`(QA.md 커밋 해시 기록).
