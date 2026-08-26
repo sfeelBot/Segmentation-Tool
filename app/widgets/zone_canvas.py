@@ -25,13 +25,20 @@
 numpy 연산)은 드래그 중이 아니라 스트로크가 끝나는 시점(`erase_changed`
 시그널, mouseReleaseEvent 1회)에만 트리거된다 — 드래그 중에는 지우기 마스크의
 bbox 증분 갱신 + 화면 리페인트만 수행(성능 요구사항, 스펙 판단 2 "성능" 절).
+
+라운드 R3-4: 통합 Undo 스택(`_undo_stack`) 추가 — 원편집/블랍삭제/브러시지우기
+셋 다 하나의 스택에 시간순으로 쌓인다. 스냅샷은 마스크가 아니라 경량 필드
+3개(원 튜플 리스트/블랍id 집합/지우기 스트로크 좌표 목록)만 저장해
+annotation_canvas.py의 BUG-014(대형 마스크 deepcopy로 인한 메모리 문제)가
+재발하지 않는다 — 캡도 필요 없다(무제한 스택). `Ctrl+Z`(`keyPressEvent`
+최상단)와 `undo()`/`can_undo()` 공개 API로 노출.
 """
 import math
 from dataclasses import dataclass
 
 import numpy as np
 from PyQt6.QtWidgets import QMenu
-from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath
+from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QKeySequence
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 
 from app.widgets.overlay_viewer import OverlayViewer
@@ -83,6 +90,12 @@ class ZoneCanvas(OverlayViewer):
         self._current_stroke: list[tuple[float, float, float]] = []
         self._last_erase_pos: QPointF | None = None
         self._erasing = False
+        # ── Undo(R3-4) ───────────────────────────────────────────────────────
+        # 통합 스택 — 원편집/블랍삭제/브러시지우기 구분 없이 시간순 하나의 리스트.
+        # 스냅샷은 경량 필드 3개뿐(원 튜플 리스트/블랍id 집합/지우기 스트로크
+        # 좌표 목록)이라 annotation_canvas의 30개 캡(BUG-014 대응)이 여기선
+        # 필요 없다(스펙 판단 1) — 캡 없이 무제한.
+        self._undo_stack: list[dict] = []
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # 클릭 후 Delete 키 삭제를 받으려면 필요
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
@@ -102,6 +115,7 @@ class ZoneCanvas(OverlayViewer):
 
     def set_circles(self, circles: list[tuple[float, float, float]]) -> None:
         """(cx, cy, r) 리스트로 전체 교체 — 자동 검출 결과 반영용."""
+        self._push_undo()
         self._circles = [
             _CircleItem(self._next_id + i, cx, cy, r) for i, (cx, cy, r) in enumerate(circles)
         ]
@@ -143,6 +157,7 @@ class ZoneCanvas(OverlayViewer):
     def remove_selected(self) -> None:
         if self._selected_id is None:
             return
+        self._push_undo()
         self._circles = [c for c in self._circles if c.id != self._selected_id]
         self._selected_id = None
         self._highlighted_zone = None
@@ -164,7 +179,12 @@ class ZoneCanvas(OverlayViewer):
         """타겟 클래스가 바뀔 때마다(새 추론/타겟 클래스 변경) 호출 — 라벨맵을
         교체하고 이전 삭제 이력을 초기화한다(라벨 id는 마스크가 바뀌면 더 이상
         의미가 없으므로). 브러시 지우기 스트로크/마스크(R3-3)도 동일한 이유로
-        함께 초기화한다 — 이전에 지운 좌표는 새 타겟 마스크에 대해 의미가 없다."""
+        함께 초기화한다 — 이전에 지운 좌표는 새 타겟 마스크에 대해 의미가 없다.
+
+        Undo 스택(R3-4)도 통째로 비운다 — 단순 정책이 아니라 정합성 문제다.
+        스택 엔트리는 `removed_blob_ids`를 포함하는데, 클래스 전환으로 라벨맵이
+        바뀌면 옛 라벨 id가 새 `blob_labels`와 대응하지 않아 잘못된 픽셀이
+        제외/포함되는 조용한 오류가 생긴다(스펙 판단 1)."""
         self._blob_labels = labels
         self._blob_stats = stats
         self._removed_blob_ids = set()
@@ -173,6 +193,7 @@ class ZoneCanvas(OverlayViewer):
         self._current_stroke = []
         self._last_erase_pos = None
         self._erasing = False
+        self._undo_stack = []
         self.update()
 
     # ── 브러시 지우기 모드 (R3-3) ────────────────────────────────────────────
@@ -273,6 +294,45 @@ class ZoneCanvas(OverlayViewer):
         와 동일한 getter 패턴(BUG-018/019 재발 방지: 캔버스가 상태의 단일 출처)."""
         return self._removed_blob_ids
 
+    # ── Undo (R3-4) ──────────────────────────────────────────────────────────
+
+    def _push_undo(self) -> None:
+        """실제 상태 변화가 확정되는 시점 직전에 1회 호출 — 원편집/블랍삭제/
+        브러시지우기 셋 다 하나의 통합 스택에 쌓는다(스펙 판단 1). 스냅샷은
+        경량 필드 3개뿐이라(원 튜플/블랍id 집합/지우기 스트로크 좌표) 매 액션마다
+        찍어도 annotation_canvas의 BUG-014(대형 마스크 deepcopy) 같은 메모리
+        문제가 생기지 않는다 — 마스크 배열 자체는 절대 저장하지 않는다."""
+        self._undo_stack.append({
+            "circles": [(c.id, c.cx, c.cy, c.r) for c in self._circles],
+            "removed_blob_ids": set(self._removed_blob_ids),
+            "erase_strokes": list(self._erase_strokes),
+        })
+
+    def can_undo(self) -> bool:
+        return bool(self._undo_stack)
+
+    def undo(self) -> None:
+        """가장 최근 스냅샷으로 복원 — 원/블랍/지우기 중 무엇이 바뀐 undo든
+        기존 `circles_changed` 시그널을 그대로 재사용해 emit한다. 이 시그널에
+        이미 `_refresh_circle_list()`(selected_id 복원)와 `_recompute_zones()`
+        (highlighted_zone 복원, 존 퍼센티지 재계산)가 연결돼 있어 BUG-018/019
+        방지 패턴이 신규 배선 없이 undo에도 자동 적용된다(스펙 판단 1)."""
+        if not self._undo_stack:
+            return
+        snap = self._undo_stack.pop()
+        self._circles = [
+            _CircleItem(cid, cx, cy, r) for cid, cx, cy, r in snap["circles"]
+        ]
+        self._removed_blob_ids = snap["removed_blob_ids"]
+        self._erase_strokes = snap["erase_strokes"]
+        self._replay_erase_strokes()   # 스트로크 좌표에서 지우기 마스크를 재생(스펙 판단 1)
+        self._selected_id = None
+        self._current_stroke = []
+        self._last_erase_pos = None
+        self._erasing = False
+        self.update()
+        self.circles_changed.emit()
+
     def _handle_blob_click(self, event) -> None:
         if (self._pixmap is None or event.button() != Qt.MouseButton.LeftButton
                 or self._blob_labels is None):
@@ -285,6 +345,7 @@ class ZoneCanvas(OverlayViewer):
         label = int(self._blob_labels[y, x])
         if label == 0 or label in self._removed_blob_ids:
             return
+        self._push_undo()
         self._removed_blob_ids.add(label)
         self.update()
         self.blob_deleted.emit(label)
@@ -454,6 +515,7 @@ class ZoneCanvas(OverlayViewer):
             return
         if self._mode == "brush_erase":
             if event.button() == Qt.MouseButton.LeftButton and self._pixmap is not None:
+                self._push_undo()   # 스트로크 시작 시점 1회(annotation_canvas 브러시 push와 동일 타이밍)
                 self._current_stroke = []
                 self._last_erase_pos = None
                 self._erasing = True
@@ -466,6 +528,7 @@ class ZoneCanvas(OverlayViewer):
         if self._pixmap is None or event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
+        self._push_undo()   # 드래그 시작 시점 1회(이동/반지름조절/생성 전부 여기서 갈림)
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         pt = QPointF(event.position())
         hit = self._hit_test(pt)
@@ -534,6 +597,11 @@ class ZoneCanvas(OverlayViewer):
             if item is not None:
                 _, r_screen = self._orig_to_screen(item.cx, item.cy, item.r)
                 if r_screen < _MIN_CREATE_R_PX:
+                    # mousePressEvent에서 이미 push해둔 undo 엔트리가 "결국 아무
+                    # 일도 없었던" 상태를 가리키게 된다 — 투기적으로 push했다가
+                    # no-op로 판명되면 되무른다(스펙 판단 1 "주의" 절).
+                    if self._undo_stack:
+                        self._undo_stack.pop()
                     click_x, click_y = item.cx, item.cy
                     self._circles.remove(item)
                     self._selected_id = None
@@ -551,6 +619,12 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
 
     def keyPressEvent(self, event) -> None:
+        # 모드(원편집/블랍삭제/브러시지우기)와 무관하게 가장 먼저 체크 —
+        # 모드별 분기보다 뒤에 두면 블랍삭제/브러시지우기 모드 중 Ctrl+Z가
+        # 죽는 회귀가 생긴다(스펙 판단 1).
+        if event.matches(QKeySequence.StandardKey.Undo):
+            self.undo()
+            return
         if self._mode != "circle":
             super().keyPressEvent(event)
             return

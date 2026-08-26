@@ -16,6 +16,8 @@
 라운드 R3-3: 픽셀 단위 브러시 지우기 모드 추가 — "블랍 삭제 모드"와 배타적인
 3번째 캔버스 모드(`ZoneCanvas._mode`). 존 재계산은 스트로크가 끝날 때(release)
 1회만 트리거(`erase_changed` 시그널).
+라운드 R3-4: 통합 Undo(원편집+블랍삭제+브러시지우기) 툴바 버튼("실행 취소") 추가
+— 실제 undo 스택/로직은 `ZoneCanvas`가 단일 출처로 보관(`undo()`/`can_undo()`).
 """
 from pathlib import Path
 
@@ -171,6 +173,11 @@ class ZoneAnalysisTab(QWidget):
         self._erase_brush_spin.setToolTip("브러시 지우기 모드의 브러시 지름(원본 이미지 픽셀 단위)")
         toolbar_row2.addWidget(self._erase_brush_spin)
 
+        self._btn_undo = QPushButton("실행 취소 (Ctrl+Z)")
+        self._btn_undo.setEnabled(False)
+        self._btn_undo.setToolTip("원 편집/블랍 삭제/브러시 지우기를 시간순으로 되돌립니다")
+        toolbar_row2.addWidget(self._btn_undo)
+
         toolbar_row2.addStretch()
         self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
         self._btn_offline_test.setToolTip(
@@ -322,6 +329,12 @@ class ZoneAnalysisTab(QWidget):
         self._btn_brush_erase.toggled.connect(self._on_brush_erase_toggled)
         self._erase_brush_spin.valueChanged.connect(self._canvas.set_erase_brush_size)
         self._canvas.erase_changed.connect(self._recompute_zones)
+        self._btn_undo.clicked.connect(self._canvas.undo)
+        # Undo 버튼 활성/비활성 갱신 — 신규 시그널을 발명하지 않고 상태를 바꿀 수
+        # 있는 기존 세 시그널(원변경/블랍삭제/지우기)에 편승한다(스펙 판단 1).
+        self._canvas.circles_changed.connect(self._update_undo_button_state)
+        self._canvas.blob_deleted.connect(self._update_undo_button_state)
+        self._canvas.erase_changed.connect(self._update_undo_button_state)
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
         self._btn_export_single.clicked.connect(self._on_export_single)
@@ -383,6 +396,7 @@ class ZoneAnalysisTab(QWidget):
         self._btn_blob_delete.setEnabled(False)
         self._btn_brush_erase.setChecked(False)
         self._btn_brush_erase.setEnabled(False)
+        self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -518,6 +532,7 @@ class ZoneAnalysisTab(QWidget):
             self._btn_blob_delete.setEnabled(False)
             self._btn_brush_erase.setChecked(False)
             self._btn_brush_erase.setEnabled(False)
+            self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
             self._recompute_zones()
             return
 
@@ -581,6 +596,7 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_blob_data(labels, stats)
             self._btn_blob_delete.setEnabled(True)
             self._btn_brush_erase.setEnabled(True)
+            self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
             self._recompute_zones()
         except Exception as exc:
             log.exception("존 분석 타겟 클래스 재필터링 실패")
@@ -623,6 +639,11 @@ class ZoneAnalysisTab(QWidget):
         if checked:
             self._btn_blob_delete.setChecked(False)
         self._canvas.set_brush_erase_mode(checked)
+
+    # ── 슬롯 — Undo (R3-4) ────────────────────────────────────────────────────
+
+    def _update_undo_button_state(self) -> None:
+        self._btn_undo.setEnabled(self._canvas.can_undo())
 
     def _compute_zone_percentages(self) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
