@@ -694,6 +694,56 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       (`zone-analysis-tab-features-2026-08-26.md`) 범위 전부 종료.** 상세는
       `docs/agents/verification-log.md` 해당 항목.
 
+### 신규 기능 5건 (2026-08-27 요청, 라운드3)
+
+기획 완료: [docs/specs/zone-analysis-tab-features-round3-2026-08-27.md](specs/zone-analysis-tab-features-round3-2026-08-27.md).
+전제: R1~R4·R-A~R-C 전부 구현+검증 통과해 push된 상태. 사용자 요청 5건 — ① Undo(여러 단계
+스택, Ctrl+Z+버튼) ② 브러시 지우기(신규 3번째 캔버스 모드, 픽셀 단위 타겟 마스크 정제)
+③ 단일 이미지 Excel 내보내기 ④ 일괄 처리 결과 wide format(이미지×존 피벗) 뷰 ⑤ 오프라인
+원 검출 팝업 → 메인 탭 라운드트립. 신규 파일 없음 — 기존 5개 파일(`zone_analysis_tab.py`,
+`zone_canvas.py`, `circle_detect_preview_dialog.py`, `zone_batch_result_dialog.py`,
+`zone_metrics.py`)만 애디티브로 수정.
+
+- **핵심 설계(판단 1)**: Undo는 원편집/블랍삭제/브러시지우기 3종을 **단일 통합 스택**으로
+  처리(UX·구현난이도 양쪽에서 분리보다 단순). BUG-014(라벨링 탭이 매 스트로크마다
+  `_annotations` 전체를 deepcopy — 대형 이미지+마스크 수백 개면 메모리 부족)가 지적한
+  문제를 원천 차단: 브러시 지우기 상태를 원본 해상도 마스크가 아니라 **"지운 스트로크의
+  좌표/반지름 목록"**(재계산 가능한 경량 표현, `zone_metrics.disk_mask()`로 재생)으로
+  저장 — 원 목록(튜플)/블랍id(정수집합)/지우기좌표(리스트) 전부 가벼워 **캡 없이 무제한
+  스택**으로 결정(라벨링 탭의 30개 캡은 "무거운 걸 억지로 담은" 방어책일 뿐, 이 탭엔
+  적용 안 됨).
+- **판단 2(브러시 지우기)**: `annotation_canvas.py`의 브러시 스탬프 엔진(bbox-crop 벡터화
+  원판+선형보간)을 그대로 이식, `zone_metrics._disk_mask()`를 `disk_mask()`로 공개 전환해
+  재사용. 3-way 모드(원편집/블랍삭제/브러시지우기)는 `QButtonGroup` 없이 버튼 2개의 상호
+  체크해제로 배타 처리. **신규 성능 주의사항**: 원 드래그처럼 매 마우스이동마다 존
+  재계산을 트리거하면 브러시 스트로크(스탬프 수십~수백 개)에서 눈에 띄게 느려질 위험 —
+  `erase_changed` 시그널을 스트로크 종료 시 1회만 emit하도록 명시(라이브 시각 피드백은
+  매 스탬프 리페인트로 저렴하게 유지).
+- **판단 3(단일 이미지 Excel)**: 기존 `export_zone_percentages_to_excel()` 그대로 재사용,
+  신규 core 함수 불필요. `_compute_zone_percentages()` 공유 헬퍼만 추출.
+- **판단 4(wide format)**: `zone_metrics.py`에 순수 함수 `pivot_wide_format()` 신규(존
+  이름 합집합을 열로, 없는 셀은 공란) — `ZoneBatchResultDialog`에 `QTabWidget`(Long/Wide
+  2탭) + Excel도 같은 파일에 `zones_wide` 시트 추가(시그니처 불변, 기존 호출부 전부 자동
+  혜택).
+- **판단 5(라운드트립)**: `auto_label_dialog.py`의 "`dialog.exec()` 후 호출부가 getter로
+  결과를 읽는" 기존 패턴 재사용 — `CircleDetectPreviewDialog`는 완전 독립 유지("메인 탭에
+  적용" 버튼은 `self.accept()`만 함, 실제 반영은 호출부 `ZoneAnalysisTab`이 수행). 해상도가
+  다르면 3b(배치 처리)와 동일한 비례 스케일 안전장치를 방향만 반대로 재사용, 메인 탭에
+  이미지 없으면 차단, 기존 원 있으면 확인 다이얼로그(#7 패턴 재사용) 후 덮어쓰기.
+- 라운드 분할(의존관계 기준, 요청 순서와 다름 — 상세는 스펙 "라운드 분할 제안" 절, 기존
+  R1~R4/R-A~R-C와 안 겹치게 R3-1~R3-5 접두사): **R3-1**(요청3, 단일Excel, 완전독립)
+  → **R3-2**(요청4, wide format + `disk_mask` 공개전환 선행, 완전독립) → **R3-3**(요청2,
+  브러시지우기, undo 없이) → **R3-4**(요청1, Undo 통합 — R3-3 의존) → **R3-5**(요청5,
+  라운드트립 — R3-4 이후 권장, 적용 결과가 자동으로 undo 가능해지는 부가 이득).
+- `docs/decisions-needed.md` 갱신 없음 — 사용자가 위임한 판단(Undo 스택 통합여부, 브러시
+  지우기 undo 표현방식, wide format 컬럼/공란 처리, 라운드트립 해상도 방어)은 전부 스펙
+  문서에서 근거와 함께 직접 결정.
+- [ ] R3-1 — 단일 이미지 Excel 내보내기. 착수 대기.
+- [ ] R3-2 — wide format 뷰 + Excel 시트(+`disk_mask` 공개 전환). 착수 대기.
+- [ ] R3-3 — 브러시 지우기(undo 없이). 착수 대기.
+- [ ] R3-4 — Undo 통합(원편집+블랍삭제+브러시지우기, Ctrl+Z+버튼). R3-3 완료 후 착수.
+- [ ] R3-5 — 오프라인 팝업→메인 탭 라운드트립. R3-4 완료 후 착수 권장.
+
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
   요청은 [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에
