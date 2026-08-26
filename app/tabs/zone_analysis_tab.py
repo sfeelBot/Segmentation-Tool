@@ -226,7 +226,9 @@ class ZoneAnalysisTab(QWidget):
         self._btn_batch = QPushButton("▶ 선택 이미지 일괄 처리 (0장)")
         self._btn_batch.setEnabled(False)
         self._btn_batch.setToolTip(
-            "목록에 2장 이상 있고, 기준(현재 로드된) 이미지에 원이 1개 이상 정의돼 있어야 합니다"
+            "목록에 2장 이상 있고, 기준(현재 로드된) 이미지에 원이 1개 이상 정의돼 있어야 합니다\n"
+            "(Ctrl/Shift로 여러 장 고르면 그 부분집합만 처리 — 정확히 1장만 골라도 목록 전체가 "
+            "처리됩니다. 1장만 확인하려면 그 이미지를 클릭해 캔버스에서 직접 확인하세요.)"
         )
         left_layout.addWidget(self._btn_batch)
 
