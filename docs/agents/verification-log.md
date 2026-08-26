@@ -3755,3 +3755,84 @@ BUG-022 수정 자체와는 무관.
 - 리더에게: **BUG-022(P1) 최종 해결 확인. R-C 3b(폴더 일괄 처리) 전체 스코프 — 정확성(1차 검증
   96 assertion) + 다중 선택 상호작용(이번 43 assertion, 부분집합 배치 처리 최초 실증 포함) 둘 다
   통과. 3c(Excel 내보내기) 착수 가능.**
+
+
+---
+
+## 2026-08-26 — 존 분석 탭 R-C 3c(Excel 내보내기) 검증: 신규 기능 3건 스펙 전체 마지막 라운드, 통과
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치).
+리더가 맡긴 R-C 3c(일괄 처리 결과 Excel 내보내기, 커밋 `143c518`+`caef517`) 검증 —
+스펙 [zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)의
+마지막 라운드. 레이아웃 뼈대+3a+3b(BUG-022 완전 해결 포함)는 최신 커밋 `02835c7`까지
+전부 검증 통과 상태라 이번 라운드는 3c 신규 부분 + 회귀만 확인.
+
+### 환경 확인 (구현자가 로컬에서 못 했던 부분)
+구현자가 로컬 셸의 기본 `python`에 `cv2`/`openpyxl`이 없어 `zone_metrics.py`의
+`__main__` self-check를 실행하지 못했다고 보고했음 — `C:\Users\Feel\anaconda3\python.exe`
+(이전 라운드들에서 `python main.py` 검증에 실제로 쓰인 것과 동일 인터프리터)로 직접 확인:
+- `python -m py_compile app/core/zone_metrics.py app/widgets/zone_batch_result_dialog.py
+  app/tabs/zone_analysis_tab.py app/widgets/inference_image_list.py` 전부 통과.
+- `python app/core/zone_metrics.py` (self-check) → `zone_metrics self-check OK`.
+- `import cv2, openpyxl, PyQt6, torch` 전부 정상 임포트(`openpyxl 3.1.5`, `cv2 4.13.0`).
+- `main.py`를 동일 인터프리터로 실제 기동(offscreen) — 전처리(`_preload_libs`) →
+  `QApplication` → `ProjectStartDialog` 노출까지 크래시 없음(콘솔에 `cp949` 코덱으로
+  한글 로그 문자열을 못 쓰는 로깅 인코딩 경고만 발생 — 이번 기능과 무관한 기존 환경
+  이슈, Windows 콘솔 코드페이지 문제. 파일 로거는 영향 없음. 버그로 등록하지 않음).
+  프로세스는 확인 직후 `taskkill`로 정리.
+
+### 골든 패스 (전용 스크립트, `QTest` 실이벤트, 저장소에 포함 안 함)
+`QT_QPA_PLATFORM=offscreen`, `numpy/cv2/PIL/torch/matplotlib` 선행 임포트 후 PyQt6(기존
+관례). `QMessageBox.*` no-op로 교체하며 호출 기록, `engine.run`/`engine.refilter`와
+`load_checkpoint_meta`/`load_model_from_ckpt`만 몽키패치(결정론적 합성 `InferenceResult`
+— 40×40 합성 이미지, 중심 (20,20) 반지름 8px 원판을 클래스1로 심음), `ZoneBatchResultDialog.exec()`도
+몽키패치해 모달을 가로채고 인스턴스를 캡처. 나머지 실제 프로덕션 코드
+(`zone_metrics.zones_from_circles`/`zone_stats`, `ZoneAnalysisTab._on_batch_process`,
+`ZoneBatchResultDialog._on_export`, `export_zone_percentages_to_excel`)는 몽키패치 없이
+그대로 실행.
+
+1. **체크포인트 열기 버튼(`QTest.mouseClick`)** → `_model`/`_ckpt_path` 준비 확인.
+2. **이미지 열기 버튼(다중 파일 4장)** → `_img_list.count()==4`, 첫 이미지 자동 선택 확인.
+3. **▶ 추론 실행 버튼 클릭** → `_last_result` 확정, 단일 클래스 자동 타겟 확정
+   (`_target_class_id==1`).
+4. 캔버스에 원 1개(r=12, 합성 클래스1 원판 r=8보다 크게) 설정 → 배치 버튼 활성화 확인.
+5. **미선택 상태에서 `selected_paths()`가 전체 4장 반환**(3a에서 이미 확인된 관례) 확인.
+6. **▶ 선택 이미지 일괄 처리 버튼 실클릭** → `ZoneBatchResultDialog` 캡처, `rows` 8행
+   (이미지4 × 존2[중심부/바깥쪽]) 생성 확인. 각 행의 퍼센티지를 numpy 오라클
+   (`(x-20)²+(y-20)²<=12²` 중심부 마스크 vs `<=8²` 클래스1 마스크의 교집합/면적비)과
+   대조 — 전부 일치(`abs(diff) < 1e-6`). 화면 `QTableWidget`의 셀 텍스트도 `rows`와
+   1:1 일치(이미지명/존이름 문자열, `f"{pct:.2f}"` 반올림 표시 형식까지).
+7. **"Excel로 내보내기" 버튼 실클릭** — `QFileDialog.getSaveFileName`을 고정 경로
+   반환으로 몽키패치(기존 관례). 저장된 xlsx를 `openpyxl.load_workbook()`으로 재오픈해
+   시트명(`zones`), 헤더(`이미지파일명`/`존이름`/`타겟비율(%)`, 볼드 폰트) 확인 후
+   데이터 8행 전부를 화면 `QTableWidget` 값과 셀 단위로 대조 — 문자열/반올림값까지
+   완전 일치(`abs(diff) < 1e-9`). 완료 `QMessageBox.information` 호출 확인.
+8. **저장 취소 시나리오**: `getSaveFileName`이 `("", "")` 반환하도록 재몽키패치 후 같은
+   버튼 재클릭 — 크래시 없음, 추가 메시지박스 호출 없음(조용히 무시) 확인.
+
+### 회귀 확인
+- 원 개수를 2개로 바꾸면 `_zone_list.count()==3`(중심부/링1/바깥쪽)으로 즉시 갱신,
+  1개로 되돌리면 `2`로 복귀 — 3b/R2~R3 존 재계산 경로 정상.
+- **R-A(오프라인 원 검출 팝업)**: `CircleDetectPreviewDialog.exec()`를 몽키패치해 모달
+  회피 후 툴바 버튼 실클릭 — 열림/닫힘 정상, 크래시 없음.
+- **R-B(threshold)**: `_conf_slider.setValue(50)` 변경 시 `_on_target_changed()`가
+  예외 없이 재필터링 완료(`_last_result` 유지) 확인.
+- 이번 라운드는 3a/3b의 다중 선택·상태아이콘·해상도 방어 로직을 다시 파고들지 않음
+  (이미 최신 커밋 `02835c7`까지 독립검증 통과 상태, 리더 지시대로 회귀만 간단 확인).
+
+### 프로세스 정리
+- 확인용 `main.py` 기동 프로세스(PID 21700, 이번 세션이 새로 띄운 것) `taskkill //F`로
+  종료 확인. 검증 스크립트 자체는 동기 실행(`QApplication.exec()` 호출 없이 위젯
+  구성/시그널만 사용)이라 백그라운드 프로세스 없음. `tasklist` 최종 확인 결과 이전
+  세션들과 동일한 기존 창(PID 16488) 하나만 잔존 — 좀비 프로세스 없음.
+- 스크래치 스크립트/합성 이미지/합성 xlsx는 전용 세션 스크래치 디렉토리에만 생성,
+  저장소에는 포함하지 않음. `git status --short` — 워크트리 소스 변경 없음(문서 갱신
+  제외).
+
+### 판정
+**통과 — R-C 3c(Excel 내보내기) 구현+검증 완료. 신규 기능 3건(요청1 오프라인 팝업/
+요청2 폴더+일괄처리/요청3 threshold) 스펙 전체 완료.**
+`docs/roadmap.md`의 R-C 3c 항목을 "검증 대기"에서 "구현+독립검증 통과"로 갱신하고
+스펙 전체 완료를 명시. `QA.md`는 이번 라운드에서 신규 버그 발견 없음(갱신 없음).
+- 리더에게: **존(Zone) 분석 탭 신규 기능 3건 스펙(zone-analysis-tab-features-2026-08-26.md)
+  전체가 검증까지 완료됐습니다. 다음 작업 판단 바랍니다.**

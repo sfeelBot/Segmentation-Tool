@@ -672,13 +672,27 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       `QA.md` BUG-022 **Closed로 이동**. 상세는 `docs/agents/verification-log.md`
       2026-08-26 BUG-022 2차 수정 검증 항목.
 - [x] R-C 3c — Excel 내보내기(`export_zone_percentages_to_excel()` 신설 +
-      `ZoneBatchResultDialog`에 버튼 연결) — 구현 완료(2026-08-26, 커밋 `143c518`),
-      **검증 대기**. `export_blobs_to_excel()`과 동일한 openpyxl 패턴(헤더 볼드, 시트 1개)을
-      long format 스키마(이미지파일명/존이름/타겟비율%)로 복제, 다이얼로그 버튼은
-      `inference_tab.py`의 `getSaveFileName`→내보내기→완료 메시지박스 패턴 그대로 이식.
-      **이로써 신규 기능 3건(요청1 팝업/요청2 폴더+일괄처리/요청3 threshold) 전체
-      완료** — 검증 통과 시 스펙 문서(`zone-analysis-tab-features-2026-08-26.md`) 범위
-      전부 종료.
+      `ZoneBatchResultDialog`에 버튼 연결) — 구현 완료(2026-08-26, 커밋 `143c518`+`caef517`),
+      **구현+독립검증 통과(2026-08-26, verifier)**. `export_blobs_to_excel()`과 동일한
+      openpyxl 패턴(헤더 볼드, 시트 1개)을 long format 스키마(이미지파일명/존이름/
+      타겟비율%)로 복제, 다이얼로그 버튼은 `inference_tab.py`의 `getSaveFileName`→
+      내보내기→완료 메시지박스 패턴 그대로 이식. **검증**: `C:\Users\Feel\anaconda3\python.exe`
+      (openpyxl/cv2/PyQt6/torch 전부 정상 임포트 확인 — 구현자가 로컬에서 못 했던 부분)로
+      `python main.py`와 동일 경로 실행, 실제 체크포인트 열기→다중 이미지 열기→추론
+      실행→캔버스 원 정의→`▶ 선택 이미지 일괄 처리` 버튼(`QTest.mouseClick`) 골든패스로
+      `ZoneBatchResultDialog`(8행, 이미지4×존2) 생성 확인, 화면 `QTableWidget` 값이
+      numpy 오라클과 정확히 일치, "Excel로 내보내기" 버튼 실클릭 → 저장된 xlsx를
+      `openpyxl.load_workbook()`으로 재오픈해 헤더(이미지파일명/존이름/타겟비율(%),
+      볼드 확인) + 데이터 8행 전부 테이블 표시값과 1:1 일치(문자열·반올림값 완전 동일)
+      확인. 저장 취소(`getSaveFileName`이 빈 문자열 반환) 시 크래시·메시지박스 없이
+      조용히 무시 확인. 회귀: R-A(오프라인 팝업 열기/닫기), R-B(신뢰도 슬라이더 변경 시
+      재필터링 예외 없음), 원 개수 변경 시 존 리스트 개수 갱신 전부 정상. `python main.py`
+      실제 임포트 체인(전처리 → PyQt6 → MainWindow, `ZoneAnalysisTab` 포함)도 별도로
+      기동해 크래시 없음 확인(콘솔 cp949 로깅 인코딩 경고만 발생 — 기존 환경 이슈,
+      이번 기능과 무관, 버그 등록 안 함). **이로써 신규 기능 3건(요청1 팝업/요청2
+      폴더+일괄처리/요청3 threshold) 전체 완료 — 스펙 문서
+      (`zone-analysis-tab-features-2026-08-26.md`) 범위 전부 종료.** 상세는
+      `docs/agents/verification-log.md` 해당 항목.
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
