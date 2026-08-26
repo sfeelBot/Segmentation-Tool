@@ -11,6 +11,7 @@ Qt 의존성 없음(core 규칙) — 순수 numpy 함수.
 원을 교차시키는 비정상 입력은 v1에서 방지하지 않는다(스펙 명시, YAGNI).
 """
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -78,6 +79,29 @@ def compute_blob_labels(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         mask.astype(np.uint8), connectivity=8
     )
     return labels, stats
+
+
+def export_zone_percentages_to_excel(rows: list[tuple[str, str, float]], out_path: Path) -> None:
+    """(이미지파일명, 존이름, 타겟비율%) long format 목록을 xlsx로 저장.
+
+    `inference_engine.export_blobs_to_excel()`과 동일한 openpyxl 패턴(헤더만 볼드,
+    시트 1개)을 스키마만 바꿔 복제. wide format(이미지×존 피벗) 아님 — 스펙 C-3 참고.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "zones"
+    ws.append(["이미지파일명", "존이름", "타겟비율(%)"])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    for image_name, zone_name, pct in rows:
+        ws.append([image_name, zone_name, round(pct, 2)])
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(str(out_path))
 
 
 if __name__ == "__main__":
