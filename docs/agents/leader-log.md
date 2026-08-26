@@ -10,35 +10,44 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 갱신되는 사본이라, main 브랜치 워크트리(`D:\segmentation model`)의 같은 파일과는 병합
 전까지 내용이 갈라진다 — 아래 참고.)*
 
-> **[최신, 2026-08-26] 존(Zone) 분석 탭 — 스펙 전체(R1~R4) 구현+검증 완료 + 워크트리 분리
-> + 에디션 브랜치 운영 규칙 확정**
-> `feature/zone-analysis-tab` 브랜치의 신규 독립 기능(배터리 캡 녹 검사, 스펙:
-> [zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md)) — 기획
-> (원 데이터모델 확정까지 2차례 정정) → **R1(탭+체크포인트+추론)/R2(원 자동검출
-> Canny+findContours+Kasa원피팅+수동편집)/R3(존별 퍼센티지)/R4(블랍 클릭삭제) 전부
-> 구현+실 GUI(QTest) 골든패스 검증 통과**. 검증 중 BUG-018/019(캔버스 시그널 발생 시
-> 사이드 리스트/하이라이트 상태가 리셋되는 동일 근본원인이 2회 재발) 발견·즉시 수정,
-> R4에서는 재발 없음 확인.
+> **[최신, 2026-08-26] 존(Zone) 분석 탭 — 최초 스펙(R1~R4) + 신규 기능 3건 스펙 전부
+> 구현+검증 완료. 에디션 브랜치로 확정, 워크트리 분리 운영 중.**
 >
-> **동시 세션 충돌 처리**: R1 검증 중 다른 세션(`segmentation-model-92`)이 같은
-> 워킹 디렉토리(`D:\segmentation model`)를 공유 중임을 발견(무관한 커밋 `46eb77b`+
-> `aa330c1`이 이 브랜치에 섞여 들어감 + 검증 1차 시도 유실) → `git worktree add`로
-> `D:\segmentation model-zone-analysis-tab` 분리, 원래 디렉토리는 `main`으로 반환.
-> gitignore된 `projects/nok/{images,checkpoints,user_models}`는 Windows 정션(junction)
-> 으로 원본과 공유(복사 아님). 이후 R1~R4 전부 이 워크트리에서 구현+검증.
+> **최초 스펙(R1~R4)**: 탭+체크포인트+추론 / 원 자동검출(Canny+findContours+Kasa
+> 원피팅)+수동편집 / 존별 퍼센티지 / 블랍 클릭삭제 — 전부 구현+실GUI(QTest) 검증
+> 통과. BUG-018/019(캔버스 시그널 시 리스트/하이라이트 상태 리셋, 동일 근본원인
+> 2회 재발) 발견·수정.
 >
-> **에디션 브랜치 운영 규칙 확정(사용자가 다른 세션 `segmentation-model-1e`를 통해
-> 결정 전달)**: 이 브랜치는 main으로 역병합하지 않는 영구 "에디션" 브랜치로 운영,
-> main 업데이트는 sync 브랜치+PR로만 주기적으로 받아옴(CLAUDE.md 8번 규칙 갱신,
-> 커밋 `144623a`). 방금 PR #11(`sync/main-into-zone-analysis`, main의 어노테이션
-> 삭제/내보내기/가져오기 성능수정 3커밋 포함)을 로컬 merge(`4aa3567`) — 섞여
-> 들어갔던 `46eb77b`/`aa330c1`과 사실상 같은 내용이라 코드 파일은 자동 merge, append-only
-> 로그 2개(`implementation-log.md`/`verification-log.md`)만 충돌 → 양쪽 다 살리는
-> 방식으로 해결. **push는 아직 안 함** — 사용자 확인 필요.
+> **신규 기능 3건 스펙**(사용자 요청: 오프라인 원검출 팝업 / 폴더+일괄처리 / threshold)
+> — UI 디자인 승인(Artifact `984ea900`, `/design` 스킬로 리더가 직접 작성) 거쳐 5개
+> 라운드로 구현+검증 완료: **R-A**(오프라인 팝업, `ZoneCanvas` 재사용) → **R-B**
+> (threshold UI + `raw_class_map`→`class_map` 근본원인 버그 수정, threshold가 실제로는
+> 무시되던 숨은 결함) → **레이아웃뼈대+3a**(좌·중·우 3분할, `InferenceImageList` 통합,
+> 애디티브 API 확장 — 이 라운드에서 BUG-020 스플리터붕괴/BUG-021 툴바폭초과 발견,
+> 리더가 직접 수정) → **3b**(일괄처리 로직+결과테이블, 합성데이터+독립오라클로 정확성
+> 검증) → **3c**(Excel 내보내기). **3b 검증 중 BUG-022(P1) 발견** — Ctrl/Shift 다중선택이
+> `currentItemChanged`를 잘못 발화시켜 기준 이미지 원이 사라지는 버그, 정확히 사용자가
+> "가장 중요하다"고 강조한 시나리오였음. **1차 수정 실패**(Qt의 `currentItemChanged`가
+> 선택 커맨드 적용 *전에* 발화하는 타이밍을 놓침, 검증 에이전트가 `QTest.mouseClick`
+> 실제 이벤트로 재현해 발견) → **2차 수정으로 해결**(`itemSelectionChanged`로 갈아타
+> 역할 분리, 구현자가 직접 실제 이벤트로 선검증 후 커밋) → 3차 검증 통과, Closed.
 >
-> **남은 것**: (1) push 여부, (2) `docs/decisions-needed.md`의 타겟 클래스 2개 이상
-> 시 v1 범위 결정 대기 1건, (3) 향후 확장 후보(블랍삭제 Undo, 체크포인트 클래스
-> 메타데이터 저장).
+> **동시 세션 충돌 처리(2026-08-25)**: R1 검증 중 다른 세션이 같은 워킹 디렉토리
+> (`D:\segmentation model`)를 공유 중임을 발견 → `git worktree add`로 `D:\segmentation
+> model-zone-analysis-tab` 분리, 원래 디렉토리는 `main`으로 반환. gitignore된
+> `projects/nok/{images,checkpoints,user_models}`는 Windows 정션으로 원본과 공유.
+>
+> **에디션 브랜치 운영 규칙 확정**: main으로 역병합하지 않는 영구 브랜치로 운영,
+> main 업데이트는 sync 브랜치+PR로만 받아옴(CLAUDE.md 8번 규칙, main 쪽도 동일 규칙
+> 반영 완료 커밋 `3cb51d1`). PR #11(main 어노테이션 성능수정) 로컬 merge 완료(`4aa3567`).
+> **push 확인 규칙도 정정**: "push 자체"가 아니라 "어느 브랜치인지"만 애매할 때
+> 확인하면 되는 것으로 사용자가 정정(CLAUDE.md 4번 규칙 갱신, 커밋 `c8cc58b`).
+> `feature/zone-analysis-tab`은 이미 1차 push 완료된 상태(커밋 `c8cc58b`까지) —
+> 이후 누적된 커밋(라운드1~4, 신규기능 3건 전체)은 **아직 push 안 함**.
+>
+> **남은 것**: (1) 이번 세션 누적 커밋 push 여부, (2) 향후 확장 후보(블랍삭제 Undo,
+> 체크포인트 클래스 메타데이터 저장, DetectParams 고급 파라미터 UI, wide format 결과뷰).
+> `docs/decisions-needed.md`는 현재 빈 상태.
 >
 > **[2026-08-21] 디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
 > ([roadmap.md](../roadmap.md) 해당 절): ①아이콘SVG ②장식이모지제거 ③model_tab팔레트
