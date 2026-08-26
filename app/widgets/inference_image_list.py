@@ -91,6 +91,7 @@ class InferenceImageList(QWidget):
 
     image_selected = pyqtSignal(Path)
     display_changed = pyqtSignal()   # 필터·정렬·목록 갱신 시 매번 emit (선택 경로 불변 케이스 포함)
+    selection_changed = pyqtSignal()   # 다중 선택(Ctrl/Shift) 상태가 바뀔 때마다 (R-C 3b, 애디티브)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -147,6 +148,7 @@ class InferenceImageList(QWidget):
         self._tree.setUniformRowHeights(True)
         self._tree.setStyleSheet(_TREE_STYLE)
         self._tree.currentItemChanged.connect(self._on_current_item_changed)
+        self._tree.itemSelectionChanged.connect(self.selection_changed.emit)
         layout.addWidget(self._tree, stretch=1)
 
     # ── 공개 API ──────────────────────────────────────────────────────────────

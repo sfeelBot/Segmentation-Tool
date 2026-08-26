@@ -21,7 +21,8 @@ from PIL import Image
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
-    QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem,
+    QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem, QCheckBox,
+    QProgressDialog, QApplication,
 )
 from PyQt6.QtCore import Qt
 import torch.nn as nn
@@ -39,6 +40,7 @@ from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.circle_detect_preview_dialog import CircleDetectPreviewDialog
 from app.widgets.inference_image_list import InferenceImageList
+from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
 
 log = get_logger(__name__)
 
@@ -58,6 +60,7 @@ class ZoneAnalysisTab(QWidget):
         self._last_result: InferenceResult | None = None
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
+        self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
         self._image_size: tuple[int, int] = (0, 0)   # (w, h) — 원본 이미지 픽셀 크기
         self._build_ui()
 
@@ -193,7 +196,7 @@ class ZoneAnalysisTab(QWidget):
 
         # 좌측 패널(C-1/3a) — 폴더/다중파일 열기 + 경로 표시 + InferenceImageList
         # (추론 탭과 공유하는 완전 독립 위젯, inference_tab.py의 _list_panel/_img_list
-        # 구성을 그대로 이식). 배치 처리 컨트롤(체크박스+버튼)은 다음 라운드(3b).
+        # 구성을 그대로 이식) + 배치 처리 컨트롤(체크박스+버튼, 3b).
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 4, 0)
@@ -208,9 +211,25 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_folder_path.setWordWrap(True)
         left_layout.addWidget(self._lbl_folder_path)
         self._img_list = InferenceImageList()
-        self._img_list.set_multi_select(True)   # 다음 라운드(3b) "선택 이미지 일괄 처리" 대상 지정용 배선
+        self._img_list.set_multi_select(True)   # "선택 이미지 일괄 처리" 대상 지정용 배선(3b)
         self._img_list.hide()   # count<=1 이면 숨김 — 단일 이미지 워크플로우 회귀 없음
         left_layout.addWidget(self._img_list, stretch=1)
+
+        # ── 배치 컨트롤 (3b) — 좌측 패널 하단 ────────────────────────────────
+        self._chk_apply_all = QCheckBox("1번째 이미지 원을 전체에 적용")
+        self._chk_apply_all.setChecked(True)   # 기본값 — 체크 해제 시 이미지마다 개별 자동검출
+        self._chk_apply_all.setToolTip(
+            "체크: 기준 이미지의 원을 나머지 전체에 그대로 적용\n"
+            "해제: 이미지마다 원을 개별 자동 검출(민감도 슬라이더 값 사용)"
+        )
+        left_layout.addWidget(self._chk_apply_all)
+        self._btn_batch = QPushButton("▶ 선택 이미지 일괄 처리 (0장)")
+        self._btn_batch.setEnabled(False)
+        self._btn_batch.setToolTip(
+            "목록에 2장 이상 있고, 기준(현재 로드된) 이미지에 원이 1개 이상 정의돼 있어야 합니다"
+        )
+        left_layout.addWidget(self._btn_batch)
+
         left.setMinimumWidth(180)
         left.setMaximumWidth(260)
         splitter.addWidget(left)
@@ -244,6 +263,10 @@ class ZoneAnalysisTab(QWidget):
         self._btn_image.clicked.connect(self._on_select_image)
         self._btn_folder.clicked.connect(self._on_select_folder)
         self._img_list.image_selected.connect(self._on_list_image_selected)
+        self._img_list.selection_changed.connect(self._update_batch_button_label)
+        self._img_list.display_changed.connect(self._update_batch_button_label)
+        self._img_list.display_changed.connect(self._update_batch_button_state)
+        self._btn_batch.clicked.connect(self._on_batch_process)
         self._btn_ckpt.clicked.connect(self._on_select_checkpoint)
         self._btn_validate.clicked.connect(self._on_validate)
         self._btn_load_code.clicked.connect(self._on_load_code)
@@ -262,6 +285,7 @@ class ZoneAnalysisTab(QWidget):
         self._min_px_spin.valueChanged.connect(self._on_target_changed)
         self._canvas.circles_changed.connect(self._refresh_circle_list)
         self._canvas.circles_changed.connect(self._recompute_zones)
+        self._canvas.circles_changed.connect(self._update_batch_button_state)
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
         self._canvas.blob_deleted.connect(self._on_blob_deleted)
@@ -279,6 +303,7 @@ class ZoneAnalysisTab(QWidget):
         )
         if not paths:
             return
+        self._img_list.clear_status()
         self._img_list.load_files([Path(p) for p in paths])
         self._lbl_folder_path.setText(
             f"{len(paths)}개 파일 선택됨" if len(paths) > 1 else str(Path(paths[0]).parent)
@@ -291,6 +316,7 @@ class ZoneAnalysisTab(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if not folder:
             return
+        self._img_list.clear_status()
         self._img_list.load_folder(Path(folder))
         if self._img_list.count() == 0:
             QMessageBox.information(
@@ -493,6 +519,7 @@ class ZoneAnalysisTab(QWidget):
             ClassDef(0, "background", DEFAULT_PALETTE[0]),
             ClassDef(cid, name, DEFAULT_PALETTE[cid % len(DEFAULT_PALETTE)]),
         ]
+        self._target_classes = classes   # 일괄 처리(3b)가 모든 이미지에 고정으로 재사용
         try:
             result = engine.refilter(
                 self._last_result.raw_class_map,
@@ -646,3 +673,109 @@ class ZoneAnalysisTab(QWidget):
         item = self._circle_list.item(row)
         circle_id = item.data(Qt.ItemDataRole.UserRole) if item else None
         self._canvas.select_circle(circle_id)
+
+    # ── 슬롯 — 배치(일괄) 처리 (스펙 판단 C-2, R-C 3b) ───────────────────────
+
+    def _update_batch_button_state(self) -> None:
+        """목록 2장 이상 + 기준 이미지에 원 1개 이상 정의돼야 활성화(스펙 그대로)."""
+        has_circles = len(self._canvas.get_circles()) >= 1
+        enough_images = self._img_list.count() > 1
+        self._btn_batch.setEnabled(has_circles and enough_images)
+
+    def _update_batch_button_label(self) -> None:
+        n = len(self._img_list.selected_paths())
+        self._btn_batch.setText(f"▶ 선택 이미지 일괄 처리 ({n}장)")
+
+    def _on_batch_process(self) -> None:
+        if (self._last_result is None or self._target_class_id is None
+                or self._target_classes is None or self._model is None
+                or self._ckpt_path is None):
+            QMessageBox.warning(
+                self, "준비 안 됨",
+                "먼저 기준 이미지에서 추론을 실행하고 타겟 클래스를 확정하세요.",
+            )
+            return
+        circles_ref = self._canvas.get_circles()   # (cx, cy, r) 반지름 오름차순, 원본 좌표
+        if not circles_ref:
+            QMessageBox.warning(self, "원 없음", "기준 이미지에 원을 1개 이상 정의하세요.")
+            return
+
+        ref_w, ref_h = self._image_size
+        apply_to_all = self._chk_apply_all.isChecked()
+        sensitivity = self._sensitivity_slider.value() / 100.0
+        min_confidence = self._conf_slider.value() / 100.0
+        min_pixel_size = self._min_px_spin.value()
+        target_classes = self._target_classes
+        target_cid = self._target_class_id
+
+        targets = self._img_list.selected_paths()
+        progress = QProgressDialog("존 분석 일괄 처리 중…", "취소", 0, len(targets), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        rows: list[tuple[str, str, float]] = []
+        for i, img_path in enumerate(targets):
+            if progress.wasCanceled():
+                break
+            progress.setLabelText(f"{i + 1} / {len(targets)}  {img_path.name}")
+            progress.setValue(i)
+            QApplication.processEvents()
+            self._img_list.set_item_status(img_path, "processing")
+            try:
+                if img_path == self._image_path and self._last_result is not None:
+                    # 현재 표시 중인 이미지는 재추론 생략(inference_tab과 동일 최적화).
+                    result = self._last_result
+                    w, h = self._image_size
+                else:
+                    result = engine.run(
+                        model=self._model, image_path=img_path,
+                        checkpoint_path=self._ckpt_path, classes=target_classes,
+                        min_confidence=min_confidence, min_pixel_size=min_pixel_size,
+                        opacity=0.5,
+                    )
+                    with Image.open(str(img_path)) as im:
+                        w, h = im.size
+
+                if apply_to_all:
+                    if ref_w > 0 and ref_h > 0 and (w, h) != (ref_w, ref_h):
+                        # 해상도 방어 — 정교한 워핑이 아닌 비례 스케일 근사(스펙 명시)
+                        sx, sy = w / ref_w, h / ref_h
+                        circles = [
+                            (cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles_ref
+                        ]
+                    else:
+                        circles = circles_ref
+                else:
+                    # 이미지마다 개별 자동검출 — 메인 탭 "자동 검출" 버튼과 동일 호출
+                    with Image.open(str(img_path)) as im:
+                        rgb = np.array(im.convert("RGB"))
+                    bgr = rgb[:, :, ::-1].copy()
+                    circles = detect_circles(bgr, sensitivity=sensitivity)
+
+                if not circles:
+                    self._img_list.set_item_status(img_path, "done", badge="원 없음")
+                    continue
+
+                zone_circles = [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)]
+                zones = zones_from_circles(zone_circles, (h, w))
+                # 판단 B와 동일하게 class_map 사용(raw_class_map 아님) — threshold가
+                # 배치 결과에도 일관되게 반영되게 하는 근본원인 수정을 재사용한다.
+                target_mask = result.class_map == target_cid
+                pct_list: list[float] = []
+                for zone in zones:
+                    pct = zone_stats(zone.mask, target_mask)
+                    rows.append((img_path.name, zone.name, pct))
+                    pct_list.append(pct)
+                # 대표 배지 = 가장 바깥쪽 존 비율(zones_from_circles가 마지막에 추가)
+                badge = f"{pct_list[-1]:.1f}%" if pct_list else None
+                self._img_list.set_item_status(img_path, "done", badge=badge)
+            except Exception:
+                log.exception(f"존 분석 일괄 처리 실패 — image={img_path}")
+                self._img_list.set_item_status(img_path, "done", badge="오류")
+        progress.setValue(len(targets))
+
+        if not rows:
+            QMessageBox.information(self, "결과 없음", "처리된 결과가 없습니다.")
+            return
+        dialog = ZoneBatchResultDialog(rows, self)
+        dialog.exec()
