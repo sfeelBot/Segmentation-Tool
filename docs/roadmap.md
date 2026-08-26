@@ -631,7 +631,9 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       단계에서 재논의 대상). 상세는 `docs/agents/verification-log.md` 해당 항목.
 - [x] R-C 3b — 일괄 처리 로직(진행률 다이얼로그 + 상태아이콘/배지 반영) + 결과 테이블
       (`zone_batch_result_dialog.py` 신설) — 구현 완료(커밋 `b391075`+`ca83829`),
-      **실제 GUI 조작 검증 완료(2026-08-26, verifier, 조건부 통과)**. `engine.run`/
+      **구현+독립검증 통과(2026-08-26, verifier) — BUG-022(P1) 완전 해결 반영**. 최초
+      검증(2026-08-26, 조건부 통과) 세부는 아래 그대로, BUG-022는 2차 수정(커밋
+      `6695f77`)으로 Closed. `engine.run`/
       `detect_circles`만 몽키패치하고 나머지 프로덕션 코드(`refilter`/
       `_compute_blobs_and_filter`/`zone_metrics`)는 실제 경로 그대로 실행한 채, 합성
       이미지 5장(동일 해상도 4장 + 다른 해상도 1장, threshold 0.4/20px 걸어둠)으로
@@ -656,8 +658,19 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       가드로 수정(커밋 `9b28987`)했으나 `QTest.mouseClick`(실제 Ctrl/Shift 모디파이어)으로
       재검증한 결과 그대로 재현됨 — 근본 원인은 Qt가 `currentItemChanged`를 선택 커맨드
       적용보다 먼저 동기 발화해 가드의 `selectedItems()` 카운트 검사가 항상 "한 클릭 전"
-      상태를 봄. 여전히 Open, 재구현 필요. 상세는 `docs/agents/verification-log.md`
-      2026-08-26 BUG-022 재검증 항목.
+      상태를 봄.
+      **2차 수정으로 완전 해결(2026-08-26, 커밋 `6695f77`+`7d8e406`, 검증 3번째 시도에서
+      통과)**: emit 책임을 `currentItemChanged`에서 선택 커맨드 적용 *후* 발화되는
+      `itemSelectionChanged` 전용 신규 슬롯(`_on_selection_changed_multi()`)으로 완전히
+      이관 — `QTest.mouseClick`(실제 뷰포트 좌표 + 실제 Ctrl/Shift 모디파이어) 독립
+      재검증에서 원본 시나리오(이미지1 클릭 → 원 2개 정의 → 이미지2 Ctrl+클릭) 재현 시도
+      실패(=버그 재현 안 됨) — 원 유지, 배치 버튼 활성 유지, `selected_paths()` 정확,
+      Shift 범위선택도 동일, 선택을 1개로 좁히면 정상 전환+중복 emit 없음까지 확인. **3b
+      배치 처리 실제 부분집합 실행(이미지1+이미지2 Ctrl+클릭 후 배치 버튼 실행)을 이번에
+      처음으로 끝까지 확인** — `engine.run`이 부분집합에 대해서만 호출되고 결과 테이블도
+      정확히 그 부분집합만 포함함을 확인. `inference_tab.py`(`SingleSelection`) 회귀 없음.
+      `QA.md` BUG-022 **Closed로 이동**. 상세는 `docs/agents/verification-log.md`
+      2026-08-26 BUG-022 2차 수정 검증 항목.
 - [ ] R-C 3c — Excel 내보내기(`export_zone_percentages_to_excel()` 신설 +
       `ZoneBatchResultDialog`에 버튼 연결) — 착수 대기.
 

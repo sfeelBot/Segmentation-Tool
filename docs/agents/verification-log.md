@@ -3676,3 +3676,82 @@ Shift=Range)를 `selectionModel`에 적용하는 순서로 동작한다. 즉 `cu
 이미지는 전용 스크래치 디렉토리에만 생성. `tasklist`로 확인한 잔여 GUI 프로세스는 이전
 세션들과 동일한 기존 창(PID 16488, 이번 세션이 새로 띄운 것 아님) 하나뿐 — 이번 세션은
 전부 `Bash` 동기 실행으로 완료, 백그라운드 프로세스 0건.
+
+
+---
+
+## 2026-08-26 — BUG-022 2차 수정 독립 재검증: 완전 해결 확인 (커밋 `6695f77`+`7d8e406`, 검증 3번째 시도)
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치). 리더가
+구현 에이전트에게 맡긴 BUG-022(P1) 2차 수정 재검증. 1차 수정(`9b28987`)은 이전 세션(2026-08-26,
+위 항목)에서 `QTest.mouseClick` 실측으로 재현 확인돼 Open으로 되돌아갔었다 — 이번이 3번째
+독립 재현 시도. 구현자 로그(`docs/agents/implementation-log.md` "2026-08-26 — BUG-022 2차 수정")도
+자체적으로 `QTest.mouseClick` + 실제 모디파이어로 확인했다고 주장해, 지시대로 **메서드 직접 호출이나
+상태 사전 세팅 없이 반드시 진짜 마우스 클릭 이벤트를 실제 위젯 좌표에 재현**하는 방식으로
+독립적으로 재확인했다.
+
+### 방법
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`. numpy/cv2/PIL/torch/
+matplotlib 선행 임포트 후 PyQt6(기존 관례). `QMessageBox.*` no-op, `engine.run`/`engine.refilter`만
+몽키패치(손계산 가능한 합성 `InferenceResult` 반환), `ZoneBatchResultDialog.__init__`을 감싸
+`rows`를 캡처하고 `exec()`를 무력화(모달 회피). 전용 스크래치 디렉토리에 스크립트 1종
+(`verify_bug022_v2.py`) + 합성 이미지 4장 작성, 43개 assertion 실행. 모든 목록 클릭은
+`InferenceImageList._tree.visualItemRect(item).center()`로 실제 아이템 좌표를 구한 뒤
+`QTest.mouseClick(tree.viewport(), LeftButton, modifier, pos)`로 진짜 마우스 이벤트를 뷰포트에
+주입(모디파이어는 `Qt.KeyboardModifier.ControlModifier`/`ShiftModifier` 실제 값 사용, 메서드 직접
+호출 0건). 원 정의도 `set_circles()` 같은 직접 API가 아니라 `ZoneCanvas`에 실제
+`QTest.mousePress`→`mouseMove`→`mouseRelease` 드래그로 생성(BUG-018 검증 때 쓴 방식과 동일).
+
+### 결과 — 원본 재현 시나리오, 재현 시도 전부 실패(=버그 해결 확인)
+1. **`InferenceImageList` 단독**: 로드 직후 img1 auto-select(기존 Qt 동작) 확인 후, img2 단일
+   클릭 → emit 1회. img3 실제 **Ctrl+클릭**(2개 선택) → `image_selected` emit **없음**(정상,
+   수정 전엔 여기서 잘못 emit됐음), `selectedItems()` 정확히 2개. img4 실제 **Shift+클릭**(3개
+   선택) → 역시 emit 없음. 모디파이어 없이 img1 단일 클릭 → 1개로 좁혀지며 emit 정확히 1회.
+2. **`ZoneAnalysisTab` 원본 시나리오**: 이미지1 실제 단일클릭(선택 확정) → 캔버스에 실제 드래그로
+   원 2개 정의(`get_circles()`==2, 배치 버튼 활성화) → 이미지2 실제 **Ctrl+클릭** → **원 2개
+   그대로 유지**(수정 전엔 즉시 `[]`), **배치 버튼 계속 활성화**(수정 전엔 `False`),
+   `tab._image_path`가 이미지1로 **유지**(수정 전엔 이미지2로 전환), `selected_paths()`가 정확히
+   `[img_01.png, img_02.png]` 반환. **셋 다 원래 증상이 재현되지 않음.**
+3. **Shift 범위선택(이미지1→이미지3)도 동일하게 원 유지** 확인.
+4. **선택을 1개로 좁히면 정상 전환**: 다중 선택 상태에서 모디파이어 없이 이미지4를 클릭하면
+   캔버스가 이미지4로 정상 전환되고 원이 클리어됨(이건 "새 이미지 로드"의 의도된 정상 동작,
+   버그 아님) + `image_selected`가 **정확히 1회만** 발화(중복 emit 없음, 두 emit 경로가 겹치지
+   않는다는 구현 로그 주장 확인).
+5. **3b 배치 처리 실제 부분집합 실행을 이번에 처음으로 끝까지 확인**(1·2차 검증에서는 원 소실
+   버그 때문에 전제가 성립하지 않아 스킵됐던 항목): 이미지1을 기준으로 원 2개 재정의 →
+   `engine.run`/`engine.refilter` 몽키패치 후 실제 `▶ 추론 실행` 버튼 클릭(`QTest.mouseClick`)
+   → `_last_result`/`_target_class_id`/`_target_classes` 자동 확정, 원 2개 여전히 유지 확인 →
+   이미지2를 실제 Ctrl+클릭으로 부분집합 지정(배치 버튼 라벨 "(2장)"으로 갱신 확인) →
+   `▶ 선택 이미지 일괄 처리` 버튼 실제 클릭 → `engine.run`이 **이미지2에 대해서만** 재호출됨
+   (이미지1은 "현재 표시 중 + `_last_result` 존재" 캐시 재사용 경로를 실제로 탐, 호출 로그로
+   확인) → `ZoneBatchResultDialog`에 캡처된 `rows`가 정확히 이미지1/이미지2 조합만 포함하고
+   이미지3/이미지4는 아예 없음, 좌측 목록 `_status`에도 이미지3/이미지4는 항목 자체가 생기지
+   않음(미처리) — "선택 이미지만 골라 일괄 처리"가 **실제로 부분집합에만 적용됨**을 실증.
+6. **`inference_tab.py` 회귀 없음**: 별도 `InferenceTab` 인스턴스에서 `_multi_select is False`
+   (기본 SingleSelection) 확인, 실제 클릭 시 `image_selected` 정상 발화, 검색 필터
+   ("img_03"→1건, 해제→4건 복원, 디바운스 타이머 직접 트리거), `navigate(+1)`/`navigate(-1)`
+   이전·다음 네비게이션 전부 정상.
+
+총 43개 assertion 전부 PASS(실패 0건). 최초 작성한 baseline assertion 1건(로드 직후 이미 선택된
+항목을 재클릭하면 Qt가 `currentItemChanged`를 재발화하지 않는 기존 Qt 동작을 "버그"로 잘못
+기대해 FAIL로 나왔던 테스트 설계 실수)은 baseline을 다른 항목 클릭으로 조정해 재확인 후 제거 —
+BUG-022 수정 자체와는 무관.
+
+### 회귀/안전 확인
+- `py_compile app/widgets/inference_image_list.py app/tabs/zone_analysis_tab.py
+  app/tabs/inference_tab.py` 전부 통과.
+- `git status --short` — 스크래치 디렉토리 밖 워크트리 변경 없음(디버그 코드 삽입/원복 없음,
+  이번엔 소스 수정 자체가 필요 없었음).
+- `tasklist`로 확인한 잔여 GUI 프로세스는 이전 세션들과 동일한 기존 창(PID 16488, 이번 세션이
+  새로 띄운 것 아님) 하나뿐 — 이번 세션은 전부 `Bash` 동기 실행으로 완료, 백그라운드 프로세스
+  0건, 좀비 프로세스 없음.
+- 스크래치 스크립트/합성 이미지는 전용 세션 스크래치 디렉토리에만 생성, 저장소에는 포함하지
+  않음.
+
+### 판정
+**통과 — BUG-022 완전 해결 확인(2차 수정 유효, 3번째 재검증 시도에서 처음으로 재현 실패).**
+`QA.md`의 BUG-022를 Open 테이블에서 제거하고 Closed 테이블로 이동, `docs/roadmap.md`의 R-C 3b
+항목을 "구현+독립검증 통과 — BUG-022(P1) 완전 해결 반영"으로 갱신.
+- 리더에게: **BUG-022(P1) 최종 해결 확인. R-C 3b(폴더 일괄 처리) 전체 스코프 — 정확성(1차 검증
+  96 assertion) + 다중 선택 상호작용(이번 43 assertion, 부분집합 배치 처리 최초 실증 포함) 둘 다
+  통과. 3c(Excel 내보내기) 착수 가능.**
