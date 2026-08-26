@@ -32,8 +32,12 @@ class Zone:
     mask: np.ndarray     # (H, W) bool
 
 
-def _disk_mask(cx: float, cy: float, r: float, img_shape: tuple[int, int]) -> np.ndarray:
-    """(x-cx)^2 + (y-cy)^2 <= r^2 벡터화 비교로 원판 마스크 생성 — fillPoly 아님."""
+def disk_mask(cx: float, cy: float, r: float, img_shape: tuple[int, int]) -> np.ndarray:
+    """(x-cx)^2 + (y-cy)^2 <= r^2 벡터화 비교로 원판 마스크 생성 — fillPoly 아님.
+
+    R3-2에서 공개 전환(언더스코어 제거) — `zone_canvas.py`의 브러시 지우기 undo
+    복원(전체 재생)이 이 함수를 그대로 재사용한다(스펙 판단 2).
+    """
     h, w = img_shape
     yy, xx = np.ogrid[:h, :w]
     return (xx - cx) ** 2 + (yy - cy) ** 2 <= r ** 2
@@ -48,7 +52,7 @@ def zones_from_circles(circles: list[Circle], img_shape: tuple[int, int]) -> lis
         return []
     sorted_c = sorted(circles, key=lambda c: c.r)
     n = len(sorted_c)
-    masks = [_disk_mask(c.cx, c.cy, c.r, img_shape) for c in sorted_c]
+    masks = [disk_mask(c.cx, c.cy, c.r, img_shape) for c in sorted_c]
 
     zones = [Zone(0, "중심부", masks[0])]
     for i in range(n - 1):
@@ -81,11 +85,48 @@ def compute_blob_labels(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return labels, stats
 
 
+def _zone_name_sort_key(name: str) -> tuple[int, int]:
+    """중심부 -> 링 N(N 오름차순) -> 바깥쪽 순 정렬 키 (스펙 R3-2 판단 4)."""
+    if name == "중심부":
+        return (0, 0)
+    if name == "바깥쪽":
+        return (2, 0)
+    import re
+    m = re.search(r"\d+", name)
+    return (1, int(m.group()) if m else 0)
+
+
+def pivot_wide_format(
+    rows: list[tuple[str, str, float]]
+) -> tuple[list[str], list[str], dict[tuple[str, str], float]]:
+    """(이미지파일명, 존이름, 퍼센티지) long rows -> (이미지목록, 정렬된 존이름 열목록, 값 dict).
+
+    없는 (이미지, 존) 조합은 값 dict에 키가 없음 -> 호출부가 공란/N-A로 렌더링.
+    이미지 목록은 rows에 처음 등장한 순서 유지, 존 이름 열은 전체 rows에서 관측된
+    합집합을 중심부->링 N(오름차순)->바깥쪽 순으로 정렬(스펙 판단 4, 원 개수가
+    이미지마다 달라도 자연스러운 중심->외곽 순서 유지).
+    """
+    images: list[str] = []
+    seen_images: set[str] = set()
+    zone_names: set[str] = set()
+    values: dict[tuple[str, str], float] = {}
+    for image_name, zone_name, pct in rows:
+        if image_name not in seen_images:
+            seen_images.add(image_name)
+            images.append(image_name)
+        zone_names.add(zone_name)
+        values[(image_name, zone_name)] = pct
+    zone_cols = sorted(zone_names, key=_zone_name_sort_key)
+    return images, zone_cols, values
+
+
 def export_zone_percentages_to_excel(rows: list[tuple[str, str, float]], out_path: Path) -> None:
     """(이미지파일명, 존이름, 타겟비율%) long format 목록을 xlsx로 저장.
 
-    `inference_engine.export_blobs_to_excel()`과 동일한 openpyxl 패턴(헤더만 볼드,
-    시트 1개)을 스키마만 바꿔 복제. wide format(이미지×존 피벗) 아님 — 스펙 C-3 참고.
+    `inference_engine.export_blobs_to_excel()`과 동일한 openpyxl 패턴(헤더만 볼드)을
+    스키마만 바꿔 복제. R3-2부터 시트 2개 — 기존 long 시트("zones") 유지 +
+    `pivot_wide_format()` 기반 wide 시트("zones_wide") 추가(애디티브, 시그니처 불변
+    — 기존 호출부 전부 무변경으로 wide 시트를 자동으로 얻는다).
     """
     from openpyxl import Workbook
     from openpyxl.styles import Font
@@ -99,6 +140,16 @@ def export_zone_percentages_to_excel(rows: list[tuple[str, str, float]], out_pat
 
     for image_name, zone_name, pct in rows:
         ws.append([image_name, zone_name, round(pct, 2)])
+
+    images, zone_cols, values = pivot_wide_format(rows)
+    ws2 = wb.create_sheet("zones_wide")
+    ws2.append(["이미지파일명"] + zone_cols)
+    for cell in ws2[1]:
+        cell.font = Font(bold=True)
+    for img in images:
+        ws2.append(
+            [img] + [round(values[(img, z)], 2) if (img, z) in values else "" for z in zone_cols]
+        )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(out_path))
@@ -151,5 +202,18 @@ if __name__ == "__main__":
     for lbl in unique_labels:
         assert stats[lbl, 4] == 4, f"블랍 면적 4 예상, 실측 {stats[lbl, 4]}"
     assert labels[0, 0] != labels[5, 5] and labels[0, 0] != 0 and labels[5, 5] != 0
+
+    # ── pivot_wide_format: 이미지 3장, 존 개수 2/2/3개 섞은 케이스(R3-2) ────────
+    wide_rows = [
+        ("a.jpg", "중심부", 10.0), ("a.jpg", "바깥쪽", 20.0),
+        ("b.jpg", "중심부", 30.0), ("b.jpg", "바깥쪽", 40.0),
+        ("c.jpg", "중심부", 50.0), ("c.jpg", "링 1", 60.0), ("c.jpg", "바깥쪽", 70.0),
+    ]
+    images, zone_cols, values = pivot_wide_format(wide_rows)
+    assert images == ["a.jpg", "b.jpg", "c.jpg"], f"이미지 순서 유지 실패: {images}"
+    assert zone_cols == ["중심부", "링 1", "바깥쪽"], f"정렬 순서(중심부->링->바깥쪽) 실패: {zone_cols}"
+    assert values[("a.jpg", "중심부")] == 10.0
+    assert ("a.jpg", "링 1") not in values, "없는 조합은 값 dict에 키가 없어야 함(공란 렌더링용)"
+    assert values[("c.jpg", "링 1")] == 60.0
 
     print("zone_metrics self-check OK")

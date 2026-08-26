@@ -35,7 +35,10 @@ from app.core.model_validator import validate
 from app.core.model_loader import load_from_code
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.core.circle_detector import detect_circles
-from app.core.zone_metrics import Circle, zones_from_circles, zone_stats, compute_blob_labels
+from app.core.zone_metrics import (
+    Circle, zones_from_circles, zone_stats, compute_blob_labels,
+    export_zone_percentages_to_excel,
+)
 from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.circle_detect_preview_dialog import CircleDetectPreviewDialog
@@ -251,6 +254,9 @@ class ZoneAnalysisTab(QWidget):
         self._zone_list = QListWidget()
         self._zone_list.setToolTip("클릭하면 캔버스에서 해당 존이 하이라이트됩니다")
         side_layout.addWidget(self._zone_list, stretch=1)
+        self._btn_export_single = QPushButton("Excel로 내보내기")
+        self._btn_export_single.setToolTip("현재 화면에 표시된 존 목록(이미지 1장)을 xlsx로 저장합니다")
+        side_layout.addWidget(self._btn_export_single)
         side.setMinimumWidth(160)
         side.setMaximumWidth(220)
         splitter.addWidget(side)
@@ -294,6 +300,7 @@ class ZoneAnalysisTab(QWidget):
         self._btn_blob_delete.toggled.connect(self._canvas.set_blob_delete_mode)
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
+        self._btn_export_single.clicked.connect(self._on_export_single)
 
     # ── 슬롯 — 이미지 / 체크포인트 선택 (C-1) ────────────────────────────────
 
@@ -571,6 +578,21 @@ class ZoneAnalysisTab(QWidget):
         # (라운드 3의 circles_changed와 동일하게, 여기선 재계산만 트리거).
         self._recompute_zones()
 
+    def _compute_zone_percentages(self) -> list[tuple[str, float]]:
+        """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
+
+        `_recompute_zones()`(사이드 패널 표시)와 단일 이미지 Excel 내보내기(R3-1)가
+        공유하는 헬퍼(스펙 판단 3, 순수 추출 — 동작 변화 없음).
+        """
+        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r)
+        if not circles_raw or self._last_result is None or self._target_class_id is None:
+            return []
+        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
+        h, w = self._last_result.raw_class_map.shape
+        zones = zones_from_circles(circles, (h, w))
+        target_mask = self._current_target_mask()
+        return [(zone.name, zone_stats(zone.mask, target_mask)) for zone in zones]
+
     def _recompute_zones(self) -> None:
         # circles_changed 는 원 드래그 이동/반지름조절 중에도 mouseMoveEvent마다 emit된다
         # (BUG-018과 동일한 근본 원인) -- blockSignals 없이 clear()+재구성하면 QListWidget의
@@ -580,18 +602,13 @@ class ZoneAnalysisTab(QWidget):
         highlighted = self._canvas.highlighted_zone()
         self._zone_list.blockSignals(True)
         self._zone_list.clear()
-        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r)
-        if not circles_raw or self._last_result is None or self._target_class_id is None:
+        pct_rows = self._compute_zone_percentages()
+        if not pct_rows:
             self._zone_list.blockSignals(False)
             self._canvas.set_highlighted_zone(None)
             return
-        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
-        h, w = self._last_result.raw_class_map.shape
-        zones = zones_from_circles(circles, (h, w))
-        target_mask = self._current_target_mask()
-        for zone in zones:
-            pct = zone_stats(zone.mask, target_mask)
-            self._zone_list.addItem(f"{zone.name}  —  {pct:.2f}%")
+        for zone_name, pct in pct_rows:
+            self._zone_list.addItem(f"{zone_name}  —  {pct:.2f}%")
         if highlighted is not None and 0 <= highlighted < self._zone_list.count():
             self._zone_list.setCurrentRow(highlighted)
         else:
@@ -607,6 +624,36 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_zone_row_selected(self, row: int) -> None:
         self._canvas.set_highlighted_zone(row if row >= 0 else None)
+
+    # ── 슬롯 — 단일 이미지 Excel 내보내기 (R3-1) ─────────────────────────────
+
+    def _on_export_single(self) -> None:
+        """일괄 처리를 거치지 않은 현재 화면(이미지 1장) 존 목록을 xlsx로 저장.
+
+        신규 core 함수 없음 — `export_zone_percentages_to_excel()`(R-C 3c에서
+        일괄 처리용으로 이미 신설됨, 범용 long rows를 받음)을 그대로 재사용한다.
+        """
+        rows = self._compute_zone_percentages()
+        if not rows or self._image_path is None:
+            QMessageBox.information(
+                self, "내보낼 결과 없음", "먼저 원을 정의하고 추론을 실행하세요."
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Excel로 내보내기", "zones.xlsx", "Excel (*.xlsx)"
+        )
+        if not path:
+            return
+        excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
+        try:
+            export_zone_percentages_to_excel(excel_rows, Path(path))
+        except Exception as exc:
+            log.exception("존 분석 단일 이미지 Excel 내보내기 실패")
+            QMessageBox.critical(self, "내보내기 오류", str(exc))
+            return
+        QMessageBox.information(
+            self, "내보내기 완료", f"{len(excel_rows)}개 행을 내보냈습니다."
+        )
 
     # ── 슬롯 — 원(circle) 자동 검출 (라운드 2) ──────────────────────────────
 
