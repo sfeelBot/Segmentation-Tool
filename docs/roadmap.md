@@ -609,13 +609,25 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       추론실행/타겟클래스/AI신뢰도/픽셀크기/민감도+자동검출/블랍삭제모드/오프라인테스트,
       승인된 목업 순서 — Artifact 도구 미제공으로 스펙 문서 서술 기준) + 좌측 패널에
       `InferenceImageList` 조립(폴더 열기/다중 파일 열기/경로 표시, `count()>1`일 때만
-      노출) — 구현 완료(2026-08-26, 커밋 예정), **실제 GUI 조작 검증 대기**(리더가 이번
-      라운드는 "주요 기능 추가"로 판단해 실제 UI 조작 검증 요청 예정). `InferenceImageList`에
+      노출) — 구현 완료(커밋 `62187c0`+`285151c`), **실제 GUI 조작 검증 완료(2026-08-26,
+      verifier, 조건부 통과 — BUG-020/021 발견)**. `QTest` 실사용 이벤트로 3-way 스플리터
+      렌더링/좌우 패널 조립/단일·다중 이미지 워크플로우/폴더 재귀 스캔/목록 클릭 시
+      자동추론 미실행/`selected_paths()` 3가지 케이스/추론 탭 회귀(폴더·검색·정렬·이전
+      다음)/R1~R4·R-A·R-B 골든패스 전부 정상 동작 확인. 다만 **BUG-020**(신규 3-way
+      스플리터에 `setChildrenCollapsible(False)` 누락 — 핸들 드래그 시 좌/우 패널 0px
+      붕괴, BUG-008 패턴 재발)와 **BUG-021**(툴바 위젯 12개를 한 줄에 몰아 `minimumSizeHint`
+      1588px — 코드 상 기본 창 크기 `1280×800`을 무시하고 런타임에 `1592×800`으로 강제
+      확대) 2건을 새로 발견해 QA.md에 등록(둘 다 P2, Open). `InferenceImageList`
       애디티브 API 2건(`set_item_status`/`clear_status`, `set_multi_select`/
-      `selected_paths`) 추가 — `inference_tab.py` 호출부 불변 확인, 기본 SingleSelection
-      유지. 상세는 `docs/agents/implementation-log.md`.
+      `selected_paths`) 실사용 확인 — `inference_tab.py` 회귀 없음(SingleSelection 유지),
+      다만 `selected_paths()`의 "선택 개수 ≤1이면 전체 반환" 설계는 실제로 "이미지 1장만
+      명시적으로 고르기"가 불가능한 것으로 실사용 확인됨(1개만 클릭해도 전체 목록이
+      반환됨) — 이번 라운드엔 배치 버튼이 없어 당장 영향은 없으나 3b(배치 처리) 착수
+      시 재검토 필요(버그로 등록하진 않음, 구현자가 이미 알고 있던 한계이자 3b 스펙
+      단계에서 재논의 대상). 상세는 `docs/agents/verification-log.md` 해당 항목.
 - [ ] R-C 3b/3c — 일괄 처리 로직(진행률 다이얼로그 + 상태아이콘/배지 반영) + 결과 테이블 +
-      Excel 내보내기(`zone_batch_result_dialog.py` 신설) — 착수 대기.
+      Excel 내보내기(`zone_batch_result_dialog.py` 신설) — 착수 대기(착수 전 BUG-020 수정
+      권장 — 좌측 이미지목록/우측 배치 컨트롤이 배치될 패널이라 붕괴 시 영향이 커짐).
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새

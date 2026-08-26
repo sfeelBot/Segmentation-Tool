@@ -3217,3 +3217,165 @@ R-A/R1~R4 회귀 없음.
 - 리더에게: **R-B 검증 통과. R-C(폴더 단위 가져오기 + 일괄 처리, 최대 스코프) 착수 가능.**
 - `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 R-B 체크박스를 "구현 완료,
   검증 대기"에서 "구현+독립검증 통과"로 갱신.
+
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 R-C 레이아웃 뼈대 + 3a 검증: 좌·중·우 3분할 + 좌측 이미지 목록 패널 (커밋 `62187c0`+`285151c`)
+
+기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"승인된 UI 레이아웃"/"판단 C > C-1"/"라운드 분할 제안" 라운드1·3a 절. 구현 로그:
+[implementation-log.md](implementation-log.md) "2026-08-26 — 존 분석 탭 R-C: 좌·중·우 3분할
+레이아웃 뼈대 + 좌측 이미지 목록 패널 조립 (3a)" 항목. 워크트리 `D:\segmentation
+model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치, `D:\segmentation model`(main)과
+분리된 별도 워크트리에서 작업). R-A/R-B/R1~R4는 기존 검증 통과 — **이번 라운드는 레이아웃
+자체를 뜯어고친 라운드라 리더 지시대로 라벨링/학습/추론이 아닌 존 분석 탭 자체와 공유 위젯
+(`inference_tab.py`)에 대해 `python`+`QTest` 실제 GUI 조작 골든패스 검증을 수행했다(주요
+기능 추가에 준하는 검증 수준).**
+
+### 정적 검토
+- `git show 62187c0 --stat` — `app/tabs/zone_analysis_tab.py`(+246/-100 net), `app/widgets/inference_image_list.py`
+  (+72), `docs/roadmap.md`만 변경. 스펙 R-C 3a 범위와 일치.
+- `zone_analysis_tab.py`에서 3-way `QSplitter` 생성부(`splitter = QSplitter(...)`,
+  `left`/`self._canvas`/`side` 3개 addWidget, `setStretchFactor(0,0)/(1,1)/(2,0)`,
+  `setSizes([200,700,180])`)를 라인 단위로 확인 — **`setChildrenCollapsible(False)` 호출이
+  코드에 없음**을 정적으로 먼저 확인(`grep -n "splitter" zone_analysis_tab.py` 전체 결과에
+  해당 호출 0건). 다른 4개 탭(`inference_tab.py` L51/L167, `labeling_tab.py` L51/L67/L106,
+  `training_tab.py` L265)은 전부 이 호출이 있어 BUG-008 수정(`7a98760`) 대상이었음을 재확인
+  — 이번 신규 스플리터만 그 수정 관례를 놓쳤을 가능성을 실제 조작으로 검증하기로 함.
+- `inference_image_list.py`의 애디티브 API 4개(`set_item_status`/`clear_status`/
+  `set_multi_select`/`selected_paths`) 코드 확인 — `selected_paths()`의 "선택 개수 ≤1이면
+  `paths()`(전체) 반환" 로직과 그 옆의 `ponytail:` 주석(Qt가 `setCurrentItem()` 시 currentItem을
+  selectionModel에도 자동 포함시켜 "선택 1개"와 "미선택"을 구별 못 한다는 문제 설명)을 확인 —
+  구현자가 예상한 대로 실제로 "이미지 1장만 명시적으로 고르기"가 불가능한지 실제 클릭
+  이벤트로 검증 필요하다고 판단.
+- `py_compile` — `zone_analysis_tab.py`/`inference_image_list.py`/`inference_tab.py`/
+  `circle_detect_preview_dialog.py` 4개 파일 전부 통과(`C:\Users\Feel\anaconda3\python.exe`).
+
+### 실제 GUI(QTest) 골든패스 검증
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, 기존 관례대로
+numpy/cv2/PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. `QFileDialog.getOpenFileNames`/
+`getOpenFileName`/`getExistingDirectory`만 몽키패치, `QMessageBox.warning/information`은
+헤드리스 무한대기 회피용 no-op(critical은 내용을 출력하도록 유지). `CircleDetectPreviewDialog.exec`는
+`self.show()`로 대체(모달 블로킹 회피 — **주의**: `Dialog.exec = Dialog.show`처럼 클래스
+속성을 다른 바운드 메서드로 그대로 별칭 지정하면 sip 메서드 바인딩이 꼬여 실제로는 원래
+`exec()`가 그대로 호출돼 무한 블로킹하는 것을 직접 겪음 — `lambda self: self.show()`처럼
+평범한 파이썬 함수로 감싸야 정상 동작함을 확인, 이후 스크립트는 전부 이 방식 사용).
+`projects/nok/images/`의 실제 배터리 캡 사진 5장(`7~11번.bmp`) 사용. 스크래치 스크립트
+6종(`verify_rc3a.py`, `debug_h.py`, `verify_nav_and_h2.py`, `verify_ra_toolbar2.py`,
+`verify_ra_final.py`, `verify_width.py`, 전용 스크래치 디렉토리에만 생성, 프로젝트에는
+추가 안 함) 작성·실행, 총 40개 이상 assertion:
+
+1. **3-way 스플리터 렌더링 — 정상**: `ZoneAnalysisTab`을 `QMainWindow`에 얹어 실제
+   `show()`+`qWaitForWindowExposed()` 후 `findChildren(QSplitter)`로 스플리터 정확히 1개,
+   자식 3개(좌/중/우) 확인.
+2. **BUG-008 패턴 재발 확인(핵심 발견, 신규 등록) — `BUG-020`**: `moveSplitter(0, 1)`(첫
+   핸들을 맨 왼쪽 끝으로 실제 이동)로 좌측 패널이 `setMinimumWidth(180)`을 무시하고
+   `sizes()[0]`이 200→**0px**로 완전히 붕괴함을 실측. 복구 후 `moveSplitter(sp.width(), 2)`
+   (둘째 핸들을 맨 오른쪽 끝으로)로 우측 패널도 `setMinimumWidth(160)`을 무시하고
+   180→**0px**로 붕괴 확인. 코드에 `setChildrenCollapsible(False)`가 없다는 정적 확인과
+   일치 — `sp.childrenCollapsible()`이 실제로 `True`(Qt 기본값)임을 직접 조회해 재확인.
+   다른 4개 탭의 스플리터 6개는 전부 이 설정이 있어 동일 조작으로 붕괴하지 않음(과거
+   BUG-008 재검증 로그 기준) — **이번 신규 스플리터에서만 그 관례가 누락된 회귀**.
+   `QA.md`에 `BUG-020`(P2)으로 신규 등록.
+3. **툴바 통합 — 창을 좁혀도 겹침은 없으나 다른 형태의 실측 결함 발견(신규 등록) —
+   `BUG-021`**: 리더 지시대로 창 폭 1100px로 `resize()` 시도 → 위젯 순서 자체는 겹치거나
+   뒤집히지 않음(PASS)이지만, **`win.width()`가 요청한 1100이 아니라 실제로는 1588로
+   강제 확대됨**을 확인 — 원인을 추적하니 `ZoneAnalysisTab.minimumSizeHint().width()`가
+   **1588px**(다른 4개 탭은 630~837px)에 달함. 상단 툴바 `QHBoxLayout`에 위젯 12개(체크포인트
+   열기/추론실행/타겟클래스/AI신뢰도 슬라이더+라벨/픽셀크기/민감도 슬라이더+라벨/자동검출/
+   블랍삭제모드/오프라인테스트)를 한 줄에 몰아넣어 줄바꿈·스크롤 없이 최소폭이 누적된 결과.
+   더 결정적으로, **`MainWindow()`를 실제로 생성해 `app/main_window.py:31`의 코드상 명시된
+   기본 창 크기 `resize(1280, 800)`이 런타임에 그대로 적용되는지 확인한 결과 `win.size()`가
+   `QSize(1280,800)`이 아니라 `QSize(1592,800)`로 나타남** — 존 분석 탭이 5번째 탭으로 이미
+   `QTabWidget`에 포함돼 있어 앱을 그냥 실행하기만 해도(별도 탭 전환 없이) Qt가 레이아웃
+   최소크기 제약 때문에 코드가 의도한 기본 창 크기를 무시하고 확대시킴. `QA.md`에
+   `BUG-021`(P2)로 신규 등록.
+4. **좌측 패널 — 단일 이미지 워크플로우 회귀 없음**: `getOpenFileNames`를 이미지 1장만
+   반환하도록 몽키패치 후 "이미지 열기…" 버튼 로직(`_on_select_image()`) 실행 →
+   `count()==1`, `_img_list.isHidden()==True`(스펙 "count>1일 때만 표시" 정확히 지켜짐),
+   `_image_path` 자동 설정, **자동 추론 미실행**(`_last_result is None` 유지) 전부 확인 —
+   기존 R1~R4 골든패스가 이 조건에서 전혀 안 바뀌었음을 재확인(가장 중요한 회귀 지점).
+5. **좌측 패널 — 다중 이미지 워크플로우**: `getOpenFileNames`로 3장 반환 → `count()==3`,
+   목록 패널 `isVisible()==True`, 자동 추론 미실행(엔진 `run` 호출 카운터 0) 확인.
+   `getExistingDirectory`로 `projects/nok/images` 폴더 지정 → `load_folder()` 재귀 스캔으로
+   실제 이미지 5장 전부 로드, 경로 라벨 갱신, 목록 표시 확인.
+6. **이미지 클릭 시 자동 추론 안 됨**: 트리 위젯에서 실제 `QTest.mouseClick`으로 다른
+   이미지 항목 클릭 → `engine.run` 호출 카운터 0(자동 추론 안 됨), 자동검출/블랍삭제 버튼
+   둘 다 비활성화(추론 전 상태로 정확히 리셋) 확인.
+7. **`selected_paths()` 3가지 케이스 실측(구현자가 남긴 우려사항 검증)**:
+   - **초기 상태**(폴더 로드 직후, 사용자가 명시적으로 아무것도 클릭 안 함) — 내부적으로는
+     Qt가 `setCurrentItem()`으로 이미 1개를 "선택"해 둔 상태이지만, `selected_paths()`가
+     `paths()`(전체 5장)를 정확히 반환함을 확인.
+   - **정확히 1개만 명시적으로 클릭**(다른 이미지로 실제 마우스 클릭 전환) — `selectedItems()`가
+     정확히 1개(클릭한 그 이미지)임에도 `selected_paths()`는 **여전히 전체 5장을 반환**함을
+     실측 확인 — **구현자가 `ponytail:` 주석에서 예상한 우려사항이 실제로 재현됨**: 사용자가
+     "이 이미지 1장만 배치 처리하고 싶다"는 의도로 명시적으로 1장을 클릭해도, 현재 설계상
+     `selected_paths()`는 그 의도를 구별하지 못하고 "전체 처리"로 해석한다. **판단**: 이번
+     라운드(3a)엔 이 반환값을 사용하는 배치 처리 버튼 자체가 아직 없어 사용자가 이 문제를
+     직접 겪을 수 있는 진입점이 없으므로 지금 당장 버그로 등록하지는 않음 — 다만 3b에서
+     "▶ 선택 이미지 일괄 처리 (N장)" 버튼이 이 값을 그대로 쓰게 되면 "이미지 1장만 정말
+     고르고 싶을 때 못 고름"이 실사용 버그가 되므로, 3b 스펙/구현 단계에서 반드시 재검토가
+     필요함을 로드맵에 명시(예: `selectionChanged`를 명시적 사용자 조작으로만 트리거하는
+     별도 플래그 방식 등 대안 검토 필요 — 구현자가 이미 주석에 남긴 해법 후보와 동일).
+   - **Ctrl+클릭으로 2개 명시적 다중 선택** — `selected_paths()`가 정확히 그 2개만 반환함을
+     확인(정상 동작).
+8. **`inference_tab.py` 회귀 없음(공유 위젯 애디티브 변경 검증, 필수 항목)**: `InferenceTab`을
+   별도로 인스턴스화해 `_img_list`의 `SelectionMode`가 여전히 기본값 `SingleSelection`임을
+   재확인, 폴더 열기(재귀 스캔, 5장), 목록 패널 표시, 검색 필터("7번" 입력 → 1장, 해제 →
+   5장 복원), 정렬(파일명 내림차순 전환 후 실제 정렬 순서 확인), "다음"/"이전" 네비게이션
+   버튼(1칸씩 정확히 이동·복귀) 전부 실제 클릭/입력 이벤트로 정상 동작 확인 — 존 분석 탭
+   전용 애디티브 API 추가가 추론 탭 기존 골든패스에 전혀 영향을 주지 않음.
+9. **R1~R4/R-A/R-B 골든패스 회귀 없음**: 실제 `simple_unet` 프리셋 모델을 fresh weight로
+   인스턴스화해 스크래치 체크포인트(`config.model_source="preset:simple_unet"`)로 저장 후
+   R1(체크포인트 자동 준비+추론 실행), R2(자동 검출 버튼 클릭 크래시 없음), R3(합성 결정론적
+   `raw_class_map`/`confidence_map`을 `engine.run` 몽키패치로 주입해 원 1개→존 2개 생성 확인),
+   R-B(AI신뢰도 슬라이더를 blob 신뢰도(0.9)보다 높은 95%로 올리면 퍼센티지가 65.02%→0.00%로
+   실제로 바뀜을 확인 + 조작 전후 원 선택(`selected_id()`)·존 하이라이트(`highlighted_zone()`)가
+   그대로 유지됨을 확인해 BUG-018/019 패턴 재발 없음 재확인), R4(블랍 삭제 모드 토글 시
+   `_canvas._blob_delete_mode` 정상 전환, 크래시 없음), R-A(툴바의 실제 "오프라인 원 검출
+   테스트…" 버튼을 `QTest.mouseClick`으로 클릭해 실제 팝업 생성 확인 → 팝업 안에서 이미지
+   열기 시 자동 1차 검출 실행 확인 → 팝업 조작 후에도 메인 탭 `_image_path`가 여전히
+   `None`으로 유지됨을 확인해 완전 독립성 재확인 → 닫기 버튼으로 정상 종료) 전부 정상 동작.
+10. **크래시 없음 / `py_compile`**: 위 모든 시나리오 실행 중 예외 0건(테스트 스크립트 자체의
+    시행착오 2건 — 중복 버튼 클릭으로 인한 nav 인덱스 오프바이원, 랜덤 초기화 모델이 배경만
+    예측해 타겟 클래스가 검출되지 않은 케이스 — 은 전부 테스트 스크립트 설계 문제로 확인되어
+    합성 데이터로 대체 후 재실행해 해소, 앱 코드의 결함이 아님). `py_compile` 4개 파일 전부
+    통과.
+
+### 발견된 결함 — `QA.md` 신규 등록
+- **`BUG-020`(P2)** — 3-way `QSplitter`에 `setChildrenCollapsible(False)` 누락, 핸들 드래그로
+  좌/우 패널 0px 붕괴(BUG-008 패턴 재발). 수정은 기존 해법과 동일하게 스플리터 생성부에
+  `splitter.setChildrenCollapsible(False)` 1줄 추가로 충분할 것으로 예상(구현 담당은 다음
+  라운드 착수 에이전트).
+- **`BUG-021`(P2)** — 상단 툴바 위젯 과밀로 `minimumSizeHint` 1588px, 앱 코드상 기본 창 크기
+  `1280×800`이 런타임에 `1592×800`으로 강제 확대됨. 수정 방향은 검증 범위 밖(디자인 판단
+  필요 — 위젯 폭 축소/2줄 분리/스크롤 영역 등 여러 옵션 가능)이므로 QA.md에 현상만 등록,
+  해법 결정은 디자인/리더 판단으로 남김.
+- `selected_paths()`의 "1개 선택=전체" 설계는 이번 라운드엔 버그로 등록하지 않음(사용
+  진입점 없음) — 3b 스펙/구현 시 재검토 필요 사항으로 위 roadmap.md에 명시.
+
+### 프로세스 정리
+- 스크래치 스크립트 전부 `QTest`로 위젯 이벤트만 발생시키고 `app.exec()` 이벤트 루프를
+  돌리지 않아 스크립트 자체가 정상 종료됨. 백그라운드(`&`)로 띄운 디버그 스크립트 1건이
+  모달 `exec()` 오배선(위 "주의" 참고)으로 응답 없이 멈춰 `pkill`로 정리 — `tasklist` 확인
+  결과 이 워크트리 관련 잔여 프로세스는 이전부터 떠 있던 `PID 16488`("Segmentation Model
+  UI — nok" 창, 시작 시각이 이번 세션보다 이르고 이번 세션이 띄운 것이 아님, R-A/R-B 검증
+  로그에도 동일 PID로 기록됨) 하나뿐 — 이번 세션이 새로 만든 좀비 프로세스 0건, 건드리지
+  않음. 스크래치 체크포인트 파일(`docs/agents/_scratch_verify_ckpt.pt`)은 검증 종료 후 삭제.
+  `git status --short` 결과 이 문서/QA.md/roadmap.md 갱신 외 워크트리 무변경 확인.
+
+### 판정
+**조건부 통과 — 골든패스 자체(레이아웃 조립, 좌측 패널 통합, 회귀 없음)는 전부 정상
+동작하나, 이번 라운드가 새로 만든 코드에서 실제 조작으로만 드러나는 결함 2건(`BUG-020`
+스플리터 붕괴, `BUG-021` 창 강제 확대)을 발견했다.** 둘 다 앱을 크래시시키거나 데이터를
+손상시키지 않고(P2), 사용자가 수동으로 우회 가능(스플리터는 다시 드래그해 복구, 창 크기는
+더 넓게 유지됨일 뿐 기능 자체는 정상 동작)하므로 R-C 3a 자체를 "블로커"로 판단하지는
+않았으나, 3b(배치 컨트롤이 좌측 패널 하단에 추가될 예정) 착수 전에 `BUG-020`을 먼저 고쳐두는
+것을 권장한다(좌측 패널이 붕괴된 채로 배치 컨트롤까지 추가되면 발견성이 더 나빠짐).
+- 리더에게: **R-C 3a 검증 완료(조건부 통과, BUG-020/021 신규 등록). 3b/3c 착수 전 BUG-020
+  수정 여부 판단 필요 — P2라 반드시 선행 조건은 아니지만 좌측 패널이 3b의 핵심 작업 대상이라
+  먼저 고치는 편이 재작업이 적음.**
+- `QA.md`에 `BUG-020`/`BUG-021` 신규 등록(둘 다 Open, P2). `docs/roadmap.md`의 R-C 레이아웃
+  뼈대+3a 체크박스를 "구현 완료, 실제 GUI 조작 검증 대기"에서 "구현+검증 완료(조건부 통과)"로
+  갱신.
