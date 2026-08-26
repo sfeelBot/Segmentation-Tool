@@ -4049,3 +4049,122 @@ no-op, `QFileDialog.get*`는 고정 경로 반환으로 몽키패치. 나머지 
   가능 — 스펙상 원편집+블랍삭제+브러시지우기 3종을 하나의 undo 스택으로 묶는 게 핵심이라
   각 mutator의 push 위치(특히 "빈 곳 클릭 취소 시 no-op 엔트리 pop" 처리)를 정밀하게
   확인해야 할 것.**
+
+---
+
+## 2026-08-27 — 존 분석 탭 R3-4(통합 Undo 스택) 검증
+
+`docs/specs/zone-analysis-tab-features-round3-2026-08-27.md` R3-4(판단 1), 구현 커밋
+`0d74f4e`(feat)+`bc48517`(docs). 브랜치 `feature/zone-analysis-tab`, 워크트리
+`D:\segmentation model-zone-analysis-tab`. 리더 지시대로 캔버스 인터랙션이 복잡해
+**실제 UI 조작(QTest 실 마우스/키보드 이벤트)로 독립 재현** — 구현자 자체 확인을 그대로
+신뢰하지 않음.
+
+### 정적 검토
+- `app/widgets/zone_canvas.py`: `_undo_stack: list[dict]` 통합 스택, 스냅샷 3필드(원
+  튜플/`removed_blob_ids` set 사본/`erase_strokes` 리스트 사본)만 저장 — 마스크 배열은
+  스택에 안 들어감(BUG-014류 재발 방지, 스펙 그대로). `_push_undo()` 호출 위치가 스펙과
+  정확히 일치: `set_circles()`/`remove_selected()`/`_handle_blob_click()`(조기 return 이후)/
+  `mousePressEvent`의 원편집 분기(생성·이동·반지름조절 공통 진입점, 분기 전에 무조건
+  1회)/브러시지우기 분기(스트로크 시작). `mouseReleaseEvent`의 "짧은 드래그=생성취소"
+  분기에서 `if self._undo_stack: self._undo_stack.pop()`으로 투기적 push를 되무르는 코드
+  확인. `keyPressEvent` 최상단에 `QKeySequence.StandardKey.Undo` 체크(모드 무관 최우선) —
+  `_mode != "circle"`이어도 Ctrl+Z가 먼저 잡힘. `undo()`가 기존 `circles_changed`를
+  재사용해 emit → `_refresh_circle_list()`/`_recompute_zones()`의 getter 기반 복원 경로에
+  올라타 BUG-018/019류 재발 방지 패턴이 신규 배선 없이 적용됨. `set_blob_data()`에
+  `self._undo_stack = []` 추가 확인(클래스 전환 시 정합성 문제 대응).
+- `app/tabs/zone_analysis_tab.py`: `_btn_undo` 추가, `circles_changed`/`blob_deleted`/
+  `erase_changed` 3개 시그널 + `set_blob_data()` 호출 3개 지점(신규 이미지 선택/타겟없음/
+  타겟 재선택 성공) 전부에 `_update_undo_button_state()` 배선 확인 — 스펙이 지적한
+  "이 3개 지점은 위 시그널이 자동 발생하지 않아 누락하기 쉬움" 경고 그대로 반영돼 있음.
+
+### 실행 확인 (`py_compile`)
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe -m py_compile app/widgets/zone_canvas.py
+  app/tabs/zone_analysis_tab.py app/core/zone_metrics.py
+  app/widgets/circle_detect_preview_dialog.py app/widgets/zone_batch_result_dialog.py
+  app/main_window.py` 전부 통과.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QT_QPA_PLATFORM=offscreen`, `QTest.mousePress/
+mouseMove/mouseRelease/keyClick` 실제 이벤트 — 저장소에 포함 안 함, 세션 종료 후 스크래치
+파일 삭제)
+
+`C:\Users\Feel\anaconda3\python.exe` 사용(기존 관례). `load_checkpoint_meta`/
+`load_model_from_ckpt`/`engine.run`/`engine.refilter`만 몽키패치(결정론적 합성 240x240
+이미지 — 왼쪽 절반 class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`
+no-op/고정경로. 나머지(`ZoneCanvas` 전체, `ZoneAnalysisTab` 슬롯, `zone_metrics`,
+`export_zone_percentages_to_excel`, `CircleDetectPreviewDialog`, `MainWindow`)는 프로덕션
+코드 그대로. 체크포인트 열기→이미지 열기→▶ 추론 실행→타겟 클래스 선택까지 전부 실클릭.
+
+1. **원 편집 undo(항목1)**: 실제 `mousePress→mouseMove→mouseRelease` 드래그로 원 생성 →
+   `can_undo()==True`, undo 버튼 활성화 → `Ctrl+Z` 키 입력 → 원 0개로 정확히 사라짐, 버튼
+   재비활성화 확인. 재생성 후 원 중심을 실제 드래그로 이동 → 좌표 변경 확인 → Ctrl+Z →
+   이동 전 좌표로 **부동소수점 오차 없이(<1e-6)** 정확히 복원. 이어서 테두리를 실제
+   드래그로 반지름 조절 → 변화 확인 → Ctrl+Z → 반지름 정확히 원복.
+2. **블랍 삭제 undo(항목2, 독립 오라클 대조)**: 큰 원 1개(전체를 덮는 중심부 존)로 재설정
+   후 블랍 삭제 모드 실제 클릭으로 블랍 1개 삭제 → `removed_blob_ids` 증가·
+   `_compute_zone_percentages()` 값 변화(감소) 확인 → Ctrl+Z → `removed_blob_ids` 삭제
+   전 집합과 **완전히 동일 복원**, 존 퍼센티지도 삭제 전 값과 **정확히 일치**(별도로
+   저장해둔 오라클 값과 대조).
+3. **브러시 지우기 undo(항목3, 픽셀 단위 오라클 대조)**: 브러시 지우기 모드에서 실제
+   드래그(press+move×2+release) 1스트로크 실행 → `erase_mask()`에 True 픽셀 생김 확인 →
+   Ctrl+Z → `erase_mask()`가 스트로크 이전 상태(`None`, 지운 적 없음)로 **완전히 복원**
+   (스트로크가 1개뿐이라 재생 결과가 빈 마스크가 되는 경우까지 포함해 픽셀 단위 확인).
+4. **섞인 순서 undo(LIFO, 항목4)**: 원 생성 → 블랍 삭제(항목2와 겹치지 않는 별도 좌표) →
+   브러시 지우기(별도 좌표) 순으로 실제 조작 후 Ctrl+Z 3회 연속 — **정확히 역순**으로
+   되돌아감 확인: 1회차(브러시 지우기만 복원, 원/블랍 상태 불변) → 2회차(블랍삭제만 복원,
+   원 상태 불변) → 3회차(원 생성만 취소, 원 개수 정확히 감소). 매 단계에서 다른 두 상태가
+   전혀 영향받지 않음을 확인.
+5. **"빈 곳 클릭 생성취소" no-op 미적재(항목5)**: 깨끗한 스택 상태에서 원 1개를 진짜
+   액션으로 생성 → 빈 곳을 드래그 없이 짧게 클릭(press+release, 위치 이동 없음) → 원 개수
+   불변(생성취소됨) **및 undo 스택 크기도 클릭 전후 완전히 동일**(no-op 엔트리 미적재
+   확인) → 그 상태에서 Ctrl+Z 실행 → 그 취소된 클릭이 아니라 **그 이전의 진짜 마지막
+   액션(원 생성)이 정확히 되돌아감**(원 0개) — 스펙이 우려한 "취소된 시도가 undo 스택에
+   쌓여 엉뚱한 걸 되돌리는" 회귀 없음. (첫 시도에서 스택에 이전 라운드 잔여 엔트리가 남아
+   있어 검증 스크립트 자체의 시나리오 설계 오류로 오탐이 났었음 — 스택을 완전히 비운
+   깨끗한 상태에서 재시도해 앱 버그가 아님을 확인, 아래 "스크립트 설계 실수" 참고.)
+6. **Undo 버튼 활성화 상태(항목6)**: 스택이 비어있을 때 버튼 비활성화(초기·undo 스택
+   완전 소진 후 둘 다) → 액션 실행 시 활성화 → 버튼 클릭으로도 `canvas.undo()`와 동일하게
+   동작(원 복원) 확인.
+7. **`set_blob_data()` 스택 초기화(항목7)**: 원 생성 후 `can_undo()==True` 확인 → 타겟
+   클래스 콤보를 실제 `setCurrentIndex()`로 전환 → `can_undo()==False`로 즉시 리셋, undo
+   버튼도 비활성화 → 리셋 이후 `undo()`를 호출해도 원 상태가 전혀 바뀌지 않음(no-op)
+   확인 — 리셋 이전 상태로 되돌아갈 방법이 없음을 실증.
+8. **BUG-018~022 패턴 재발 여부(항목8)**: 항목2~4 전체에 걸쳐 undo 실행 전후 선택/하이라이트
+   상태가 `undo()`가 `_selected_id = None`으로 명시 리셋하는 것 외에 예상치 못하게
+   깨지는 사례 없음(기존 `circles_changed` 재사용 경로의 getter 기반 복원이 그대로
+   작동함을 실증).
+9. **Ctrl+Z와 버튼 동일 동작(항목9)**: 원 삭제 후 Ctrl+Z 대신 "실행 취소" 버튼을 실제
+   `QTest.mouseClick`으로 클릭 → 동일하게 원이 복원됨 확인.
+10. **오프라인 팝업 부가 확인**: `CircleDetectPreviewDialog`에 이미지를 직접 로드한 뒤
+    실제 드래그로 원 생성 → 팝업 캔버스에서도 Ctrl+Z로 정상 undo됨 확인(스펙이 명시한
+    "부가 혜택", 회귀 아님).
+11. **회귀**: R3-1(단일 이미지 Excel 내보내기) 버튼이 여전히 xlsx를 정상 생성함을 재확인,
+    `MainWindow` 5탭 전체(존 분석 탭 포함) 생성 시 크래시 없음. R1~R4/R-A~R-C/R3-1~R3-3은
+    이전 세션에서 이미 검증 통과 상태라 이번 라운드는 R3-4 신규 부분 + 핵심 회귀 확인으로
+    범위를 좁힘(리더 지시와 동일 원칙).
+12. **크래시 없음**: 전체 시나리오 진행 중 예외/트레이스백 0건. `py_compile` 전체 통과.
+
+총 47개 assertion 전부 PASS(0 FAIL). 검증 스크립트 자체의 시나리오 설계 실수 1건 발견(앱
+버그 아님): 항목5(no-op 미적재)를 검증하며 이전 항목들에서 undo/redo를 반복한 뒤라
+스택에 "circle2 생성" 잔여 엔트리가 남아있었는데, 이를 고려하지 않고 "Ctrl+Z 이후
+반지름이 되돌아갈 것"이라 잘못 기대해 첫 시도에서 `IndexError`가 났음 — 스택을
+`while can_undo(): undo()`로 완전히 비운 뒤 "원 생성 1개"를 깨끗한 "진짜 마지막 액션"으로
+새로 만들어 재시도해 의도한 시나리오(no-op 다음 Ctrl+Z가 그 이전 진짜 액션을 정확히
+되돌리는지)를 올바르게 재현·통과시켰다(annotation_canvas 계열 검증에서도 반복돼 온
+"스택 상태를 정확히 추적하지 못한 스크립트 실수" 패턴과 동일 원인).
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지·체크포인트·xlsx는 세션 스크래치 디렉토리에만 생성 후
+  검증 종료 시 삭제, 저장소에는 포함하지 않음.
+- 프로세스 종료 코드가 127로 관찰됐으나(`sys.exit(0)` 직전까지 전 assertion PASS 출력,
+  stderr 빈 상태) 이는 R1~R6/UI라운드1 등 기존 검증 로그에서 반복 관찰된 "비대화형
+  offscreen 환경에서 이벤트 루프 없이 조기 종료할 때 생기는 종료 코드 이상" 패턴과 동일 —
+  실제 실패가 아님. `tasklist`로 잔존 `python.exe`/`pythonw.exe` 프로세스 0건 확인.
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션의 `docs/roadmap.md`,
+  `QA.md`, `docs/agents/verification-log.md` 갱신 제외).
+
+### 판정
+**통과 — R3-4(통합 Undo 스택) 구현+독립검증 완료.** 신규 버그 발견 없음(`QA.md` 갱신
+없음). `docs/roadmap.md`의 R3-4 항목을 "구현 완료, 검증 대기"에서 "구현+독립검증 통과"로
+갱신. R3-5(오프라인 팝업→메인 탭 라운드트립)는 R3-4의 `set_circles()` undo 배선을 그대로
+공짜로 활용할 수 있는 상태 — 다음 라운드 착수 가능.
