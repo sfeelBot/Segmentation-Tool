@@ -106,7 +106,7 @@ class InferenceImageList(QWidget):
         self._search_debounce.setSingleShot(True)
         self._search_debounce.setInterval(_SEARCH_DEBOUNCE_MS)
         self._search_debounce.timeout.connect(self._apply_display)
-        self._multi_select = False               # BUG-022: 다중선택 중엔 currentItemChanged 무시
+        self._multi_select = False               # BUG-022: 다중선택 모드에선 emit을 itemSelectionChanged로 이관
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -150,6 +150,7 @@ class InferenceImageList(QWidget):
         self._tree.setStyleSheet(_TREE_STYLE)
         self._tree.currentItemChanged.connect(self._on_current_item_changed)
         self._tree.itemSelectionChanged.connect(self.selection_changed.emit)
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed_multi)
         layout.addWidget(self._tree, stretch=1)
 
     # ── 공개 API ──────────────────────────────────────────────────────────────
@@ -265,12 +266,32 @@ class InferenceImageList(QWidget):
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 
     def _on_current_item_changed(self, current: QTreeWidgetItem | None, _previous) -> None:
-        # BUG-022: 다중선택 모드에서 Ctrl/Shift 클릭도 currentItem을 바꿔 이 시그널을
-        # 발화시킨다. 선택 개수가 정확히 1개일 때만 "새 기준 이미지 지정"으로 간주한다
-        # — SingleSelection(기본값, 다른 탭)은 선택 개수가 항상 1이라 영향 없음(애디티브).
-        if self._multi_select and len(self._tree.selectedItems()) != 1:
+        # BUG-022 (2차): Qt는 마우스 클릭 시 실제 선택 커맨드(Ctrl 토글/Shift 범위)가
+        # selectionModel 에 적용되기 *전에* currentItemChanged 를 먼저 동기 발화한다
+        # (검증 에이전트가 QTest.mouseClick 으로 실측: currentItemChanged 시점엔
+        # selectedItems() 가 아직 "클릭 전" 개수를 보여줌). 그래서 1차 수정처럼 이 핸들러
+        # 안에서 selectedItems() 개수로 가드해도 항상 "정상 단일 선택"으로 오판한다.
+        # 다중선택 모드에서는 이 경로 자체를 emit 에서 완전히 제외하고,
+        # 선택 커맨드가 실제로 적용된 뒤 발화되는 itemSelectionChanged 기반
+        # _on_selection_changed_multi() 로 emit 책임을 전부 이관한다(중복 emit 방지).
+        # SingleSelection(기본값, 다른 탭)은 self._multi_select 가 False 라 완전히 무영향.
+        if self._multi_select:
             return
         path = self._get_item_path(current)
+        if path is not None:
+            self.image_selected.emit(path)
+
+    def _on_selection_changed_multi(self) -> None:
+        """다중선택 모드 전용 emit 경로 — itemSelectionChanged 는 선택 커맨드가
+        selectionModel 에 실제로 적용된 *후* 발화되므로 이 시점의 selectedItems() 개수는
+        정확하다(BUG-022 2차 수정). 정확히 1개로 좁혀졌을 때만 "기준 이미지 전환"으로
+        간주해 emit — 0개(전체 해제)나 2개 이상(다중 선택 중)은 emit하지 않는다."""
+        if not self._multi_select:
+            return
+        selected = self._tree.selectedItems()
+        if len(selected) != 1:
+            return
+        path = self._get_item_path(selected[0])
         if path is not None:
             self.image_selected.emit(path)
 

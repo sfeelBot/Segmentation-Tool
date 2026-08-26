@@ -3388,3 +3388,77 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - `QA.md` BUG-022 상태를 "Open" → "수정함, 검증 필요"로 갱신(Closed로 옮기지
   않음 — 관례대로 검증 에이전트가 재현 안 됨을 확인한 뒤 이동).
 - 커밋: `9b28987`(수정), `86f66ac`(QA.md 커밋 해시 기록).
+
+---
+
+## 2026-08-26 — BUG-022 2차 수정: currentItemChanged → itemSelectionChanged 로 다중선택 emit 경로 이관
+
+### 배경 — 1차 수정(`9b28987`)이 왜 실패했는지
+검증 에이전트가 `QTest.mouseClick`(실제 마우스 클릭 + Ctrl/Shift 모디파이어)으로
+재검증한 결과 원 증상이 그대로 재현됨(`0b7d672`). 1차 수정은
+`_on_current_item_changed()`(`currentItemChanged` 시그널) 안에
+`len(selectedItems()) != 1` 가드를 추가했지만, `QAbstractItemView`는 마우스 클릭
+처리 중 (1) `setCurrentIndex()` → `currentItemChanged` 동기 발화 → (2) 선택 커맨드
+(Ctrl 토글/Shift 범위)를 `selectionModel`에 적용, 순서로 동작한다. 즉
+`currentItemChanged` 핸들러가 실행되는 시점엔 방금 클릭한 항목이 아직
+`selectedItems()`에 반영되지 않아 "이전" 선택 개수(주로 1)가 관측되고, 가드가
+"정상 단일 선택"으로 오판해 그대로 `image_selected`를 emit해버린다. 검증
+에이전트가 소스에 임시 print를 넣어 실제 순서를 확인:
+`currentItemChanged`(오래된 개수, 잘못된 emit) → (Qt 내부 선택 커맨드 적용) →
+`itemSelectionChanged`(정확한 개수, 뒤늦게 발화).
+
+### 이번 수정 — 무엇을 다르게 했는지
+`app/widgets/inference_image_list.py`:
+- `_on_current_item_changed()`: 다중선택 모드(`self._multi_select == True`)일 때는
+  **가드 없이 무조건 early return** — 이 경로가 다중선택 모드에서 emit을 아예
+  담당하지 않도록 역할을 완전히 분리(1차 수정의 카운트 가드 잔재 제거).
+  `SingleSelection`(기본값, `inference_tab.py`)은 `self._multi_select`가 항상
+  `False`라 전혀 영향 없음 — 코드 자체를 건드리지 않음.
+- 신규 슬롯 `_on_selection_changed_multi()` 추가, 생성자에서
+  `self._tree.itemSelectionChanged.connect(self._on_selection_changed_multi)`로
+  상시 연결(다중선택 여부는 슬롯 내부에서 체크). `itemSelectionChanged`는 선택
+  커맨드가 `selectionModel`에 실제로 적용된 *후* 발화되므로 이 시점의
+  `selectedItems()` 개수는 정확함(검증 에이전트가 실측 확인한 사실) — 정확히
+  1개일 때만 `image_selected.emit(path)`, 0개/2개 이상은 emit 안 함.
+- 두 경로(`currentItemChanged`/`itemSelectionChanged`)가 동시에 emit해 중복
+  로드가 생기는 걸 막기 위해 다중선택 모드에서는 emit 책임을 `itemSelectionChanged`
+  경로 하나로 완전히 통합(1차 수정처럼 두 경로가 겹치지 않음).
+
+### 직접 검증 — 실제 QTest.mouseClick + 모디파이어 (지시대로 구현 단계에서 직접 확인)
+`QT_QPA_PLATFORM=offscreen`, `C:\Users\Feel\anaconda3\python.exe`로 스크래치 스크립트
+실행(`QTest.mouseClick(viewport, LeftButton, ControlModifier/ShiftModifier, pos)` —
+메서드 직접 호출이나 `selectedItems()` 사전 세팅 없이 실제 뷰포트 좌표에 마우스
+이벤트를 주입):
+1. `InferenceImageList` + `set_multi_select(True)`, 이미지 4장 로드(첫 장 자동
+   선택, 기존 동작).
+2. 이미지2(index1) 실제 단일 클릭(모디파이어 없음) → 기준 전환 emit 확인
+   (`img_02.png`).
+3. 이미지3(index2) 실제 **Ctrl+클릭** → `selectedItems()`가 정확히 2개로 바뀌지만
+   `image_selected`는 emit 안 됨(BUG-022 원 증상이 여기서 재현됐었음 — 이제
+   재현 안 됨 확인).
+4. 이미지4(index3) 실제 **Ctrl+클릭** → 3개로 확장, 여전히 emit 없음 확인.
+5. 이미지1(index0) 실제 단일 클릭(모디파이어 없음) → 1개로 좁혀지며 emit 1회
+   (`img_01.png`, 중복 없음) 확인.
+6. 이미지1 재선택 후 이미지3 **Shift+클릭**(범위선택, 0/1/2 3개) → emit 없음 확인.
+7. `SingleSelection`(기본값, `inference_tab.py` 방식) 별도 위젯으로 회귀 없음
+   확인 — index1 실제 클릭 시 정상적으로 emit 1회(`img_02.png`).
+
+7개 시나리오 모두 통과(`assert` 전부 통과, 스크립트 종료 코드 0). 스크립트는
+세션 스크래치 디렉토리에 작성했고 저장소에는 포함하지 않음(1회성 검증 도구,
+ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt 스위트로 승격).
+
+`python -m py_compile app/widgets/inference_image_list.py` 통과.
+
+### 미완료 / 검증 에이전트에게
+- 이번엔 구현 단계에서 직접 `QTest.mouseClick` + 실제 모디파이어로 확인했지만,
+  `python main.py` 실제 GUI(존 분석 탭)에서의 골든 패스 재확인은 여전히 검증
+  에이전트 몫 — 이미지1 클릭(원 그리기) → 이미지2 Ctrl+클릭(배치 대상 추가) 시
+  캔버스 원 유지 + 배치 버튼 활성화 유지되는지, `inference_tab.py` 골든패스
+  회귀 없는지.
+- **이 라운드도 "완료"로 보고하지 않음** — 검증 에이전트의 실제 GUI 확인 후
+  `QA.md` BUG-022를 Closed로 옮기는 것은 검증 에이전트 몫.
+
+### 관련 문서
+- `QA.md` BUG-022 상태를 "Open — 1차 수정 재현 확인, 수정 실패"에서
+  "수정함(2차), 검증 필요"로 갱신(Closed로 옮기지 않음).
+- 커밋: (다음 커밋에서 해시 기록 예정)
