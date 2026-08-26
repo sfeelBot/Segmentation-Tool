@@ -3130,3 +3130,94 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - R1~R4, R-A 골든패스 회귀 없음(체크포인트 로드+추론, 자동검출, 존 리스트, 블랍삭제,
   오프라인 팝업) — 이번 변경은 `circle_row`에 컨트롤 2개 삽입 + 마스크 소스 교체뿐이라
   회귀 범위가 좁지만 실제 조작으로 확인 권장.
+
+---
+
+## 2026-08-26 — 존 분석 탭 R-C: 좌·중·우 3분할 레이아웃 뼈대 + 좌측 이미지 목록 패널 조립 (3a)
+
+세션 한도 초기화 후 재시작된 라운드 — 이전 지시(레이아웃 뼈대 3분할 + C-1/3a)를 처음부터
+그대로 재수행. 워크트리 `D:\segmentation model-zone-analysis-tab`, 브랜치
+`feature/zone-analysis-tab`. 스펙: [zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"승인된 UI 레이아웃"/"판단 C > C-1"/"라운드 분할 제안" R1·3a 절.
+
+### 변경
+- `app/tabs/zone_analysis_tab.py`
+  - 기존 `file_row`/`ckpt_row`/`run_row`/`target_row`/`circle_row` 5개 산발적 행을
+    상단 툴바(`toolbar`) 한 줄로 통합: 체크포인트 상태+열기 → ▶ 추론 실행 → 타겟클래스
+    → AI신뢰도 슬라이더+값 → 픽셀크기 스핀박스 → 민감도 슬라이더+값(자동검출의 파라미터라
+    바로 옆 배치) → 자동 검출 → 블랍 삭제 모드 토글 → (stretch) → 오프라인 원 검출 테스트
+    버튼. 이번 세션엔 Artifact 도구가 제공되지 않아 스펙 문서 "승인된 UI 레이아웃" 절
+    서술을 그대로 따랐음(코디네이터 지시의 폴백 경로) — 툴바 목록에 명시되지 않았던
+    "민감도" 슬라이더는 "자동 검출" 버튼의 필수 파라미터라 제거 시 기존 R2 기능이
+    깨지므로 그대로 유지(회귀 방지 우선).
+  - `_lbl_model_info`/`_lbl_target_info`는 툴바 아래 별도 줄로 유지(기존 `_lbl_model_info`
+    패턴과 동일하게), 커스텀 모델 코드 박스(`_code_box`)는 툴바 바로 아래 조건부 표시
+    위치로 이동(로직 변경 없음).
+  - `QSplitter(canvas|side)` 2분할 → 좌(이미지 목록 패널)·중(`ZoneCanvas`)·우(원/존 목록)
+    3-way로 확장. `setStretchFactor`로 중앙만 flex-grow, 좌/우는 `setMinimumWidth`/
+    `setMaximumWidth`로 고정폭 범위 제한.
+  - 좌측 패널: "이미지 열기…"(다중 선택, `QFileDialog.getOpenFileNames()`로 변경 —
+    기존 단일 선택에서 확장) + "폴더 열기…"(신설, `getExistingDirectory()` →
+    `InferenceImageList.load_folder()`) + 현재 경로 `QLabel`(위젯 밖에서 직접 관리) +
+    `InferenceImageList` 인스턴스(`set_multi_select(True)` 호출로 다중선택 배선만 해둠,
+    배치 버튼 자체는 3b 범위) — `count() > 1`일 때만 목록 표시.
+  - `image_selected` 시그널 → `_on_list_image_selected()`(기존 `_on_select_image()`의
+    본문을 그대로 재사용 — 캔버스 초기화, 자동검출/블랍삭제 버튼 비활성화, 자동 추론 실행
+    없음).
+- `app/widgets/inference_image_list.py` — 애디티브 API 2건 추가(기존 `inference_tab.py`
+  호출부는 새 API를 호출하지 않아 회귀 없음, R1의 `classes` 옵션 인자 추가와 동일한 안전
+  패턴):
+  1. `set_item_status(path, status, badge=None)` / `clear_status()` — `image_browser.py`의
+     상태아이콘 관례(SVG `status_dot`/`status_ring`)를 재사용해 3단계(`pending`/
+     `processing`/`done`)로 확장(`status_ring`/`status_dot`/`status_done`), 완료 시
+     배지 텍스트를 파일명 옆에 붙임. `_status: dict[Path, tuple[str, str|None]]`에
+     저장해두고 `_apply_display()`(검색/정렬/재로드로 트리 재구성될 때마다) 끝에서
+     재적용 — 상태가 재구성 후에도 유지됨.
+  2. `set_multi_select(enabled)`(기본 SingleSelection 유지, 켜면 ExtendedSelection) /
+     `selected_paths()`(다중 선택 시 선택된 경로, 없으면 `paths()`=전체 반환).
+     **구현 중 발견한 설계 이슈(ponytail 주석으로 명시)**: Qt는 `_apply_display()`의
+     `setCurrentItem()` 호출 시 currentItem을 selectionModel에도 자동 포함시켜, "선택
+     1개"와 "아직 아무것도 안 골랐음"을 구별할 수 없다 — `selected_paths()`를
+     "선택 개수 ≤ 1이면 전체 반환"으로 정의해 우회(별도 "explicit selection" 상태
+     플래그 없이 해결, 배치 처리는 통상 여러 장을 고르는 용도라 실사용 영향 적음).
+- `docs/roadmap.md` — R-C 항목을 레이아웃 뼈대+3a(완료, 검증 대기)와 3b/3c(대기)로 분리.
+
+### 검증 (구현 단계, 실행 검증 아님)
+- `py -3 -m py_compile app/tabs/zone_analysis_tab.py app/widgets/inference_image_list.py
+  app/tabs/inference_tab.py` 전부 통과.
+- 1회성 스크래치 스크립트(오프스크린 QApplication, 커밋 대상 아님)로 자체 점검:
+  - `InferenceImageList`: `load_files()` 후 `count()==3`, 기본 `SingleSelection` 유지,
+    `set_multi_select(True)` 후 `ExtendedSelection` 전환, 빈 선택 시 `selected_paths()
+    == paths()`(전체), `set_item_status()`로 붙인 배지 텍스트가 아이템에 정확히
+    반영되고 `clear_status()`로 원상복구, 정렬 변경(`_apply_display()` 재호출)에도
+    상태가 유지됨 — 전부 assert 통과.
+  - `ZoneAnalysisTab()` 인스턴스 생성 성공, 초기 상태 `_img_list.isHidden()==True`
+    (count 0), `_on_list_image_selected()` 호출 시 `_image_path`가 정확히 갱신됨 — 통과.
+  - `InferenceTab()` 인스턴스 생성 후 `_img_list`의 `SelectionMode`가 여전히
+    `SingleSelection`임을 재확인(공유 위젯 애디티브 변경의 회귀 없음 정적 확인).
+- **지시에 따라 `python main.py` 실제 GUI 구동/조작 검증은 수행하지 않음** — 검증
+  에이전트 몫으로 남김. 리더가 이번 라운드를 "주요 기능 추가"(레이아웃 변경)로 판단해
+  실제 UI 조작 골든패스 검증을 명시적으로 요청할 예정.
+
+### 확인 필요 (검증 서브에이전트에게)
+- `python main.py` 실제 GUI: 존 분석 탭 3-way 스플리터 렌더링(좌/중/우 리사이즈 정상,
+  핸들 드래그로 폭 조절 가능), 상단 툴바 가로 스크롤/줄바꿈 없이 표시되는지(위젯이 많아
+  좁은 창에서 잘릴 수 있음 — 창 크기별 확인 권장).
+- 좌측 패널: "이미지 열기…"로 여러 장 선택 시 목록에 표시되고 첫 장이 자동으로 캔버스에
+  로드되는지(추론은 자동 실행 안 됨 확인), "폴더 열기…"로 하위 폴더 포함 재귀 스캔되는지,
+  목록이 2장 이상일 때만 보이고 1장/0장이면 숨겨지는지, 검색/정렬 정상 동작.
+- 다른 이미지 클릭 시 캔버스가 초기화되고(원/블랍 데이터 클리어) 자동 검출/블랍삭제
+  버튼이 비활성화되는지(추론 전 상태), 추론 실행 버튼을 눌러야 실제 추론이 도는지
+  (BUG-018/019류 "의도치 않은 자동 재계산" 재발 없는지 핵심 확인 포인트).
+- R1~R4, R-A, R-B 골든패스 회귀 없음(체크포인트 로드+추론, 타겟클래스, AI신뢰도/픽셀크기
+  threshold, 자동검출+민감도, 원 수동편집, 존 리스트, 블랍삭제모드, 오프라인 팝업) —
+  이번 변경은 컨테이너 레이아웃 재배치 위주라 로직 회귀 범위는 좁지만, 위젯 위치가 전부
+  바뀌어 시그널 연결 누락 가능성이 있으므로 전체 골든패스 실제 조작 재확인 필요.
+- `inference_tab.py` 골든패스(폴더 열기/검색/정렬/이전·다음 탐색) — 공유 위젯
+  (`InferenceImageList`) 애디티브 변경이 실제로 무해한지 실행 확인.
+- **완료 후에도 이 라운드는 "완료"로 보고하지 않음** — 검증 에이전트의 실제 GUI 확인이
+  끝나야 R-C 3a가 완결된다.
+
+### 관련 문서
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절 R-C 항목을 레이아웃 뼈대+3a(완료, 검증 대기)와
+  3b/3c(대기)로 분리 갱신.
