@@ -506,8 +506,8 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       `_recompute_zones()`가 재구성 전 하이라이트를 저장, `blockSignals`로 감싼 재구성 후
       복원하도록 수정(BUG-018 수정과 동일 패턴). `QA.md` BUG-019 Closed로 등록. 라운드1·2
       회귀 없음(탭 5개, preset 체크포인트 자동 인스턴스화, 원 생성/조절 정상).
-- [x] R4 (블랍 클릭 삭제 + 재계산) — **구현 완료, 독립검증 대기**(커밋은
-      `docs/agents/implementation-log.md` 참고). `zone_metrics.compute_blob_labels()`
+- [x] R4 (블랍 클릭 삭제 + 재계산, 스펙 마지막 라운드) — 구현+독립검증 통과,
+      커밋 `80405fd`(feat)+`b288e82`(docs). `zone_metrics.compute_blob_labels()`
       신설 — `cv2.connectedComponentsWithStats(connectivity=8)`를 그대로 노출하는
       작은 헬퍼(`inference_engine._compute_blobs_and_filter()`의 confidence/size
       threshold 필터링은 가져오지 않음 — YAGNI). `ZoneCanvas`에 "블랍 삭제 모드"
@@ -523,9 +523,32 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       `selected_id()`/`highlighted_zone()`과 동일하게 캔버스를 상태 단일
       출처로 두고, 오버레이 재도색에 `set_pixmap()`(내부적으로 뷰 강제
       리셋)을 쓰지 않고 캔버스 자체 `paintEvent`에 바운딩박스만 덧그리는
-      방식을 택해 줌/팬 상태 리셋 위험 자체를 원천 차단. 이 라운드가 스펙의
-      마지막 라운드 — 실제 GUI 구동 검증(검증 에이전트)이 통과해야 라운드
-      1~4 전체가 최종 완료로 확정된다.
+      방식을 택해 줌/팬 상태 리셋 위험 자체를 원천 차단.
+      **검증 완료(2026-08-26, 별도 워크트리 `D:\segmentation model-zone-analysis-tab`)** —
+      `python main.py`와 동일 임포트 순서로 `MainWindow` 실구동, `engine.run`/
+      `refilter`를 서로 떨어진 블랍 3개(A/B/C, 손계산 가능한 합성 `raw_class_map`)로
+      몽키패치해 `QTest` 실제 마우스 클릭/드래그로 골든패스 확인(총 48개 assertion,
+      전부 통과): 블랍 삭제 모드 토글 ON/OFF, 배경(0) 클릭 시 무동작, 블랍 A 클릭 시
+      A만 삭제, 같은 블랍 재클릭 시 무동작(idempotent), 블랍 B 추가 삭제 시 A+B
+      누적 반영. 삭제 전/A만 삭제 후/A+B 삭제 후 3개 시점 모두 존 퍼센티지를
+      `zone_metrics`를 거치지 않는 독립 numpy 오라클과 대조해 소수점 4자리까지
+      완전 일치 확인. 줌(2.3배)·팬(11,-7) 상태를 블랍 삭제 조작 전에 강제 설정해두고
+      삭제 후에도 완전히 동일하게 유지됨을 확인(`set_pixmap()` 미호출 설계가 실제로
+      유효). 원 선택 상태(`selected_id`)·존 하이라이트(`highlighted_zone`)도 블랍
+      삭제 조작으로 리셋되지 않음을 확인 — **BUG-018/019 패턴 3번째 재발 없음**.
+      중클릭 팬이 블랍 삭제 모드 중에도 정상 동작함을 실측 확인(`super()` 라우팅
+      주장 검증됨). 블랍 삭제 모드 OFF 전환 후 원 드래그 이동이 다시 정상 동작함을
+      확인(회귀 없음). 타겟 클래스 재선택 시 삭제 이력 초기화+라벨맵 재계산도 확인.
+      부가 회귀(별도 스크립트): 자동 검출 버튼 무크래시, non-preset 체크포인트
+      코드박스 노출+Validate→Load 커스텀 모델 로드 정상. 라운드 1~3 전체 골든패스
+      재확인 결과 회귀 없음. 신규 버그 발견 없음(QA.md 신규 등록 없음). 상세:
+      [verification-log.md](agents/verification-log.md) 2026-08-26 라운드4 항목.
+
+**존(Zone) 분석 탭 — 스펙 전체(R1~R4) 완료.** 배터리 캡 녹 검사용 5번째 탭이
+프로젝트 시스템과 독립적으로 이미지/체크포인트 직접 로드 → 추론 → 동심원 자동
+검출/수동 편집 → 존별 녹 면적 비율 계산 → 오검출 블랍 클릭 삭제 + 재계산까지
+전 과정 실 GUI 골든패스로 검증 완료. main 병합 여부는 스펙 명시대로 별도 사용자
+확인 필요(이번 라운드 범위 아님).
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
