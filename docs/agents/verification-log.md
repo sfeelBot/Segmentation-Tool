@@ -3016,3 +3016,101 @@ main.py와 동일하게 `cv2`/`torch`를 `PyQt6.QtWidgets`보다 먼저 import�
    에서는 구버전 대비(가정) 3.5배 빠름 — 사용자가 체감한 "삭제 시 렉"의 주범이라는
    구현 에이전트의 추정과 합치.
 회귀 없음(폴리곤/이미지 전환/OK 토글 정상). push는 하지 않음 — 리더가 처리.
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 R-A 검증: 오프라인 원 검출 테스트 팝업 (커밋 `ea28b68`)
+
+기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"판단 A" 절. 구현 로그: [implementation-log.md](implementation-log.md) "2026-08-26 — R-A: 오프라인
+원 검출 테스트 팝업" 항목. 워크트리 `D:\segmentation model-zone-analysis-tab`
+(`feature/zone-analysis-tab` 브랜치, main과 완전 분리 운영). 레이아웃(디자인 목업 대조)은
+리더가 이미 확인 완료 — 이번 검증은 실제 동작(골든패스)에 집중.
+
+### 정적 검토
+- `git show ea28b68 --stat` — `app/tabs/zone_analysis_tab.py`(+15), `app/widgets/circle_detect_preview_dialog.py`
+  (신규, 170줄), 기획/로그/로드맵 문서만 변경. 스펙 R-A 범위와 일치.
+- `CircleDetectPreviewDialog`는 `app.core.project`/체크포인트/모델 관련 import가 전혀 없음을
+  확인(완전 독립). `ZoneAnalysisTab._on_open_offline_test()`가 `CircleDetectPreviewDialog(self)`를
+  **매 클릭마다 새로 생성**하고, 이 탭의 상태(`_image_path`/`_ckpt_path`/`_last_result` 등)를
+  생성자에 전혀 전달하지 않는 구조를 코드로 확인 — 구조적으로 상태 누수가 불가능함.
+- `ZoneCanvas`/`OverlayViewer`는 전부 인스턴스 속성만 사용(클래스 변수·전역 상태 없음)을
+  `__init__` 확인 — 팝업이 매번 새 `ZoneCanvas` 인스턴스를 만드므로 재오픈 시 stale 상태가
+  구조적으로 남을 수 없음.
+- `py_compile`로 `circle_detect_preview_dialog.py`/`zone_analysis_tab.py` 양쪽 문법 확인 통과
+  (`C:\Users\Feel\anaconda3\python.exe`).
+
+### 실제 GUI(QTest) 골든패스 검증
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, `numpy/cv2/PIL/torch/matplotlib`
+선행 임포트 후 PyQt6 임포트 순서(기존 검증 관례 준수). `QFileDialog.getOpenFileName`만
+몽키패치(헤드리스 환경 제약), `CircleDetectPreviewDialog.exec()`도 모달 블로킹 회피를 위해
+`show()`로 대체(dialog 자체 로직·시그널 배선은 원본 그대로, `findChildren()`으로 실제 생성된
+인스턴스를 잡아 조작). 스크래치 스크립트 2종(`verify_ra.py`, `verify_ra_drag.py`, 프로젝트에는
+추가 안 함), `projects/nok/images/7번.bmp`/`8번.bmp`(실제 배터리 캡 사진) 사용, 42개 + 5개
+assertion 전부 통과:
+
+1. **완전 독립성(핵심) — 초기 상태**: `ZoneAnalysisTab()`을 이미지/체크포인트 아무것도 로드
+   하지 않은 상태로 생성 → "오프라인 원 검출 테스트…" 버튼이 처음부터 `isEnabled()==True`
+   (별도 조건부 비활성화 없음) → 실제 `QTest.mouseClick`으로 클릭 → `CircleDetectPreviewDialog`
+   인스턴스가 정상 생성됨 → 팝업 안에서 이미지 열기(`7번.bmp`) → 자동 1차 검출 실행되어
+   `_lbl_stats`가 `"검출 개수: 2    소요시간: 26ms"`로 채워짐(초기값 `"검출 개수: -    소요시간: -"`
+   에서 실제 갱신 확인) → 캔버스에 원 2개 표시(`get_circles()` 길이 확인) → **이 모든 조작
+   후에도 메인 탭 `_image_path`/`_ckpt_path`가 여전히 `None`** — 팝업이 메인 탭 상태에
+   전혀 영향을 주지 않음을 실행으로 확인.
+2. **팝업 골든패스**: 민감도 슬라이더를 5%로 낮춘 뒤 "다시 검출" 클릭 → 검출 개수 2개(변화
+   없음, 유효한 결과), 95%로 올린 뒤 재검출 → 검출 개수 4개로 실제 변경됨 — 민감도 변경이
+   검출 결과에 실제로 반영됨을 확인. `set_circles`/`get_circles` API 왕복도 크래시 없이 정상.
+3. **원 수동 편집 — 실제 마우스 드래그(`verify_ra_drag.py`)**: `QTest.mousePress/mouseMove/
+   mouseRelease`로 화면 좌표 계산(`canvas._orig_to_screen()`) 후 실제 드래그 이벤트 발생:
+   - 중심 클릭 후 드래그 → 원 중심 좌표(cx, cy)가 실제로 이동함(PASS)
+   - 테두리 클릭 후 바깥으로 드래그 → 반지름(r)이 실제로 변경됨(PASS)
+   - 원 클릭 선택 후 `QTest.keyClick(Delete)` → 원 개수 1개 감소(2→1, PASS)
+   전부 크래시 없이 정상 동작(스펙이 요구한 "부가 기능이지만 크래시 없는지" 확인 완료).
+4. **닫기 동작**: 하단 "닫기" 버튼 클릭 → `dialog.isVisible()==False`. 별도 인스턴스에서
+   우상단 "✕" 버튼(`QPushButton` 텍스트 "✕"로 탐색) 클릭 → 마찬가지로 정상 종료.
+5. **재오픈 시 clean state**: 버튼을 다시 클릭해 연 두 번째 `CircleDetectPreviewDialog`
+   인스턴스가 `is` 비교로 **첫 번째 인스턴스와 다른 객체**임을 확인(재사용 아님) + 파일명
+   라벨/스탯 라벨이 초기값으로 되돌아가 있고 원 목록이 비어있음(`get_circles()==[]`) —
+   stale 상태 없음.
+6. **메인 탭에 이미 체크포인트+이미지+추론 결과가 있는 상태에서 팝업 열기**: 스크래치
+   체크포인트(`app.model_presets.load_preset_code("lraspp_mobilenet")`로 프리셋 모델을
+   인스턴스화해 fresh weight로 `config.model_source="preset:lraspp_mobilenet"` 메타와 함께
+   저장 — 학습 없이 배선만 확인하는 용도이므로 정확도는 무관, `engine.run()`이 체크포인트
+   내부에서 `load_state_dict(strict=False)`로 로드하므로 이 방식으로 충분) → 메인 탭에서
+   이미지(`8번.bmp`) 열기 → 체크포인트 열기(자동 모델 인스턴스화 확인) → "▶ 추론 실행" →
+   `_last_result` 생성 확인 → "자동 검출"로 원 2개(`[(2661.7, 1779.4, 1209.3), (2661.9, 1754.7,
+   1527.1)]`, 배터리 캡 사진 특성상 육안상 합리적인 크기·위치)까지 채운 상태에서 팝업을
+   열어(`8번.bmp`가 아닌 `7번.bmp`로 별도 이미지 로드) 민감도 조절+재검출까지 수행 후 닫음 →
+   **팝업을 닫은 뒤 메인 탭의 `_image_path`/`_ckpt_path`/`_last_result`(객체 참조까지 동일)/
+   원 목록(`get_circles()` 값 완전 일치)/존 리스트 개수가 전부 조작 전과 동일** — 팝업이
+   메인 탭 상태를 전혀 오염시키지 않음을 "이미 상태가 있는" 케이스로도 재확인.
+7. **BUG-018/019 패턴 재발 없음**: 팝업 자체에 원/존 사이드 리스트가 없어(스펙이 예상한 대로)
+   그 패턴이 성립할 대상이 구조적으로 없음을 실행으로도 재확인(팝업 조작 중 크래시나 상태
+   불일치 0건).
+8. **R1~R4 회귀(간단 재확인)**: 위 6번 시나리오 안에서 체크포인트 로드+추론(R1), 자동 원
+   검출(R2, 배터리 캡 사진에서 실제 원 2개 검출), 존 리스트 생성(R3, `_zone_list.count()`
+   원 개수에 맞게 채워짐), 블랍 삭제 모드 토글(R4, 체크박스 토글 시 크래시 없음) 전부 정상
+   동작 확인 — 이번 라운드가 회귀를 일으키지 않음.
+9. **크래시 없음**: `py_compile` 통과 + 위 실행 시나리오 전체(팝업 단독/메인탭 병행) 예외
+   0건, 42개+5개 assertion 전부 PASS.
+
+### 프로세스 정리
+- 검증 스크립트는 `app.exec()` 이벤트 루프를 돌리지 않고 `QTest`로 직접 위젯 이벤트만
+  발생시켰으므로 스크립트 자체가 정상 종료됨(좀비 프로세스 없음). 스크래치 체크포인트 파일
+  (`verify_ra_ckpt.pt`)은 검증 종료 후 삭제. `git status --short`로 `projects/nok/`을 포함한
+  워크트리 전체 무변경 확인(읽기 전용 사용).
+- `tasklist` 확인 중 이 워크트리 경로로 실행 중인 별도 `python.exe`(PID 16488, "Segmentation
+  Model UI — nok" 창) 1개를 발견했으나, 시작 시각(09:31)이 이번 검증 세션 시작보다 이르고
+  이번 검증 스크립트가 사용한 인터프리터(anaconda) 경로와도 달라(다른 Python 배포본) 이번
+  검증이 만든 프로세스가 아님을 확인 — 리더 또는 다른 세션이 디자인 목업 대조용으로 띄워둔
+  것으로 추정되어 임의로 종료하지 않음(내가 시작한 프로세스만 정리 대상).
+
+### 판정
+- 구현 로그의 주장과 코드가 전부 일치, 완전 독립성(초기 상태·기존 상태 있는 상태 양쪽)·
+  골든패스(이미지 열기→자동검출→민감도조절→재검출→실제 마우스 드래그 편집→삭제)·재오픈
+  clean state·닫기(하단/✕ 둘 다)·R1~R4 회귀 전부 실행 확인으로 통과. **버그 발견 없음 — R-A
+  검증 통과.**
+- 리더에게: **R-A 검증 통과. R-B(threshold + root-cause 수정) 착수 가능.**
+- `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 R-A 체크박스를 "구현 완료,
+  검증 대기"에서 "구현+독립검증 통과"로 갱신.
+
