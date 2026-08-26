@@ -106,6 +106,7 @@ class InferenceImageList(QWidget):
         self._search_debounce.setSingleShot(True)
         self._search_debounce.setInterval(_SEARCH_DEBOUNCE_MS)
         self._search_debounce.timeout.connect(self._apply_display)
+        self._multi_select = False               # BUG-022: 다중선택 중엔 currentItemChanged 무시
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -221,6 +222,7 @@ class InferenceImageList(QWidget):
             else QTreeWidget.SelectionMode.SingleSelection
         )
         self._tree.setSelectionMode(mode)
+        self._multi_select = enabled
 
     def selected_paths(self) -> list[Path]:
         """다중 선택 모드에서 선택된 경로들. 아무것도 선택하지 않았으면 현재 표시
@@ -263,6 +265,11 @@ class InferenceImageList(QWidget):
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 
     def _on_current_item_changed(self, current: QTreeWidgetItem | None, _previous) -> None:
+        # BUG-022: 다중선택 모드에서 Ctrl/Shift 클릭도 currentItem을 바꿔 이 시그널을
+        # 발화시킨다. 선택 개수가 정확히 1개일 때만 "새 기준 이미지 지정"으로 간주한다
+        # — SingleSelection(기본값, 다른 탭)은 선택 개수가 항상 1이라 영향 없음(애디티브).
+        if self._multi_select and len(self._tree.selectedItems()) != 1:
+            return
         path = self._get_item_path(current)
         if path is not None:
             self.image_selected.emit(path)
