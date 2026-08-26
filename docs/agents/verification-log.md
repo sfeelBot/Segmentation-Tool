@@ -2943,3 +2943,76 @@ BUG-018과 동일한 근본 원인이 라운드 3 신규 코드(`_recompute_zone
   후속 논의가 필요하면 main 병합 여부, 결정 대기 1건(`docs/decisions-needed.md`의
   타겟 클래스 2개 이상 시 v1 범위), 향후 확장 후보(블랍 삭제 Undo, 체크포인트 클래스
   메타데이터 저장 등)만 남음.
+
+---
+
+## 2026-08-26 — 어노테이션 삭제/내보내기/가져오기 성능 병목 수정 검증 (커밋 46eb77b/e48b4a0, main 반영 e48b4a0/159c5be)
+
+### 배경
+사용자 리포트("삭제 느림, 내보내기/가져오기 시 멈추는 느낌")에 대한 구현 3건
+(원인1: `_push_undo()` deepcopy→네이티브 스냅샷, 원인2: export/import를 `QThread`
+워커로 이동, 원인3: `image_browser._on_delete()`가 전체 `reload()` 대신 캐시만
+갱신)을 실제 GUI로 최초 검증. 구현 에이전트는 위젯을 직접 인스턴스화한 스크립트
+자체 점검만 했고 `python main.py` 구동 확인은 없었음(`docs/agents/implementation-log.md`
+2026-08-25 항목 "확인 필요" 참고).
+
+### 방법
+`git branch --show-current` → `main`, `git worktree list`로 `feature/zone-analysis-tab`은
+별도 워크트리(`D:/segmentation model-zone-analysis-tab`)로 분리되어 있음을 확인 —
+현재 폴더는 자유롭게 사용 가능. 실사용 `projects/`를 건드리지 않도록 scratchpad에
+격리 프로젝트를 생성하고, 실제 `QApplication` + `PyQt6.QtTest`로 `MainWindow`를
+그대로 띄워 실제 위젯(`AnnotationCanvas`, `ImageBrowser`, `ExportDialog`,
+`ImportAnnotationDialog`)에 실제 `QMouseEvent`/`QKeyEvent`를 posting하는 방식으로
+골든 패스를 재현(`…/scratchpad/qa_perf_gui.py`, `qa_perf_scale.py` — 정리 시 함께 삭제
+예정이나 세션 scratchpad라 리포지토리엔 없음). anaconda Python(`PyQt6 6.7.1` +
+CUDA 빌드 torch 설치된 환경)을 사용 — 시스템 기본 `python`은 PyQt6/torch 미설치.
+main.py와 동일하게 `cv2`/`torch`를 `PyQt6.QtWidgets`보다 먼저 import해야
+`QtSvg` DLL 로드 실패를 피할 수 있음을 확인(import 순서 문제, 앱 자체 결함 아님).
+
+- **테스트 프로젝트**: 25장(640×480 22장 + 2400×1800/2200×1600/2000×1500 대형 3장)
+  합성 이미지, 그중 10장에 실제 브러시 스트로크(대형 이미지는 브러시 크기 80·
+  스트로크 3회로 스트레스) 2~3개씩 그려 저장.
+- **캔버스 내 삭제+undo**: `TOOL_SELECT`로 마스크 클릭 선택 → `Key_Delete` →
+  20.6ms, `Ctrl+Z` → 20.6ms, undo 후 마스크 배열이 삭제 전과 `np.array_equal`로
+  pixel-exact 일치 확인.
+- **이미지 브라우저 다중 삭제**: 라벨 있는 이미지 5장 + 대형 미라벨 이미지 2장
+  (img_23/img_24, 각 2200×1600/2000×1500) 합계 7장을 Ctrl+클릭 다중 선택 후
+  삭제 버튼 클릭 → 70.7ms(선택 7/7 정확). 동일 시점 `browser.reload()`(구버전이
+  삭제마다 추가로 호출했을 비용)를 직접 호출해 비교하면 25장 규모에서는 3.5ms로
+  작아 차이가 잘 안 보였으나, **500장 규모 별도 스크립트(`qa_perf_scale.py`)로
+  재측정**하면 현재 코드(캐시만 갱신) 12.6ms vs 전체 `reload()` 44.3ms — **3.5배
+  차이**로 원인3이 실사용 규모에서 체감 지연의 주범이라는 구현 에이전트의 추정을
+  뒷받침(실제 이미지 개수·어노테이션 파일이 클수록 격차는 더 벌어질 것).
+- **Export**: JSON/YOLO/COCO 각각 실제 `ExportDialog._btn_run` 클릭으로 실행.
+  워커 실행 중 `QTimer`(5ms) tick이 2~6회 기록되고(메인 루프 비블로킹), YOLO/COCO
+  실행 중에는 실제로 메인 윈도우 탭바를 클릭해 반응하는지도 확인(클릭 정상 처리).
+  완료 후 JSON 어노테이션 파일 수(5개, "라벨된 것만" 옵션과 남은 라벨 이미지 수
+  일치), YOLO `labels/*.txt`, COCO `annotations.json` 산출물 존재 확인.
+- **Import**: 별도 신규 프로젝트에 방금 내보낸 JSON을 `ImportAnnotationDialog`로
+  가져오기 → 104ms, tick 6회(비블로킹), imported=5/new_images=5, 원본과 가져온
+  이미지의 brush_mask를 `np.array_equal`로 픽셀 단위 비교해 0건 불일치(완전 롤백).
+- **회귀 스팟체크**: 새 창에서 폴리곤 4점 클릭+더블클릭 닫기(정상 생성), 브라우저
+  `navigate(1)`로 다음 이미지 전환(정상), OK 토글(정상) 모두 통과.
+- **`data/logs/errors.log`**: 실행 전 226432바이트 → 실행 후 227459바이트, 증가분은
+  검증 스크립트 자체의 import 순서 실수(1차 실행 시 `QtSvg` DLL 오류, 스크립트를
+  고쳐 해결)로 인한 1건뿐 — 앱/수정 코드 자체의 신규 예외는 0건.
+- `git status`: 작업 트리 clean, `projects/`(실사용) 무변경. 테스트 프로젝트는
+  전부 scratchpad(`qa_projects`, `qa_projects_scale`, `qa_export_out`)에만 생성했고
+  종료 후 삭제 완료.
+
+### 발견한 문제
+없음. 최초 1회 "선택 7/7" 대신 "5/7"로 실패했던 것은 제품 버그가 아니라 검증
+스크립트 자체의 결함(트리 위젯에서 스크롤 밖(뷰포트 밖)에 있는 25번째/24번째
+항목을 `scrollToItem()` 없이 `visualItemRect()` 좌표로 클릭 시도 — 실제 사용자도
+스크롤 없이는 안 보이는 항목을 클릭할 수 없으므로 이 자체가 UX 결함은 아님).
+`tree.scrollToItem()` 추가 후 재실행해 7/7 정상 확인.
+
+### 판정
+**통과**. 3가지 원인 수정 모두 실제 GUI 경로에서 정상 동작 확인:
+1) 캔버스 삭제/undo 반응 속도(각 20ms대) + pixel-exact 복원.
+2) Export/Import가 실제로 `QThread`에서 실행되어 메인 스레드가 블로킹되지 않음(진행
+   중 다른 위젯 클릭 정상 처리) + 3개 포맷 모두 산출물 정확.
+3) 이미지 브라우저 다중 삭제가 전체 재스캔 없이 즉시 반영되고, 실사용 규모(500장)
+   에서는 구버전 대비(가정) 3.5배 빠름 — 사용자가 체감한 "삭제 시 렉"의 주범이라는
+   구현 에이전트의 추정과 합치.
+회귀 없음(폴리곤/이미지 전환/OK 토글 정상). push는 하지 않음 — 리더가 처리.
