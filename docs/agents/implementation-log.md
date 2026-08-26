@@ -3558,3 +3558,74 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - `docs/roadmap.md` "신규 기능 5건(2026-08-27 요청, 라운드3)" 절의 R3-1/R3-2 체크박스를
   미착수([ ])에서 구현 완료([x], 검증 대기)로 갱신.
 - 커밋: `6bd7226`
+
+---
+
+## 2026-08-27 — 존 분석 탭 R3-3(브러시 지우기 모드) 구현
+
+브랜치 `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+스펙: [docs/specs/zone-analysis-tab-features-round3-2026-08-27.md](../specs/zone-analysis-tab-features-round3-2026-08-27.md)
+"판단 2 — 브러시 지우기". R3-1/R3-2는 이미 구현+검증 통과 상태(전제 확인 완료).
+
+### 변경
+- `app/widgets/zone_canvas.py`
+  - `annotation_canvas.py`의 브러시 스탬프 엔진(`_paint_circle`/`_paint_stroke`,
+    bbox-crop 벡터화 원판 비교 + 반지름 40% 간격 선형보간)을 그대로 이식(신규
+    엔진 재작성 없음 — 라더 2단계 재사용).
+  - `self._blob_delete_mode: bool` 플래그를 `self._mode: str`("circle" |
+    "blob_delete" | "brush_erase") 단일 필드로 통합. `set_blob_delete_mode()`는
+    하위 호환 시그니처를 유지하는 얕은 래퍼로 리라이트.
+  - 신규 공개 API: `set_brush_erase_mode()`, `brush_erase_mode()`,
+    `set_erase_brush_size()`(1~200 clamp), `erase_brush_size()`, `erase_mask()`
+    (`removed_blob_ids()`/`blob_labels()`와 동일한 "캔버스가 단일 출처" getter
+    패턴).
+  - 신규 상태: `_erase_strokes`(스트로크별 (cx,cy,r) 스탬프 좌표 목록 —
+    마스크가 아니라 재생 가능한 경량 표현, 다음 라운드 R3-4 Undo가 그대로
+    재사용하도록 미리 이 형태로 저장), `_erase_mask_np`(원본 해상도 bool,
+    undo 대상 아닌 파생 캐시), `_replay_erase_strokes()`(스트로크 좌표로부터
+    마스크 재생 — 이번 라운드엔 호출부 없음, R3-4를 위한 선행 준비).
+  - `mousePressEvent`/`mouseMoveEvent`/`mouseReleaseEvent`/`keyPressEvent`/
+    `contextMenuEvent`에 `brush_erase` 분기 추가, 좌클릭 외(중클릭 팬 등)는
+    기존 `blob_delete` 분기와 동일하게 `super()`로 위임.
+  - **성능 요구사항**: `erase_changed` 신규 시그널을 스트로크가 끝나는
+    `mouseReleaseEvent`에서 1회만 emit — 드래그 중(`mouseMoveEvent`)에는
+    지우기 마스크의 bbox 증분 갱신 + `self.update()`(화면 리페인트)만 수행하고
+    무거운 존 재계산은 트리거하지 않음.
+  - `paintEvent`에 `_paint_erase_preview()` 추가 — 지운 스트로크를 반투명 원으로
+    벡터 렌더링(`_paint_removed_blobs()`의 bbox 근사와 동일한 원칙, 원본 해상도
+    마스크를 QImage로 합성하지 않아 대형 이미지에서도 가벼움).
+  - `set_blob_data()`가 브러시 지우기 상태(`_erase_strokes`/`_erase_mask_np`/
+    진행 중 스트로크)도 함께 초기화 — 타겟 클래스가 바뀌면 이전 삭제 이력과
+    동일하게 이전 지우기 이력도 무의미해지므로.
+- `app/tabs/zone_analysis_tab.py`
+  - 툴바 2번째 줄에 "브러시 지우기 모드"(체크 가능 버튼) + "지우개 크기"
+    `QSpinBox`(1~200px) 추가.
+  - `_on_blob_delete_toggled()`/`_on_brush_erase_toggled()` 신규 — `QButtonGroup`
+    없이 버튼 2개가 서로를 끄는 2줄 상호배제로 3-way 모드 배타 구현(스펙 그대로).
+  - `_current_target_mask()`에 `erase_mask()` 배경 처리 1줄 추가 — 존 퍼센티지
+    즉시 재계산이 추가 배선 없이 자동 만족(`_recompute_zones()`가 이미 이 함수를
+    호출).
+  - 새 이미지 로드/추론 결과 없음/타겟 클래스 확정 시 등 기존 "블랍 삭제 모드"
+    버튼 활성/비활성·체크해제 지점 3곳 모두에 "브러시 지우기 모드" 버튼도 동일하게
+    처리(재확인 지시사항 — BUG-018~022류 상태 리셋 누락 재발 방지).
+
+### 검증 (구현자 자체 확인 — 정식 GUI 검증은 검증 에이전트 몫)
+- `py_compile app/widgets/zone_canvas.py app/tabs/zone_analysis_tab.py app/core/zone_metrics.py` 통과.
+- `python -m app.core.zone_metrics` self-check 통과(회귀 없음).
+- 신규 스모크 스크립트(QT_QPA_PLATFORM=offscreen, 실제 `QMouseEvent`를 `ZoneCanvas`에
+  주입)로 다음을 실측 확인:
+  - press+move 20회(보간 포함) 동안 `erase_changed`가 0회 emit.
+  - release 시 정확히 1회만 emit, `_erase_strokes`에 스트로크 1개(스탬프 여러 개 포함) append.
+  - 드래그 중에도 `erase_mask()`가 bbox 증분으로 실시간 갱신됨.
+  - `set_blob_data()` 재호출 시 `erase_mask()`/`_erase_strokes` 모두 초기화.
+  - `set_blob_delete_mode(True)` 호출 시 `brush_erase_mode()`가 자동으로 False로
+    전환(단일 `_mode` 필드 공유에 의한 3-way 배타 확인).
+- **미검증(다음 검증 에이전트 몫)**: 실제 `python main.py` GUI 구동, 대형 이미지에서
+  브러시 드래그 체감 랙 여부, 중클릭 팬이 브러시 지우기 모드 중에도 정상 동작하는지,
+  오프라인 팝업(`CircleDetectPreviewDialog`)에서 회귀가 없는지, R1~R4/R-A~R-C/R3-1/R3-2
+  전체 골든패스 회귀.
+
+### 관련 문서
+- `docs/roadmap.md` "신규 기능 5건(2026-08-27 요청, 라운드3)" 절의 R3-3 체크박스를
+  미착수([ ])에서 구현 완료([x], 검증 대기)로 갱신.
+- 커밋: `c32139c`
