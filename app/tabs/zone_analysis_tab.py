@@ -73,62 +73,68 @@ class ZoneAnalysisTab(QWidget):
         #    체크포인트 상태+열기 / ▶ 추론 실행 / 타겟클래스 / AI신뢰도 / 픽셀크기 /
         #    (민감도 — 자동검출의 파라미터라 바로 옆에 배치) / 자동검출 / 블랍삭제모드
         #    / (오른쪽 끝) 오프라인 원 검출 테스트. 이미지 열기는 좌측 패널로 이동(C-1). ─
-        toolbar = QHBoxLayout()
+        # 두 줄로 분리(BUG-021 수정) — 한 줄에 다 욱여넣으면 최소폭이 1588px까지
+        # 벌어져 MainWindow 코딩된 기본 크기(1280x800)를 조용히 무시하고 더 넓게
+        # 뜸(main_window.py의 resize() 호출과 실제 동작이 어긋나는 버그였음).
+        toolbar_row1 = QHBoxLayout()
+        toolbar_row2 = QHBoxLayout()
+
         self._btn_ckpt = QPushButton("체크포인트 열기 (.pt)…")
-        toolbar.addWidget(self._btn_ckpt)
+        toolbar_row1.addWidget(self._btn_ckpt)
         self._lbl_ckpt = QLabel("선택된 체크포인트 없음")
         self._lbl_ckpt.setStyleSheet("color:#9ca3af;")
-        toolbar.addWidget(self._lbl_ckpt)
+        toolbar_row1.addWidget(self._lbl_ckpt)
 
         self._btn_run = QPushButton("▶  추론 실행")
         self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
-        toolbar.addWidget(self._btn_run)
+        toolbar_row1.addWidget(self._btn_run)
 
-        toolbar.addWidget(QLabel("타겟(녹) 클래스:"))
+        toolbar_row1.addWidget(QLabel("타겟(녹) 클래스:"))
         self._target_name_edit = QLineEdit()
         self._target_name_edit.setPlaceholderText("클래스 이름 (예: 녹)")
         self._target_name_edit.setFixedWidth(120)
         self._target_name_edit.hide()
-        toolbar.addWidget(self._target_name_edit)
+        toolbar_row1.addWidget(self._target_name_edit)
         self._target_combo = QComboBox()
         self._target_combo.setFixedWidth(160)
         self._target_combo.hide()
-        toolbar.addWidget(self._target_combo)
+        toolbar_row1.addWidget(self._target_combo)
+        toolbar_row1.addStretch()
 
-        toolbar.addWidget(QLabel("AI 신뢰도:"))
+        toolbar_row2.addWidget(QLabel("AI 신뢰도:"))
         self._conf_slider = QSlider(Qt.Orientation.Horizontal)
         self._conf_slider.setRange(0, 100)
         self._conf_slider.setValue(int(_DEFAULT_MIN_CONFIDENCE * 100))
         self._conf_slider.setFixedWidth(90)
         self._conf_slider.setToolTip("blob(연결 영역)의 평균 신뢰도가 이 값 미만이면 배경으로 제거")
-        toolbar.addWidget(self._conf_slider)
+        toolbar_row2.addWidget(self._conf_slider)
         self._lbl_confidence = QLabel(f"{self._conf_slider.value()}%")
         self._lbl_confidence.setFixedWidth(32)
-        toolbar.addWidget(self._lbl_confidence)
+        toolbar_row2.addWidget(self._lbl_confidence)
 
-        toolbar.addWidget(QLabel("픽셀크기:"))
+        toolbar_row2.addWidget(QLabel("픽셀크기:"))
         self._min_px_spin = QSpinBox()
         self._min_px_spin.setRange(0, 100000)
         self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
         self._min_px_spin.setSuffix(" px")
         self._min_px_spin.setFixedWidth(90)
         self._min_px_spin.setToolTip("blob 면적(픽셀 수)이 이 값 미만이면 배경으로 제거")
-        toolbar.addWidget(self._min_px_spin)
+        toolbar_row2.addWidget(self._min_px_spin)
 
-        toolbar.addWidget(QLabel("민감도:"))
+        toolbar_row2.addWidget(QLabel("민감도:"))
         self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
         self._sensitivity_slider.setRange(0, 100)
         self._sensitivity_slider.setValue(50)
         self._sensitivity_slider.setFixedWidth(90)
         self._sensitivity_slider.setToolTip("원 자동 검출 민감도(아래 '자동 검출' 버튼의 파라미터)")
-        toolbar.addWidget(self._sensitivity_slider)
+        toolbar_row2.addWidget(self._sensitivity_slider)
         self._lbl_sensitivity = QLabel("50%")
         self._lbl_sensitivity.setFixedWidth(32)
-        toolbar.addWidget(self._lbl_sensitivity)
+        toolbar_row2.addWidget(self._lbl_sensitivity)
         self._btn_detect = QPushButton("자동 검출")
         self._btn_detect.setEnabled(False)
         self._btn_detect.setToolTip("추론을 먼저 실행하면 검출된 원이 캔버스에 표시됩니다")
-        toolbar.addWidget(self._btn_detect)
+        toolbar_row2.addWidget(self._btn_detect)
 
         self._btn_blob_delete = QPushButton("블랍 삭제 모드")
         self._btn_blob_delete.setCheckable(True)
@@ -136,15 +142,16 @@ class ZoneAnalysisTab(QWidget):
         self._btn_blob_delete.setToolTip(
             "활성화하면 캔버스 좌클릭이 원 편집 대신 오검출 블랍 삭제로 동작합니다"
         )
-        toolbar.addWidget(self._btn_blob_delete)
+        toolbar_row2.addWidget(self._btn_blob_delete)
 
-        toolbar.addStretch()
+        toolbar_row2.addStretch()
         self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
         self._btn_offline_test.setToolTip(
             "체크포인트 없이 이미지만으로 원 검출 알고리즘을 확인·튜닝합니다"
         )
-        toolbar.addWidget(self._btn_offline_test)
-        root.addLayout(toolbar)
+        toolbar_row2.addWidget(self._btn_offline_test)
+        root.addLayout(toolbar_row1)
+        root.addLayout(toolbar_row2)
 
         self._lbl_model_info = QLabel("")
         self._lbl_model_info.setStyleSheet(
@@ -182,6 +189,7 @@ class ZoneAnalysisTab(QWidget):
 
         # ── 좌·중·우 3분할 ───────────────────────────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)   # BUG-020 수정 — 다른 탭 스플리터(BUG-008)와 동일 조치
 
         # 좌측 패널(C-1/3a) — 폴더/다중파일 열기 + 경로 표시 + InferenceImageList
         # (추론 탭과 공유하는 완전 독립 위젯, inference_tab.py의 _list_panel/_img_list
