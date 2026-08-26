@@ -4168,3 +4168,126 @@ no-op/고정경로. 나머지(`ZoneCanvas` 전체, `ZoneAnalysisTab` 슬롯, `zo
 없음). `docs/roadmap.md`의 R3-4 항목을 "구현 완료, 검증 대기"에서 "구현+독립검증 통과"로
 갱신. R3-5(오프라인 팝업→메인 탭 라운드트립)는 R3-4의 `set_circles()` undo 배선을 그대로
 공짜로 활용할 수 있는 상태 — 다음 라운드 착수 가능.
+
+
+---
+
+## 2026-08-27 — 존 분석 탭 R3-5(오프라인 팝업→메인 탭 라운드트립) 검증 — 신규 기능 라운드3(R3-1~R3-5) 전체 마지막 라운드
+
+`docs/specs/zone-analysis-tab-features-round3-2026-08-27.md`(R3-5 절, 판단 5), 구현 커밋
+`ff7dbf8`(feat)+`f8868a9`(docs). 브랜치 `feature/zone-analysis-tab`, 워크트리
+`D:\segmentation model-zone-analysis-tab`(main과 공유 방지를 위해 지정된 워크트리에서
+작업). 리더 지시대로 관련 탭(모델/라벨링/학습/추론 탭은 이 에디션 브랜치 전용 존 분석
+탭과 무관 — 존 분석 탭 자체가 검증 대상) 골든 패스를 **실제 QTest 마우스/키보드 이벤트**로
+독립 재현. 구현자 자체 검증을 신뢰하지 않고 별도 스크립트로 재현.
+
+### 정적 검토
+- `app/widgets/circle_detect_preview_dialog.py`: "닫기"/X 버튼은 그대로 `self.close()`(부수
+  효과 없음), 신규 "메인 탭에 적용" 버튼이 `self.accept()`에 연결. 신규 getter
+  `result_circles()`(`self._canvas.get_circles()` 위임)/`result_image_size()`
+  (`self._orig_size`) 확인. 다이얼로그 자체는 여전히 `app.core.project`/체크포인트/메인 탭
+  관련 import가 전혀 없는 완전 독립 구조 유지(스펙 판단 5 그대로).
+- `app/tabs/zone_analysis_tab.py`: `_on_open_offline_test()`가 `auto_label_dialog.py`와
+  동일한 `if dialog.exec(): circles = dialog.result_circles(); if circles:
+  self._apply_circles_from_popup(...)` 패턴으로 정확히 리라이트됨.
+  `_apply_circles_from_popup()`가 스펙 의사코드와 1:1로 일치: (1) `self._image_path is None
+  or self._image_size == (0,0)` 가드 → `QMessageBox.warning` 후 무동작, (2) 해상도 다르면
+  `sx=ref_w/pop_w, sy=ref_h/pop_h`로 `(cx*sx, cy*sy, r*(sx+sy)/2)` 비례 스케일(3b 배치처리
+  로직과 동일 공식, 방향만 반대), (3) `self._canvas.get_circles()`가 비어있지 않으면
+  `QMessageBox.question`으로 확인 후 `Yes`가 아니면 조기 return(기존 원 완전 보존), (4)
+  최종 `self._canvas.set_circles(circles)` 호출 — R3-4에서 이미 `set_circles()` 내부에
+  `_push_undo()`가 박혀 있어 이 적용도 신규 배선 없이 자동으로 undo 가능함을 코드 확인.
+
+### 실행 확인 (`py_compile`)
+`C:/Users/Feel/anaconda3/python.exe -m py_compile app/widgets/zone_canvas.py
+app/tabs/zone_analysis_tab.py app/core/zone_metrics.py
+app/widgets/circle_detect_preview_dialog.py app/widgets/zone_batch_result_dialog.py
+app/main_window.py` 전부 통과.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QT_QPA_PLATFORM=offscreen`, `QTest.mousePress/
+mouseMove/mouseRelease/mouseClick/keyClick` 실제 이벤트 — 저장소에 포함 안 함, 세션 종료
+후 스크래치 파일 삭제)
+
+`C:/Users/Feel/anaconda3/python.exe` 사용(PATH에 `anaconda3/Library/bin` 추가 필요 — 이
+환경에서 `torch`를 `PyQt6.QtSvg` 임포트보다 먼저 실행하면 DLL 로드 순서 문제로 `QtSvg`
+임포트가 깨지는 환경 이슈를 발견해 `QtSvg`를 먼저 임포트하는 것으로 우회, 애플리케이션
+버그 아님 — `main.py`도 동일 이유로 torch를 `QApplication` 생성보다 먼저 로드하는 주석이
+있어 프로덕션 실행 경로에서는 발생하지 않음). `load_checkpoint_meta`/`load_model_from_ckpt`/
+`engine.run`/`engine.refilter`만 몽키패치(결정론적 합성 240x240 이미지 — 왼쪽 절반
+class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`는 no-op/고정경로로
+몽키패치. 나머지(`ZoneCanvas` 전체, `ZoneAnalysisTab` 슬롯, `CircleDetectPreviewDialog`,
+`zone_metrics`, `export_zone_percentages_to_excel`, `MainWindow`)는 프로덕션 코드 그대로
+실행. 모달 `CircleDetectPreviewDialog.exec()` 안에서 실제 클릭/드래그를 수행하기 위해
+`zone_analysis_tab.CircleDetectPreviewDialog`를 실제 클래스를 그대로 생성만 하고 참조를
+캡처하는 spy로 일시 교체 + `QTimer.singleShot(50, ...)`으로 모달 이벤트 루프 진행 중
+콜백을 실행하는 표준 Qt 모달 테스트 패턴 사용(다이얼로그 로직 자체는 변경 없이 실제
+`exec()`/`accept()`/`close()`를 그대로 탐). 체크포인트 열기→이미지 열기→▶ 추론 실행까지
+전부 `QTest.mouseClick` 실클릭으로 수행, 타겟 클래스 2개 검출돼 콤보 자동 표시 확인.
+
+1. **메인 이미지 없을 때 가드(항목1)**: 아직 이미지를 전혀 로드하지 않은 별도 `ZoneAnalysisTab`
+   인스턴스에서 "오프라인 원 검출 테스트…" 버튼 실클릭 → 팝업에서 이미지 로드 후 실제
+   드래그로 원 1개 생성 → "메인 탭에 적용" 버튼 실클릭 → `QMessageBox.warning` 호출됨(1회)
+   확인, 메인 탭 캔버스 원 개수 0 유지, 크래시 없음 확인.
+2. **같은 해상도 적용(항목2)**: 메인 탭에 이미지(240x240)+체크포인트+추론+타겟클래스까지
+   실클릭으로 완료한 상태(원 0개)에서, 팝업으로 같은 해상도(240x240) 이미지를 열어 실제
+   드래그로 원 2개 생성 → 적용 버튼 실클릭 → 덮어쓰기 확인 다이얼로그 안 뜸(기존 원 없었음)
+   확인 → 메인 탭 `ZoneCanvas.get_circles()`가 팝업에서 만든 원 2개와 **좌표까지 정확히
+   일치**(`<1e-6`, 스케일 1.0이므로 그대로) 확인.
+3. **다른 해상도 적용 — 비례 스케일(항목3)**: 팝업으로 다른 해상도(120x160) 이미지를 열어
+   실제 드래그로 원 1개 생성 → 적용 → 팝업에서 얻은 실제 좌표에 대해 스크립트가 독립적으로
+   `sx=240/120, sy=240/160`로 `(cx*sx, cy*sy, r*(sx+sy)/2)` 오라클을 계산 → 메인 탭에 반영된
+   좌표와 **정확히 일치**(`<1e-6`) 확인.
+4. **기존 원 있을 때 덮어쓰기 확인(항목4)**: 항목3에서 메인 탭에 원이 이미 있는 상태에서
+   다시 팝업으로 새 원을 만들어 적용 → **"아니오" 응답**: `QMessageBox.question` 호출됨
+   확인, 메인 탭 원 목록이 적용 시도 전과 완전히 동일하게 유지됨 확인(교체 안 됨).
+   **"예" 응답**: 같은 방식으로 재시도 → 새 원으로 정확히 교체됨 확인(좌표 일치).
+5. **Undo 통합(항목5)**: 항목2에서 적용한 직후 `can_undo()==True` 확인 → `Ctrl+Z` 실제
+   키입력 → 원 0개(적용 전 상태)로 정확히 복원, `can_undo()==False`(스택 소진) 확인.
+   항목4의 "예"(덮어쓰기) 적용 이후에도 `Ctrl+Z` → 덮어쓰기 직전(=항목4 "아니오" 결과) 원
+   목록으로 **정확히** 복원됨을 확인 — R3-4 통합 undo 스택에 이 "적용" 동작이 실제로
+   하나의 엔트리로 들어갔음을 실증.
+6. **적용 안 하고 닫기(항목6)**: 팝업에서 원을 생성했지만 "닫기" 버튼(그리고 별도로 X
+   버튼도) 실클릭으로 닫기 → 두 경우 모두 `dialog.result() == QDialog.DialogCode.Rejected`
+   확인, 메인 탭의 원 목록/선택 상태(`selected_id()`)/하이라이트 상태
+   (`highlighted_zone()`) 전부 완전히 불변임을 확인(완전 독립성 유지, R-A 재확인).
+7. **BUG-018~022 패턴 재발 여부(항목7)**: 적용 직전 원 선택·존 하이라이트를 설정해둔 뒤
+   팝업 적용을 실행 → `set_circles()`가 명시적으로 `_selected_id=None`/
+   `_highlighted_zone=None`으로 리셋하는 스펙 그대로의 정상 동작만 확인(크래시·불일치
+   없음), 존 리스트 사이드 패널이 크래시 없이 재구성됨 확인 — 재발 없음.
+8. **회귀**: 원 편집 모드 실제 드래그로 원 생성, 블랍 삭제 모드/브러시 지우기 모드
+   토글+상호배타(R3-3/R4), Undo 버튼 클릭 동작(R3-4), 단일 이미지 Excel 내보내기 버튼
+   실클릭으로 xlsx 생성 확인 및 `zones`/`zones_wide` 두 시트 존재 확인(R3-1/R3-2 회귀),
+   `MainWindow()` 5탭 생성 크래시 없음.
+9. **크래시 없음**: 전체 시나리오 진행 중 예외/트레이스백 0건. `py_compile` 전체 통과.
+
+총 49개 assertion 전부 PASS(0 FAIL).
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지·체크포인트·xlsx는 세션 스크래치 디렉토리에만 생성 후
+  검증 종료 시 삭제, 저장소에는 포함하지 않음.
+- 프로세스 종료 코드가 127로 관찰됐으나(`ALL CHECKS PASSED` 출력 이후) 이는 R3-3/R3-4 등
+  기존 검증 로그에서 반복 관찰된 "비대화형 offscreen 환경에서 이벤트 루프 없이 조기
+  종료할 때 생기는 종료 코드 이상" 패턴과 동일 — 실제 실패가 아님. `tasklist`로 잔존
+  `python.exe`/`pythonw.exe` 프로세스 0건 확인(이번 검증은 `python main.py`로 GUI를 띄우지
+  않고 `QApplication`+실제 위젯 인스턴스를 직접 구동하는 방식이라 애초에 별도 종료 대상
+  프로세스가 남지 않음).
+- 이번 세션에서 새로 발견한 환경 이슈(애플리케이션 버그 아님, 참고용): 이 anaconda 환경에서
+  `torch`를 `PyQt6.QtSvg`보다 먼저 임포트하면(`QApplication` 생성 여부와 무관하게 재현)
+  `QtSvg` DLL 로드가 깨짐 — `main.py`는 애초에 torch를 `QApplication` 생성보다 먼저
+  로드하지만 `QtSvg`는 그보다도 더 나중(탭 위젯 생성 시점)에 임포트되므로 실제 프로덕션
+  실행 경로에서는 이 문제가 나타나지 않는 것으로 보임(정식 `python main.py` 스모크는 이번
+  세션 범위 밖이라 별도 확인은 안 함, 후속 세션에서 필요 시 재확인 권장).
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션의 `docs/roadmap.md`,
+  `docs/agents/verification-log.md` 갱신 제외, `QA.md`는 신규 버그 없어 변경 없음).
+
+### 판정
+**통과 — R3-5(오프라인 팝업→메인 탭 라운드트립) 구현+독립검증 완료.** 신규 버그 발견
+없음(`QA.md` 갱신 없음). `docs/roadmap.md`의 R3-5 항목을 "구현 완료, 검증 대기"에서
+"구현+독립검증 통과"로 갱신.
+
+**라운드3 전체(R3-1~R3-5) 완료** — R3-1(단일 이미지 Excel)/R3-2(wide format)/R3-3(브러시
+지우기)/R3-4(통합 Undo)/R3-5(오프라인 팝업 라운드트립) 5건 전부 구현+독립검증 통과.
+- 리더에게: **R3-5 검증 통과로 신규 기능 라운드3(R3-1~R3-5) 전체 완료**. 사용자가
+  요청한 5건(Undo/브러시지우기/단일Excel/wide format/팝업라운드트립) 모두 실 GUI
+  `QTest` 기반 독립 검증까지 마쳤고 신규 버그 없음. 다음 단계는 리더 판단에 따라
+  push 여부 결정(현재 로컬 커밋만 있고 `origin/feature/zone-analysis-tab`에 미푸시 상태).
