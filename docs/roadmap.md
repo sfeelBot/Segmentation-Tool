@@ -593,15 +593,18 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       초기 상태(stale 상태 없음), 하단 닫기/우상단 ✕ 둘 다 정상 종료. R1~R4 회귀 없음
       (체크포인트 로드+추론, 자동검출, 존 리스트, 블랍삭제 모드 토글). 버그 발견 없음.
 - [x] R-B — `raw_class_map`→`class_map` root-cause 수정 + Threshold UI(AI신뢰도
-      `QSlider`+값라벨, 픽셀크기 `QSpinBox`) 추가 — 구현 완료(2026-08-26, 커밋
-      `22c9e60`), 검증 대기. `_on_target_changed()`/`_current_target_mask()`의 마스크
-      소스를 `class_map`으로 교체하고 두 컨트롤을 `_on_target_changed()`에 그대로
-      연결(새 슬롯 불필요) — 상세는 `docs/agents/implementation-log.md`. 3-way
-      `QSplitter`/좌측 `InferenceImageList` 패널 등 나머지 툴바 레이아웃 재편은 R-C
-      스코프로 남겨둠(이번 라운드는 기존 `circle_row`에 컨트롤 2개만 승인된 순서로
-      삽입). 검증 필요: 실제 GUI에서 신뢰도/픽셀크기 조절 시 존 퍼센티지·블랍 목록이
-      실시간으로 바뀌는지, 원 선택/존 하이라이트 상태가 threshold 조절만으로 리셋되지
-      않는지(BUG-018/019 재발 방지) 확인.
+      `QSlider`+값라벨, 픽셀크기 `QSpinBox`) 추가 — 구현+독립검증 통과(2026-08-26, 커밋
+      `22c9e60`). `_on_target_changed()`/`_current_target_mask()`의 마스크 소스를
+      `class_map`으로 교체하고 두 컨트롤을 `_on_target_changed()`에 그대로 연결(새 슬롯
+      불필요) — 상세는 `docs/agents/implementation-log.md`. 3-way `QSplitter`/좌측
+      `InferenceImageList` 패널 등 나머지 툴바 레이아웃 재편은 R-C 스코프로 남겨둠(이번
+      라운드는 기존 `circle_row`에 컨트롤 2개만 승인된 순서로 삽입). **검증(QTest, 합성
+      blob 3개+독립 오라클 대조)**: AI신뢰도 0/30/60/100%, 픽셀크기 0/50/250 6가지 조합
+      전부 GUI 존 퍼센티지·블랍 목록 개수가 오라클과 정확히 일치(수정 전이었다면 threshold를
+      바꿔도 항상 고정값이었을 것) — 버그 수정이 실제로 숫자에 반영됨을 정량 확인. 원
+      선택/존 하이라이트 유지(BUG-018/019 재발 없음), 모델 재실행 없음(`engine.run` 호출
+      1회 고정, `raw_class_map` object identity 불변), R-A/R1~R4 회귀 없음. 상세는
+      `docs/agents/verification-log.md` 해당 항목.
 - [ ] R-C — 폴더 단위 가져오기(`InferenceImageList` 재사용) + 일괄 처리 + 결과 표시/
       Excel 내보내기(`zone_batch_result_dialog.py` 신설) — 착수 대기.
 

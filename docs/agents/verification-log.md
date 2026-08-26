@@ -3114,3 +3114,106 @@ assertion 전부 통과:
 - `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 R-A 체크박스를 "구현 완료,
   검증 대기"에서 "구현+독립검증 통과"로 갱신.
 
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 R-B 검증: threshold UI + root-cause 수정 (커밋 `22c9e60`, `96b3530`)
+
+기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"판단 B" 절. 구현 로그: [implementation-log.md](implementation-log.md) "2026-08-26 — 존 분석 탭
+R-B: threshold 무시 근본원인 수정 + AI신뢰도/픽셀크기 UI" 항목. 워크트리 `D:\segmentation
+model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치). R-A(오프라인 팝업, 커밋
+`ea28b68`+`a0afbe3`)와 R1~R4는 기존 검증 통과 — 이번엔 회귀만 재확인, 이번 라운드 핵심은
+"버그 수정이 실제로 숫자를 바꾸는지" 정량 검증.
+
+### 정적 검토
+- `git show 22c9e60` diff 확인 — `app/tabs/zone_analysis_tab.py`만 변경(+36/-5), `_on_target_changed()`
+  의 `target_mask = result.raw_class_map == cid` → `result.class_map == cid`,
+  `_current_target_mask()`의 `mask = self._last_result.raw_class_map == ...` → `class_map`으로
+  교체된 것을 라인 단위로 확인. `_recompute_zones()`의 `h, w = ...raw_class_map.shape`는 shape만
+  읽는 용도(threshold와 무관, 존 자체가 필요로 하는 이미지 크기)라 그대로 둔 것도 타당함을 확인.
+- `inference_engine.refilter()`가 `raw_class_map=raw_class_map`(인자로 받은 배열을 그대로,
+  복사 없이) 반환하는 것을 확인 — threshold를 몇 번 바꿔도 `InferenceResult.raw_class_map`의
+  object identity가 최초 `run()` 호출 결과와 계속 같아야 하고(모델 재실행 없음의 근거),
+  `class_map`만 매번 `_compute_blobs_and_filter()`로 새로 계산됨을 코드로 확인.
+- UI 추가분(`_conf_slider` QSlider 0~100, `_min_px_spin` QSpinBox 0~100000, 승인된 순서:
+  타겟클래스→AI신뢰도→픽셀크기→자동검출→블랍삭제모드→오프라인테스트)이 스펙과 일치.
+  두 컨트롤의 `valueChanged`가 새 슬롯 없이 기존 `_on_target_changed()`에 직결된 것도 확인.
+- `py_compile` — `zone_analysis_tab.py`/`circle_detect_preview_dialog.py`/`zone_canvas.py`/
+  `inference_engine.py`/`zone_metrics.py` 5개 파일 전부 통과.
+
+### 실제 GUI(QTest) 골든패스 검증 — 정량적 버그 수정 확인 (핵심)
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, 기존 관례대로
+numpy/cv2/PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. R3 검증 때 쓴 방식을 그대로
+재사용해 `engine.run`만 몽키패치(모델 forward pass 대신 손계산 가능한 합성 데이터 주입,
+`refilter()`/`_compute_blobs_and_filter()`는 실제 프로덕션 코드 그대로 실행)하고
+`QMessageBox.warning/information/critical`은 헤드리스 모달 무한대기 회피용으로만 no-op
+처리. 스크래치 스크립트(`verify_rb.py`, 프로젝트에는 추가 안 함) 작성, 100×100 합성
+`raw_class_map`에 신뢰도/크기가 다른 blob 3개를 배치(blob1: conf 0.9, 400px, 중심부 존
+안쪽에 위치 / blob2: conf 0.5, 225px, 링1 존 위치 / blob3: conf 0.2, 9px, 바깥쪽 존 위치),
+원 2개(r=15, r=35 → 존 3개: 중심부/링1/바깥쪽) 배치. 30개 assertion 전부 통과:
+
+1. **정량 검증 — GUI 존 퍼센티지가 threshold마다 실제로 바뀌고 독립 오라클과 정확히
+   일치**: 오라클은 `zone_analysis_tab.py`를 전혀 거치지 않고 `engine._compute_blobs_and_filter()`
+   +`zone_metrics.zones_from_circles()`/`zone_stats()`를 테스트 스크립트 안에서 직접 호출해
+   별도로 계산. AI 신뢰도 0%(기본값)/30%/60%/100%, 픽셀크기 0(기본값)/50/250 총 6가지 조합에서
+   GUI 표시값(`_zone_list` 텍스트 파싱)과 오라클 값이 반올림 오차(0.006%p) 이내로 완전 일치.
+   - 신뢰도 0%: blob 3개 전부 반영(중심부 56.42%/링1 6.68%/바깥쪽 0.39%).
+   - 신뢰도 60%: blob2(0.5)/blob3(0.2) 제거, blob1(0.9)만 반영 — 중심부만 >0%, 나머지 0%로
+     GUI 수치가 **실제로 바뀜**(수정 전 버그였다면 신뢰도를 아무리 바꿔도 raw_class_map
+     기준이라 항상 56.42/6.68/0.39로 고정됐을 것).
+   - 신뢰도 30%: blob3만 제거, blob1/blob2 반영(중심부·링1 >0%) — 오라클과 정확히 일치.
+   - 픽셀크기 250: blob2(225px)/blob3(9px) 제거, blob1(400px)만 반영.
+   - 픽셀크기 50: blob3(9px)만 제거, blob1/blob2 반영.
+   - 신뢰도 100%(`QTest.keyClick(Key_End)`로 실제 키보드 슬라이더 조작): 3개 blob 전부
+     conf<1.0이라 전부 제거 — 3개 존 전부 0%.
+2. **블랍 목록도 threshold 반영**: `ZoneCanvas.blob_labels()`(블랍 삭제 모드가 클릭 대상으로
+   쓰는 라벨맵)의 고유 라벨 개수가 threshold에 따라 3개(0%) → 1개(60%) → 2개(30%) → 0개
+   (100%)로 정확히 변화 — threshold로 이미 제거된 blob은 라벨맵 자체에 없어 블랍 삭제
+   모드에서 클릭 대상이 될 수 없음을 확인(수정 전이라면 raw_class_map 기준이라 항상 3개
+   그대로였을 것).
+3. **BUG-018/019 패턴 재발 없음**: 신뢰도 60%/30%, 픽셀크기 250 조작 전에 원 1개를
+   `select_circle()`로 선택 + 존 리스트 "링1"을 `setCurrentRow(1)`로 하이라이트해둔 뒤,
+   threshold를 4차례(60%→30%→0%+px250→px50) 바꾸는 동안 `_canvas.selected_id()`/
+   `_canvas.highlighted_zone()`이 매번 그대로 유지됨을 확인 — 리셋 없음.
+4. **모델 재실행 없음**: `engine.run` 호출 카운터가 threshold를 5차례 바꾼 뒤에도 계속 1
+   (최초 1회)로 유지, `InferenceResult.raw_class_map`의 `id()`가 최초 실행 직후와 threshold
+   변경 여러 차례 후에도 완전히 동일(object identity 불변) — `refilter()`만 호출되고
+   forward pass가 재실행되지 않음을 확인.
+5. **R-A/R1~R4 회귀**: `CircleDetectPreviewDialog(tab)` 오픈/닫기 정상(체크포인트 상태
+   무관 독립 동작), `_on_auto_detect()`(R2 자동검출, `detect_circles()` 실제 파이프라인)
+   크래시 없음, 추론 실행→타겟 클래스 단일 검출→텍스트필드 노출(R1) 정상.
+6. **전체 앱 부팅 확인**: `python main.py`와 동일하게 `MainWindow()` 생성 시 탭 5개
+   (라벨링/학습/추론/모델/존 분석) 정상 구성, 존 분석 탭이 5번째 위치에 `ZoneAnalysisTab`
+   인스턴스로 올바르게 붙어있음을 확인 — R-B 변경이 탭 임베딩 자체에 영향 없음.
+
+### 테스트 설계상 참고 (버그 아님)
+- 신뢰도 30% 케이스에서 blob2(15:30,45:60 영역)의 모서리 일부가 반지름 35 경계를 살짝
+  넘어 "바깥쪽" 존에도 소량(hit=15px) 걸치는 것을 발견 — 좌표를 직접 계산해보니 blob2의
+  한쪽 모서리(45,15)가 중심(50,50)에서 거리 ≈35.36으로 링 경계(r=35)를 미세하게 초과하는
+  기하학적 배치 때문(테스트 데이터 설계상의 우연, 실제 zone_stats 계산 자체는 GUI와
+  오라클이 정확히 같은 값을 냈으므로 정상 동작). 애초에 "바깥쪽=정확히 0%"를 기대한
+  내 사전 가정이 잘못이었던 것으로 판단해 해당 세부 assertion만 완화(퍼센티지 일치
+  assertion 자체는 그대로 유지·통과).
+
+### 프로세스 정리
+- 스크래치 자산(`verify_rb.py`, `rb_dummy.png`)은 전용 스크래치 디렉토리에만 생성, 검증
+  종료 후 이미지 파일 삭제. `git status --short` 결과 워크트리 무변경 확인.
+- 검증 도중 헤드리스 환경에서 `QMessageBox.information()`(자동검출 결과 0건 시)이
+  무한 대기하는 것을 실제로 겪어(첫 시도에서 `verify_rb.py` 프로세스가 블로킹) `taskkill`로
+  종료 — `tasklist`로 PID 확인 후 이번 세션이 직접 띄운 프로세스(시작 시각이 이번 세션
+  이후, 인터프리터 경로가 스크립트 실행 명령과 일치)만 골라 종료했고, 이 워크트리 경로로
+  이미 실행 중이던 다른 `python.exe`(PID 16488, R-A 검증 로그에도 기록된 것과 동일 프로세스
+  — 시작 시각이 이번 세션보다 훨씬 이르고 인터프리터 경로도 다름)는 건드리지 않음.
+  종료 후 `tasklist` 재확인 결과 이 워크트리 관련 잔여 프로세스는 PID 16488 하나뿐(이번
+  세션이 새로 띄운 것 0건).
+
+### 판정
+**통과 — 버그 발견 없음.** root-cause 수정(`raw_class_map`→`class_map`)이 실제로 존
+퍼센티지·블랍 목록에 반영됨을 6가지 threshold 조합에서 독립 오라클과 정확히 일치하는
+정량 데이터로 확인했고, 수정 전이었다면 재현됐을 "오버레이는 바뀌는데 숫자는 그대로"
+증상이 지금은 없음을 직접 실측으로 반증. BUG-018/019 패턴 재발 없음, 모델 재실행 없음,
+R-A/R1~R4 회귀 없음.
+- 리더에게: **R-B 검증 통과. R-C(폴더 단위 가져오기 + 일괄 처리, 최대 스코프) 착수 가능.**
+- `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 R-B 체크박스를 "구현 완료,
+  검증 대기"에서 "구현+독립검증 통과"로 갱신.
