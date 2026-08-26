@@ -89,7 +89,14 @@ segmentation model/
 5. 리더도 서브에이전트와 동일하게 `docs/agents/leader-log.md`에 로그를 남긴다. 기록 대상은 서브에이전트 산출물 자체가 아니라 **오케스트레이션 흐름**이다: 사용자 요청 → 어떤 서브에이전트에 무엇을 언제·왜 맡겼는지 → 결과 → 커밋/푸시 등 외부 액션. `leader-log.md` 맨 위 "현재 상황 요약" 절은 append가 아니라 매번 덮어쓰는 살아있는 요약이다 — 그 아래 날짜별 로그는 append-only.
 6. 사용자 결정이 필요한 지점을 발견하면 `docs/decisions-needed.md`에 추가한다. 실제 결정이 나면 즉시 삭제한다(근거는 관련 문서·`leader-log.md`에 남으므로 이력은 보존). "추후 논의"로만 답한 경우는 삭제하지 않고 "보류된 항목" 절로 옮긴다.
 7. `docs/roadmap.md`(탭/기능별 진행 상태)는 `decisions-needed.md`와 같은 살아있는 문서다 — 상태가 바뀔 때마다 리더가 직접 갱신한다(체크박스 토글, 완료 항목 정리). append-only가 아니므로 과거 상태를 지우고 최신으로 덮어써도 된다 — 상세 이력은 `docs/agents/*-log.md`, `QA.md`, `docs/CHANGELOG.md`에 이미 남는다.
-8. **feature 브랜치에서 작업 중일 때**: 세션 시작 시 로컬 `main`이 현재 브랜치보다 앞서 있는지 확인한다(`git log <branch>..main`). 앞서 있으면 사용자에게 알리고 `git merge main`(rebase 아님 — 이미 커밋된 이력을 다시 쓰지 않기 위함) 여부를 확인한 뒤 진행한다. 자동으로 병합하지 않는다 — 확인 후에만.
+8. **"에디션" 브랜치(예: `feature/zone-analysis-tab`) 운영 규칙** (2026-08-26 사용자 확정): main과 독립적으로 계속 유지되는 별도 기능 브랜치는 **main으로 역병합하지 않는다** — main → 에디션 방향으로만, 그것도 직접 merge가 아니라 **sync 브랜치 + PR**로 주기적으로 받아온다.
+   ```
+   git fetch origin
+   git branch sync/main-into-<에디션명>-<날짜> origin/main
+   git push -u origin sync/main-into-<에디션명>-<날짜>
+   gh pr create --base <에디션 브랜치> --head sync/main-into-<에디션명>-<날짜> --title "sync: main 업데이트 반영" --body "..."
+   ```
+   병합(로컬 `git merge origin/sync/...` 또는 PR merge)은 사용자 확인 후 진행. `docs/agents/*-log.md`/`QA.md` 같은 append-only 문서에서 충돌이 나면 **양쪽 다 살리기**(두 항목 다 보존)로 해결 — 내용을 버리지 않는다. 이 브랜치를 다시 main에 합칠지는 사용자가 "이제 됐다"고 결정할 때 별도로 논의한다(그 전까지는 반대 방향 merge 시도 금지). 워크트리(같은 저장소를 여러 디렉토리에 체크아웃)를 쓰는 경우, 각 워크트리는 자기 브랜치 파일만 갖고 있으므로 이 규칙은 해당 에디션 워크트리의 `CLAUDE.md`에도 동일하게 반영돼 있어야 한다.
 
 ### 워크플로우 순서
 
