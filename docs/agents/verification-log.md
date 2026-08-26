@@ -3924,3 +3924,128 @@ no-op, `QFileDialog.get*`는 고정 경로 반환으로 몽키패치. 나머지 
 - 리더에게: **R3-1/R3-2 검증 통과. 다음은 R3-3(브러시 지우기, `zone_canvas.py` 신규
   3-way 모드) 착수 가능 — 스펙에 명시된 대로 성능(스트로크 종료 시에만 존 재계산) 실측이
   이 라운드 검증의 핵심 포인트가 될 것.**
+
+
+## 2026-08-27 — 존 분석 탭 R3-3(브러시 지우기 모드) 검증: 통과
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치).
+리더가 맡긴 R3-3 검증 — 스펙
+[zone-analysis-tab-features-round3-2026-08-27.md](../specs/zone-analysis-tab-features-round3-2026-08-27.md)
+"판단 2 — 브러시 지우기", 구현 로그는 `docs/agents/implementation-log.md`
+"2026-08-27 — 존 분석 탭 R3-3(브러시 지우기 모드) 구현" 항목, 커밋 `c32139c`(feat)+
+`ea4e6a5`(docs). 캔버스 인터랙션이 복잡하다는 리더 지시에 따라 이번 라운드는 **실제
+`QTest.mousePress/mouseMove/mouseRelease` 이벤트 주입**으로 골든패스를 확인했다(구현자가
+오프스크린 스모크로 자체 확인한 내용을 그대로 신뢰하지 않고 독립 재확인).
+
+### 정적 검토
+- `app/widgets/zone_canvas.py`: `annotation_canvas.py`의 브러시 스탬프(`_paint_circle`/
+  `_paint_stroke`, bbox-crop 벡터화 원판 + 반지름 40% 간격 선형보간)가 `_erase_stamp`/
+  `_erase_paint_at`/`_erase_paint_stroke`로 정확히 이식됨. `self._mode`(`"circle"|
+  "blob_delete"|"brush_erase"`) 단일 필드로 3-way 배타 구현, `set_blob_delete_mode()`는
+  하위 호환 얕은 래퍼로 리라이트됨. `mousePressEvent`/`mouseMoveEvent`/`mouseReleaseEvent`
+  전부 `brush_erase` 분기에서 좌클릭만 가로채고 나머지 버튼(중클릭 등)은 `super()`로 위임 —
+  `blob_delete` 분기와 동일 패턴. `erase_changed` 시그널이 `mouseReleaseEvent`에서만 emit되고
+  `mouseMoveEvent`는 `self.update()`만 호출(무거운 재계산 트리거 없음) — 스펙 "성능" 절 그대로.
+  `set_blob_data()`가 `_erase_strokes`/`_erase_mask_np`/진행중 스트로크를 함께 초기화함을 코드로
+  확인.
+- `app/tabs/zone_analysis_tab.py`: "브러시 지우기 모드" 체크 가능 버튼 + "지우개 크기"
+  `QSpinBox`(1~200px) 추가, `_on_blob_delete_toggled`/`_on_brush_erase_toggled`가 서로 상대
+  버튼을 `setChecked(False)`하는 2줄 상호배제로 3-way 배타 구현(신규 `QButtonGroup` 없음,
+  스펙 그대로). `_current_target_mask()`에 `erase_mask()` 배경 처리 1줄 추가 확인. 새
+  이미지 로드/추론결과 없음 등 기존 "블랍 삭제 모드" 버튼 리셋 지점 3곳 모두에 "브러시
+  지우기 모드" 버튼도 동일하게 처리돼 있음(BUG-018~022류 리셋 누락 재발 방지 확인).
+
+### 실행 확인 (`py_compile`)
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe -m py_compile app/widgets/zone_canvas.py
+  app/tabs/zone_analysis_tab.py app/core/zone_metrics.py
+  app/widgets/circle_detect_preview_dialog.py app/widgets/zone_batch_result_dialog.py
+  app/main_window.py` 전부 통과.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QT_QPA_PLATFORM=offscreen`, `QTest` 실제 마우스
+이벤트 — 저장소에 포함 안 함, 세션 종료 후 스크래치 파일 삭제)
+
+`load_checkpoint_meta`/`load_model_from_ckpt`/`engine.run`/`engine.refilter`만 몽키패치
+(결정론적 합성 240x240 이미지 — 왼쪽 절반 class_id=1, 오른쪽 절반 class_id=2, confidence
+전부 1.0), `QMessageBox.*` no-op, `QFileDialog.getOpenFileName(s)`/`getSaveFileName`은 고정
+경로 반환. 나머지(`ZoneCanvas` 전체, `ZoneAnalysisTab` 슬롯, `zone_metrics.zones_from_circles`/
+`zone_stats`, `export_zone_percentages_to_excel`, `CircleDetectPreviewDialog`, `MainWindow`)는
+몽키패치 없이 실제 프로덕션 코드 그대로 실행. 체크포인트 열기→이미지 열기→▶ 추론 실행까지
+전부 `QTest.mouseClick` 실클릭으로 수행, 타겟 클래스 2개(class_1/class_2) 검출돼 콤보 표시
+확인.
+
+1. **3-way 모드 배타성(항목1)**: 원편집 모드에서 실제 `QTest.mousePress→Move→Release` 드래그로
+   원 생성(반지름 25.26px) 확인 → 같은 방식으로 원 중심 드래그 이동 확인(좌표 정확히 반영) →
+   "블랍 삭제 모드" 버튼 실클릭 → `canvas.blob_delete_mode()==True`+`brush_erase_mode()==False`
+   전환 확인 → 블랍삭제 모드에서 좌클릭해도 원이 생성되지 않음(원 개수 불변) 확인 →
+   "브러시 지우기 모드" 버튼 실클릭 → `brush_erase_mode()==True`+블랍삭제 버튼 자동
+   `setChecked(False)`까지 확인 → 브러시지우기 모드에서 드래그해도 원이 생성되지 않음 확인 →
+   버튼 재클릭으로 circle 모드 복귀 후 원 이동이 다시 정상 동작함을 재확인. **전부 실제 버튼
+   클릭 + 캔버스 드래그로 확인, 내부 메서드 직접 호출 없음.**
+2. **브러시 지우기 정확성(항목2, 독립 오라클 대조)**: `canvas.set_circles([(120,120,200)])`로
+   전체 이미지를 덮는 원 1개(중심부=전체 존) 설정, 타겟을 class_1(왼쪽 절반, 사전 50.0%)로
+   재확인 → 브러시 지우기 모드에서 서로 겹치지 않는 3곳(30,30)/(30,80)/(30,130)에 실제
+   `QTest.mousePress+Release`(단일 스탬프)로 지우기 실행 → **`canvas.erase_mask()`가
+   production 코드를 전혀 재사용하지 않고 새로 작성한 독립 오라클(`np.ogrid` 원판 비교)과
+   픽셀 단위로 정확히 일치**(2127px = 2127px) → 존 퍼센티지도 오라클 계산값과
+   `<1e-6` 정확히 일치(46.307291666666664% = 46.307291666666664%) → 화면 `_zone_list` 텍스트도
+   반올림 오차(`<5e-3`) 내로 일치.
+3. **재계산 타이밍(항목3, 성능 요구사항 핵심)**: `erase_changed`를 카운팅 래퍼로 재연결 →
+   실제 드래그(press+move 7회+release)에서 **press와 7번의 move 동안 재계산 호출 0회
+   유지**(구현자 주장 재확인) → 라이브 드래그 중에도 `erase_mask()`가 bbox 증분으로 실시간
+   갱신됨(화면 피드백 정상) → **release 시점에 정확히 1회만 재계산 호출**됨을 카운터로 실증.
+4. **지우개 크기 조절(항목4)**: `QSpinBox`를 60px로 변경(실제 값 변경 시그널 경로) →
+   `canvas.erase_brush_size()==60` 반영 확인 → 새 위치에 단일 클릭 지우기 → 새 스탬프 면적이
+   반지름 30 기준 독립 오라클과 정확히 일치(2821px = 2821px), 이전 반지름 15 오라클(193px,
+   가장자리 근접이라 원 일부가 캔버스 밖으로 잘림)보다 확연히 넓음 — 브러시 크기 변경이 실제
+   반경에 반영됨을 확인.
+5. **`set_blob_data()` 리셋(항목5)**: 타겟 콤보를 실제 `setCurrentIndex(1)`로 class_2(id=2)
+   전환 → `canvas.erase_mask()`가 `None`으로 리셋, `blob_labels()`가 새 배열 객체로 교체,
+   `removed_blob_ids()`도 빈 집합으로 리셋됨을 확인 → class_1로 재전환 후에도 지우기 이력이
+   복원되지 않음(새 타겟 기준으로 완전히 무효화됨) 확인.
+6. **중클릭 팬(항목6)**: 브러시 지우기 모드가 활성인 상태에서 실제 `QTest.mousePress/Move/
+   Release(MiddleButton)` 드래그 → `canvas._pan` 오프셋이 실제로 이동함(12,12→69,-26) 확인,
+   팬 조작 자체는 `erase_mask()`에 영향 없음(불변) 확인.
+7. **BUG-018~022 패턴 재발 여부(항목7)**: 원편집 모드에서 실제 클릭으로 원 선택 →
+   빈 곳 클릭으로 존 하이라이트 설정 → 브러시 지우기 모드 진입해 캔버스 반대편에서 실제
+   스트로크 실행 후 다시 원편집 모드로 복귀 → **원 선택 상태(`selected_id()`)와 존
+   하이라이트(`highlighted_zone()`) 둘 다 스트로크 전후로 완전히 동일하게 유지**됨을 확인
+   (재발 없음).
+8. **회귀(항목8)**: R3-1(단일 이미지 Excel 내보내기) 버튼이 여전히 정상 동작해 xlsx 파일을
+   생성함을 확인, `CircleDetectPreviewDialog` 생성/닫기 시 크래시 없고 메인 탭 상태(타겟
+   클래스/원 목록)가 완전히 불변임을 확인(완전 독립 회귀 없음), `MainWindow` 5탭 전체(존 분석
+   탭 포함) 생성 시 크래시 없음. R1~R4/R-A~R-C/R3-1/R3-2는 이전 세션들에서 이미 검증
+   통과+push 완료 상태라 이번엔 R3-3 신규 부분 + 위 회귀 확인으로 충분하다고 판단(리더 지시와
+   동일 원칙).
+9. **크래시 없음**: 전체 시나리오 진행 중 예외/크래시 0건.
+
+총 assertion 다수(항목1 11개 + 항목2~4 12개 + 항목5 7개 + 항목6 3개 + 항목7 4개 + 항목8 4개
+등) 전부 PASS. 검증 과정에서 스크립트 자체의 시나리오 설계 실수 2건을 발견해 수정
+(둘 다 애플리케이션 버그 아님):
+- 첫 시도에서 "블랍삭제 모드 좌클릭이 원을 생성하지 않는지" 테스트에 class_1 영역 좌표를
+  써서 실제로 좌측 절반 전체(단일 연결요소)가 삭제돼 이후 정밀 오라클 테스트를 오염시킴 —
+  배경(class_2) 좌표로 교체.
+- 체크 가능 버튼을 여러 항목에 걸쳐 `QTest.mouseClick`으로 반복 토글하면서 이전 상태를
+  추적하지 못해 의도와 반대로 꺼지는 시퀀싱 버그 — `ensure_checked()` 헬퍼(원하는 상태가
+  아닐 때만 실제 클릭)로 교체해 해결.
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지·체크포인트·xlsx는 세션 스크래치 디렉토리에만 생성 후 검증
+  종료 시 삭제, 저장소에는 포함하지 않음.
+- 부가로 `main.py`와 동일하게 `MainWindow().show()`까지 띄우는 스모크를 별도 시도했다가
+  오프스크린 플랫폼에서 응답 없는 모달(원인 미조사, R3-3 범위 밖)로 추정되는 이유로 행이
+  걸려 `taskkill`로 강제 종료함 — 이 스모크는 필수 검증 항목이 아니었고(`MainWindow()` 생성
+  자체는 위 항목8에서 `.show()` 없이 이미 크래시 없음 확인 완료), 별도 이슈로 등록할 만큼
+  재현/조사하지 않음(필요 시 후속 세션에서 재확인 권장). 검증 스크립트 자체는 매번
+  `tab.close()`로 정리했고, 최종 `tasklist` 확인 결과 잔존 `python.exe` 프로세스 0건.
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션 문서 갱신 제외).
+
+### 판정
+**통과 — R3-3(브러시 지우기 모드) 구현+검증 완료.** 신규 버그 발견 없음(`QA.md` 갱신
+없음). `docs/roadmap.md`의 R3-3 항목을 "구현 완료, 검증 대기"에서 "구현+독립검증 통과"로
+갱신.
+- 리더에게: **R3-3 검증 통과(실제 `QTest` 마우스 이벤트로 3-way 배타성/브러시 지우기
+  정확성/재계산 타이밍(release 시 1회)/브러시 크기/타겟 전환 리셋/중클릭 팬/선택·하이라이트
+  유지 전부 실증, 회귀 없음). 다음은 R3-4(Undo 통합, `zone_canvas.py` 추가 상태) 착수
+  가능 — 스펙상 원편집+블랍삭제+브러시지우기 3종을 하나의 undo 스택으로 묶는 게 핵심이라
+  각 mutator의 push 위치(특히 "빈 곳 클릭 취소 시 no-op 엔트리 pop" 처리)를 정밀하게
+  확인해야 할 것.**
