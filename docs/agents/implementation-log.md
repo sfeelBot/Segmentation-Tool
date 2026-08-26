@@ -3462,3 +3462,37 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - `QA.md` BUG-022 상태를 "Open — 1차 수정 재현 확인, 수정 실패"에서
   "수정함(2차), 검증 필요"로 갱신(Closed로 옮기지 않음).
 - 커밋: `6695f77`(2차 수정)
+
+---
+
+## 2026-08-26 — 존 분석 탭 R-C 3c: 일괄 처리 결과 Excel 내보내기
+
+브랜치 `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+스펙 [zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"판단 C > C-3", "라운드 분할 제안 > 3c" — 스펙 전체의 마지막 라운드.
+
+### 변경
+- `app/core/zone_metrics.py` — `export_zone_percentages_to_excel(rows, out_path)` 추가.
+  `inference_engine.py::export_blobs_to_excel()`과 동일한 openpyxl 패턴(헤더 볼드, 시트
+  1개)을 그대로 복제, 스키마만 이미지파일명/존이름/타겟비율(%)로 변경. long format 유지
+  (wide format으로 바꾸지 않음 — 개별 자동검출 모드에서 이미지마다 존 개수가 다를 수
+  있어서, 스펙에 이미 명시된 이유). `Path` import 추가.
+- `app/widgets/zone_batch_result_dialog.py` — 하단 버튼 행에 "Excel로 내보내기" 버튼 추가.
+  `QFileDialog.getSaveFileName(..., "Excel (*.xlsx)")` → `export_zone_percentages_to_excel()`
+  호출 → 완료/오류 `QMessageBox` — `inference_tab.py`의 `_export_current_to_excel()` 패턴
+  그대로 이식. 생성자에서 받은 `rows`를 `self._rows`로 저장해 버튼 슬롯에서 재사용.
+
+### 확인
+- `python -m py_compile app/core/zone_metrics.py app/widgets/zone_batch_result_dialog.py`
+  통과(두 파일 모두 문법 오류 없음). 로컬 셸의 기본 Python에는 `cv2`/`openpyxl`이 설치돼
+  있지 않아(다른 인터프리터 경로 문제로 추정, `inference_engine.py`도 같은 방식으로 이
+  두 패키지를 import하므로 코드 자체 문제 아님) `zone_metrics.py`의 `__main__` self-check는
+  이번 세션에서 직접 실행하지 못함 — 실행 확인은 검증 에이전트가 프로젝트 실제 실행 환경
+  에서 수행 필요.
+- `python main.py` GUI 구동 검증은 하지 않음(지시에 따라 구현만 수행) — **검증 에이전트의
+  실제 확인 필요**.
+
+### 관련 문서
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절의 R-C 3c 항목을 미착수([ ])에서 구현 완료([x],
+  검증 대기)로 갱신, 완료 시 신규 기능 3건 전체 종료임을 명시.
+- 커밋: `143c518`

@@ -671,8 +671,14 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       정확히 그 부분집합만 포함함을 확인. `inference_tab.py`(`SingleSelection`) 회귀 없음.
       `QA.md` BUG-022 **Closed로 이동**. 상세는 `docs/agents/verification-log.md`
       2026-08-26 BUG-022 2차 수정 검증 항목.
-- [ ] R-C 3c — Excel 내보내기(`export_zone_percentages_to_excel()` 신설 +
-      `ZoneBatchResultDialog`에 버튼 연결) — 착수 대기.
+- [x] R-C 3c — Excel 내보내기(`export_zone_percentages_to_excel()` 신설 +
+      `ZoneBatchResultDialog`에 버튼 연결) — 구현 완료(2026-08-26, 커밋 `143c518`),
+      **검증 대기**. `export_blobs_to_excel()`과 동일한 openpyxl 패턴(헤더 볼드, 시트 1개)을
+      long format 스키마(이미지파일명/존이름/타겟비율%)로 복제, 다이얼로그 버튼은
+      `inference_tab.py`의 `getSaveFileName`→내보내기→완료 메시지박스 패턴 그대로 이식.
+      **이로써 신규 기능 3건(요청1 팝업/요청2 폴더+일괄처리/요청3 threshold) 전체
+      완료** — 검증 통과 시 스펙 문서(`zone-analysis-tab-features-2026-08-26.md`) 범위
+      전부 종료.
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
