@@ -629,9 +629,22 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       반환됨) — 이번 라운드엔 배치 버튼이 없어 당장 영향은 없으나 3b(배치 처리) 착수
       시 재검토 필요(버그로 등록하진 않음, 구현자가 이미 알고 있던 한계이자 3b 스펙
       단계에서 재논의 대상). 상세는 `docs/agents/verification-log.md` 해당 항목.
-- [ ] R-C 3b/3c — 일괄 처리 로직(진행률 다이얼로그 + 상태아이콘/배지 반영) + 결과 테이블 +
-      Excel 내보내기(`zone_batch_result_dialog.py` 신설) — 착수 대기(BUG-020/021 수정 및
-      재검증 완료, 선행 조건 해소됨).
+- [x] R-C 3b — 일괄 처리 로직(진행률 다이얼로그 + 상태아이콘/배지 반영) + 결과 테이블
+      (`zone_batch_result_dialog.py` 신설) — 구현 완료(커밋 `b391075`+`ca83829`), **검증
+      대기**. 좌측 패널 하단에 "1번째 이미지 원을 전체에 적용"(기본 체크) 체크박스 +
+      "▶ 선택 이미지 일괄 처리 (N장)" 버튼(목록 2장 이상 + 기준 이미지에 원 1개 이상일
+      때만 활성화) 신설. `inference_tab._export_all_images_to_excel()`의
+      `QProgressDialog` 루프 패턴을 그대로 재사용 — 현재 이미지는 캐시 재사용(재추론
+      생략), 나머지는 고정 타겟 클래스로 `engine.run()` 재실행 + 기준 원 재사용(해상도
+      다르면 비례 스케일 방어) 또는 이미지별 `detect_circles()` 자동검출 + R-B와 동일하게
+      `class_map`(raw_class_map 아님) 기준 `zone_stats()` 계산. 블랍 삭제는 배치에
+      미반영(v1 명시 제외). `InferenceImageList`에 애디티브 `selection_changed` 시그널
+      1개 추가(버튼 라벨 N 갱신용, 기존 API/동작 불변). 3a에서 확인된 "선택 1개=전체
+      반환" 동작은 그대로 유지하되 배치 버튼 툴팁에 안내 문구 추가(별도 선택 플래그
+      도입은 YAGNI로 보류 — 판단 근거는 구현 로그 참고). **Excel 내보내기(3c)는 이번
+      라운드 범위 밖** — 별도 착수 대기.
+- [ ] R-C 3c — Excel 내보내기(`export_zone_percentages_to_excel()` 신설 +
+      `ZoneBatchResultDialog`에 버튼 연결) — 착수 대기.
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새

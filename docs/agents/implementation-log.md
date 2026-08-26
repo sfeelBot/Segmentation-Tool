@@ -3221,3 +3221,104 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 ### 관련 문서
 - `docs/roadmap.md` "존(Zone) 분석 탭" 절 R-C 항목을 레이아웃 뼈대+3a(완료, 검증 대기)와
   3b/3c(대기)로 분리 갱신.
+
+---
+
+## 2026-08-26 — 존 분석 탭 R-C 3b: 폴더 일괄 처리 로직 + 결과 테이블
+
+지시: `docs/specs/zone-analysis-tab-features-2026-08-26.md`의 "판단 C > C-2"와
+"라운드 분할 제안 > 3b" 절 그대로. 워크트리 `D:\segmentation model-zone-analysis-tab`
+(main과 공유하는 `D:\segmentation model`이 아님). 엑셀 내보내기(3c)는 범위 밖.
+
+### 변경
+- `app/tabs/zone_analysis_tab.py`:
+  - 좌측 패널 하단에 `QCheckBox("1번째 이미지 원을 전체에 적용")`(기본 체크) +
+    `QPushButton("▶ 선택 이미지 일괄 처리 (0장)")` 신설. 버튼은
+    `_update_batch_button_state()`(목록 2장 이상 + `self._canvas.get_circles()` 1개
+    이상)로 활성화 여부를, `_update_batch_button_label()`(`self._img_list
+    .selected_paths()` 개수)로 라벨의 N을 갱신 — 각각 `circles_changed`/
+    `display_changed`/`selection_changed` 시그널에 연결해 상태 변경마다 자동 갱신.
+  - `_on_target_changed()`에 `self._target_classes = classes` 저장 추가 — 배치가 모든
+    이미지에 고정으로 재사용하는 타겟 클래스 정의(스펙 그대로, 같은 체크포인트라
+    클래스 id 의미가 이미지마다 바뀌지 않는다는 전제).
+  - `_on_batch_process()` 신설 — `inference_tab._export_all_images_to_excel()`의
+    `QProgressDialog(0, len(targets))` 루프 패턴을 그대로 복제:
+    - 현재 캔버스에 표시 중인 이미지는 `self._last_result` 재사용(재추론 생략), 그 외는
+      `engine.run(model, path, ckpt_path, classes=고정_classes, min_confidence=,
+      min_pixel_size=, opacity=0.5)`.
+    - 체크박스 체크(기본) = `self._canvas.get_circles()`(기준 원) 그대로 재사용, 해상도가
+      기준 이미지와 다르면 `(w_i/w_ref, h_i/h_ref)` 비율로 좌표 스케일(반지름은 두 축
+      평균 스케일) — 정교한 워핑 아닌 최소 안전장치(스펙 명시 YAGNI 선).
+    - 체크 해제(개별 자동검출) = `detect_circles(bgr, sensitivity=슬라이더값)`(메인 탭
+      "자동 검출"과 동일 호출, core 변경 없음).
+    - `zones_from_circles()` + `zone_stats()` — 판단 B/R-B와 동일하게 **`class_map`**
+      기준(`raw_class_map` 아님, R-B에서 고친 근본원인 버그 재발 방지 명시적으로 재확인).
+    - 처리 중/완료마다 `self._img_list.set_item_status(path, "processing"/"done",
+      badge=...)`(완료 배지 = 가장 바깥쪽 존 퍼센티지, `zones_from_circles`가 마지막에
+      추가하는 존이므로 `pct_list[-1]`).
+    - 블랍 삭제는 배치에 미반영(스펙 v1 명시 제외) — `_current_target_mask()`(제거된
+      블랍 반영)가 아니라 `result.class_map == target_cid`를 직접 사용.
+    - 결과는 `(image_name, zone_name, pct)` long format 리스트로 누적 후
+      `ZoneBatchResultDialog`에 표시.
+  - 새 폴더/파일 로드 시(`_on_select_image`/`_on_select_folder`) `self._img_list
+    .clear_status()` 호출 추가 — 이전 배치 실행의 상태아이콘/배지 잔존 방지.
+  - 배치 버튼 툴팁에 "1장만 선택해도 전체 처리됨" 안내 문구 추가(아래 "재확인" 절 참고).
+- `app/widgets/inference_image_list.py`: 애디티브 시그널
+  `selection_changed = pyqtSignal()` 추가, `_tree.itemSelectionChanged`에 연결. 기존
+  `_apply_display()`는 트리 재구성을 `blockSignals(True)`로 감싸므로 폴더/파일 재로드 시
+  이 시그널이 오발화하지 않음(사용자가 실제로 Ctrl/Shift 선택을 바꿀 때만 발생) —
+  `inference_tab.py`는 이 시그널을 구독하지 않으므로 회귀 없음.
+- 신설 `app/widgets/zone_batch_result_dialog.py::ZoneBatchResultDialog(QDialog)` —
+  `QTableWidget(0, 3)`(이미지/존/타겟 비율(%)), long format, "닫기" 버튼만(엑셀 버튼은
+  3c에서 추가 예정, 이번 라운드엔 자리도 만들지 않음 — YAGNI, 필요해지면 버튼 1개 추가로
+  충분).
+
+### 재확인 (BUG-018/019/020/021 패턴 재발 방지 + selected_paths() 한계 판단)
+- 배치 루프는 `self._img_list.set_item_status()`만 호출하고 `self._canvas.set_circles()`/
+  `set_pixmap()` 등 캔버스 API는 전혀 호출하지 않는다(스펙 "리스크" 절 지시 그대로) —
+  원 선택/존 하이라이트 상태를 리셋시킬 경로 자체가 없음을 코드 리뷰로 확인.
+  `set_item_status()`는 내부적으로 트리 아이템의 아이콘/텍스트만 갱신하고 `clear()`로
+  트리를 재구성하지 않으므로(`_apply_item_status()` 참고) 선택 상태에도 영향 없음.
+- **`selected_paths()`의 "선택 개수 ≤1이면 전체 반환" 판단**: 3a 검증에서 지적된
+  "정확히 1장만 선택 → 그 1장만 처리"가 불가능한 한계를 검토함. 결론: **문제 삼지 않고
+  안내 문구만 추가**(버튼 툴팁, `ca83829`). 근거 — 배치 처리의 존재 이유 자체가 "여러 장을
+  한 번에"이고, 사용자가 정말 이미지 1장만 확인하고 싶다면 그 이미지를 목록에서 클릭해
+  기존 단일 이미지 플로우(캔버스에 바로 표시, 우측 존 리스트에서 즉시 확인)를 쓰는 것이
+  배치 다이얼로그를 여는 것보다 이미 더 빠르고 자연스러운 경로다 — 배치 버튼이 굳이
+  "정확히 1장"을 지원해야 할 이유가 약함. 별도 선택 플래그(진짜 "1개 선택"과 "미선택"을
+  구분하는 상태)를 추가하는 것은 이 시나리오의 실익 대비 상태 관리 코드만 늘리는
+  과설계로 판단(YAGNI) — 3a 구현자의 원래 판단과 동일 결론 재확인.
+- 새 이미지 선택 시 `_on_list_image_selected()`가 `self._canvas.clear_circles()`를
+  호출해 `circles_changed`를 emit하므로 `_update_batch_button_state()`가 자동으로
+  버튼을 비활성화한다(새 이미지는 원이 없으므로) — 별도 훅 추가 불필요, 기존 시그널
+  체인으로 커버됨을 코드 리뷰로 확인.
+
+### 검증 (구현 단계, 실행 검증 아님)
+- `py -3 -m py_compile app/tabs/zone_analysis_tab.py app/widgets/inference_image_list.py
+  app/widgets/zone_batch_result_dialog.py` 전부 통과(3.14 인터프리터로 구문만 확인,
+  프로젝트 venv 미탐지 — import/실행 검증은 아님).
+- **지시에 따라 `python main.py` 실제 GUI 구동/조작 검증은 수행하지 않음** — 검증
+  에이전트 몫으로 남김.
+
+### 확인 필요 (검증 서브에이전트에게)
+- `python main.py` 실제 GUI: 합성 폴더(이미지 3~5장, 크기 동일 1케이스 + 크기 다른
+  1케이스)로 체크박스 두 상태(기준 원 재사용 / 이미지별 자동검출) 각각 실행 → 결과
+  테이블 값이 numpy 오라클과 일치하는지, 진행률 다이얼로그 취소 동작, 좌측 목록의
+  상태아이콘/배지가 처리 진행에 맞춰 실시간 갱신되는지.
+- 배치 처리 도중/이후에도 원 선택·존 하이라이트가 부당하게 리셋되지 않는지(코드 리뷰로는
+  경로가 없음을 확인했으나 실제 GUI에서 재확인 필요).
+- 특정 이미지를 좌측 목록에서 재클릭 → 기존 단일 이미지 플로우로 재계산한 값이 배치 결과와
+  100% 일치하는지(캐시 없는 재계산 방식 검증, 결정론적 계산이라는 전제 확인).
+- 버튼 활성화/라벨 갱신: 목록 2장 미만이거나 기준 이미지에 원이 없을 때 비활성화 유지,
+  Ctrl/Shift 다중 선택 시 라벨의 (N장)이 정확히 갱신되는지, 1장만 클릭 선택 시 안내
+  툴팁이 실제로 도움이 되는지(UX 판단).
+- `inference_tab.py` 골든패스(폴더 열기/검색/정렬/이전·다음) — `InferenceImageList`에
+  추가된 `selection_changed` 시그널이 무해한지(구독자 없음, 정적 확인은 끝냈으나 실행
+  확인 권장).
+- **완료 후에도 이 라운드는 "완료"로 보고하지 않음** — 검증 에이전트의 실제 GUI 확인이
+  끝나야 R-C 3b가 완결된다.
+
+### 관련 문서
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절 R-C 3b 항목을 완료(검증 대기)로 갱신, 3c는
+  별도 대기 항목으로 분리.
+- 커밋: `b391075`(기능), `ca83829`(툴팁 안내).
