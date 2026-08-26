@@ -3590,3 +3590,89 @@ PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. `engine.run`(모델 f
   시급함.**
 - `QA.md`에 `BUG-022`(P1, Open) 신규 등록. `docs/roadmap.md`의 R-C 3b 항목을 "구현 완료,
   검증 대기"에서 "구현+검증 완료(조건부 통과, BUG-022 신규 발견)"로 갱신.
+
+---
+
+## 2026-08-26 — BUG-022 재검증: 다중선택(Ctrl/Shift) 시 원 소실 방지 수정, 재현됨(수정 실패)
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치). 리더가
+구현 에이전트에게 맡긴 BUG-022(P1) 1차 수정(커밋 `9b28987`, `_multi_select` 플래그 가드)의
+재검증만 수행 — 3b의 나머지 부분(정확성 96 assertion 등)은 직전 세션에서 이미 통과 확인돼
+범위 밖.
+
+### 방법
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`. numpy/cv2/PIL/torch/
+matplotlib 선행 임포트 후 PyQt6(기존 관례). `engine.run`/`engine.refilter`만 몽키패치(손계산
+가능한 합성 `InferenceResult` 반환, `class_stats`/`blobs`는 빈 리스트), `QMessageBox.*`
+no-op, `ZoneBatchResultDialog.exec` 무력화(모달 회피) — 3b 검증 세션과 동일 패턴. 스크래치
+스크립트 3종(`verify_bug022.py`, `debug_timing.py`/`debug_timing2.py`, 전용 스크래치 디렉토리)
++ 합성 이미지 4장. **지시사항대로 `_on_current_item_changed()`를 직접 호출하지 않고 반드시
+`QTest.mouseClick` + 실제 `Qt.KeyboardModifier.ControlModifier`/`ShiftModifier`로 마우스
+이벤트를 재현**(원 보고서와 동일 방법).
+
+### 결과 — BUG-022 재현됨(수정이 실제로 작동하지 않음)
+원본 재현 시나리오(이미지1 실제 단일클릭으로 선택 확정 → 원 2개 정의 → 이미지2 실제
+Ctrl+클릭)를 그대로 재실행한 결과, **수정 이전과 동일하게 증상이 재현**됐다:
+- `tab._canvas.get_circles()`가 Ctrl+클릭 직후 `[]`로 즉시 비워짐(기대: 원 2개 유지).
+- `tab._btn_batch.isEnabled()`가 `False`로 전환(기대: 계속 `True`).
+- `tab._image_path`가 이미지1에서 이미지2로 바뀜(기대: 이미지1 유지, Ctrl+클릭은 확장
+  선택일 뿐 "미리보기 전환"이 아니어야 함).
+- Shift 범위선택(이미지1 → 이미지3)도 동일하게 재현(`image_selected`가 이미지3에 대해
+  잘못 emit됨, 최종 `selectedItems()`는 3개로 정상이지만 그 사이에 이미 잘못된 emit 발생).
+
+### 근본 원인 규명 — 왜 1차 수정의 "검증 완료" 주장이 틀렸는가
+`inference_image_list.py`의 `_on_current_item_changed()`에 추가된 가드(`if self._multi_select
+and len(self._tree.selectedItems()) != 1: return`)는 **`selectedItems()`를 인위적으로
+미리 세팅한 뒤 메서드를 직접 호출하는 헤드리스 테스트에서만 통과**하고, 실제 Qt 마우스
+클릭 이벤트 시퀀스에서는 작동하지 않는다. `debug_timing.py`/`debug_timing2.py`로
+`_on_current_item_changed`(소스에 임시 디버그 print 삽입 후 원상복구, `git status`로 무변경
+확인)와 `currentItemChanged`/`itemSelectionChanged` raw 시그널 발화 순서를 직접 관찰한 결과:
+
+```
+RAW 시퀀스 (이미지1 선택된 상태에서 이미지2 Ctrl+클릭 시):
+1) currentItemChanged 발화 — 이 시점 selectedItems() = [이미지1] (1개, 이미지2는 아직 미반영)
+   → 가드 조건(len != 1)이 False → "정상 단일 선택"으로 오판 → image_selected(이미지2) 잘못 emit
+2) (Qt 내부에서 Ctrl 토글 선택 커맨드 적용)
+3) itemSelectionChanged 발화 — 이제야 selectedItems() = [이미지1, 이미지2] (2개, 뒤늦게 정확해짐)
+```
+
+Qt의 `QAbstractItemView` 마우스 클릭 처리는 `mousePressEvent` 안에서 (a) `currentIndex`를
+먼저 바꿔 `currentItemChanged`를 동기 발화한 뒤에야 (b) 실제 선택 커맨드(Ctrl=Toggle,
+Shift=Range)를 `selectionModel`에 적용하는 순서로 동작한다. 즉 `currentItemChanged` 핸들러
+실행 시점엔 아직 이번 클릭의 선택 효과가 반영되지 않은 "직전" 상태만 관측 가능 — 가드가
+검사하는 `len(selectedItems())`가 이 순간엔 항상 "이전 선택 개수"를 보게 돼, Ctrl/Shift로
+선택을 2개 이상으로 늘리는 첫 클릭마다 매번 뚫린다(정확히 원래 버그가 발생하던 경로).
+1차 수정 시도의 헤드리스 검증(QA.md 원문: "`_on_current_item_changed()`를 실제
+`selectedItems()` 상태별로 직접 호출")은 이 인트라 이벤트 타이밍을 재현할 수 없는 방법이라
+거짓 양성(false positive)이었다.
+
+### 회귀 없음 확인 (변경 안 됨 — 코드 레벨 보장)
+`inference_tab.py`는 `set_multi_select()`를 호출하지 않아 `_multi_select`가 항상 `False`이고,
+가드 전체가 `self._multi_select and ...`로 게이팅돼 있어 이 조건이 거짓이면 가드 블록에
+진입 자체를 안 한다 — 즉 SingleSelection 경로는 이번 수정 전후로 코드 실행 흐름이 100%
+동일함을 코드 레벨로 보장. 실측으로도 `InferenceImageList(set_multi_select 미호출)`에서
+`_multi_select is False`, 실제 클릭 시 `image_selected` 정상 발화(이미 선택된 항목을 다시
+클릭하는 경우엔 애초에 Qt가 `currentItemChanged`를 발화하지 않는데 이는 이번 수정과 무관한
+기존 Qt 동작이며 3b 검증 때도 동일하게 관찰됨).
+
+### 시나리오 5(부분집합 배치 처리 실제 실행)는 별도로 미실행
+원이 시나리오 1 단계에서 이미 사라지는 게 재현됐으므로, "이제 원이 안 사라지니 실제로
+일괄 처리가 되는지" 확인하는 지시사항 5번은 전제(원 유지)가 성립하지 않아 의미가 없어
+스킵 — 원 손실 버그부터 실제로 수정된 뒤 재확인 필요.
+
+### 판정
+**블로커 — BUG-022 수정 실패, 재현됨.** `QA.md`의 상태를 "수정함, 검증 필요"에서
+**Open**으로 되돌리고, 근본 원인(`currentItemChanged`가 선택 커맨드 적용보다 먼저 동기
+발화되는 Qt 내부 순서)과 1차 수정이 왜 헤드리스 테스트를 통과했는지, 수정 방향 후보
+(예: `itemSelectionChanged` 기반으로 재설계, `QApplication.keyboardModifiers()`로 클릭
+시점 모디파이어 직접 확인, `QTimer.singleShot(0, ...)`으로 선택 커맨드 적용 완료 후 재확인
+등)를 상세히 기록. 리더에게: **1차 수정이 실제로 작동하지 않으므로 재구현 필요 — 이번엔
+반드시 `QTest.mouseClick` + 실제 모디파이어로 재검증할 것을 구현 에이전트에게도 명시
+권고.**
+
+### 프로세스 정리
+디버그 스크립트 실행 중 `inference_image_list.py`에 임시 print를 삽입했다가 즉시 백업본으로
+복원(`git status --short`로 무변경 확인, `py_compile` 재확인). 스크래치 스크립트/합성
+이미지는 전용 스크래치 디렉토리에만 생성. `tasklist`로 확인한 잔여 GUI 프로세스는 이전
+세션들과 동일한 기존 창(PID 16488, 이번 세션이 새로 띄운 것 아님) 하나뿐 — 이번 세션은
+전부 `Bash` 동기 실행으로 완료, 백그라운드 프로세스 0건.

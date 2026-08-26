@@ -652,6 +652,12 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       골라 일괄 처리"가 실제로는 동작하지 않음(우회법: 선택을 건드리지 않고 "≤1개=전체"
       기본 동작에 의존). 3a에서 이미 알려진 "1개 선택=전체 반환" 한계와는 별개의, 더 심각한
       신규 결함 — 다음 라운드(3c 또는 별도 수정 라운드) 착수 전 리더가 수정 여부 판단 필요.
+      **1차 수정 시도 실패(2026-08-26 재검증)**: 구현자가 `_multi_select` 플래그
+      가드로 수정(커밋 `9b28987`)했으나 `QTest.mouseClick`(실제 Ctrl/Shift 모디파이어)으로
+      재검증한 결과 그대로 재현됨 — 근본 원인은 Qt가 `currentItemChanged`를 선택 커맨드
+      적용보다 먼저 동기 발화해 가드의 `selectedItems()` 카운트 검사가 항상 "한 클릭 전"
+      상태를 봄. 여전히 Open, 재구현 필요. 상세는 `docs/agents/verification-log.md`
+      2026-08-26 BUG-022 재검증 항목.
 - [ ] R-C 3c — Excel 내보내기(`export_zone_percentages_to_excel()` 신설 +
       `ZoneBatchResultDialog`에 버튼 연결) — 착수 대기.
 
