@@ -3629,3 +3629,67 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - `docs/roadmap.md` "신규 기능 5건(2026-08-27 요청, 라운드3)" 절의 R3-3 체크박스를
   미착수([ ])에서 구현 완료([x], 검증 대기)로 갱신.
 - 커밋: `c32139c`
+
+---
+
+## 2026-08-27 — 존 분석 탭 R3-4 (통합 Undo 스택) 구현
+
+`docs/specs/zone-analysis-tab-features-round3-2026-08-27.md` R3-4(판단 1) 구현.
+브랜치 `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+
+### 변경 파일
+- `app/widgets/zone_canvas.py`
+  - `self._undo_stack: list[dict]` 신설 — 원편집/블랍삭제/브러시지우기 구분 없는
+    통합 스택(스펙 판단 1의 "카테고리별 분리보다 통합이 단순·정확" 결론 그대로 채택).
+  - `_push_undo()` — 스냅샷 3필드(`circles` 튜플 리스트, `removed_blob_ids` set 사본,
+    `erase_strokes` 리스트 사본)만 저장. **마스크 배열은 절대 저장하지 않음.** 호출
+    위치: `set_circles()`(자동검출 반영), `remove_selected()`, `_handle_blob_click()`
+    (조기 return 이후), `mousePressEvent`의 원편집 분기(생성/이동/반지름조절 공통
+    진입점)와 브러시지우기 분기(스트로크 시작).
+  - `undo()`/`can_undo()` 신설 — `undo()`는 팝한 스냅샷으로 `_circles`/
+    `_removed_blob_ids`/`_erase_strokes`를 복원하고 `_replay_erase_strokes()`로
+    지우기 마스크를 스트로크 좌표에서 재생성(마스크 자체는 스택에 없으므로 필수),
+    `_selected_id = None` 리셋 후 기존 `circles_changed`를 재사용해 emit —
+    `_refresh_circle_list()`/`_recompute_zones()`의 getter 기반 복원 경로를
+    신규 배선 없이 그대로 태워 BUG-018/019류 재발을 방지(스펙 명시 설계).
+  - `mouseReleaseEvent`의 "짧은 드래그는 생성 취소" 분기에 `if self._undo_stack:
+    self._undo_stack.pop()` 추가 — 투기적으로 push해둔 no-op 엔트리 되무름(스펙
+    "주의" 절).
+  - `keyPressEvent` 최상단에 `QKeySequence.StandardKey.Undo` 체크 추가(모드 무관
+    최우선 — 블랍삭제/브러시지우기 모드 중에도 Ctrl+Z 동작).
+  - `set_blob_data()`에 `self._undo_stack = []` 추가 — 클래스 전환 시 스택 전체
+    리셋(데이터 정합성 문제, 스펙 명시: 오래된 `removed_blob_ids`가 새 라벨맵과
+    어긋나는 조용한 오류 방지).
+- `app/tabs/zone_analysis_tab.py`
+  - 툴바에 "실행 취소 (Ctrl+Z)" `QPushButton`(`_btn_undo`) 추가, 클릭 시
+    `self._canvas.undo()`.
+  - `_update_undo_button_state()` 신설 — `circles_changed`/`blob_deleted`/
+    `erase_changed` 3개 시그널에 편승해 `_btn_undo.setEnabled(canvas.can_undo())`
+    갱신(신규 시그널 미발명, 스펙 명시 방식). `set_blob_data()`가 호출되는 3개
+    지점(새 이미지 선택, 타겟클래스 없음, 타겟클래스 (재)선택 성공)에도 명시적으로
+    호출 추가 — 이 경로는 위 3개 시그널이 자동으로 발생하지 않아 누락하면 버튼
+    상태가 스테일해짐.
+
+### 검증 (구현자 자체 확인 — 정식 GUI 검증은 검증 에이전트 몫)
+- `py_compile app/widgets/zone_canvas.py app/tabs/zone_analysis_tab.py` 통과.
+- 스모크 스크립트(`QTest.mousePress/mouseMove/mouseRelease/keyClick`로 실제 마우스·
+  키보드 이벤트 재현, 직접 메서드 호출로 대체하지 않음 — BUG-022 재발 방지)로
+  다음을 실측 확인:
+  - 원 생성(press+move+release) → `can_undo()==True` → Ctrl+Z → `get_circles()==[]`.
+  - 짧은 드래그(생성 취소 경로) 후 `can_undo()==False`(no-op 엔트리 안 남음).
+  - 블랍 클릭삭제(`set_blob_delete_mode(True)` 후 실제 클릭) → Ctrl+Z →
+    `removed_blob_ids()`가 삭제 이전 상태로 복원.
+  - 브러시 지우기 1스트로크(press+move×2+release) → `erase_mask()`에 True 픽셀
+    존재 → Ctrl+Z → `erase_mask() is None`(스트로크 재생 결과 빈 마스크).
+  - 원생성→블랍삭제→브러시지우기를 순서대로 실행 후 Ctrl+Z 3회 — 매 단계에서
+    "방금 실행한 동작"만 되돌아가고 나머지 두 상태는 그대로인지(LIFO 순서) 확인.
+  - `set_blob_data()` 호출 시 이전에 쌓인 undo 스택이 `can_undo()==False`로 리셋.
+- **미검증(다음 검증 에이전트 몫)**: 실제 `python main.py` GUI 구동, 툴바 "실행
+  취소" 버튼 클릭 동작 및 활성/비활성 갱신 실측, 오프라인 팝업
+  (`CircleDetectPreviewDialog`)에서 Ctrl+Z 부가 혜택 확인, 대형 이미지에서 브러시
+  스트로크 수십 개 undo 반복 시 체감 지연, R1~R4/R-A~R-C/R3-1~R3-3 전체 골든패스
+  회귀.
+
+### 관련 문서
+- `docs/roadmap.md`의 R3-4 체크박스를 미착수([ ])에서 구현 완료([x], 검증 대기)로 갱신.
+- 커밋: `0d74f4e`
