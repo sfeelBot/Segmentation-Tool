@@ -552,6 +552,42 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 업데이트만 sync 브랜치+PR로 주기적으로 받아온다(CLAUDE.md 8번 규칙 참고). main
 병합은 개발이 다 끝나고 사용자가 별도로 결정할 때 재논의.
 
+### 신규 기능 3건 (2026-08-26 요청, R1~R4 완료 이후)
+
+기획 완료: [docs/specs/zone-analysis-tab-features-2026-08-26.md](specs/zone-analysis-tab-features-2026-08-26.md).
+사용자 요청 3건 — ① 오프라인 원 검출 테스트 팝업(체크포인트 불필요) ② 폴더 단위 이미지
+가져오기 + 일괄 처리(**사용자가 가장 중요하다고 강조**) ③ Threshold(AI 신뢰도/픽셀 크기)
+조절. 코드 조사 결과 세 요청 모두 기존 인프라(`circle_detector.DetectParams`,
+`inference_engine`의 `classes`/`min_confidence`/`min_pixel_size` 옵션 인자,
+`InferenceImageList` 위젯, `export_blobs_to_excel` 패턴)를 그대로 재사용하면 돼 신규
+검출/추론 로직이 전혀 필요 없음을 확인 — `inference_engine.py`/`circle_detector.py`는
+이번 라운드에서 수정 없음.
+
+- **2026-08-26 UI 디자인 목업 승인**(Artifact `984ea900`) — 메인 탭 좌·중·우 3분할(상단
+  툴바[체크포인트/타겟클래스/AI신뢰도 슬라이더/픽셀크기/자동검출/블랍삭제모드/팝업버튼]
+  + 좌측 `InferenceImageList` 패널[폴더열기/경로/검색/정렬/상태아이콘+퍼센티지배지 목록/
+  배치 컨트롤] + 중앙 `ZoneCanvas` + 우측 원·존 목록) + 팝업(요청1) 구조 확정. 스펙 문서에
+  반영 완료 — `InferenceImageList`에 애디티브 API 2건(상태아이콘/배지, 다중선택) 추가
+  필요성이 이때 새로 확인됨(기존 "수정 없음" 판단에서 정정, `inference_tab.py` 회귀 없는
+  범위로 한정). 상세는 스펙 문서 "승인된 UI 레이아웃" 절.
+- **부수 발견(요청 3 관련 숨은 결함)**: `zone_analysis_tab.py`의 `_on_target_changed()`/
+  `_current_target_mask()`가 존/블랍 계산에 `InferenceResult.raw_class_map`(threshold
+  적용 전)을 쓰고 있어, 지금까지는 threshold가 항상 0 하드코딩이라 문제가 드러나지
+  않았지만 스핀박스 UI를 추가하는 순간 "오버레이 화면은 threshold를 반영해 바뀌는데
+  존 퍼센티지 숫자는 안 바뀌는" 혼란스러운 버그가 될 것 — `class_map`(threshold 적용
+  후)으로 교체하는 root-cause 수정을 요청 3 라운드에 포함.
+- 라운드 분할(의존관계 기준, 요청 순서와 다름 — 상세는 스펙 "라운드 분할 제안" 절):
+  R-A(요청1, 팝업, 완전 독립) → R-B(요청3, threshold + root-cause 수정, 일괄 처리의
+  정확성 전제) → R-C(요청2, 폴더+일괄처리, 최대 스코프, 서브스텝 3a 폴더 UI 배선/3b
+  일괄처리+결과표/3c Excel 내보내기로 분할).
+- `docs/decisions-needed.md` 갱신 없음 — 위임된 판단(엑셀 내보내기 포함 여부, 개별
+  자동검출 결과 확인 UX 등)은 기획 문서에서 YAGNI 기준으로 직접 판단해 명시함.
+- [x] R-A — 오프라인 원 검출 팝업(`circle_detect_preview_dialog.py` 신설, `ZoneCanvas`
+      재사용, 툴바에 여는 버튼 추가) — 구현 완료, 검증 대기.
+- [ ] R-B — Threshold 스핀박스 + `raw_class_map`→`class_map` root-cause 수정 — 착수 대기.
+- [ ] R-C — 폴더 단위 가져오기(`InferenceImageList` 재사용) + 일괄 처리 + 결과 표시/
+      Excel 내보내기(`zone_batch_result_dialog.py` 신설) — 착수 대기.
+
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
   요청은 [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에

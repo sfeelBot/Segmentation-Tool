@@ -37,6 +37,7 @@ from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import Circle, zones_from_circles, zone_stats, compute_blob_labels
 from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
+from app.widgets.circle_detect_preview_dialog import CircleDetectPreviewDialog
 
 log = get_logger(__name__)
 
@@ -158,6 +159,11 @@ class ZoneAnalysisTab(QWidget):
             "활성화하면 캔버스 좌클릭이 원 편집 대신 오검출 블랍 삭제로 동작합니다"
         )
         circle_row.addWidget(self._btn_blob_delete)
+        self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
+        self._btn_offline_test.setToolTip(
+            "체크포인트 없이 이미지만으로 원 검출 알고리즘을 확인·튜닝합니다"
+        )
+        circle_row.addWidget(self._btn_offline_test)
         root.addLayout(circle_row)
 
         # ── 캔버스 + 원 목록 사이드 패널 ─────────────────────────────────────
@@ -190,6 +196,7 @@ class ZoneAnalysisTab(QWidget):
         self._target_name_edit.editingFinished.connect(self._on_target_changed)
         self._target_combo.currentIndexChanged.connect(self._on_target_changed)
         self._btn_detect.clicked.connect(self._on_auto_detect)
+        self._btn_offline_test.clicked.connect(self._on_open_offline_test)
         self._sensitivity_slider.valueChanged.connect(
             lambda v: self._lbl_sensitivity.setText(f"{v}%")
         )
@@ -498,6 +505,14 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.set_circles(circles)
         if not circles:
             QMessageBox.information(self, "검출 결과 없음", "원을 찾지 못했습니다. 민감도를 조절하거나 수동으로 추가하세요.")
+
+    # ── 슬롯 — 오프라인 원 검출 테스트 팝업 (R-A) ────────────────────────────
+
+    def _on_open_offline_test(self) -> None:
+        """체크포인트 준비 여부와 무관하게 항상 열 수 있는 독립 팝업 — 이 탭의
+        상태(이미지/체크포인트/추론결과)를 전혀 참조·변경하지 않는다."""
+        dialog = CircleDetectPreviewDialog(self)
+        dialog.exec()
 
     # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
 
