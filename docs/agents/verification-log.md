@@ -3379,3 +3379,66 @@ numpy/cv2/PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. `QFileDialo
 - `QA.md`에 `BUG-020`/`BUG-021` 신규 등록(둘 다 Open, P2). `docs/roadmap.md`의 R-C 레이아웃
   뼈대+3a 체크박스를 "구현 완료, 실제 GUI 조작 검증 대기"에서 "구현+검증 완료(조건부 통과)"로
   갱신.
+
+---
+
+## 2026-08-26 — BUG-020/BUG-021 재검증 (존 분석 탭 3분할 스플리터 붕괴 + 툴바 폭 초과)
+
+### 범위
+직전 라운드(R-C 레이아웃 뼈대+3a, 커밋 `22e9725`)에서 발견한 `BUG-020`(3-way `QSplitter`
+붕괴)과 `BUG-021`(툴바 폭 초과로 `MainWindow` 기본크기 무시)을 리더가 직접 수정(커밋
+`9efcd14`, `app/tabs/zone_analysis_tab.py`)한 것에 대한 **좁은 범위 재검증만** 수행. 다른
+항목(R1~R4/R-A/R-B/R-C 3a 골든패스, BUG-018/019 등)은 직전 라운드에서 이미 통과 확인돼
+전체 재검증 생략. 워크트리 `D:\segmentation model-zone-analysis-tab`
+(`feature/zone-analysis-tab` 브랜치)에서 작업.
+
+### 검증 방법
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, `numpy/cv2/PIL/torch/
+matplotlib` 선행 임포트 후 `QApplication` 생성(기존 세션들과 동일 순서). `py_compile`로
+`app/tabs/zone_analysis_tab.py`/`app/main_window.py` 정적 확인 후, 3개의 오프스크린
+스모크 스크립트로 실측:
+
+1. **BUG-020**: `ZoneAnalysisTab()` 실제 인스턴스에서 `findChildren(QSplitter)`로 3-way
+   스플리터를 찾아 `childrenCollapsible()`이 `False`인지 확인 후, `moveSplitter(0, 1)`(좌측
+   핸들을 x=0까지)과 `moveSplitter(splitter.width(), 2)`(우측 핸들을 맨 끝까지) 두 방향
+   모두 극단까지 이동시켜 좌/우 패널 실제 폭을 측정.
+2. **BUG-021**: `ZoneAnalysisTab().minimumSizeHint().width()` 측정 + 실제 `MainWindow()`를
+   생성해 `win.size()`가 코드 상 `resize(1280, 800)`과 일치하는지 확인(`app/main_window.py:31`).
+3. 두 줄로 나뉜 툴바(`toolbar_row1`/`toolbar_row2`) 위젯 전수 존재 확인(`hasattr`) +
+   `QTest.mouseClick()`/`QTest.keyClick()`/`QTest.keyClicks()`로 실제 이벤트 3건 발생시켜
+   동작 확인: 블랍삭제모드 토글 버튼 클릭 → `isChecked()` 반영, 민감도 슬라이더 키보드
+   좌측 화살표 → 값 변경, 타겟 클래스 이름 입력란 실제 타이핑 → 텍스트 반영.
+4. `python -m py_compile` 크래시 없음 확인.
+
+**주의(프로세스)**: 초기 시도에서 `print()`가 flush 안 된 채 `2>&1` 리다이렉션으로 실행해
+출력이 전혀 안 보여 "행"으로 오인, 두 차례 프로세스를 직접 확인 후 종료(`taskkill /F`)함 —
+실제로는 (a) `tab._btn_ckpt.click()`으로 실제 네이티브 파일 열기 다이얼로그가 뜨면서
+offscreen 플랫폼에서도 모달 이벤트 루프가 자동으로 안 닫혀 대기 상태가 된 것, (b)
+`MainWindow.close()`가 `closeEvent()`의 `QMessageBox.question()` 종료 확인창을 띄워 같은
+이유로 대기 상태가 된 것 — 둘 다 **테스트 스크립트 자체의 설계 문제**(실제 앱 동작 자체는
+의도대로 정상, 파일 다이얼로그/종료 확인창이 뜨는 것 자체가 맞는 동작)였음. 이후 스크립트에서
+파일 다이얼로그를 여는 버튼 클릭과 `MainWindow.close()`를 제거해 문제 없이 완료. `tasklist`로
+매 단계 프로세스 상태 확인, 이번 세션이 새로 띄운 스크립트 프로세스 전부 정상 종료/필요 시
+직접 종료 확인 완료 — 세션 종료 시점에 이 워크트리 관련 잔여 프로세스 0건(사전에 떠 있던
+`PID 16488`, "Segmentation Model UI — nok" 창은 이번 세션이 띄운 것이 아니라 건드리지 않음,
+이전 검증 로그에도 동일 PID로 기록돼 있음).
+
+### 결과
+- **BUG-020**: `childrenCollapsible()` → `False` 확인. `moveSplitter(0,1)` 후 좌측 패널
+  폭 = 180px(설정된 `setMinimumWidth(180)`), `moveSplitter(total,2)` 후 우측 패널 폭 =
+  160px(설정된 `setMinimumWidth(160)`) — 양방향 모두 0px 붕괴 재현 안 됨. **재현 안 됨 →
+  Closed.**
+- **BUG-021**: `ZoneAnalysisTab().minimumSizeHint().width()` = **982px**(리더가 보고한
+  982px와 일치). 실제 `MainWindow()` 생성 후 `win.size()` = **1280×800**(코드 상
+  `resize(1280, 800)` 그대로) — 이전 재현된 `1592×800` 강제 확대 재현 안 됨. **재현 안 됨
+  → Closed.**
+- 두 줄 툴바 위젯 12개(체크포인트 열기/추론실행/타겟클래스 이름·콤보/AI신뢰도 슬라이더/
+  픽셀크기/민감도 슬라이더/자동검출/블랍삭제모드/오프라인테스트) 전부 `hasattr` 확인, 실제
+  `QTest` 클릭/키입력 3건(블랍삭제모드 토글, 민감도 슬라이더 키보드 조작, 타겟 클래스 이름
+  입력란 타이핑) 모두 정상 반영 — 레이아웃 변경으로 인한 기능 회귀 없음.
+- `py_compile app/tabs/zone_analysis_tab.py app/main_window.py` 정상, 런타임 크래시 없음.
+
+### 판정
+**통과.** `QA.md`에서 BUG-020/BUG-021을 Open → Closed로 이동(수정 커밋 `9efcd14`, 재검증
+내용 포함). `docs/roadmap.md`의 R-C 레이아웃 뼈대+3a 항목을 "조건부 통과(BUG-020/021)"에서
+"구현+검증 완료(BUG-020/021 수정 및 재검증 통과)"로 갱신 필요.
