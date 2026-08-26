@@ -13,6 +13,9 @@
 실시간 계산·표시.
 라운드 4: 블랍(연결요소) 클릭 삭제(`zone_metrics.compute_blob_labels`) + 존
 퍼센티지 재계산. "블랍 삭제 모드" 토글로 원 편집과 클릭 해석을 분리.
+라운드 R3-3: 픽셀 단위 브러시 지우기 모드 추가 — "블랍 삭제 모드"와 배타적인
+3번째 캔버스 모드(`ZoneCanvas._mode`). 존 재계산은 스트로크가 끝날 때(release)
+1회만 트리거(`erase_changed` 시그널).
 """
 from pathlib import Path
 
@@ -149,6 +152,24 @@ class ZoneAnalysisTab(QWidget):
             "활성화하면 캔버스 좌클릭이 원 편집 대신 오검출 블랍 삭제로 동작합니다"
         )
         toolbar_row2.addWidget(self._btn_blob_delete)
+
+        self._btn_brush_erase = QPushButton("브러시 지우기 모드")
+        self._btn_brush_erase.setCheckable(True)
+        self._btn_brush_erase.setEnabled(False)
+        self._btn_brush_erase.setToolTip(
+            "활성화하면 캔버스 좌클릭 드래그로 타겟 마스크를 픽셀 단위로 지웁니다"
+            "(블랍 삭제 모드와 배타적)"
+        )
+        toolbar_row2.addWidget(self._btn_brush_erase)
+
+        toolbar_row2.addWidget(QLabel("지우개 크기:"))
+        self._erase_brush_spin = QSpinBox()
+        self._erase_brush_spin.setRange(1, 200)
+        self._erase_brush_spin.setValue(30)
+        self._erase_brush_spin.setSuffix(" px")
+        self._erase_brush_spin.setFixedWidth(90)
+        self._erase_brush_spin.setToolTip("브러시 지우기 모드의 브러시 지름(원본 이미지 픽셀 단위)")
+        toolbar_row2.addWidget(self._erase_brush_spin)
 
         toolbar_row2.addStretch()
         self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
@@ -297,7 +318,10 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
         self._canvas.blob_deleted.connect(self._on_blob_deleted)
-        self._btn_blob_delete.toggled.connect(self._canvas.set_blob_delete_mode)
+        self._btn_blob_delete.toggled.connect(self._on_blob_delete_toggled)
+        self._btn_brush_erase.toggled.connect(self._on_brush_erase_toggled)
+        self._erase_brush_spin.valueChanged.connect(self._canvas.set_erase_brush_size)
+        self._canvas.erase_changed.connect(self._recompute_zones)
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
         self._btn_export_single.clicked.connect(self._on_export_single)
@@ -357,6 +381,8 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.set_blob_data(None, None)
         self._btn_blob_delete.setChecked(False)
         self._btn_blob_delete.setEnabled(False)
+        self._btn_brush_erase.setChecked(False)
+        self._btn_brush_erase.setEnabled(False)
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -490,6 +516,8 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_blob_data(None, None)
             self._btn_blob_delete.setChecked(False)
             self._btn_blob_delete.setEnabled(False)
+            self._btn_brush_erase.setChecked(False)
+            self._btn_brush_erase.setEnabled(False)
             self._recompute_zones()
             return
 
@@ -552,6 +580,7 @@ class ZoneAnalysisTab(QWidget):
             labels, stats = compute_blob_labels(target_mask)
             self._canvas.set_blob_data(labels, stats)
             self._btn_blob_delete.setEnabled(True)
+            self._btn_brush_erase.setEnabled(True)
             self._recompute_zones()
         except Exception as exc:
             log.exception("존 분석 타겟 클래스 재필터링 실패")
@@ -571,12 +600,29 @@ class ZoneAnalysisTab(QWidget):
         labels = self._canvas.blob_labels()
         if removed and labels is not None:
             mask = mask & ~np.isin(labels, list(removed))
+        erase_mask = self._canvas.erase_mask()   # 브러시 지우기(R3-3)
+        if erase_mask is not None:
+            mask = mask & ~erase_mask
         return mask
 
     def _on_blob_deleted(self, _label_id: int) -> None:
         # ZoneCanvas가 이미 removed_blob_ids에 반영·재도색까지 마친 뒤 emit한다
         # (라운드 3의 circles_changed와 동일하게, 여기선 재계산만 트리거).
         self._recompute_zones()
+
+    # ── 슬롯 — 3-way 모드 배타(원편집/블랍삭제/브러시지우기, R3-3) ────────────
+    # `QButtonGroup` 같은 새 추상화 없이 버튼 2개가 서로를 끄는 2줄짜리 상호배제로
+    # 충분하다(스펙 판단 2, "원편집"은 둘 다 꺼진 기본 상태로 암묵적으로 표현).
+
+    def _on_blob_delete_toggled(self, checked: bool) -> None:
+        if checked:
+            self._btn_brush_erase.setChecked(False)
+        self._canvas.set_blob_delete_mode(checked)
+
+    def _on_brush_erase_toggled(self, checked: bool) -> None:
+        if checked:
+            self._btn_blob_delete.setChecked(False)
+        self._canvas.set_brush_erase_mode(checked)
 
     def _compute_zone_percentages(self) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
