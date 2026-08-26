@@ -38,6 +38,7 @@ from app.core.zone_metrics import Circle, zones_from_circles, zone_stats, comput
 from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.circle_detect_preview_dialog import CircleDetectPreviewDialog
+from app.widgets.inference_image_list import InferenceImageList
 
 log = get_logger(__name__)
 
@@ -67,22 +68,83 @@ class ZoneAnalysisTab(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
-        # ── 이미지 / 체크포인트 선택 ─────────────────────────────────────────
-        file_row = QHBoxLayout()
-        self._btn_image = QPushButton("이미지 열기…")
-        self._lbl_image = QLabel("선택된 이미지 없음")
-        self._lbl_image.setStyleSheet("color:#9ca3af;")
-        file_row.addWidget(self._btn_image)
-        file_row.addWidget(self._lbl_image, stretch=1)
-        root.addLayout(file_row)
-
-        ckpt_row = QHBoxLayout()
+        # ── 상단 툴바 (승인된 목업 순서, Artifact 984ea900 — 이번 세션엔 Artifact
+        #    도구가 없어 스펙 문서 "승인된 UI 레이아웃" 절 서술을 그대로 따름):
+        #    체크포인트 상태+열기 / ▶ 추론 실행 / 타겟클래스 / AI신뢰도 / 픽셀크기 /
+        #    (민감도 — 자동검출의 파라미터라 바로 옆에 배치) / 자동검출 / 블랍삭제모드
+        #    / (오른쪽 끝) 오프라인 원 검출 테스트. 이미지 열기는 좌측 패널로 이동(C-1). ─
+        toolbar = QHBoxLayout()
         self._btn_ckpt = QPushButton("체크포인트 열기 (.pt)…")
+        toolbar.addWidget(self._btn_ckpt)
         self._lbl_ckpt = QLabel("선택된 체크포인트 없음")
         self._lbl_ckpt.setStyleSheet("color:#9ca3af;")
-        ckpt_row.addWidget(self._btn_ckpt)
-        ckpt_row.addWidget(self._lbl_ckpt, stretch=1)
-        root.addLayout(ckpt_row)
+        toolbar.addWidget(self._lbl_ckpt)
+
+        self._btn_run = QPushButton("▶  추론 실행")
+        self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
+        toolbar.addWidget(self._btn_run)
+
+        toolbar.addWidget(QLabel("타겟(녹) 클래스:"))
+        self._target_name_edit = QLineEdit()
+        self._target_name_edit.setPlaceholderText("클래스 이름 (예: 녹)")
+        self._target_name_edit.setFixedWidth(120)
+        self._target_name_edit.hide()
+        toolbar.addWidget(self._target_name_edit)
+        self._target_combo = QComboBox()
+        self._target_combo.setFixedWidth(160)
+        self._target_combo.hide()
+        toolbar.addWidget(self._target_combo)
+
+        toolbar.addWidget(QLabel("AI 신뢰도:"))
+        self._conf_slider = QSlider(Qt.Orientation.Horizontal)
+        self._conf_slider.setRange(0, 100)
+        self._conf_slider.setValue(int(_DEFAULT_MIN_CONFIDENCE * 100))
+        self._conf_slider.setFixedWidth(90)
+        self._conf_slider.setToolTip("blob(연결 영역)의 평균 신뢰도가 이 값 미만이면 배경으로 제거")
+        toolbar.addWidget(self._conf_slider)
+        self._lbl_confidence = QLabel(f"{self._conf_slider.value()}%")
+        self._lbl_confidence.setFixedWidth(32)
+        toolbar.addWidget(self._lbl_confidence)
+
+        toolbar.addWidget(QLabel("픽셀크기:"))
+        self._min_px_spin = QSpinBox()
+        self._min_px_spin.setRange(0, 100000)
+        self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
+        self._min_px_spin.setSuffix(" px")
+        self._min_px_spin.setFixedWidth(90)
+        self._min_px_spin.setToolTip("blob 면적(픽셀 수)이 이 값 미만이면 배경으로 제거")
+        toolbar.addWidget(self._min_px_spin)
+
+        toolbar.addWidget(QLabel("민감도:"))
+        self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sensitivity_slider.setRange(0, 100)
+        self._sensitivity_slider.setValue(50)
+        self._sensitivity_slider.setFixedWidth(90)
+        self._sensitivity_slider.setToolTip("원 자동 검출 민감도(아래 '자동 검출' 버튼의 파라미터)")
+        toolbar.addWidget(self._sensitivity_slider)
+        self._lbl_sensitivity = QLabel("50%")
+        self._lbl_sensitivity.setFixedWidth(32)
+        toolbar.addWidget(self._lbl_sensitivity)
+        self._btn_detect = QPushButton("자동 검출")
+        self._btn_detect.setEnabled(False)
+        self._btn_detect.setToolTip("추론을 먼저 실행하면 검출된 원이 캔버스에 표시됩니다")
+        toolbar.addWidget(self._btn_detect)
+
+        self._btn_blob_delete = QPushButton("블랍 삭제 모드")
+        self._btn_blob_delete.setCheckable(True)
+        self._btn_blob_delete.setEnabled(False)
+        self._btn_blob_delete.setToolTip(
+            "활성화하면 캔버스 좌클릭이 원 편집 대신 오검출 블랍 삭제로 동작합니다"
+        )
+        toolbar.addWidget(self._btn_blob_delete)
+
+        toolbar.addStretch()
+        self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
+        self._btn_offline_test.setToolTip(
+            "체크포인트 없이 이미지만으로 원 검출 알고리즘을 확인·튜닝합니다"
+        )
+        toolbar.addWidget(self._btn_offline_test)
+        root.addLayout(toolbar)
 
         self._lbl_model_info = QLabel("")
         self._lbl_model_info.setStyleSheet(
@@ -91,7 +153,11 @@ class ZoneAnalysisTab(QWidget):
         )
         root.addWidget(self._lbl_model_info)
 
-        # ── 커스텀 모델 코드 박스 (preset이 아닌 체크포인트일 때만 노출) ────────
+        self._lbl_target_info = QLabel("추론을 먼저 실행하세요")
+        self._lbl_target_info.setStyleSheet("color:#9ca3af; font-size:11px;")
+        root.addWidget(self._lbl_target_info)
+
+        # ── 커스텀 모델 코드 박스 (툴바 아래, preset이 아닌 체크포인트일 때만 노출) ──
         self._code_box = QGroupBox("모델 아키텍처 코드 (이 체크포인트는 프리셋이 아님)")
         code_layout = QVBoxLayout(self._code_box)
         self._code_editor = QPlainTextEdit()
@@ -114,86 +180,38 @@ class ZoneAnalysisTab(QWidget):
         self._code_box.hide()
         root.addWidget(self._code_box)
 
-        # ── 추론 실행 ────────────────────────────────────────────────────────
-        run_row = QHBoxLayout()
-        self._btn_run = QPushButton("▶  추론 실행")
-        self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
-        run_row.addWidget(self._btn_run)
-        run_row.addStretch()
-        root.addLayout(run_row)
-
-        # ── 타겟(녹) 클래스 즉석 구성 ────────────────────────────────────────
-        target_row = QHBoxLayout()
-        target_row.addWidget(QLabel("타겟(녹) 클래스:"))
-        self._target_name_edit = QLineEdit()
-        self._target_name_edit.setPlaceholderText("클래스 이름 (예: 녹)")
-        self._target_name_edit.setFixedWidth(160)
-        self._target_name_edit.hide()
-        target_row.addWidget(self._target_name_edit)
-        self._target_combo = QComboBox()
-        self._target_combo.setFixedWidth(200)
-        self._target_combo.hide()
-        target_row.addWidget(self._target_combo)
-        self._lbl_target_info = QLabel("추론을 먼저 실행하세요")
-        self._lbl_target_info.setStyleSheet("color:#9ca3af;")
-        target_row.addWidget(self._lbl_target_info)
-        target_row.addStretch()
-        root.addLayout(target_row)
-
-        # ── 원 검출/편집 컨트롤 ──────────────────────────────────────────────
-        circle_row = QHBoxLayout()
-        # 승인된 툴바 순서: 타겟클래스 / AI신뢰도 / 픽셀크기 / 자동검출 / 블랍삭제모드 / 오프라인테스트
-        circle_row.addWidget(QLabel("AI 신뢰도:"))
-        self._conf_slider = QSlider(Qt.Orientation.Horizontal)
-        self._conf_slider.setRange(0, 100)
-        self._conf_slider.setValue(int(_DEFAULT_MIN_CONFIDENCE * 100))
-        self._conf_slider.setFixedWidth(120)
-        self._conf_slider.setToolTip("blob(연결 영역)의 평균 신뢰도가 이 값 미만이면 배경으로 제거")
-        circle_row.addWidget(self._conf_slider)
-        self._lbl_confidence = QLabel(f"{self._conf_slider.value()}%")
-        self._lbl_confidence.setFixedWidth(36)
-        circle_row.addWidget(self._lbl_confidence)
-        circle_row.addWidget(QLabel("픽셀 크기:"))
-        self._min_px_spin = QSpinBox()
-        self._min_px_spin.setRange(0, 100000)
-        self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
-        self._min_px_spin.setSuffix(" px")
-        self._min_px_spin.setFixedWidth(100)
-        self._min_px_spin.setToolTip("blob 면적(픽셀 수)이 이 값 미만이면 배경으로 제거")
-        circle_row.addWidget(self._min_px_spin)
-        self._btn_detect = QPushButton("자동 검출")
-        self._btn_detect.setEnabled(False)
-        self._btn_detect.setToolTip("추론을 먼저 실행하면 검출된 원이 캔버스에 표시됩니다")
-        circle_row.addWidget(self._btn_detect)
-        circle_row.addWidget(QLabel("민감도:"))
-        self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._sensitivity_slider.setRange(0, 100)
-        self._sensitivity_slider.setValue(50)
-        self._sensitivity_slider.setFixedWidth(140)
-        circle_row.addWidget(self._sensitivity_slider)
-        self._lbl_sensitivity = QLabel("50%")
-        self._lbl_sensitivity.setFixedWidth(36)
-        circle_row.addWidget(self._lbl_sensitivity)
-        circle_row.addStretch()
-        self._btn_blob_delete = QPushButton("블랍 삭제 모드")
-        self._btn_blob_delete.setCheckable(True)
-        self._btn_blob_delete.setEnabled(False)
-        self._btn_blob_delete.setToolTip(
-            "활성화하면 캔버스 좌클릭이 원 편집 대신 오검출 블랍 삭제로 동작합니다"
-        )
-        circle_row.addWidget(self._btn_blob_delete)
-        self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
-        self._btn_offline_test.setToolTip(
-            "체크포인트 없이 이미지만으로 원 검출 알고리즘을 확인·튜닝합니다"
-        )
-        circle_row.addWidget(self._btn_offline_test)
-        root.addLayout(circle_row)
-
-        # ── 캔버스 + 원 목록 사이드 패널 ─────────────────────────────────────
+        # ── 좌·중·우 3분할 ───────────────────────────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # 좌측 패널(C-1/3a) — 폴더/다중파일 열기 + 경로 표시 + InferenceImageList
+        # (추론 탭과 공유하는 완전 독립 위젯, inference_tab.py의 _list_panel/_img_list
+        # 구성을 그대로 이식). 배치 처리 컨트롤(체크박스+버튼)은 다음 라운드(3b).
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 4, 0)
+        open_row = QHBoxLayout()
+        self._btn_image = QPushButton("이미지 열기…")
+        self._btn_folder = QPushButton("폴더 열기…")
+        open_row.addWidget(self._btn_image)
+        open_row.addWidget(self._btn_folder)
+        left_layout.addLayout(open_row)
+        self._lbl_folder_path = QLabel("선택된 이미지 없음")
+        self._lbl_folder_path.setStyleSheet("color:#9ca3af; font-size:11px;")
+        self._lbl_folder_path.setWordWrap(True)
+        left_layout.addWidget(self._lbl_folder_path)
+        self._img_list = InferenceImageList()
+        self._img_list.set_multi_select(True)   # 다음 라운드(3b) "선택 이미지 일괄 처리" 대상 지정용 배선
+        self._img_list.hide()   # count<=1 이면 숨김 — 단일 이미지 워크플로우 회귀 없음
+        left_layout.addWidget(self._img_list, stretch=1)
+        left.setMinimumWidth(180)
+        left.setMaximumWidth(260)
+        splitter.addWidget(left)
+
+        # 중앙 — 캔버스 (가능한 한 크게)
         self._canvas = ZoneCanvas()
         splitter.addWidget(self._canvas)
 
+        # 우측 — 원/존 목록 (R2/R3 로직 그대로, 컨테이너 위치만 이동)
         side = QWidget()
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(4, 0, 0, 0)
@@ -204,14 +222,20 @@ class ZoneAnalysisTab(QWidget):
         self._zone_list = QListWidget()
         self._zone_list.setToolTip("클릭하면 캔버스에서 해당 존이 하이라이트됩니다")
         side_layout.addWidget(self._zone_list, stretch=1)
+        side.setMinimumWidth(160)
+        side.setMaximumWidth(220)
         splitter.addWidget(side)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        splitter.setSizes([700, 180])
+
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([200, 700, 180])
         root.addWidget(splitter, stretch=1)
 
         # ── 시그널 ───────────────────────────────────────────────────────────
         self._btn_image.clicked.connect(self._on_select_image)
+        self._btn_folder.clicked.connect(self._on_select_folder)
+        self._img_list.image_selected.connect(self._on_list_image_selected)
         self._btn_ckpt.clicked.connect(self._on_select_checkpoint)
         self._btn_validate.clicked.connect(self._on_validate)
         self._btn_load_code.clicked.connect(self._on_load_code)
@@ -237,20 +261,50 @@ class ZoneAnalysisTab(QWidget):
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
 
-    # ── 슬롯 — 이미지 / 체크포인트 선택 ─────────────────────────────────────
+    # ── 슬롯 — 이미지 / 체크포인트 선택 (C-1) ────────────────────────────────
 
     def _on_select_image(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+        """다중 파일 선택 — inference_tab._on_select_file과 동일 패턴."""
+        paths, _ = QFileDialog.getOpenFileNames(
             self, "이미지 선택", "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tiff *.tif)"
         )
-        if not path:
+        if not paths:
             return
-        self._image_path = Path(path)
-        self._lbl_image.setText(self._image_path.name)
-        self._lbl_image.setStyleSheet("color:#e5e7eb;")
+        self._img_list.load_files([Path(p) for p in paths])
+        self._lbl_folder_path.setText(
+            f"{len(paths)}개 파일 선택됨" if len(paths) > 1 else str(Path(paths[0]).parent)
+        )
+        self._lbl_folder_path.setStyleSheet("color:#e5e7eb; font-size:11px;")
+        self._after_list_load()
+
+    def _on_select_folder(self) -> None:
+        """폴더 열기 — 하위 폴더 포함 재귀 스캔(InferenceImageList.load_folder)."""
+        folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
+        if not folder:
+            return
+        self._img_list.load_folder(Path(folder))
+        if self._img_list.count() == 0:
+            QMessageBox.information(
+                self, "이미지 없음", "선택한 폴더(하위 폴더 포함)에 지원되는 이미지가 없습니다."
+            )
+            return
+        self._lbl_folder_path.setText(folder)
+        self._lbl_folder_path.setStyleSheet("color:#e5e7eb; font-size:11px;")
+        self._after_list_load()
+
+    def _after_list_load(self) -> None:
+        # 목록은 이미지가 2장 이상일 때만 표시 — 단일 이미지 워크플로우는 목록
+        # 없이 그대로 동작(회귀 없음, 스펙 C-1 명시).
+        self._img_list.setVisible(self._img_list.count() > 1)
+
+    def _on_list_image_selected(self, path: Path) -> None:
+        """목록에서 이미지를 클릭(단일 선택 또는 load_folder/load_files 직후 자동
+        선택)했을 때 — 기존 단일 이미지 로드 로직 그대로 재사용. 자동 추론은
+        실행하지 않는다(스펙 명시 — 수동 '▶ 추론 실행' 트리거 유지)."""
+        self._image_path = path
         try:
-            with Image.open(str(self._image_path)) as im:
+            with Image.open(str(path)) as im:
                 self._image_size = im.size   # (w, h)
         except Exception:
             self._image_size = (0, 0)

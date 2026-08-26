@@ -605,7 +605,16 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       선택/존 하이라이트 유지(BUG-018/019 재발 없음), 모델 재실행 없음(`engine.run` 호출
       1회 고정, `raw_class_map` object identity 불변), R-A/R1~R4 회귀 없음. 상세는
       `docs/agents/verification-log.md` 해당 항목.
-- [ ] R-C — 폴더 단위 가져오기(`InferenceImageList` 재사용) + 일괄 처리 + 결과 표시/
+- [x] R-C 레이아웃 뼈대 + 3a — 좌·중·우 3-way `QSplitter` + 상단 툴바 통합(체크포인트/
+      추론실행/타겟클래스/AI신뢰도/픽셀크기/민감도+자동검출/블랍삭제모드/오프라인테스트,
+      승인된 목업 순서 — Artifact 도구 미제공으로 스펙 문서 서술 기준) + 좌측 패널에
+      `InferenceImageList` 조립(폴더 열기/다중 파일 열기/경로 표시, `count()>1`일 때만
+      노출) — 구현 완료(2026-08-26, 커밋 예정), **실제 GUI 조작 검증 대기**(리더가 이번
+      라운드는 "주요 기능 추가"로 판단해 실제 UI 조작 검증 요청 예정). `InferenceImageList`에
+      애디티브 API 2건(`set_item_status`/`clear_status`, `set_multi_select`/
+      `selected_paths`) 추가 — `inference_tab.py` 호출부 불변 확인, 기본 SingleSelection
+      유지. 상세는 `docs/agents/implementation-log.md`.
+- [ ] R-C 3b/3c — 일괄 처리 로직(진행률 다이얼로그 + 상태아이콘/배지 반영) + 결과 테이블 +
       Excel 내보내기(`zone_batch_result_dialog.py` 신설) — 착수 대기.
 
 ## 다음 후보
