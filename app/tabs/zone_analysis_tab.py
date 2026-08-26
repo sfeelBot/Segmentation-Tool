@@ -21,7 +21,7 @@ from PIL import Image
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
-    QSplitter, QSlider, QListWidget, QListWidgetItem,
+    QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem,
 )
 from PyQt6.QtCore import Qt
 import torch.nn as nn
@@ -40,6 +40,10 @@ from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.circle_detect_preview_dialog import CircleDetectPreviewDialog
 
 log = get_logger(__name__)
+
+# threshold 초기 고정값 — 설정 UI는 만들지 않음(YAGNI), 나중에 바꾸고 싶으면 이 상수만 수정
+_DEFAULT_MIN_CONFIDENCE = 0.0
+_DEFAULT_MIN_PIXEL_SIZE = 0
 
 
 class ZoneAnalysisTab(QWidget):
@@ -138,6 +142,25 @@ class ZoneAnalysisTab(QWidget):
 
         # ── 원 검출/편집 컨트롤 ──────────────────────────────────────────────
         circle_row = QHBoxLayout()
+        # 승인된 툴바 순서: 타겟클래스 / AI신뢰도 / 픽셀크기 / 자동검출 / 블랍삭제모드 / 오프라인테스트
+        circle_row.addWidget(QLabel("AI 신뢰도:"))
+        self._conf_slider = QSlider(Qt.Orientation.Horizontal)
+        self._conf_slider.setRange(0, 100)
+        self._conf_slider.setValue(int(_DEFAULT_MIN_CONFIDENCE * 100))
+        self._conf_slider.setFixedWidth(120)
+        self._conf_slider.setToolTip("blob(연결 영역)의 평균 신뢰도가 이 값 미만이면 배경으로 제거")
+        circle_row.addWidget(self._conf_slider)
+        self._lbl_confidence = QLabel(f"{self._conf_slider.value()}%")
+        self._lbl_confidence.setFixedWidth(36)
+        circle_row.addWidget(self._lbl_confidence)
+        circle_row.addWidget(QLabel("픽셀 크기:"))
+        self._min_px_spin = QSpinBox()
+        self._min_px_spin.setRange(0, 100000)
+        self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
+        self._min_px_spin.setSuffix(" px")
+        self._min_px_spin.setFixedWidth(100)
+        self._min_px_spin.setToolTip("blob 면적(픽셀 수)이 이 값 미만이면 배경으로 제거")
+        circle_row.addWidget(self._min_px_spin)
         self._btn_detect = QPushButton("자동 검출")
         self._btn_detect.setEnabled(False)
         self._btn_detect.setToolTip("추론을 먼저 실행하면 검출된 원이 캔버스에 표시됩니다")
@@ -200,6 +223,11 @@ class ZoneAnalysisTab(QWidget):
         self._sensitivity_slider.valueChanged.connect(
             lambda v: self._lbl_sensitivity.setText(f"{v}%")
         )
+        self._conf_slider.valueChanged.connect(
+            lambda v: self._lbl_confidence.setText(f"{v}%")
+        )
+        self._conf_slider.valueChanged.connect(self._on_target_changed)
+        self._min_px_spin.valueChanged.connect(self._on_target_changed)
         self._canvas.circles_changed.connect(self._refresh_circle_list)
         self._canvas.circles_changed.connect(self._recompute_zones)
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
@@ -408,8 +436,8 @@ class ZoneAnalysisTab(QWidget):
                 self._last_result.raw_class_map,
                 self._last_result.confidence_map,
                 self._image_path,
-                min_confidence=0.0,
-                min_pixel_size=0,
+                min_confidence=self._conf_slider.value() / 100.0,
+                min_pixel_size=self._min_px_spin.value(),
                 opacity=0.5,
                 classes=classes,
             )
@@ -419,7 +447,10 @@ class ZoneAnalysisTab(QWidget):
             # 타겟 클래스가 (재)선택될 때마다 블랍 라벨맵을 새로 계산한다 — 라벨
             # id는 마스크에 종속적이라 클래스가 바뀌면 이전 삭제 이력은 무의미
             # (`ZoneCanvas.set_blob_data`가 삭제 이력도 함께 초기화).
-            target_mask = result.raw_class_map == cid
+            # class_map(threshold 적용 후)을 기준으로 삼아야 한다 — raw_class_map을
+            # 쓰면 AI신뢰도/픽셀크기 threshold가 존 퍼센티지·블랍 계산에 전혀
+            # 반영되지 않는 버그가 된다(오버레이 화면만 바뀌고 숫자는 그대로).
+            target_mask = result.class_map == cid
             labels, stats = compute_blob_labels(target_mask)
             self._canvas.set_blob_data(labels, stats)
             self._btn_blob_delete.setEnabled(True)
@@ -437,7 +468,7 @@ class ZoneAnalysisTab(QWidget):
         하이라이트와 동일한 getter 패턴, BUG-018/019 재발 방지)."""
         if self._last_result is None or self._target_class_id is None:
             return None
-        mask = self._last_result.raw_class_map == self._target_class_id
+        mask = self._last_result.class_map == self._target_class_id
         removed = self._canvas.removed_blob_ids()
         labels = self._canvas.blob_labels()
         if removed and labels is not None:
