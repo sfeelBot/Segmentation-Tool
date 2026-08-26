@@ -10,27 +10,35 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 갱신되는 사본이라, main 브랜치 워크트리(`D:\segmentation model`)의 같은 파일과는 병합
 전까지 내용이 갈라진다 — 아래 참고.)*
 
-> **[최신, 2026-08-25] 존(Zone) 분석 탭 — 라운드 1 구현 완료, 검증 진행 중 + 워크트리 분리**
-> `feature/zone-analysis-tab` 브랜치에서 진행 중인 신규 독립 기능(배터리 캡 녹 검사,
-> 스펙: [zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md)).
-> 기획(원 데이터모델 확정까지 2차례 정정 반영) 완료 → 라운드 1(탭 스켈레톤+체크포인트
-> 로드+추론, 커밋 `13f2952`) 구현 완료 → 검증 1차 시도 중 **동시 세션 충돌 발견**:
-> 다른 세션(`segmentation-model-92`)이 같은 워킹 디렉토리(`D:\segmentation model`)를
-> 공유해서 작업 중이었고, 그 세션의 무관한 커밋(어노테이션 삭제/내보내기/가져오기
-> 성능 수정 `46eb77b`+`aa330c1`)이 이 브랜치에 섞여 들어감 + 내 검증 에이전트의
-> `python main.py` 구동이 그 동시 파일 변경 때문에 중단·유실됨(결과 미기록). 사용자
-> 확인 후 **`git worktree add`로 분리**: 원래 디렉토리(`D:\segmentation model`)는
-> `main`으로 되돌려 다른 세션에 반환, 이 브랜치 전용 워크트리를 `D:\segmentation
-> model-zone-analysis-tab`에 새로 만듦(둘 다 같은 `.git` 저장소·원격 공유 — push는
-> 워크트리 무관하게 동일하게 동작). gitignore된 런타임 데이터 중 실사용 가치가 있는
-> `projects/nok/{images,checkpoints,user_models}`(배터리 캡 실사진 5장 포함, 마침 이
-> 기능의 실제 검사 대상과 동일 도메인)만 Windows 디렉토리 정션(junction)으로 원본과
-> 공유(복사 아님, 최신 상태 항상 동기화, `checkpoints`는 현재 비어있음 확인).
-> 라운드 1 검증은 이 새 워크트리에서 처음부터 다시 진행 중(진행 중, 결과 대기).
-> **주의**: 섞여 들어간 다른 세션 커밋 2개를 이 브랜치에서 정리(cherry-pick to main +
-> 이 브랜치에서 제거)할지 여부는 아직 미결정 — origin에는 아직 안 올라간 상태
-> (`origin/feature/zone-analysis-tab` 최신은 기획 완료 커밋 `73716dd`까지만) 확인함,
-> push 전에 정리 여부 사용자 확인 필요.
+> **[최신, 2026-08-26] 존(Zone) 분석 탭 — 스펙 전체(R1~R4) 구현+검증 완료 + 워크트리 분리
+> + 에디션 브랜치 운영 규칙 확정**
+> `feature/zone-analysis-tab` 브랜치의 신규 독립 기능(배터리 캡 녹 검사, 스펙:
+> [zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md)) — 기획
+> (원 데이터모델 확정까지 2차례 정정) → **R1(탭+체크포인트+추론)/R2(원 자동검출
+> Canny+findContours+Kasa원피팅+수동편집)/R3(존별 퍼센티지)/R4(블랍 클릭삭제) 전부
+> 구현+실 GUI(QTest) 골든패스 검증 통과**. 검증 중 BUG-018/019(캔버스 시그널 발생 시
+> 사이드 리스트/하이라이트 상태가 리셋되는 동일 근본원인이 2회 재발) 발견·즉시 수정,
+> R4에서는 재발 없음 확인.
+>
+> **동시 세션 충돌 처리**: R1 검증 중 다른 세션(`segmentation-model-92`)이 같은
+> 워킹 디렉토리(`D:\segmentation model`)를 공유 중임을 발견(무관한 커밋 `46eb77b`+
+> `aa330c1`이 이 브랜치에 섞여 들어감 + 검증 1차 시도 유실) → `git worktree add`로
+> `D:\segmentation model-zone-analysis-tab` 분리, 원래 디렉토리는 `main`으로 반환.
+> gitignore된 `projects/nok/{images,checkpoints,user_models}`는 Windows 정션(junction)
+> 으로 원본과 공유(복사 아님). 이후 R1~R4 전부 이 워크트리에서 구현+검증.
+>
+> **에디션 브랜치 운영 규칙 확정(사용자가 다른 세션 `segmentation-model-1e`를 통해
+> 결정 전달)**: 이 브랜치는 main으로 역병합하지 않는 영구 "에디션" 브랜치로 운영,
+> main 업데이트는 sync 브랜치+PR로만 주기적으로 받아옴(CLAUDE.md 8번 규칙 갱신,
+> 커밋 `144623a`). 방금 PR #11(`sync/main-into-zone-analysis`, main의 어노테이션
+> 삭제/내보내기/가져오기 성능수정 3커밋 포함)을 로컬 merge(`4aa3567`) — 섞여
+> 들어갔던 `46eb77b`/`aa330c1`과 사실상 같은 내용이라 코드 파일은 자동 merge, append-only
+> 로그 2개(`implementation-log.md`/`verification-log.md`)만 충돌 → 양쪽 다 살리는
+> 방식으로 해결. **push는 아직 안 함** — 사용자 확인 필요.
+>
+> **남은 것**: (1) push 여부, (2) `docs/decisions-needed.md`의 타겟 클래스 2개 이상
+> 시 v1 범위 결정 대기 1건, (3) 향후 확장 후보(블랍삭제 Undo, 체크포인트 클래스
+> 메타데이터 저장).
 >
 > **[2026-08-21] 디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
 > ([roadmap.md](../roadmap.md) 해당 절): ①아이콘SVG ②장식이모지제거 ③model_tab팔레트
