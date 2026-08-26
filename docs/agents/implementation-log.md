@@ -3693,3 +3693,70 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 ### 관련 문서
 - `docs/roadmap.md`의 R3-4 체크박스를 미착수([ ])에서 구현 완료([x], 검증 대기)로 갱신.
 - 커밋: `0d74f4e`
+
+## 2026-08-27 — 존 분석 탭 R3-5(오프라인 팝업→메인 탭 라운드트립) 구현
+
+- 스펙: `docs/specs/zone-analysis-tab-features-round3-2026-08-27.md` 판단 5.
+  **신규 기능 라운드3(R3-1~R3-5) 전체의 마지막 라운드.**
+- 워크트리 `D:\segmentation model-zone-analysis-tab`, 브랜치
+  `feature/zone-analysis-tab`.
+
+### 변경 파일
+- `app/widgets/circle_detect_preview_dialog.py`
+  - 하단 버튼 행에 "메인 탭에 적용" `QPushButton`(`_btn_apply`) 추가, 클릭 시
+    `self.accept()`("닫기"/`✕`는 기존대로 `self.close()`만 — dismiss는 부수효과
+    없음, 스펙 명시 구분 유지).
+  - 신규 getter 2개: `result_circles()`(내부적으로 `self._canvas.get_circles()`
+    위임), `result_image_size()`(`self._orig_size` 반환). 다이얼로그는 여전히
+    `app.core.project`/체크포인트/메인 탭 관련 import를 전혀 하지 않는다 —
+    실제로 메인 탭 상태를 바꾸는 코드는 전부 호출부(`ZoneAnalysisTab`)에 둠(스펙
+    지시 그대로: "이 기능만 예외적으로 메인 탭 상태를 갱신하는 경로").
+- `app/tabs/zone_analysis_tab.py`
+  - `_on_open_offline_test()`를 `auto_label_dialog.py` L395("if preview.exec():
+    ...")와 동일한 패턴으로 리라이트 — `dialog.exec()`가 진실값이면
+    `result_circles()`/`result_image_size()`를 읽어 `_apply_circles_from_popup()`
+    호출. 신규 시그널·복잡한 상태공유 메커니즘 없음(라더: 이미 있는 패턴 재사용).
+  - `_apply_circles_from_popup(circles, pop_w, pop_h)` 신설:
+    - 메인 탭에 이미지가 없으면(`self._image_path is None or self._image_size ==
+      (0, 0)`) `QMessageBox.warning()` 후 무동작(스펙 명시 제약).
+    - 팝업 이미지와 메인 탭 이미지 해상도가 다르면 3b(배치 처리)의 비례 스케일
+      로직을 방향만 반대로 재사용: `sx, sy = ref_w/pop_w, ref_h/pop_h`,
+      `(cx*sx, cy*sy, r*(sx+sy)/2)`.
+    - 메인 탭에 이미 원이 있으면(`self._canvas.get_circles()`) `QMessageBox.
+      question()`으로 덮어쓰기 확인(`labeling_tab.py`의 파괴적 동작 전 확인
+      패턴 재사용, `Yes`가 아니면 무동작).
+    - `self._canvas.set_circles(circles)` 호출 — R3-4에서 이미 `set_circles()`가
+      `_push_undo()`를 호출하도록 구현돼 있어 이 적용 동작도 별도 코드 없이
+      자동으로 Ctrl+Z 가능(부가 이득, 신규 로직 없음).
+
+### 검증 (구현자 자체 확인 — 정식 GUI 검증은 검증 에이전트 몫)
+- `py_compile app/tabs/zone_analysis_tab.py app/widgets/circle_detect_preview_dialog.py`
+  통과.
+- 독립 QTest 스크립트(실제 `QTest.mouseClick`으로 "메인 탭에 적용" 버튼 클릭 재현,
+  직접 메서드 호출로 대체하지 않음)로 다음을 실측 확인:
+  - 팝업에서 `set_circles()`로 원을 채운 뒤 "메인 탭에 적용" 버튼을 실제
+    클릭하면 `accept()`가 호출되고 `dialog.result() == QDialog.Accepted`,
+    `result_circles()`/`result_image_size()`가 캔버스 상태를 정확히 반환.
+  - 메인 탭에 이미지가 없을 때 `_apply_circles_from_popup()` 호출 →
+    `QMessageBox.warning` 1회 호출, 캔버스 원 목록 불변.
+  - 메인 탭 이미지와 팝업 이미지가 같은 해상도 → 원 좌표가 스케일 없이 그대로
+    반영.
+  - 해상도가 다를 때(예: 참조 800x400, 팝업 400x200 → 2배) 좌표/반지름이
+    정확히 비례 스케일됨(오라클 대조).
+  - 메인 탭에 기존 원이 있을 때 `QMessageBox.question`이 정확히 1회 호출되고,
+    `No` 응답 시 캔버스 불변, `Yes` 응답 시 팝업 원으로 전체 교체.
+  - 적용 직후 `can_undo() == True`, `undo()` 호출 시 적용 이전 원 목록으로
+    정확히 복원(R3-4 undo 스택과의 통합 확인).
+  - `_on_open_offline_test()` 전체 배선을 가짜 다이얼로그(`exec()->1`)로 재현해
+    실제 적용 경로가 동작함을 확인, `exec()->0`(닫기/dismiss)이면 메인 탭 캔버스
+    상태가 완전히 그대로임을 확인(R-A 완전 독립 회귀 없음 재확인).
+- **미검증(다음 검증 에이전트 몫)**: 실제 `python main.py` GUI 구동, 팝업에서
+  실제 이미지 열기+검출+수동 편집 후 "메인 탭에 적용" 버튼 클릭이 실제 마우스
+  이벤트로 동작하는지, 3가지 시나리오((a) 같은 이미지 (b) 다른 이미지·같은
+  해상도 (c) 다른 이미지·다른 해상도) 실 GUI 재현, R1~R4/R-A~R-C/R3-1~R3-4 전체
+  골든패스 회귀.
+
+### 관련 문서
+- `docs/roadmap.md`의 R3-5 체크박스를 미착수([ ])에서 구현 완료([x], 검증
+  대기)로 갱신 — **신규 기능 라운드3(R3-1~R3-5) 전체 구현 완료**를 명시.
+- 커밋: `ff7dbf8`
