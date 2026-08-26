@@ -3496,3 +3496,65 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - `docs/roadmap.md` "존(Zone) 분석 탭" 절의 R-C 3c 항목을 미착수([ ])에서 구현 완료([x],
   검증 대기)로 갱신, 완료 시 신규 기능 3건 전체 종료임을 명시.
 - 커밋: `143c518`
+
+## 2026-08-27 — 존 분석 탭 라운드3 R3-1(단일 이미지 Excel)+R3-2(wide format 뷰) 구현
+
+브랜치 `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+스펙: `docs/specs/zone-analysis-tab-features-round3-2026-08-27.md` 판단 3/4(R3-1/R3-2).
+범위: R3-1(단일 이미지 Excel 내보내기), R3-2(일괄 처리 결과 wide format 뷰)만. R3-3(브러시
+지우기)/R3-4(Undo)/R3-5(팝업 라운드트립)는 범위 밖(다음 라운드).
+
+### 변경 사항 (기존 3개 파일만 애디티브 수정, 신규 파일 없음)
+
+- `app/core/zone_metrics.py`
+  - `_disk_mask()` → `disk_mask()` 공개 전환(언더스코어 제거), 내부 호출부
+    `zones_from_circles()`도 새 이름으로 갱신. R3-3(브러시 지우기)이 이 공개 함수를
+    가져다 쓸 예정이라 미리 준비(스펙 지시).
+  - `pivot_wide_format(rows)` 신규 순수 함수 — long rows를
+    `(이미지목록, 정렬된 존이름 열목록, {(이미지,존): 퍼센티지} dict)`로 피벗. 열 정렬은
+    중심부→링 N(정규식으로 숫자 추출해 오름차순)→바깥쪽 고정, 없는 조합은 dict에 키가
+    없음(호출부가 공란 렌더링). Qt 의존 없음(core 규칙 준수).
+  - `export_zone_percentages_to_excel()`을 애디티브 확장 — 기존 `zones` 시트(long) 유지,
+    `pivot_wide_format()` 기반 `zones_wide` 시트 신규 추가. 시그니처 불변이라 R3-1 단일
+    내보내기와 기존 일괄 처리 내보내기 양쪽 다 코드 변경 없이 자동으로 시트 2개짜리 결과를
+    얻는다.
+  - `__main__` self-check에 `pivot_wide_format()` 검증 추가(이미지 3장, 존 개수 2/2/3개
+    섞은 케이스 — 이미지 순서 유지, 열 정렬 순서, 없는 조합이 dict에 없는지 assert).
+- `app/tabs/zone_analysis_tab.py`
+  - `_compute_zone_percentages()` 헬퍼 추출 — 기존 `_recompute_zones()`의 존 계산 로직을
+    순수 추출(동작 변화 없음), 신규 단일 이미지 내보내기와 공유.
+  - 우측 존 리스트 패널 아래 "Excel로 내보내기" 버튼(`_btn_export_single`) 추가.
+  - `_on_export_single()` 신규 — 현재 화면 존 목록을 `(이미지파일명, 존이름, 퍼센티지)`
+    rows로 만들어 기존 `export_zone_percentages_to_excel()`에 그대로 전달(신규 core 함수
+    불필요, 스펙 지시 그대로). `QFileDialog.getSaveFileName` + 완료/오류 메시지박스는
+    `zone_batch_result_dialog.py`의 기존 패턴과 동일.
+- `app/widgets/zone_batch_result_dialog.py`
+  - `QTabWidget`으로 "목록별 (Long)"/"이미지별 (Wide)" 2탭 구성(`_build_long_tab`/
+    `_build_wide_tab`으로 분리). Wide 탭은 `pivot_wide_format()` 결과로 `QTableWidget`을
+    채우고, 상단에 "이미지마다 존 개수가 다르면 같은 열도 다른 위치를 가리킬 수 있다"는
+    안내 라벨 추가(스펙의 "알려진 한계, 버그 아님" 문서화 지시).
+  - Excel 내보내기 버튼/로직은 변경 없음(이미 `export_zone_percentages_to_excel()` 호출 —
+    zone_metrics.py 확장 덕에 자동으로 wide 시트도 포함됨).
+
+### BUG-018~022 패턴(캔버스 단일 출처 + getter 복원) 재확인
+이번 변경은 UI 추가(버튼/탭)와 순수 데이터 변환(피벗)만 다뤄 캔버스 시그널 재구성 경로를
+건드리지 않는다. `_recompute_zones()`의 기존 하이라이트 복원 로직은 그대로 유지(순수 추출만
+수행), 신규 회귀 표면 없음.
+
+### 확인
+- `python -m py_compile app/core/zone_metrics.py app/widgets/zone_batch_result_dialog.py app/tabs/zone_analysis_tab.py app/widgets/zone_canvas.py app/widgets/circle_detect_preview_dialog.py`
+  전부 통과.
+- `python app/core/zone_metrics.py` 직접 실행 — self-check 전부 통과(`zone_metrics
+  self-check OK`, `pivot_wide_format` 케이스 포함). 이번 세션엔 `C:\Users\Feel\AppData\Local\Python\bin\python.exe`
+  인터프리터로 실행(기본 `python`이 Windows Store 스텁으로 연결돼 있어 우회).
+- `git status --short`로 변경 파일이 스펙 "파일 구조 변경 요약"의 3개 파일(zone_metrics.py,
+  zone_analysis_tab.py, zone_batch_result_dialog.py)과 정확히 일치함을 확인 — 신규 파일 없음.
+- `python main.py` GUI 구동 검증은 하지 않음(지시에 따라 구현만 수행) — **검증 에이전트의
+  실제 확인 필요**(실 GUI: 이미지+체크포인트→추론→원 정의→"Excel로 내보내기" 클릭→저장된
+  xlsx의 zones/zones_wide 두 시트가 화면 존 리스트와 일치, 배치 처리 후 Long/Wide 탭 전환
+  확인).
+
+### 관련 문서
+- `docs/roadmap.md` "신규 기능 5건(2026-08-27 요청, 라운드3)" 절의 R3-1/R3-2 체크박스를
+  미착수([ ])에서 구현 완료([x], 검증 대기)로 갱신.
+- 커밋: `6bd7226`
