@@ -2688,3 +2688,21 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 
 ### 판정
 **통과 — 커밋 가능**. 기능·후속 병합·회귀·성능 기준을 모두 충족함.
+
+---
+
+## 2026-08-27 — GitHub #12 도구 타입 무관 동일 클래스 병합 검증
+
+- 관련 자동·회귀 테스트 12개 및 `py_compile` 통과.
+- 실제 위젯 이벤트로 brush→poly, poly→brush, poly→poly의 overlap/4-neighbor 병합,
+  diagonal-only 미병합, undo 타입·ID 복원 확인.
+- 다른 클래스 제외, bbox false positive 제외, 지우개 overlap-only 현행 동작, #15 채우기
+  결과와 폴리곤 병합 통합 경로 통과.
+- 2048×2048 + 먼 같은 클래스 폴리곤 100개 후보 탐색 20회: 중앙값 0.702ms,
+  p95 0.969ms. 후보 단계 full-image allocation 0회.
+- 중간 검증에서 병합으로 제거된 선택 ID가 `_selected_ids`에 남는 회귀 발견 → live ID
+  교집합 정리 + `selection_changed([])` 방출로 수정. 정확한 재현 경로와 신규 테스트 모두
+  재통과.
+
+### 판정
+**통과 — 커밋 가능**. 기능·성능·선택 상태 무결성 기준을 모두 충족함.

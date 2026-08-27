@@ -284,7 +284,7 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       패딩 마진=브러시 반경의 1배.** 결정 대기 없음 — 구현 가능, 설계는
       [voc-github-issues-round4-2026-08-27.md](specs/voc-github-issues-round4-2026-08-27.md)
       "GitHub #15" 절 참고.
-- [ ] [GitHub #12](https://github.com/sfeelBot/Segmentation-Tool/issues/12) "브러시는
+- [x] [GitHub #12](https://github.com/sfeelBot/Segmentation-Tool/issues/12) "브러시는
       그리는 도구일 뿐, annotation에서 분류할 필요 없다" — 원인은 어노테이션 목록의
       `[Poly]`/`[Mask]` 타입 태그 노출(`labeling_tab.py` `_refresh_ann_list()`) +
       같은 클래스라도 polygon/brush_mask는 병합 안 됨(`_resolve_overlap_and_merge`가

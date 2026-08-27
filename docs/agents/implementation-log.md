@@ -2738,3 +2738,46 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - 최종 재검증: 자동·회귀 6개 통과, 실제 위젯 이벤트 골든패스에서 내부 채움 및
   어노테이션 1개 병합 통과. 먼 마스크 600개 중앙값 1.844ms로 최초 구현 대비 약
   20.7배 개선. 검증 에이전트 커밋 가능 판정.
+
+## 2026-08-27 — GitHub #12 도구 타입 무관 동일 클래스 병합 (옵션 B)
+
+**상태: 구현 완료 / 검증 서브에이전트 확인 대기 / 커밋 없음**
+
+### 구현
+- `app/widgets/annotation_canvas.py`
+  - 일반 브러시·채우기 커밋 직전에 같은 클래스 폴리곤 후보를 검사하고, 새 마스크와
+    실제 픽셀 겹침 또는 상하좌우 1픽셀 접촉이 확인된 폴리곤만 `brush_mask`로 변환.
+  - 폴리곤 완료 시에도 같은 기준으로 기존 브러시/폴리곤과의 접촉을 판정해 양방향
+    (brush→poly, poly→brush, poly→poly) 병합을 지원.
+  - 후보는 polygon bbox와 작업 bbox 교차로 먼저 축소하고 로컬 bbox 배열에서만
+    `fillPoly`·접촉 판정. 실제 접촉이 확인된 폴리곤에만 전체 이미지 마스크를 생성.
+  - 대각선만 닿는 경우는 제외하고 4-neighbor만 병합. 다른 클래스는 후보에서 제외.
+  - `class_id=None`인 기존 지우개 호출은 실제 겹침만 인정해 현행 동작을 보존.
+  - `_resolve_overlap_and_merge(..., bbox=None)`로 확장해 폴리곤 완료 경로도 명시적
+    로컬 bbox를 사용할 수 있게 했으며, #15의 최종 `margin=1` bbox 계약을 유지.
+  - 기존 `_push_undo()` 시점 뒤에 변환·병합이 일어나므로 undo 1회로 병합 전의
+    폴리곤/마스크 타입과 annotation_id가 함께 복원됨.
+
+### 테스트
+- `tests/test_annotation_type_merge.py` 신규: brush→poly(+undo), poly→brush,
+  poly→poly, 대각선 제외, bbox만 겹치는 삼각형 제외, 다른 클래스 제외, 지우개 인접
+  비변환을 실제 `AnnotationCanvas` 코드 경로로 검증.
+- 실행 결과:
+  - `pytest -q tests/test_annotation_type_merge.py tests/test_fill_enclosed.py tests/test_canvas_zoom_pan.py`
+    → **11 passed in 0.16s**
+  - `py_compile app/widgets/annotation_canvas.py tests/test_annotation_type_merge.py` → 통과
+
+### 확인 필요 (검증 서브에이전트에게)
+- 실제 GUI에서 세 방향 병합, 대각선 비병합, 다른 클래스 픽셀 독점성, undo 골든패스.
+- 다수 폴리곤 프로젝트에서 스트로크당 후보 축소 효과와 접촉 확정 전 전체 크기 배열
+  미생성 여부를 계측하는 성능 검증.
+
+### 검증 피드백 반영
+- 최초 독립 검증에서 선택된 기존 폴리곤이 병합으로 제거된 뒤 `_selected_ids`에 사라진
+  ID가 남는 회귀 발견. `_resolve_overlap_and_merge()` 종료 시 live annotation ID와
+  선택 집합의 교집합만 유지하고, 변경 시 `selection_changed`를 방출하도록 수정.
+- 선택 상태 회귀 테스트를 추가해 총 12개 자동 테스트 통과. 실제 이벤트 병합 조합,
+  undo, 다른 클래스, 지우개, #15 통합도 통과.
+- 2048×2048 이미지 + 먼 같은 클래스 폴리곤 100개 후보 탐색 중앙값 0.702ms,
+  p95 0.969ms. 후보 단계 전체 이미지 배열 할당 0회 확인.
+- 최종 상태: 검증 에이전트 커밋 가능 판정.

@@ -844,6 +844,15 @@ class AnnotationCanvas(QWidget):
             points=[(p.x(), p.y()) for p in self._poly_pts],
         )
         self._annotations.append(ann)
+        bbox = _polygon_bbox(ann.points, self._img_w, self._img_h, margin=1)
+        if bbox is not None and self._polygon_has_same_class_contact(ann, bbox):
+            poly_mask = _rasterize_polygon(ann.points, self._img_w, self._img_h)
+            self._rasterize_polygons_touching(poly_mask, ann.class_id, bbox)
+            converted = next(
+                (a for a in self._annotations if a.annotation_id == ann.annotation_id), None
+            )
+            if converted is not None:
+                self._resolve_overlap_and_merge(converted, bbox)
         self._poly_pts.clear()
         self._invalidate_overlay()
         self._schedule_save()
@@ -915,6 +924,12 @@ class AnnotationCanvas(QWidget):
             else:
                 if self._tool == TOOL_BRUSH_FILL:
                     self._fill_enclosed()
+                if self._brush_bbox is not None:
+                    self._rasterize_polygons_touching(
+                        self._brush_np, self._class_id, tuple(self._brush_bbox)
+                    )
+                    merged_bbox = _mask_bbox(self._brush_np, margin=1)
+                    self._brush_bbox = list(merged_bbox) if merged_bbox is not None else None
                 ann = AnnotationItem(
                     annotation_id=store.new_id(),
                     class_id=self._class_id,
@@ -1041,15 +1056,45 @@ class AnnotationCanvas(QWidget):
                     and not a.mask.any())
         ]
 
-    def _rasterize_polygons_touching(self, region_mask: np.ndarray) -> None:
-        """region_mask와 겹치는 폴리곤을 brush_mask 어노테이션으로 변환."""
-        for i, ann in enumerate(self._annotations):
-            if ann.type != "polygon" or len(ann.points) < 3:
-                continue
-            pts = np.array([[int(x), int(y)] for x, y in ann.points], dtype=np.int32)
-            poly_mask = np.zeros((self._img_h, self._img_w), dtype=np.uint8)
-            cv2.fillPoly(poly_mask, [pts], 1)
-            if (poly_mask & region_mask).any():
+    def _rasterize_polygons_touching(
+        self,
+        region_mask: np.ndarray,
+        class_id: int | None = None,
+        bbox: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        """영역과 닿는 폴리곤만 마스크로 변환한다.
+
+        class_id가 지정된 #12 경로는 겹침과 4-neighbor 접촉을 인정한다. 지우개가
+        사용하는 하위 호환 경로(class_id=None)는 기존처럼 실제 겹침만 인정한다.
+        후보 검사는 bbox 크기의 로컬 배열에서 수행하고, 접촉이 확인된 폴리곤에만
+        전체 이미지 크기 마스크를 할당한다.
+        """
+        if bbox is None:
+            bbox = _mask_bbox(region_mask, margin=1 if class_id is not None else 0)
+        if bbox is None:
+            return
+
+        region_bbox = tuple(int(v) for v in bbox)
+        changed = True
+        while changed:
+            changed = False
+            for i, ann in enumerate(self._annotations):
+                if ann.type != "polygon" or len(ann.points) < 3:
+                    continue
+                if class_id is not None and ann.class_id != class_id:
+                    continue
+                poly_bbox = _polygon_bbox(
+                    ann.points, self._img_w, self._img_h,
+                    margin=1 if class_id is not None else 0,
+                )
+                if poly_bbox is None or not _bboxes_intersect(region_bbox, poly_bbox):
+                    continue
+                if not _polygon_touches_mask_local(
+                    ann.points, region_mask, region_bbox,
+                    include_four_neighbor=class_id is not None,
+                ):
+                    continue
+                poly_mask = _rasterize_polygon(ann.points, self._img_w, self._img_h)
                 self._annotations[i] = AnnotationItem(
                     annotation_id=ann.annotation_id,
                     class_id=ann.class_id,
@@ -1059,6 +1104,37 @@ class AnnotationCanvas(QWidget):
                     width=self._img_w,
                     height=self._img_h,
                 )
+                if class_id is not None:
+                    region_mask |= poly_mask
+                    merged_bbox = _mask_bbox(region_mask, margin=1)
+                    if merged_bbox is not None:
+                        region_bbox = merged_bbox
+                changed = True
+
+    def _polygon_has_same_class_contact(
+        self, new_ann: AnnotationItem, bbox: tuple[int, int, int, int]
+    ) -> bool:
+        """새 폴리곤이 같은 클래스의 확정 어노테이션과 실제로 닿는지 확인."""
+        local_mask = _rasterize_polygon_local(new_ann.points, bbox)
+        x0, y0, x1, y1 = bbox
+        for ann in self._annotations:
+            if ann is new_ann or ann.class_id != new_ann.class_id:
+                continue
+            if ann.type == "brush_mask" and ann.mask is not None:
+                if _local_masks_touch(local_mask, ann.mask[y0:y1, x0:x1], True):
+                    return True
+            elif ann.type == "polygon" and len(ann.points) >= 3:
+                other_bbox = _polygon_bbox(ann.points, self._img_w, self._img_h, margin=1)
+                if other_bbox is None or not _bboxes_intersect(bbox, other_bbox):
+                    continue
+                ux0, uy0 = min(x0, other_bbox[0]), min(y0, other_bbox[1])
+                ux1, uy1 = max(x1, other_bbox[2]), max(y1, other_bbox[3])
+                union_bbox = (ux0, uy0, ux1, uy1)
+                new_local = _rasterize_polygon_local(new_ann.points, union_bbox)
+                other_local = _rasterize_polygon_local(ann.points, union_bbox)
+                if _local_masks_touch(new_local, other_local, True):
+                    return True
+        return False
 
     def _flood_erase(self, img_pos: QPointF) -> None:
         cx, cy = int(img_pos.x()), int(img_pos.y())
@@ -1137,13 +1213,16 @@ class AnnotationCanvas(QWidget):
         self._schedule_save()
         self.update()
 
-    def _resolve_overlap_and_merge(self, new_ann: AnnotationItem) -> None:
+    def _resolve_overlap_and_merge(
+        self, new_ann: AnnotationItem,
+        bbox: tuple[int, int, int, int] | None = None,
+    ) -> None:
         """픽셀 독점성 보장 + 같은 클래스 연결 영역 병합.
         brush_bbox 를 활용해 칠한 영역만 처리 → 20MP 전체 스캔 방지."""
         if new_ann.type != "brush_mask" or new_ann.mask is None:
             return
 
-        bb = self._brush_bbox
+        bb = bbox if bbox is not None else self._brush_bbox
         if bb is None:
             return
         x0, y0, x1, y1 = int(bb[0]), int(bb[1]), int(bb[2]), int(bb[3])
@@ -1187,6 +1266,14 @@ class AnnotationCanvas(QWidget):
         t0 = _perf.mark("consolidate_region")
         self._consolidate_class_region(new_ann.class_id, x0, y0, x1, y1)
         _perf.end("consolidate_region", t0)
+
+        # 병합/픽셀 독점 처리로 제거된 어노테이션 ID가 선택 상태에 남지 않게 한다.
+        # 도구 전환은 기존 선택을 유지하므로 select → brush 경로에서 실제로 발생 가능하다.
+        live_ids = {a.annotation_id for a in self._annotations}
+        valid_selected = self._selected_ids & live_ids
+        if valid_selected != self._selected_ids:
+            self._selected_ids = valid_selected
+            self.selection_changed.emit(list(self._selected_ids))
 
     def _consolidate_class_region(
         self, class_id: int, x0: int, y0: int, x1: int, y1: int
@@ -1779,6 +1866,84 @@ class AnnotationCanvas(QWidget):
 
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
+
+def _polygon_bbox(
+    points: list[tuple[float, float]], image_w: int, image_h: int, margin: int = 0
+) -> tuple[int, int, int, int] | None:
+    if len(points) < 3:
+        return None
+    pts = np.asarray([[int(x), int(y)] for x, y in points], dtype=np.int32)
+    x, y, w, h = cv2.boundingRect(pts)
+    if w == 0 or h == 0:
+        return None
+    return (
+        max(0, x - margin), max(0, y - margin),
+        min(image_w, x + w + margin), min(image_h, y + h + margin),
+    )
+
+
+def _bboxes_intersect(
+    a: tuple[int, int, int, int], b: tuple[int, int, int, int]
+) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _rasterize_polygon_local(
+    points: list[tuple[float, float]], bbox: tuple[int, int, int, int]
+) -> np.ndarray:
+    x0, y0, x1, y1 = bbox
+    local = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+    pts = np.asarray(
+        [[int(x) - x0, int(y) - y0] for x, y in points], dtype=np.int32
+    )
+    cv2.fillPoly(local, [pts], 1)
+    return local
+
+
+def _rasterize_polygon(
+    points: list[tuple[float, float]], image_w: int, image_h: int
+) -> np.ndarray:
+    mask = np.zeros((image_h, image_w), dtype=np.uint8)
+    pts = np.asarray([[int(x), int(y)] for x, y in points], dtype=np.int32)
+    cv2.fillPoly(mask, [pts], 1)
+    return mask
+
+
+def _local_masks_touch(
+    first: np.ndarray, second: np.ndarray, include_four_neighbor: bool
+) -> bool:
+    first_bool = first != 0
+    second_bool = second != 0
+    if (first_bool & second_bool).any():
+        return True
+    if not include_four_neighbor:
+        return False
+    return bool(
+        (first_bool[1:, :] & second_bool[:-1, :]).any()
+        or (first_bool[:-1, :] & second_bool[1:, :]).any()
+        or (first_bool[:, 1:] & second_bool[:, :-1]).any()
+        or (first_bool[:, :-1] & second_bool[:, 1:]).any()
+    )
+
+
+def _polygon_touches_mask_local(
+    points: list[tuple[float, float]],
+    region_mask: np.ndarray,
+    region_bbox: tuple[int, int, int, int],
+    include_four_neighbor: bool,
+) -> bool:
+    poly_bbox = _polygon_bbox(
+        points, region_mask.shape[1], region_mask.shape[0],
+        margin=1 if include_four_neighbor else 0,
+    )
+    if poly_bbox is None or not _bboxes_intersect(region_bbox, poly_bbox):
+        return False
+    x0, y0 = min(region_bbox[0], poly_bbox[0]), min(region_bbox[1], poly_bbox[1])
+    x1, y1 = max(region_bbox[2], poly_bbox[2]), max(region_bbox[3], poly_bbox[3])
+    local_bbox = (x0, y0, x1, y1)
+    polygon_local = _rasterize_polygon_local(points, local_bbox)
+    region_local = region_mask[y0:y1, x0:x1]
+    return _local_masks_touch(polygon_local, region_local, include_four_neighbor)
 
 def _mask_bbox(mask: np.ndarray, margin: int = 1) -> tuple[int, int, int, int] | None:
     """0이 아닌 영역의 바운딩 박스를 반환 (margin px 여유 포함, 이미지 경계로 클리핑).
