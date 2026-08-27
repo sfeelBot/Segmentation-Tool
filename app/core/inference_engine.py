@@ -535,7 +535,11 @@ def _colorize_and_blend(
 
     # PIL blend — 원본 이미지는 부드러운 축소를 위해 BILINEAR
     orig_np    = np.array(orig.resize((w, h), Image.BILINEAR), dtype=np.uint8)
-    blended    = (orig_np * (1 - opacity) + color_img * opacity).clip(0, 255).astype(np.uint8)
+    blended = orig_np.copy()
+    foreground = class_map_work != 0
+    blended[foreground] = (
+        orig_np[foreground] * (1 - opacity) + color_img[foreground] * opacity
+    ).clip(0, 255).astype(np.uint8)
 
     qimg = QImage(
         blended.tobytes(), w, h,

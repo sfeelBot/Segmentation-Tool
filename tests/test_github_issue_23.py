@@ -4,6 +4,7 @@ from PyQt6 import QtSvg  # noqa: F401  # Windows DLL load order
 from PyQt6.QtWidgets import QApplication
 
 from app.tabs import inference_tab
+from app.core.inference_engine import ClassDef, _colorize_and_blend
 
 
 _APP = QApplication.instance() or QApplication([])
@@ -57,3 +58,17 @@ def test_inference_tab_f_toggles_overlay(tmp_path) -> None:
 
     assert tab._overlay_visible is False
     tab.close()
+
+
+def test_overlay_opacity_does_not_dim_background() -> None:
+    import numpy as np
+    from PIL import Image
+
+    original = Image.new("RGB", (2, 1), (100, 150, 200))
+    class_map = np.array([[0, 1]], dtype=np.int64)
+    classes = {1: ClassDef(1, "foreground", (200, 50, 100))}
+
+    image = _colorize_and_blend(original, class_map, classes, 0.5).toImage()
+
+    assert image.pixelColor(0, 0).getRgb()[:3] == (100, 150, 200)
+    assert image.pixelColor(1, 0).getRgb()[:3] == (150, 100, 150)
