@@ -81,6 +81,8 @@ class TrainingJob:
 
 
 class TrainingTab(QWidget):
+    queue_active_changed = pyqtSignal(bool)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._jobs: list[TrainingJob] = []
@@ -99,8 +101,16 @@ class TrainingTab(QWidget):
         self._cuda_diag_worker: _CudaDiagWorker | None = None
         # 종료 중인 TrainerWorker Python 참조 보관 — GC가 실행 중 QThread를 파괴하는 크래시 방지
         self._dying_workers: list = []
+        self._start_guard = None
         self._build_ui()
         self._start_cuda_diag()
+
+    @property
+    def queue_active(self) -> bool:
+        return self._queue_active
+
+    def set_start_guard(self, guard) -> None:
+        self._start_guard = guard
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
@@ -451,7 +461,10 @@ class TrainingTab(QWidget):
             return
         if self._queue_active:
             return
+        if self._start_guard is not None and not self._start_guard():
+            return
         self._queue_active = True
+        self.queue_active_changed.emit(True)
         self._queue_stop_all = False
         self._btn_start_all.setEnabled(False)
         self._btn_stop.setEnabled(True)
@@ -468,6 +481,7 @@ class TrainingTab(QWidget):
 
         if next_idx is None or self._queue_stop_all:
             self._queue_active = False
+            self.queue_active_changed.emit(False)
             self._running_idx = None
             self._btn_start_all.setEnabled(True)
             self._btn_stop.setEnabled(False)
@@ -491,6 +505,7 @@ class TrainingTab(QWidget):
 
         self._running_idx = next_idx
         job.status = "running"
+        self._btn_stop.setEnabled(True)
         job.epoch_times = []
         job.epochs_done = 0
         classes = load_classes()
@@ -532,6 +547,9 @@ class TrainingTab(QWidget):
         self._queue_stop_all = (reply == QMessageBox.StandardButton.Yes)
         self._worker.request_stop()
         self._lbl_status.setText("중지 요청됨…")
+        self._btn_stop.setEnabled(False)
+        if self._dialog:
+            self._dialog.set_stopping()
 
     # ── Worker 시그널 슬롯 ────────────────────────────────────────────────────
 
@@ -689,12 +707,18 @@ class TrainingTab(QWidget):
         if self._worker:
             self._worker.request_stop()
             self._lbl_status.setText("현재 작업 중지 요청됨…")
+            self._btn_stop.setEnabled(False)
+            if self._dialog:
+                self._dialog.set_stopping()
 
     def _on_dialog_stop_all(self) -> None:
         self._queue_stop_all = True
         if self._worker:
             self._worker.request_stop()
         self._lbl_status.setText("전체 큐 중지 요청됨…")
+        self._btn_stop.setEnabled(False)
+        if self._dialog:
+            self._dialog.set_stopping()
 
     # ── ETA 계산 ─────────────────────────────────────────────────────────────
 

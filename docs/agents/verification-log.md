@@ -3476,6 +3476,70 @@ numpy/cv2/PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. `QFileDialo
   `git status --short` 결과 이 문서/QA.md/roadmap.md 갱신 외 워크트리 무변경 확인.
 
 ### 판정
+**통과 — 커밋 가능**. 단일 선택의 기존 OK on/off 경로도 그대로 유지됨.
+
+## 2026-08-27 — main v1.9.0 릴리스 메타데이터 검증
+
+- `scripts/generate_version_info.py`: 성공.
+- `tests/test_build_release.py`: 20 passed.
+- 생성값: EXE/installer `1.9.0`, `SegmentationModelUI`, AppId 유지 확인.
+
+---
+
+## 2026-08-27 — 오토라벨링 원본 해상도 슬라이딩 윈도우 검증
+
+- 코드 리뷰: 입력 이미지를 전체 resize하지 않고 체크포인트 입력 크기의 패치로 분할하며,
+  우측·하단 경계 패치와 작은 이미지는 edge padding 후 원본 크기로 crop하는 것을 확인.
+- 겹침 영역은 클래스별 softmax 확률을 누적한 뒤 방문 횟수로 평균하고 argmax하며,
+  모델 출력 공간 크기가 패치와 다를 때만 bilinear 보간하여 원본 픽셀 좌표를 보존함.
+- 패치 배치 크기 4, 배치 사이 중지 확인, 이미지 단위 결과 누적 및 기존 미라벨 이미지 배치 처리
+  흐름을 정적 검토함.
+- `tests/test_auto_label_sliding.py`: 5 passed. 경계 시작점, 작은 이미지 padding/crop,
+  큰 이미지 원본 크기·겹침 패치·배치, 축소 출력 보간, 중지 경로 확인.
+- 기존 회귀 테스트: 48 passed (`annotation_type_merge`, `build_release`, `canvas_zoom_pan`,
+  `fill_enclosed`, `labeling_multi_ok`). `py_compile` 통과.
+- 전체 테스트를 단일 pytest 프로세스로 수집할 때 로컬 PyQt6 QtSvg DLL import-order 오류가 발생했으나,
+  동일 테스트를 두 프로세스로 분리 실행하면 모두 통과하여 제품 변경 회귀로 판정하지 않음.
+- 비차단 위험: 클래스별 확률 누적 배열은 `클래스 수 × 원본 높이 × 원본 너비 × 4 bytes`에
+  비례하므로 초대형 이미지·다중 클래스에서 CPU 메모리 사용량과 패치 추론 시간이 증가함.
+  또한 고정 GPU 배치 4는 매우 큰 체크포인트 입력 크기에서 장치 메모리 여유에 따라 OOM 가능성이 있음.
+
+### 판정
+**통과 — 커밋 가능.** 요청한 비축소 원본 해상도 오토라벨링 동작과 기존 기능 회귀를 충족함.
+
+## 2026-08-27 — 학습 데이터 잠금 및 병목 개선 통합 검증
+
+- 최신 관련 회귀 묶음 59 passed, 변경 모듈 `py_compile`, `git diff --check` 통과.
+- streaming confusion matrix가 기존 IoU/Dice 계산과 random 5-class·ignore index·분할
+  update 조건에서 동등함을 확인.
+- 두 작업 사이에는 잠금이 유지되고 마지막 작업의 정상 완료·중지·오류 뒤에만 해제됨을
+  fake worker 큐로 직접 확인.
+- 학습 중 annotation import와 창 닫기가 경고 후 차단되고, 이미지 탐색·zoom·pan 등
+  읽기 동작은 허용됨을 확인.
+- 학습 시작 전 저장 타이머 및 이미 실행 중인 background annotation 저장이 모두 끝날
+  때까지 기다리는 경합 방지 동작을 확인.
+- validation worker 0/pin memory, train cache 총 512MiB 분배, val cache 64MiB,
+  batch signal 0.1초 제한·마지막 emit, 차트 2,000포인트 상한과 단계별 로그를 확인.
+
+## 2026-08-27 — 학습 설정 휠 변경 차단 검증
+
+- `ConfigForm`의 모든 `QSpinBox`·`QDoubleSpinBox`·`QComboBox`에 wheel event를 전달한
+  뒤 값과 선택 index가 변하지 않음을 확인: 2 passed.
+- 직접 `setValue()` 변경은 유지되며 `py_compile`, 관련 학습 성능 회귀 2 passed,
+  `git diff --check` 통과.
+- 다른 PyQt 테스트와 단일 프로세스 수집 시 기존 QtSvg DLL import-order 오류가 있어
+  관련 테스트를 분리 실행함.
+
+## 2026-08-27 — 학습 큐 중지 응답 개선 검증
+
+- 독립 임시 테스트 포함 16 passed, 변경 모듈 `py_compile`, `git diff --check` 통과.
+- train batch 중 stop은 현재 batch 안전 완료 후 validation·epoch metric·checkpoint를
+  생략하고 `training_finished`를 1회 emit함을 확인.
+- validation 중 stop도 현재 validation batch 경계에서 종료하고 이후 metric/checkpoint를
+  실행하지 않음을 확인.
+- 현재 작업만 중지하면 다음 waiting 작업으로 진행하며 메인/진행창 중지 버튼이 복구되고,
+  전체 중지는 다음 작업을 실행하지 않고 큐 잠금을 해제함을 확인.
+
 **조건부 통과 — 골든패스 자체(레이아웃 조립, 좌측 패널 통합, 회귀 없음)는 전부 정상
 동작하나, 이번 라운드가 새로 만든 코드에서 실제 조작으로만 드러나는 결함 2건(`BUG-020`
 스플리터 붕괴, `BUG-021` 창 강제 확대)을 발견했다.** 둘 다 앱을 크래시시키거나 데이터를

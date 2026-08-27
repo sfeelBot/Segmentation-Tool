@@ -60,6 +60,12 @@ class AutoLabelDialog(QDialog):
         self._tabs.addTab(self._build_existing_tab(), "기존 체크포인트 사용")
         root.addWidget(self._tabs)
 
+        infer_hint = QLabel(
+            "오토라벨링은 이미지를 축소하지 않고 원본 해상도에서 패치별로 추론합니다."
+        )
+        infer_hint.setStyleSheet("color:#93c5fd; font-size:11px;")
+        root.addWidget(infer_hint)
+
         # ── 공용 진행 상태 ───────────────────────────────────────────────────
         self._lbl_status = QLabel("대기 중")
         self._lbl_status.setStyleSheet("color:#9ca3af;")

@@ -103,12 +103,16 @@ class ImageBrowser(QWidget):
         self._sort_mode: str = "name_asc"
         self._filter_text: str = ""
         self._import_worker: _FolderImportWorker | None = None
+        self._mutation_guard = lambda: True
         self._search_debounce = QTimer(self)
         self._search_debounce.setSingleShot(True)
         self._search_debounce.setInterval(_SEARCH_DEBOUNCE_MS)
         self._search_debounce.timeout.connect(self._apply_display)
         self._build_ui()
         self.reload()
+
+    def set_mutation_guard(self, guard) -> None:
+        self._mutation_guard = guard
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
@@ -328,6 +332,8 @@ class ImageBrowser(QWidget):
         self._apply_display()
 
     def _on_add(self) -> None:
+        if not self._mutation_guard():
+            return
         files, _ = QFileDialog.getOpenFileNames(
             self, t("browser.add_file_dialog_title"), "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tiff *.tif)"
@@ -343,6 +349,8 @@ class ImageBrowser(QWidget):
         self.reload()
 
     def _on_add_folder(self) -> None:
+        if not self._mutation_guard():
+            return
         folder = QFileDialog.getExistingDirectory(self, t("browser.add_folder_dialog_title"))
         if not folder:
             return
@@ -368,6 +376,8 @@ class ImageBrowser(QWidget):
         self._import_worker.start()
 
     def _on_delete(self) -> None:
+        if not self._mutation_guard():
+            return
         """선택된 이미지(들) 삭제."""
         selected_paths = [
             self._get_item_path(item)

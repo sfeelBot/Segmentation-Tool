@@ -99,6 +99,15 @@
 
 ---
 
+## 2026-08-27 — v1.9.0 릴리스 준비
+
+- 상태: 진행 중
+- 사용자 요청에 따라 main 버전을 `1.8.0`에서 `1.9.0`으로 갱신하고 CHANGELOG에
+  v1.8.0 이후 기능·수정 내역을 정리함.
+- 범위는 버전 메타데이터 생성·검증, 릴리스 커밋·annotated tag·push까지이며 전체
+  PyInstaller/Inno Setup 패키징과 GitHub Release 업로드는 포함하지 않음.
+- 검증 완료: 메타데이터 생성 성공, `tests/test_build_release.py` 20 passed.
+
 ## 2026-08-27 — zone-v1.1.0 릴리스 준비
 
 - 상태: 진행 중

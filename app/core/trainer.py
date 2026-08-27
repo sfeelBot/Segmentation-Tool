@@ -12,12 +12,16 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from app.core.dataset import SegmentationDataset
 from app.core.augmentations import build_pipeline
-from app.core.metrics import compute_metrics
+from app.core.metrics import StreamingSegmentationMetrics
 from app.core.logger import get_logger
 from app.core.device_info import pick_device, should_use_amp, format_oom_help
 from app.core import project as _project
 
 log = get_logger(__name__)
+
+_TOTAL_TRAIN_CACHE_BYTES = 512 * 1024 * 1024
+_VAL_CACHE_BYTES = 64 * 1024 * 1024
+_BATCH_SIGNAL_INTERVAL_SECONDS = 0.1
 
 
 # ── 설정 dataclass ────────────────────────────────────────────────────────────
@@ -136,6 +140,7 @@ class TrainerWorker(QThread):
 
         # 데이터셋
         aug = build_pipeline(cfg.augmentations) if cfg.augmentations else None
+        train_cache_budget = _TOTAL_TRAIN_CACHE_BYTES // max(1, cfg.num_workers)
         log.info(
             f"샘플링 모드: {cfg.sample_mode}"
             + (f"  (결함 우선 확률: {cfg.defect_sample_prob:.0%})"
@@ -149,6 +154,7 @@ class TrainerWorker(QThread):
                 defect_sample_prob=cfg.defect_sample_prob,
                 patches_per_image=cfg.patches_per_image,
                 augment_fn=aug,
+                cache_bytes_budget=train_cache_budget,
             )
         except Exception as e:
             log.exception("데이터셋 구성 실패")
@@ -186,6 +192,7 @@ class TrainerWorker(QThread):
         val_ds_resize = SegmentationDataset(
             image_size=(cfg.image_w, cfg.image_h),
             mode="resize",
+            cache_bytes_budget=_VAL_CACHE_BYTES,
         )
         val_ds = _IndexedSubset(val_ds_resize, val_img_idx)
 
@@ -204,8 +211,8 @@ class TrainerWorker(QThread):
         )
         val_loader = DataLoader(
             val_ds, batch_size=cfg.batch_size, shuffle=False,
-            num_workers=cfg.num_workers,
-            persistent_workers=persist,
+            num_workers=0, pin_memory=pin,
+            persistent_workers=False,
         )
 
         try:
@@ -220,7 +227,12 @@ class TrainerWorker(QThread):
         optimizer  = _build_optimizer(model, cfg)
         loss_fn    = _build_loss_fn(cfg.loss_fn, device)
         use_amp    = should_use_amp(device, cfg.mixed_precision)
-        log.info(f"Mixed precision: {use_amp}  |  pin_memory: {pin}  |  num_workers: {cfg.num_workers}")
+        log.info(
+            f"Mixed precision: {use_amp} | pin_memory: {pin} | "
+            f"train_workers: {cfg.num_workers} | val_workers: 0 | "
+            f"train_cache/worker: {train_cache_budget / 1024**2:.0f} MiB | "
+            f"val_cache: {_VAL_CACHE_BYTES / 1024**2:.0f} MiB"
+        )
         try:
             scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         except (AttributeError, TypeError):
@@ -246,9 +258,15 @@ class TrainerWorker(QThread):
             # ── Train ─────────────────────────────────────────────────────────
             model.train()
             train_loss = 0.0
+            data_time = 0.0
+            train_time = 0.0
+            batch_wait_start = time.perf_counter()
+            last_batch_signal = 0.0
             for batch_idx, (images, masks) in enumerate(train_loader):
+                data_time += time.perf_counter() - batch_wait_start
                 if self._stop.is_set():
                     break
+                train_step_start = time.perf_counter()
                 images = images.to(device, non_blocking=True)
                 masks  = masks.to(device,  non_blocking=True)
                 optimizer.zero_grad()
@@ -258,11 +276,24 @@ class TrainerWorker(QThread):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-                train_loss += loss.item()
-                self.batch_done.emit(epoch, batch_idx, loss.item())
+                loss_value = loss.item()
+                train_loss += loss_value
+                train_time += time.perf_counter() - train_step_start
+                now = time.monotonic()
+                if (now - last_batch_signal >= _BATCH_SIGNAL_INTERVAL_SECONDS
+                        or batch_idx + 1 == len(train_loader)):
+                    self.batch_done.emit(epoch, batch_idx, loss_value)
+                    last_batch_signal = now
                 # OneCycleLR: 배치마다 step
                 if _is_onecycle and scheduler is not None:
                     scheduler.step()
+                batch_wait_start = time.perf_counter()
+
+            # 현재 GPU batch는 안전하게 마친 뒤 즉시 epoch를 빠져나간다. 이전에는
+            # 중지 요청 후에도 validation·metric·checkpoint까지 계속 실행됐다.
+            if self._stop.is_set():
+                log.info("학습 중지 요청 반영 — validation 이전에 현재 작업 종료")
+                break
 
             if len(train_loader) > 0:
                 train_loss /= len(train_loader)
@@ -270,17 +301,26 @@ class TrainerWorker(QThread):
             # ── Validation ────────────────────────────────────────────────────
             model.eval()
             val_loss = 0.0
-            all_preds, all_masks = [], []
+            val_start = time.perf_counter()
+            metric_time = 0.0
+            metric_accumulator = StreamingSegmentationMetrics(self._num_classes)
             with torch.no_grad():
                 for images, masks in val_loader:
+                    if self._stop.is_set():
+                        break
                     images = images.to(device, non_blocking=True)
                     masks  = masks.to(device,  non_blocking=True)
                     with torch.autocast(device.type, enabled=use_amp):
                         output = model(images)
                         val_loss += loss_fn(output, masks).item()
                     preds = output.argmax(dim=1)
-                    all_preds.append(preds.cpu())
-                    all_masks.append(masks.cpu())
+                    metric_start = time.perf_counter()
+                    metric_accumulator.update(preds, masks)
+                    metric_time += time.perf_counter() - metric_start
+
+            if self._stop.is_set():
+                log.info("학습 중지 요청 반영 — validation 중 현재 작업 종료")
+                break
 
             if len(val_loader) > 0:
                 val_loss /= len(val_loader)
@@ -294,20 +334,25 @@ class TrainerWorker(QThread):
 
             current_lr = optimizer.param_groups[0]["lr"]
 
-            metrics = compute_metrics(
-                torch.cat(all_preds),
-                torch.cat(all_masks),
-                self._num_classes,
-            ) if all_preds else {"mean_iou": 0.0, "mean_dice": 0.0}
+            metrics = metric_accumulator.compute()
 
             metrics["epoch_time"] = time.time() - epoch_start
+            metrics["data_time"] = data_time
+            metrics["train_time"] = train_time
+            metrics["val_time"] = time.perf_counter() - val_start
+            metrics["metric_time"] = metric_time
             metrics["current_lr"] = current_lr   # UI·체크포인트에 기록
             self.epoch_done.emit(epoch, train_loss, val_loss, metrics)
-            log.debug(f"epoch {epoch}  train={train_loss:.4f}  val={val_loss:.4f}"
-                      f"  LR={current_lr:.3e}")
+            log.info(
+                f"epoch {epoch} train={train_loss:.4f} val={val_loss:.4f} "
+                f"LR={current_lr:.3e} | data={data_time:.2f}s "
+                f"train={train_time:.2f}s val={metrics['val_time']:.2f}s "
+                f"metric={metric_time:.2f}s total={metrics['epoch_time']:.2f}s"
+            )
 
             # ── Checkpoint ────────────────────────────────────────────────────
             if epoch % cfg.checkpoint_every == 0:
+                checkpoint_start = time.perf_counter()
                 prefix = f"{self._ckpt_prefix}_" if self._ckpt_prefix else ""
                 path = _project.checkpoints_dir() / f"{prefix}epoch_{epoch:04d}.pt"
                 torch.save({
@@ -326,6 +371,8 @@ class TrainerWorker(QThread):
                         "scheduler":    cfg.scheduler,
                     },
                 }, path)
+                checkpoint_time = time.perf_counter() - checkpoint_start
+                log.info(f"checkpoint saved: {path} ({checkpoint_time:.2f}s)")
                 self.checkpoint_saved.emit(str(path))
 
         self.training_finished.emit()
