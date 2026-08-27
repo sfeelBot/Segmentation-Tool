@@ -230,9 +230,37 @@ class ImageBrowser(QWidget):
         item.setText(0, self._rel_name(path))
         item.setForeground(0, QColor(color))
 
+    def refresh_items(self, paths: list[Path]) -> None:
+        """Refresh known statuses and reapply sorting without rescanning the project."""
+        for path in paths:
+            if path in self._status_cache:
+                status = get_label_status(path)
+                self._status_cache[path] = status
+                if self._sort_mode in ("name_asc", "name_desc"):
+                    item = self._path_to_item.get(path)
+                    if item is not None:
+                        icon_name, color = _STATUS_STYLE[status]
+                        item.setIcon(0, svg_icon(icon_name, color, _STATUS_ICON_SIZE))
+                        item.setText(0, self._rel_name(path))
+                        item.setForeground(0, QColor(color))
+        if self._sort_mode not in ("name_asc", "name_desc"):
+            self._apply_display()
+
     def current_path(self) -> Path | None:
         """현재 선택된 이미지 경로. 선택 없으면 None."""
         return self._get_item_path(self._tree.currentItem())
+
+    def selected_paths(self) -> list[Path]:
+        """Selected images in current display order, falling back to current."""
+        selected = {
+            path for item in self._tree.selectedItems()
+            if (path := self._get_item_path(item)) is not None
+        }
+        ordered = [path for path in self._paths if path in selected]
+        if ordered:
+            return ordered
+        current = self.current_path()
+        return [current] if current is not None else []
 
     def current_display_index(self) -> int:
         """현재 선택된 이미지의 _paths 인덱스. 없으면 -1."""
@@ -448,6 +476,7 @@ class ImageBrowser(QWidget):
     def _apply_display(self) -> None:
         """_all_paths 에 필터·정렬을 적용해 _paths + 트리 위젯 갱신."""
         # 현재 선택 기억
+        selected_paths = set(self.selected_paths())
         cur_idx = self.current_display_index()
         cur_path: Path | None = (
             self._paths[cur_idx] if 0 <= cur_idx < len(self._paths) else None
@@ -495,6 +524,10 @@ class ImageBrowser(QWidget):
 
         if new_item is not None:
             self._tree.setCurrentItem(new_item)
+        for path in selected_paths:
+            item = self._path_to_item.get(path)
+            if item is not None:
+                item.setSelected(True)
         self._tree.blockSignals(False)
 
         # 선택 경로가 바뀐 경우에만 image_selected 발행

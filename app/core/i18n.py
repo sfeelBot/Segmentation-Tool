@@ -295,6 +295,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "labeling.clear_msg":     "현재 이미지의 모든 어노테이션을 삭제하시겠습니까?",
         "labeling.ok_clear_title": "라벨 삭제 후 OK 처리",
         "labeling.ok_clear_msg":   "현재 이미지에 라벨(어노테이션)이 있습니다. 라벨을 삭제하고 OK 처리하시겠습니까?",
+        "labeling.multi_ok_clear_title": "선택 이미지 일괄 양품화",
+        "labeling.multi_ok_clear_msg":   "선택한 {selected}개 중 라벨이 있는 {labeled}개의 라벨을 삭제하고 모두 OK 처리하시겠습니까?",
+        "labeling.multi_ok_failed_title": "일부 이미지 처리 실패",
+        "labeling.multi_ok_failed_msg":   "{success}개 처리 완료, {failed}개 실패했습니다.\n실패: {preview}",
+        "labeling.multi_ok_more_suffix":  " 외 {n}개",
         "labeling.copy_filename":  "파일명 복사",
     },
 
@@ -586,6 +591,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "labeling.clear_msg":     "Delete all annotations on the current image?",
         "labeling.ok_clear_title": "Delete Labels and Mark OK",
         "labeling.ok_clear_msg":   "This image has labels (annotations). Delete them and mark OK?",
+        "labeling.multi_ok_clear_title": "Mark Selected Images OK",
+        "labeling.multi_ok_clear_msg":   "{labeled} of {selected} selected images have labels. Delete those labels and mark all selected images OK?",
+        "labeling.multi_ok_failed_title": "Some Images Failed",
+        "labeling.multi_ok_failed_msg":   "Completed {success}; failed {failed}.\nFailed: {preview}",
+        "labeling.multi_ok_more_suffix":  " and {n} more",
         "labeling.copy_filename":  "Copy filename",
 
         # ── Missing shortcut keys (English) ──────────────────────────────

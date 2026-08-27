@@ -450,6 +450,10 @@ class LabelingTab(QWidget):
         if self._canvas._image_path is None:
             self._act_ok.setChecked(False)
             return
+        selected_paths = self._image_browser.selected_paths()
+        if len(selected_paths) >= 2:
+            self._mark_selected_ok(selected_paths)
+            return
         # OK를 켜는 순간(끄는 경우는 무확인) + 라벨이 남아있으면 삭제 확인
         if self._act_ok.isChecked() and self._canvas._annotations:
             reply = QMessageBox.question(
@@ -468,6 +472,68 @@ class LabelingTab(QWidget):
                 self._canvas._save_timer.stop()
                 self._canvas._do_save(sync=True)
         self._canvas.toggle_ok()
+
+    def _mark_selected_ok(self, selected_paths: list[Path]) -> None:
+        """Mark a multi-selection OK; unlike the single-item action this never toggles off."""
+        from app.core import annotation_store as store
+
+        pending = [path for path in selected_paths if not store.get_ok(path)]
+        if not pending:
+            self._act_ok.setChecked(True)
+            return
+
+        current = self._canvas._image_path
+        with_labels = [
+            path for path in pending
+            if (path == current and bool(self._canvas._annotations))
+            or store.has_annotations(path)
+        ]
+        if with_labels:
+            reply = QMessageBox.question(
+                self, t("labeling.multi_ok_clear_title"),
+                t("labeling.multi_ok_clear_msg").format(
+                    selected=len(selected_paths), labeled=len(with_labels)
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                current = self._canvas._image_path
+                self._act_ok.setChecked(store.get_ok(current) if current else False)
+                return
+
+        # Persist pending edits before the atomic clear.  Otherwise a delayed canvas
+        # save can race with the batch operation and resurrect annotations.
+        if current in pending and self._canvas._save_timer.isActive():
+            self._canvas._save_timer.stop()
+            self._canvas._do_save(sync=True)
+
+        succeeded: list[Path] = []
+        failed: list[tuple[Path, Exception]] = []
+        for path in pending:
+            try:
+                store.set_ok_and_clear_annotations(path)
+                succeeded.append(path)
+            except Exception as exc:
+                failed.append((path, exc))
+
+        if succeeded:
+            self._image_browser.refresh_items(succeeded)
+
+        if current in succeeded:
+            self._canvas.load_image(current)
+            self._refresh_ann_list()
+        self._act_ok.setChecked(store.get_ok(current) if current else False)
+
+        if failed:
+            preview = ", ".join(path.name for path, _exc in failed[:3])
+            if len(failed) > 3:
+                preview += t("labeling.multi_ok_more_suffix").format(n=len(failed) - 3)
+            QMessageBox.warning(
+                self, t("labeling.multi_ok_failed_title"),
+                t("labeling.multi_ok_failed_msg").format(
+                    success=len(succeeded), failed=len(failed), preview=preview
+                ),
+            )
 
     def reload_after_import(self) -> None:
         """어노테이션 가져오기(Import) 완료 후 이미지 목록·현재 캔버스 갱신."""

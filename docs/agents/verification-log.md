@@ -2725,3 +2725,21 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 ### 판정
 **통과 — main 커밋 가능**. 실제 전체 패키징은 대용량 의존성 때문에 이번 검증 범위에서
 제외하고 생성기·PyInstaller 버전 파서·정적 연계로 검증함.
+
+---
+
+## 2026-08-27 — 라벨링 이미지 다중선택 일괄 양품화 검증
+
+- offscreen 전체 테스트 43개, 신규 `tests/test_labeling_multi_ok.py` 11개 통과.
+- 무라벨/라벨 있음/기존 OK 3장 선택에서 확인 1회, 기존 OK skip, 라벨 삭제+OK 처리,
+  현재 캔버스·어노테이션 목록·OK 액션·상태 아이콘 동기화 확인.
+- 현재 캔버스 저장 타이머가 활성인 미저장 라벨 경로에서 sync save → 원자 clear/OK →
+  reload 순서를 확인해 지연 저장이 라벨을 되살리는 경쟁 회귀 방지.
+- 취소 무변경, 일부 JSON 실패 시 나머지 성공 유지·경고, 손상/non-dict JSON 원본 보존,
+  임시 파일 정리, RLE/이미지 decode 미호출 확인.
+- 이름 정렬은 변경된 k개 항목만 갱신. 상태 정렬은 상태 I/O k개 후 표시 트리만 재정렬하며
+  프로젝트 filesystem rescan 없이 current/multi-selection을 보존하고 중복
+  `image_selected`를 발생시키지 않음.
+
+### 판정
+**통과 — 커밋 가능**. 단일 선택의 기존 OK on/off 경로도 그대로 유지됨.
