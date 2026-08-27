@@ -71,6 +71,19 @@ def _default_classes() -> list[ClassDef]:
 
 # ── 어노테이션 I/O ────────────────────────────────────────────────────────────
 
+def has_annotations(image_path: Path) -> bool:
+    """이 이미지에 어노테이션이 하나라도 있는지, RLE 디코딩 없이(가볍게) 확인.
+    대형 프로젝트를 일괄 처리할 때(내보내기 등) load() 전에 필터링용으로 쓴다."""
+    json_path = _ann_path(image_path)
+    if not json_path.exists():
+        return False
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return bool(data.get("annotations"))
+
+
 def load(image_path: Path) -> list[AnnotationItem]:
     json_path = _ann_path(image_path)
     if not json_path.exists():

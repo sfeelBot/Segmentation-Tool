@@ -133,6 +133,31 @@ segmentation model/
 - 검증 단계 범위: 현재는 체크리스트 기반 수동 검증(`QA.md`). CI 자동화는 프로젝트가 안정화된 뒤 추가한다.
 - 배포 에이전트 범위: 버전 태깅, CHANGELOG 갱신까지만 담당. PyInstaller 등 실행파일 패키징/배포는 범위 밖 (별도 논의).
 
+### 에디션 브랜치 (feature/*, edition/*, variant/*)
+
+일부 기능(예: 존 분석 탭 — 배터리 캡 녹 검사 전용 도구)은 범용 세그멘테이션 툴이 아닌
+특정 용도 전용이라, main에 병합하지 않고 **별도로 계속 유지되는 브랜치**(에디션 브랜치)로
+관리한다. 2026-08-25 `feature/zone-analysis-tab` 운영 중 확정된 규칙:
+
+1. **에디션 브랜치 → main 역병합 금지.** main은 범용 기능만 유지한다.
+2. **main → 에디션 브랜치 동기화는 전용 sync 브랜치 + PR로만 한다** (main을 PR head로 직접
+   쓰지 않는다):
+   ```
+   git fetch origin
+   git branch sync/main-into-<에디션명>-<날짜> origin/main
+   git push -u origin sync/main-into-<에디션명>-<날짜>
+   gh pr create --base <에디션 브랜치> --head sync/main-into-<에디션명>-<날짜> \
+     --title "sync: main 업데이트 반영"
+   ```
+   main에 의미 있는 개선(버그 수정, 공통 기능 추가 등)이 쌓일 때마다 반복한다.
+3. 같은 워킹 디렉토리를 여러 세션이 공유하면 `git checkout` 충돌이 생기므로, 에디션 브랜치
+   작업은 `git worktree add <경로> <브랜치>`로 **별도 워크트리를 분리**해서 진행한다.
+4. `docs/agents/*.md`, `docs/roadmap.md`, `QA.md` 는 append-only라 sync 시 자주 충돌하는데,
+   기본 해법은 "양쪽 다 살리기"(두 항목 다 보존)다 — 내용을 버리지 않는다.
+5. 버전 태그는 main의 `vX.Y.Z`와 구분되는 별도 체계를 쓴다 (예: `zone-vX.Y.Z`). 빌드도
+   `build.spec`/`installer/setup.iss`의 앱 이름을 달리해 별도 installer로 만든다.
+6. main 병합은 사용자가 명시적으로 결정하기 전까진 하지 않는다 — 기본은 "영구 분리".
+
 ## Git 커밋 규칙
 
 > **코드 수정이 있을 때마다 반드시 커밋한다.**
