@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,19 @@ from app.core.logger import get_logger
 log = get_logger(__name__)
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+
+
+def _copy_with_retry(src: Path, dst: Path, attempts: int = 3, delay: float = 0.3) -> None:
+    """일시적 파일 잠금(백신/탐색기 미리보기/OneDrive 등) 대응 — 마지막 시도 실패 시
+    원래 예외를 그대로 올린다 (GitHub #16)."""
+    for i in range(attempts):
+        try:
+            shutil.copy2(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(delay)
 
 
 class ExportWorker(QThread):
@@ -110,7 +124,7 @@ class ExportWorker(QThread):
                 json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8",
             )
             if include_images:
-                shutil.copy2(img_path, img_out / img_path.name)
+                _copy_with_retry(img_path, img_out / img_path.name)
             self.progress.emit(i, len(image_paths), img_path.name)
 
     def _export_yolo(self, image_paths, include_images: bool) -> None:
@@ -156,7 +170,7 @@ class ExportWorker(QThread):
                 "\n".join(lines), encoding="utf-8",
             )
             if include_images:
-                shutil.copy2(img_path, img_out / img_path.name)
+                _copy_with_retry(img_path, img_out / img_path.name)
             self.progress.emit(i, len(image_paths), img_path.name)
 
     def _export_coco(self, image_paths, include_images: bool, relative: bool) -> None:
@@ -231,7 +245,7 @@ class ExportWorker(QThread):
                     })
                     ann_id += 1
             if include_images:
-                shutil.copy2(img_path, img_out / img_path.name)
+                _copy_with_retry(img_path, img_out / img_path.name)
             self.progress.emit(i, len(image_paths), img_path.name)
 
         (self._out_dir / "annotations.json").write_text(

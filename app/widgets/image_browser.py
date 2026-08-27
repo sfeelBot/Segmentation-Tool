@@ -4,10 +4,10 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
     QPushButton, QLabel, QFileDialog, QMessageBox, QProgressBar,
-    QComboBox, QLineEdit,
+    QComboBox, QLineEdit, QApplication,
 )
-from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QSize
+from PyQt6.QtGui import QColor, QKeyEvent
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QObject
 from app.core.i18n import t
 
 from app.core.annotation_store import get_label_status
@@ -167,6 +167,7 @@ class ImageBrowser(QWidget):
         self._tree.setIconSize(QSize(_STATUS_ICON_SIZE, _STATUS_ICON_SIZE))
         self._tree.setStyleSheet(_TREE_STYLE)
         self._tree.currentItemChanged.connect(self._on_current_item_changed)
+        self._tree.installEventFilter(self)
         layout.addWidget(self._tree)
 
         # ── 범례 ──────────────────────────────────────────────────────────────
@@ -258,6 +259,26 @@ class ImageBrowser(QWidget):
     def has_list_focus(self) -> bool:
         """트리 위젯에 키보드 포커스가 있는지."""
         return self._tree.hasFocus()
+
+    # ── 이벤트 필터 ───────────────────────────────────────────────────────────
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """_tree 전용 — Ctrl+C 로 선택된 항목들의 파일명을 클립보드에 복사 (#17)."""
+        if (obj is self._tree and event.type() == QEvent.Type.KeyPress
+                and isinstance(event, QKeyEvent)
+                and event.key() == Qt.Key.Key_C
+                and event.modifiers() == Qt.KeyboardModifier.ControlModifier):
+            self._copy_selected_names()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _copy_selected_names(self) -> None:
+        names = [
+            p.name for item in self._tree.selectedItems()
+            if (p := self._get_item_path(item)) is not None
+        ]
+        if names:
+            QApplication.clipboard().setText("\n".join(names))
 
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 

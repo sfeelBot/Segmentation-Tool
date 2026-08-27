@@ -284,6 +284,107 @@ GitHub에 2026-08-20 새로 등록된 이슈 4건(#3 브러시 도구, #4 이미
 
 ---
 
+## 2026-08-27 — GitHub 이슈 #12·#15·#16·#17 스코프 산정 (라운드4)
+
+### 배경
+메인 세션 담당 GitHub 이슈 4건(`feature/zone-analysis-tab` 관련 2건은 별도 세션 처리
+중이라 범위 밖). #17 이미지 목록 Ctrl+C 복사, #16 내보내기 PermissionError(실사용자
+크래시 로그 첨부), #15 브러시 채우기 시 기존 라벨 경계 고려, #12 "브러시는 도구일
+뿐 분류 불필요"(원문 매우 짧음). 각각 범위/우선순위/영향 파일을 코드 조사 기반으로
+정리.
+
+### 한 일
+- **#17**: `image_browser.py` 확인 — `_tree`(QTreeWidget)는 이미 `ExtendedSelection`
+  (GitHub #8에서 확인된 그대로)이지만 `keyPressEvent`/`eventFilter` 등 키보드 단축키
+  핸들러가 전혀 없음을 재확인. `installEventFilter` 방식(서브클래싱 불필요)으로 최소
+  침습 구현 제안. "파일명들"은 확장자 포함으로 결정 — `_on_delete()` 확인 다이얼로그가
+  이미 `p.name`(확장자 포함)으로 미리보기하는 기존 관례와 통일, 별도 사용자 확인
+  불필요한 사소한 선택으로 판단.
+- **#16**: 첨부된 크래시 로그가 `self._pairs`(오늘 커밋 `7dabdb5`로 이미
+  `self._image_paths`로 리팩터링된 구버전 변수명)를 참조함을 확인 — MemoryError
+  건과는 무관한 별개 버그(PermissionError)임을 먼저 분리. `shutil.copy2` 호출부
+  (`export_dialog.py` json/yolo/coco 3곳)는 현재 HEAD에도 retry 없이 단발 호출로 남아
+  있어 취약점 자체는 여전히 유효함을 확인. 원인 조사: `_image_size()`는 이미
+  `with Image.open() as im`으로 안전, `dataset.py`의 학습 캐시(`_load_cached`)는
+  `Image.open().convert("RGB")`가 PIL 내부적으로 `_exclusive_fp=True`일 때 `load()`
+  직후 OS 핸들을 즉시 닫는다는 PIL 동작 원리를 근거로 원인에서 제외. 유일하게 발견한
+  비-`with` 패턴은 `auto_labeler.py:70`(`.width`/`.height`만 접근, `.convert()` 미호출
+  → 다음 루프까지 핸들이 열려있을 수 있음)이나, Windows 기본 파일 공유 모드가
+  deny-none이라 자기 프로세스 핸들이 자기 자신의 copy를 막을 개연성은 낮다고 판단 —
+  **1순위 원인은 외부 프로세스(백신/탐색기 미리보기/OneDrive 등 클라우드 동기화)**로
+  결론, Windows 에러 메시지 자체("다른 프로세스가 파일을 사용 중")가 이를 직접
+  뒷받침. 로컬 재현은 실패(OS 레벨 파일 잠금을 인위적으로 만들 방법 없음) — 정적
+  분석 기반 결론임을 명시. 제안: `export_dialog.py`에 retry+backoff 헬퍼(주 수정,
+  원인이 외부든 내부든 항상 유효한 방어책) + `auto_labeler.py` `with` 보강(보조,
+  위생 차원, 근본원인일 개연성은 낮음). 사용자 재현조건 확인용 질문 4건을 스펙에
+  남김(동기화 폴더 여부, 동시 실행 작업 여부 등) — 결정 대기 등록은 아님(구현 진행
+  막을 필요 없다고 판단, GitHub #9 라운드3 관례와 동일).
+- **#15**: `_fill_enclosed()`(`annotation_canvas.py`)가 오늘 커밋 `e02cf95`(시작·끝점
+  강제 연결 제거) 이후에도 여전히 이번 궤적(`self._brush_np`)만으로 flood-fill함을
+  확인. 핵심 발견 — **병합 자체는 이미 있다**: `_consolidate_class_region()`이 커밋
+  직후 같은 클래스의 인접/겹치는 brush_mask들을 connectedComponents로 자동 병합하므로,
+  이번 이슈에 필요한 신규 작업은 "벽 확장"뿐(새 병합 로직 불필요). 설계: 기존 어노테이션
+  마스크를 flood-fill 입력에 OR로 추가하되, **커밋되는 새 마스크는 (이번 궤적) ∪
+  (flood-fill로 새로 드러난 빈 공간)만** 남기고 기존 어노테이션이 차지하던 픽셀은
+  제외 — task brief가 우려한 "기존 어노테이션이 새 annotation_id로 흡수되는 회귀"를
+  원천 차단하는 설계. 성능은 `_resolve_overlap_and_merge`/`_consolidate_class_region`
+  기존 bbox 스코프 패턴을 재사용해 후보 축소(bbox-vs-bbox) + 작업 캔버스를 로컬
+  사각형으로 축소하는 방안 제시, 로컬 사각형 네 모서리가 전부 벽이 되는 위험(패딩
+  부족 시 오탐)까지 식별해 패딩 확장 재시도 → 최종 실패 시 전체이미지 폴백을 안전장치로
+  제안. **결정 대기 2건 등록**(벽 범위: 같은 클래스만 vs 모든 클래스 — 답에 따라
+  구현 로직 자체가 달라짐, 패딩 마진 기본값 — 임의로 정하면 이슈가 원하는 "이어 그리기"
+  거리감을 못 맞출 위험) — 구현 착수 보류 권장.
+- **#12**: 원문이 매우 짧아("브러쉬는 그리는 도구일뿐 이걸 annotation에서 분류할 필요는
+  없어") 3가지 가설을 코드로 검증. (a) `class_panel.py` — 클래스 목록만 다루고
+  어노테이션 타입 노출 없음, 기각. (b) `labeling_tab.py` `_refresh_ann_list()`가
+  `type_label = "Poly" if ann.type == "polygon" else "Mask"`로 목록 항목 텍스트에
+  타입 태그를 직접 노출함을 확인 — **가장 유력한 원인**. (c)
+  `_resolve_overlap_and_merge()`/`_consolidate_class_region()`이 brush_mask끼리만
+  병합하고 폴리곤은 병합 대상에서 제외됨을 확인(같은 클래스라도 그리기 도구가 다르면
+  항상 별개 항목) — (b)의 인상을 강화하는 배경 요인이지만 자료구조 제약상(벡터 vs
+  래스터) 단독으로 없애기 어려움. 옵션A(저비용, `[Poly]`/`[Mask]` 태그만 제거) /
+  옵션B(고비용, 타입 무관 자동 병합·좌표 정밀도 손실 리스크) 2안 제시. **결정 대기
+  1건 등록**(원문이 정말 이 화면을 가리키는지 스크린샷으로 재확인 + 옵션A/B 선택) —
+  원문만으로는 재현 조건이 100% 확정 아니라 구현 착수 보류 권장.
+- 스펙 문서 신설:
+  [docs/specs/voc-github-issues-round4-2026-08-27.md](../specs/voc-github-issues-round4-2026-08-27.md)
+  — 4건 각각 문제정의·코드근거·설계안·결정필요사항·구현대상파일·검증골든패스 정리,
+  실행순서(#16→#15→#12→#17, 파일 겹침 없어 병렬 가능) 명시.
+- `docs/decisions-needed.md`에 2건 등록(#15 벽범위+패딩마진, #12 화면확인+옵션선택).
+  #16·#17은 결정 없이 바로 구현 가능하다고 명시.
+- `docs/roadmap.md`에 "GitHub 이슈 VOC 라운드4" 절 신설(4개 항목 체크박스, 처리순서
+  명시).
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건, `decisions-needed.md`/
+  `roadmap.md`/본 로그 갱신에만 사용. 시작 전 `git status` 확인(clean).
+
+### 상태
+완료 — 다음: 리더가 사용자에게 decisions-needed 2건(#15, #12) 확인. #16·#17은 결정
+없이 바로 구현 에이전트에 위임 가능(#16 우선, #17은 언제든 병렬).
+
+---
+
+## 2026-08-27 — GitHub #12 옵션B 상세 설계 정정 (#15 커밋 후 재검토)
+
+### 작업 요약
+- 최신 #15 커밋 `7f33695`의 `_fill_enclosed()`를 기준으로 옵션B 설계를 코드와 재대조.
+- #15가 채움 성공 후 최종 결과의 `_mask_bbox(..., margin=1)`로 `_brush_bbox`를
+  갱신한다는 계약을 #12 구현 전제에 명시. #12는 원 stroke bbox가 아니라 이 최종
+  bbox를 폴리곤 접촉 판정과 병합에 그대로 사용하도록 정정.
+- 기존 `_rasterize_polygons_touching()`의 단순 AND는 겹침만 찾고 4-neighbor 인접을
+  놓친다는 오류를 정정. bbox는 후보 축소에만 쓰고, 로컬 bbox 래스터 + cross-kernel
+  1px 접촉 검사로 겹침/상하좌우 인접을 확정하며 대각선은 제외하도록 설계 확정.
+- 모든 브러시 커밋에서 전체 이미지 크기 임시 폴리곤 마스크를 반복 생성하지 않도록,
+  후보 판정은 로컬 배열만 사용하고 실제 변환 확정 시에만 저장용 full-size 마스크를
+  1회 생성하는 성능 요구를 추가.
+- 다른 클래스는 신규 타입 통합 대상이 아니며, mask-mask의 기존 나중 우선과
+  polygon-mask가 함께 남을 수 있는 현행 동작을 그대로 보존한다고 정확히 기술.
+- 겹침/4-neighbor/대각선/bbox-only 오탐 매트릭스, #15 최종 bbox 통합, full-image
+  allocation 방지 계측을 필수 자동 테스트로 보강.
+
+### 상태
+완료 — `docs/specs/voc-github-issues-round4-2026-08-27.md`의 옵션B 설계를 구현 가능한
+정확도로 정정함. 다음 단계는 #12 구현 에이전트가 해당 절의 최종 bbox·로컬 접촉 판정·
+현행 다중클래스 보존 계약을 따라 `annotation_canvas.py`와 전용 테스트를 수정하는 것.
 ## 2026-08-25 — 존(Zone) 분석 탭 기획 (배터리 캡 녹 검사 독립 도구)
 
 ### 배경

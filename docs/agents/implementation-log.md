@@ -2672,6 +2672,115 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - 원인 1의 벤치마크가 사전 가설과 다르게 나온 점(개선폭 5~16%에 불과, 사용자가 체감한
   "삭제 시 렉"의 실제 원인은 다른 곳일 가능성)을 리더가 재검토할 필요가 있음.
 
+---
+
+## 2026-08-27 — GitHub #15 브러시 채우기 시 기존 라벨 경계까지 고려
+
+### 배경
+`docs/specs/voc-github-issues-round4-2026-08-27.md`의 "GitHub #15" 절 기획 완료 +
+사용자 확정 파라미터 2건(벽 범위=같은 클래스만, 패딩 마진=브러시 반경×1) 반영.
+
+### 변경
+- `app/widgets/annotation_canvas.py::_fill_enclosed()` 단독 수정(호출부 `_finish_brush()`,
+  `_resolve_overlap_and_merge()`/`_consolidate_class_region()`은 그대로 재사용, 변경 없음).
+  - 후보 축소: 같은 `class_id` + `type == "brush_mask"`인 기존 어노테이션 중, 자신의
+    bbox(`_mask_bbox`, 기존 헬퍼 재사용)가 "이번 스트로크 bbox를 브러시 반경×1만큼
+    padding한 영역"과 겹치는 것만 벽 후보로 남김 — bbox-vs-bbox 비교만 하므로 후보
+    개수가 0이면 즉시 기존 폴백(전체 이미지 flood-fill)으로 빠짐(회귀 없음).
+  - 로컬 작업 캔버스: "스트로크 bbox ∪ 후보 bbox"를 padding한 로컬 사각형만 잘라
+    `walls_local = brush | existing_same_class_or`로 flood-fill(신규 모듈 함수
+    `_floodfill_interior()`로 추출 — 기존 알고리즘 그대로, 시드 탐색 실패 시 `None`
+    반환). 로컬 사각형 네 모서리가 전부 벽이면 패딩을 2배로 늘려 최대 3회 재시도,
+    그래도 실패하면 전체-이미지 방식으로 안전 폴백.
+  - 커밋되는 마스크는 `filled_local & ~existing_local`(순증분만) — 기존 어노테이션
+    픽셀은 절대 새 annotation_id로 흡수되지 않음(경계 역할만). 이후 병합은 기존
+    `_consolidate_class_region()`이 커밋 시점에 자동 처리(수정 없음).
+  - 다른 클래스 어노테이션은 벽 후보 필터링 단계에서 원천 제외 → 기존처럼 침범 후
+    픽셀 독점성 단계에서 자동 양도되는 동작 그대로 유지.
+- `app/widgets/annotation_canvas.py`에 모듈 헬퍼 `_floodfill_interior(walls)` 신규
+  추가(`_mask_bbox` 바로 아래) — 기존 `_fill_enclosed()`가 하드코딩하던 "네 모서리
+  시드 탐색 + floodFill" 로직을 추출해 전체-이미지 경로/로컬 경로 양쪽에서 재사용.
+
+### 테스트
+- `tests/test_fill_enclosed.py` 신규(기존 `tests/test_canvas_zoom_pan.py` 컨벤션 그대로:
+  `AnnotationCanvas`를 직접 인스턴스화, `QApplication` 헤드리스 생성). 스펙 문서 "검증
+  골든 패스" 1·2·3·4·6번을 코드 레벨로 커버:
+  1. 기본 회귀(후보 0개 → 기존 폴백과 동일 결과, `np.array_equal`로 확인)
+  2. 같은 클래스 인접 → 폐곡선 내부 채움 + 기존 어노테이션 픽셀 비흡수
+  3. 기존 라벨이 스트로크 bbox보다 훨씬 큰 경우 → 먼 부분 픽셀 보존(원본 배열 불변+
+     new_region과 겹치지 않음)
+  4. 다른 클래스 인접 → 벽 후보에서 제외되어 기존 폴백 결과와 동일
+  6. 로컬 사각형 네 모서리가 전부 벽(기존 라벨이 이미지 전체를 덮는 극단 케이스) →
+     크래시 없이 전체-이미지 폴백으로 안전 처리
+  - 실행: `py -3 tests/test_fill_enclosed.py` → `OK: GitHub #15 fill-enclosed tests passed`
+  - 5번(수백 개 어노테이션 성능 벤치마크)은 골든패스 문서상 "대형 프로젝트 실측"
+    성격이라 이번 단위 테스트 범위에 넣지 않음 — 검증 에이전트가 실측 필요.
+  - 기존 `tests/test_canvas_zoom_pan.py`도 회귀 없음 재확인(통과).
+
+### 커밋
+- 아직 없음 — 사용자 지시("커밋은 하지 마라, 검증 통과 후 리더가 커밋")에 따라 보류.
+
+### 확인 필요 (검증 서브에이전트에게)
+- `python main.py`로 실제 GUI 골든패스 재현: 라벨링 탭에서 같은 클래스 이어 그리기 →
+  폐곡선 채움 + 커밋 후 어노테이션 목록 개수 불변(하나로 합쳐짐) 확인(골든패스 2번).
+- 골든패스 5번(대형 프로젝트 스트로크당 소요 시간이 전체 어노테이션 수가 아니라
+  근처 후보 수에 비례하는지) 실측 벤치마크 — 이번 라운드에서 단위 테스트로 커버 못함.
+- `docs/roadmap.md`의 #15 체크박스는 검증 전이므로 그대로 둠(상태만 "구현 완료,
+  검증 대기"로 이 로그에 기록).
+
+### 검증 피드백 반영
+- 최초 구현은 후보마다 `_mask_bbox()`를 호출해 먼 마스크도 전체 스캔하는 성능 문제가
+  확인됨(512×512, 먼 마스크 600개: 38.102ms). padded stroke query 슬라이스의
+  `.any()`로 먼저 거르고 실제 근처 후보만 tight bbox를 계산하도록 수정.
+- 채움 결과 기준으로 `_brush_bbox`를 갱신하되, 후속 4-connectivity 병합에서 맞닿은
+  기존 마스크를 놓치지 않도록 `_mask_bbox(..., margin=1)`을 사용. margin=0 재검증에서
+  어노테이션이 2개로 남는 회귀를 발견해 수정함.
+- 최종 재검증: 자동·회귀 6개 통과, 실제 위젯 이벤트 골든패스에서 내부 채움 및
+  어노테이션 1개 병합 통과. 먼 마스크 600개 중앙값 1.844ms로 최초 구현 대비 약
+  20.7배 개선. 검증 에이전트 커밋 가능 판정.
+
+## 2026-08-27 — GitHub #12 도구 타입 무관 동일 클래스 병합 (옵션 B)
+
+**상태: 구현 완료 / 검증 서브에이전트 확인 대기 / 커밋 없음**
+
+### 구현
+- `app/widgets/annotation_canvas.py`
+  - 일반 브러시·채우기 커밋 직전에 같은 클래스 폴리곤 후보를 검사하고, 새 마스크와
+    실제 픽셀 겹침 또는 상하좌우 1픽셀 접촉이 확인된 폴리곤만 `brush_mask`로 변환.
+  - 폴리곤 완료 시에도 같은 기준으로 기존 브러시/폴리곤과의 접촉을 판정해 양방향
+    (brush→poly, poly→brush, poly→poly) 병합을 지원.
+  - 후보는 polygon bbox와 작업 bbox 교차로 먼저 축소하고 로컬 bbox 배열에서만
+    `fillPoly`·접촉 판정. 실제 접촉이 확인된 폴리곤에만 전체 이미지 마스크를 생성.
+  - 대각선만 닿는 경우는 제외하고 4-neighbor만 병합. 다른 클래스는 후보에서 제외.
+  - `class_id=None`인 기존 지우개 호출은 실제 겹침만 인정해 현행 동작을 보존.
+  - `_resolve_overlap_and_merge(..., bbox=None)`로 확장해 폴리곤 완료 경로도 명시적
+    로컬 bbox를 사용할 수 있게 했으며, #15의 최종 `margin=1` bbox 계약을 유지.
+  - 기존 `_push_undo()` 시점 뒤에 변환·병합이 일어나므로 undo 1회로 병합 전의
+    폴리곤/마스크 타입과 annotation_id가 함께 복원됨.
+
+### 테스트
+- `tests/test_annotation_type_merge.py` 신규: brush→poly(+undo), poly→brush,
+  poly→poly, 대각선 제외, bbox만 겹치는 삼각형 제외, 다른 클래스 제외, 지우개 인접
+  비변환을 실제 `AnnotationCanvas` 코드 경로로 검증.
+- 실행 결과:
+  - `pytest -q tests/test_annotation_type_merge.py tests/test_fill_enclosed.py tests/test_canvas_zoom_pan.py`
+    → **11 passed in 0.16s**
+  - `py_compile app/widgets/annotation_canvas.py tests/test_annotation_type_merge.py` → 통과
+
+### 확인 필요 (검증 서브에이전트에게)
+- 실제 GUI에서 세 방향 병합, 대각선 비병합, 다른 클래스 픽셀 독점성, undo 골든패스.
+- 다수 폴리곤 프로젝트에서 스트로크당 후보 축소 효과와 접촉 확정 전 전체 크기 배열
+  미생성 여부를 계측하는 성능 검증.
+
+### 검증 피드백 반영
+- 최초 독립 검증에서 선택된 기존 폴리곤이 병합으로 제거된 뒤 `_selected_ids`에 사라진
+  ID가 남는 회귀 발견. `_resolve_overlap_and_merge()` 종료 시 live annotation ID와
+  선택 집합의 교집합만 유지하고, 변경 시 `selection_changed`를 방출하도록 수정.
+- 선택 상태 회귀 테스트를 추가해 총 12개 자동 테스트 통과. 실제 이벤트 병합 조합,
+  undo, 다른 클래스, 지우개, #15 통합도 통과.
+- 2048×2048 이미지 + 먼 같은 클래스 폴리곤 100개 후보 탐색 중앙값 0.702ms,
+  p95 0.969ms. 후보 단계 전체 이미지 배열 할당 0회 확인.
+- 최종 상태: 검증 에이전트 커밋 가능 판정.
 ## 2026-08-26 — 존(Zone) 분석 탭 라운드 2: 원(circle) 검출 파이프라인 + 수동 편집
 
 ### 배경

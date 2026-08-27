@@ -248,6 +248,52 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       발견 시에만 최소 보강. 저비용 선택 갭 1건(키보드 `Delete` 단축키 없음, 버튼만 가능)
       기록해둠. 결정 대기 없음.
 
+## GitHub 이슈 VOC 라운드4 (2026-08-27 접수, #12·#15·#16·#17)
+
+메인 세션 담당 4건 (`feature/zone-analysis-tab` 관련 2건은 별도 세션 처리, 이 절 범위
+밖). 기획 완료: [docs/specs/voc-github-issues-round4-2026-08-27.md](specs/voc-github-issues-round4-2026-08-27.md).
+처리 순서: **#16(결정불필요, 즉시 구현) → #15(결정대기 2건 확인 후) → #12(결정대기
+1건 확인 후) → #17(결정불필요, 언제든 병렬 가능)**. 4건 전부 서로 다른 파일이라
+병렬 구현 가능.
+
+- [x] [GitHub #17](https://github.com/sfeelBot/Segmentation-Tool/issues/17) "이미지
+      리스트 다중선택 → Ctrl+C 파일명 복사" — `image_browser.py`의 `_tree`는 이미
+      다중선택 가능하나 키보드 단축키 핸들러 자체가 없음(신규 갭). `installEventFilter`
+      로 최소 침습 구현 제안, 파일명은 확장자 포함(`_on_delete()` 기존 표시 관례와
+      통일). 결정 대기 없음, 바로 구현 가능.
+- [x] [GitHub #16](https://github.com/sfeelBot/Segmentation-Tool/issues/16) "내보내기
+      실패(PermissionError, WinError 32)" — 사용자 첨부 로그는 `self._pairs` 참조하는
+      **구버전 코드**(오늘 커밋 `7dabdb5`로 이미 `self._image_paths`로 리팩터링됨,
+      MemoryError 건과 무관)지만, **PermissionError 자체는 현재 HEAD에도 남아있는
+      별개 버그**로 확인. 로컬 재현은 실패(OS 파일 잠금 인위 재현 불가), 코드 감사로
+      원인 후보 순위화: 1순위 외부 프로세스(백신/탐색기 미리보기/OneDrive 등 클라우드
+      동기화, Windows 에러 메시지 자체가 이를 뒷받침), 2순위 내부
+      `auto_labeler.py:70`의 비-`with` `Image.open()`(가능성 낮음 — Windows 기본 공유
+      모드가 deny-none이라 자기 프로세스 핸들이 자기 자신의 `shutil.copy2`를 막을
+      개연성 낮음). `dataset.py`의 학습 캐시는 PIL이 `.convert()` 시점에 exclusive fp를
+      이미 닫는 구조라 원인에서 제외 확인. 제안: `export_dialog.py`의
+      `shutil.copy2` 호출 3곳(json/yolo/coco)에 retry+backoff 헬퍼 적용(주 수정) +
+      `auto_labeler.py` `with` 보강(보조, 위생). 결정 대기 없음, 바로 구현 가능.
+- [x] [GitHub #15](https://github.com/sfeelBot/Segmentation-Tool/issues/15) "브러시
+      채우기 시 기존 라벨 경계까지 고려" — `_fill_enclosed()`(`annotation_canvas.py`)의
+      flood-fill 입력을 근처 기존 **같은 클래스** 어노테이션 마스크까지 OR로 합쳐
+      "벽"으로 확장. 커밋되는 새 마스크는 이번 궤적 + flood-fill로 새로 드러난 빈
+      공간만(기존 어노테이션 픽셀 흡수 방지), 병합은 기존
+      `_consolidate_class_region()`이 자동 처리. 성능은 `_resolve_overlap_and_merge`
+      bbox 스코프 패턴 재사용. **사용자 결정 완료(2026-08-27): 벽 범위=같은 클래스만,
+      패딩 마진=브러시 반경의 1배.** 결정 대기 없음 — 구현 가능, 설계는
+      [voc-github-issues-round4-2026-08-27.md](specs/voc-github-issues-round4-2026-08-27.md)
+      "GitHub #15" 절 참고.
+- [x] [GitHub #12](https://github.com/sfeelBot/Segmentation-Tool/issues/12) "브러시는
+      그리는 도구일 뿐, annotation에서 분류할 필요 없다" — 원인은 어노테이션 목록의
+      `[Poly]`/`[Mask]` 타입 태그 노출(`labeling_tab.py` `_refresh_ann_list()`) +
+      같은 클래스라도 polygon/brush_mask는 병합 안 됨(`_resolve_overlap_and_merge`가
+      brush_mask끼리만 병합). **사용자 결정 완료(2026-08-27): 옵션B(타입 무관 자동
+      병합, 고비용)로 확정** — 폴리곤→마스크 변환에 따른 좌표 정밀도 손실, 폴리곤
+      편집 워크플로우 충돌 가능성, #15(벽 확장)와의 상호작용을 포함한 **상세 설계
+      완료**. 구현 전 최신 코드 대조 검토에서 4-connectivity 접촉 판정과 로컬 bbox
+      rasterize가 필수임을 재확인함.
+
 ## 아이콘/이모지 → 미니멀 디자인 + i18n(en) 완비 (2026-08-20 요청)
 
 사용자 요청: "아이콘 가시성이 떨어진다 — 남길 아이콘은 깔끔·미니멀하게, 불필요한 건 글자로

@@ -3019,6 +3019,116 @@ main.py와 동일하게 `cv2`/`torch`를 `PyQt6.QtWidgets`보다 먼저 import�
 
 ---
 
+## 2026-08-27 — GitHub 이슈 라운드4 #16(내보내기 PermissionError 방지) / #17(이미지
+브라우저 Ctrl+C 파일명 복사) 실행 검증
+
+### 배경
+`docs/decisions-needed.md`의 "GitHub #16"/"#17" 절과
+`docs/specs/voc-github-issues-round4-2026-08-27.md`에 따라 구현이 이미 작업트리에
+uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export_dialog.py`,
+`app/core/auto_labeler.py`). 두 항목 모두 "사소한 버그 수정"으로 분류돼 정적 검토 +
+실행 확인 수준으로 검증(전체 탭 골든패스 UI 조작까지는 불필요).
+
+### 정적 검토
+`git diff`로 3개 파일 변경분 확인 — 스펙 문서가 제안한 구현과 실제 코드가 일치:
+- `image_browser.py`: `_tree.installEventFilter(self)` + `eventFilter()`가 `obj is self._tree`
+  조건으로 한정돼 있어 다른 위젯(검색창)에는 영향 없음. `_copy_selected_names()`가
+  `selectedItems()` 순회 → `p.name`(확장자 포함) 리스트 → 비어있으면 아무 것도 안 함
+  → `\n".join()` 후 클립보드 설정. 스펙과 일치.
+- `export_dialog.py`: `_copy_with_retry(src, dst, attempts=3, delay=0.3)` 헬퍼가
+  `_export_json/_export_yolo/_export_coco` 3곳의 `shutil.copy2` 호출을 교체. 단, 스펙은
+  지수 백오프(100→300→900ms)와 `PermissionError`/`OSError` 둘 다 포착을 제안했는데
+  실제 구현은 고정 지연(0.3s)과 `PermissionError`만 포착 — 기능적으로는 WinError 32
+  케이스를 그대로 커버하므로 문제는 아니나 스펙과 완전히 동일하지는 않음(참고 사항,
+  버그 아님).
+- `auto_labeler.py:70`: `img = Image.open(...)` → `with Image.open(...) as img:`로
+  스펙 그대로 변경. `_infer_to_annotations()` 내부의 별도 `Image.open(...).convert("RGB")`
+  (128행)는 `.convert()`가 즉시 `.load()`를 트리거해 그 안에서 파일 핸들을 곧바로 닫으므로
+  이번 이슈 범위 밖(스펙에서도 언급 안 됨) — 정상.
+
+### 실행 검증 방법
+`C:\Users\Feel\anaconda3\python.exe`(PyQt6 6.7.1 + CUDA torch 설치 환경) 사용. 실사용
+`projects/nok`은 건드리지 않고 scratchpad(`.../scratchpad/qa_round4`)에 격리 프로젝트를
+만들어 합성 이미지 5장으로 테스트. `QApplication`을 실제 GUI 모드로 띄운 뒤
+`PyQt6.QtTest.QTest`로 실제 `QKeyEvent`(Ctrl+C)를 `ImageBrowser._tree`/검색창에
+주입하는 스크립트(`.../scratchpad/verify_round4.py`, 세션 scratchpad라 리포지토리엔
+없음)로 골든패스 21건을 자동 재현. 별도로 `python main.py`를 실제 GUI 모드(오프스크린
+아님)로 백그라운드 기동해 창이 정상적으로 뜨고 크래시 없이 유지되는지도 확인.
+
+- **#17 (7건, decisions-needed.md 골든패스 그대로)**: 다중선택(2개) Ctrl+C → 줄바꿈
+  구분 파일명(확장자 포함) 복사 PASS / 단일 선택 시 1개만 PASS / 선택 없음일 때 크래시
+  없음 + 클립보드 불변 PASS / 검색 필터(`img_00`) 적용 상태에서도 필터된 항목 기준으로
+  정상 복사 PASS / 검색창(QLineEdit)에 포커스가 있을 때 Ctrl+C는 QLineEdit 기본 복사만
+  동작하고 브라우저 로직이 끼어들지 않음 PASS(`eventFilter`가 `obj is self._tree`로
+  한정된 설계 그대로 검증됨).
+- **#16 (14건)**:
+  - `_copy_with_retry` 정상 케이스 — 잠금 없을 때 0.0009~0.0013s 만에 즉시 반환(재시도
+    로직이 정상 경로 속도에 영향 없음) PASS.
+  - 인위적 파일 잠금 재현 — 별도 스레드가 `ctypes.CreateFileW(dwShareMode=0)`으로
+    소스 이미지를 0.5초간 exclusive 잠금 후 해제, 그동안 `_copy_with_retry` 호출 →
+    0.602s 후(고정 0.3s 지연 × 재시도 2회) 예외 없이 복사 성공 PASS(스펙이 요구한
+    "실제 파일 잠금 시뮬레이션으로 retry 성공 복구 확인" 항목 충족).
+  - 항상 실패하는 경우(존재하지 않는 파일) — 무한 재시도 없이 `FileNotFoundError`
+    그대로 raise PASS(예외를 삼키지 않는다는 CLAUDE.md 원칙 준수 확인).
+  - 내보내기 골든패스 — JSON/YOLO/COCO × 이미지 포함/미포함 6개 조합 전부 에러 없이
+    2장 처리, `include_images=True`일 때만 `images/` 폴더 생성 + 파일 2개 복사 확인
+    PASS(폴리곤 1건 + brush_mask 1건 혼합 라벨로 회귀 없음 확인).
+  - auto_labeler 골든패스 — 트리비얼 `nn.Conv2d(3,3,1)` 모델 + 합성 체크포인트로
+    `collect_unlabeled()`(3장 검출) → `AutoLabelWorker.run()`(3장 모두 에러 없이 처리,
+    `image_done` 시그널 3회) → `commit_results()`(3장 저장) → `get_label_status()`가
+    3장 모두 `labeled`로 전환 확인 PASS. 회귀 포인트(파일 핸들이 루프 중간에 방치되지
+    않는지)는 `with` 블록 종료 직후 `os.replace()`로 즉시 rename 가능함을 확인해
+    간접 검증(Windows는 열린 핸들이 있으면 rename 실패) PASS.
+- `python main.py` 백그라운드 기동 — 콘솔에 cp949 인코딩 관련 로깅 에러(em-dash `—`
+  문자를 cp949 콘솔이 못 그림)가 반복 출력됐으나, 이는 `app/core/device_info.py`의
+  로그 문자열과 이 세션 Bash 콘솔의 코드페이지 문제일 뿐 앱 크래시가 아님(프로세스는
+  정상 기동해 유지됨, `tasklist`로 확인) — 이번 diff와 무관한 기존 환경 이슈이므로
+  새 버그로 등록하지 않음.
+
+### 발견한 문제
+없음. 두 항목 모두 스펙 문서의 문제정의·설계·골든패스와 실제 구현이 일치했고,
+회귀도 없었다.
+
+### 판정
+**통과**. `QA.md`에 반영할 신규 버그 없음. scratchpad 산출물(격리 프로젝트, 체크포인트,
+로그)은 검증 후 정리 완료, 리포지토리에는 흔적 없음. 커밋은 하지 않음(리더가 처리).
+
+---
+
+## 2026-08-27 — GitHub #15 브러시 채우기 기존 라벨 경계 확장 검증
+
+- 자동·회귀: `tests/test_fill_enclosed.py` + `tests/test_canvas_zoom_pan.py` 총 6개 통과,
+  `py_compile` 통과.
+- 실제 `AnnotationCanvas`에 `TOOL_BRUSH_FILL` 마우스 press/move/release 이벤트를 주입해
+  같은 클래스 기존 마스크 옆 U자 스트로크를 재현: 내부 채움 성공, 완료 후 어노테이션
+  1개로 병합, 기존 픽셀 보존 확인.
+- 최초 성능 검증에서 모든 기존 마스크의 tight bbox를 계산하는 병목 발견(먼 후보 600개,
+  38.102ms) → query bbox 슬라이스 사전 필터로 수정 후 재측정.
+- 최종 성능 중앙값(512×512, 근처 후보 0개, 15회): 0개 0.550ms / 100개 0.589ms /
+  300개 0.924ms / 600개 1.844ms. 최초 구현 대비 600개 기준 약 20.7배 개선.
+- 최종 bbox를 margin=0으로 갱신했을 때 4방향으로 맞닿은 기존 라벨이 병합 후보에서
+  빠지는 회귀를 중간 검증에서 발견했고, margin=1로 수정 후 핵심 골든패스 재통과.
+
+### 판정
+**통과 — 커밋 가능**. 기능·후속 병합·회귀·성능 기준을 모두 충족함.
+
+---
+
+## 2026-08-27 — GitHub #12 도구 타입 무관 동일 클래스 병합 검증
+
+- 관련 자동·회귀 테스트 12개 및 `py_compile` 통과.
+- 실제 위젯 이벤트로 brush→poly, poly→brush, poly→poly의 overlap/4-neighbor 병합,
+  diagonal-only 미병합, undo 타입·ID 복원 확인.
+- 다른 클래스 제외, bbox false positive 제외, 지우개 overlap-only 현행 동작, #15 채우기
+  결과와 폴리곤 병합 통합 경로 통과.
+- 2048×2048 + 먼 같은 클래스 폴리곤 100개 후보 탐색 20회: 중앙값 0.702ms,
+  p95 0.969ms. 후보 단계 full-image allocation 0회.
+- 중간 검증에서 병합으로 제거된 선택 ID가 `_selected_ids`에 남는 회귀 발견 → live ID
+  교집합 정리 + `selection_changed([])` 방출로 수정. 정확한 재현 경로와 신규 테스트 모두
+  재통과.
+
+### 판정
+**통과 — 커밋 가능**. 기능·성능·선택 상태 무결성 기준을 모두 충족함.
 ## 2026-08-26 — 존(Zone) 분석 탭 R-A 검증: 오프라인 원 검출 테스트 팝업 (커밋 `ea28b68`)
 
 기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)

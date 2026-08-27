@@ -67,8 +67,8 @@ class AutoLabelWorker(QThread):
                 annotations = _infer_to_annotations(
                     self._model, img_path, infer_size, device, classes
                 )
-                img = Image.open(str(img_path))
-                results.append((img_path, annotations, img.width, img.height))
+                with Image.open(str(img_path)) as img:
+                    results.append((img_path, annotations, img.width, img.height))
                 self.image_done.emit(img_path.name)
             except Exception:
                 continue  # 개별 이미지 실패 시 계속 진행
