@@ -1,5 +1,6 @@
 """오토 라벨러 — 학습된 모델로 미라벨 이미지를 자동 어노테이션."""
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -65,7 +66,8 @@ class AutoLabelWorker(QThread):
             self.progress.emit(i, total, img_path.name)
             try:
                 annotations = _infer_to_annotations(
-                    self._model, img_path, infer_size, device, classes
+                    self._model, img_path, infer_size, device, classes,
+                    should_stop=self._stop.is_set,
                 )
                 with Image.open(str(img_path)) as img:
                     results.append((img_path, annotations, img.width, img.height))
@@ -122,26 +124,66 @@ def _infer_to_annotations(
     infer_size: tuple[int, int],
     device: torch.device,
     classes: list[ClassDef],
+    should_stop: Callable[[], bool] | None = None,
 ) -> list[AnnotationItem]:
     import torchvision.transforms.functional as TF  # 지연 임포트 — 콜드 기동 단축
 
-    pil_img = Image.open(str(img_path)).convert("RGB")
+    with Image.open(str(img_path)) as opened:
+        pil_img = opened.convert("RGB")
     orig_w, orig_h = pil_img.size
+    patch_w, patch_h = infer_size
+    if patch_w <= 0 or patch_h <= 0:
+        raise ValueError(f"Invalid inference patch size: {infer_size}")
 
-    resized = pil_img.resize(infer_size, Image.BILINEAR)
-    img_np  = np.array(resized, dtype=np.uint8)
-    tensor  = TF.to_tensor(img_np)
-    tensor  = TF.normalize(tensor, IMAGENET_MEAN, IMAGENET_STD)
-    tensor  = tensor.unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        output = model(tensor)
-
-    class_map_small = output.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
-    class_map = np.array(
-        Image.fromarray(class_map_small).resize((orig_w, orig_h), Image.NEAREST),
-        dtype=np.int64,
+    # 원본 픽셀 좌표를 유지한다. 작은 이미지는 우측·하단만 패딩하고 추론 후 crop한다.
+    padded_w = max(orig_w, patch_w)
+    padded_h = max(orig_h, patch_h)
+    image_np = np.asarray(pil_img, dtype=np.uint8)
+    image_np = np.pad(
+        image_np,
+        ((0, padded_h - orig_h), (0, padded_w - orig_w), (0, 0)),
+        mode="edge",
     )
+
+    overlap_x = min(64, patch_w // 4)
+    overlap_y = min(64, patch_h // 4)
+    x_starts = _patch_starts(padded_w, patch_w, patch_w - overlap_x)
+    y_starts = _patch_starts(padded_h, patch_h, patch_h - overlap_y)
+    coords = [(x, y) for y in y_starts for x in x_starts]
+
+    probabilities: np.ndarray | None = None
+    counts = np.zeros((padded_h, padded_w), dtype=np.float32)
+    batch_size = 4
+    for offset in range(0, len(coords), batch_size):
+        if should_stop is not None and should_stop():
+            raise InterruptedError("Auto-labeling cancelled")
+        batch_coords = coords[offset:offset + batch_size]
+        tensors = []
+        for x, y in batch_coords:
+            patch = image_np[y:y + patch_h, x:x + patch_w]
+            tensor = TF.normalize(TF.to_tensor(patch), IMAGENET_MEAN, IMAGENET_STD)
+            tensors.append(tensor)
+        batch = torch.stack(tensors).to(device)
+        with torch.no_grad():
+            output = model(batch)
+            if output.shape[-2:] != (patch_h, patch_w):
+                output = torch.nn.functional.interpolate(
+                    output, size=(patch_h, patch_w), mode="bilinear", align_corners=False
+                )
+            batch_probs = torch.softmax(output, dim=1).cpu().numpy().astype(np.float32)
+
+        if probabilities is None:
+            probabilities = np.zeros(
+                (batch_probs.shape[1], padded_h, padded_w), dtype=np.float32
+            )
+        for index, (x, y) in enumerate(batch_coords):
+            probabilities[:, y:y + patch_h, x:x + patch_w] += batch_probs[index]
+            counts[y:y + patch_h, x:x + patch_w] += 1.0
+
+    if probabilities is None:
+        raise RuntimeError("No inference patches were generated")
+    probabilities /= np.maximum(counts, 1.0)[None]
+    class_map = probabilities.argmax(axis=0)[:orig_h, :orig_w].astype(np.int64)
 
     annotations: list[AnnotationItem] = []
     for cls in classes:
@@ -160,6 +202,15 @@ def _infer_to_annotations(
             height        = orig_h,
         ))
     return annotations
+
+
+def _patch_starts(image_size: int, patch_size: int, stride: int) -> list[int]:
+    """모든 픽셀을 덮고 마지막 패치를 이미지 경계에 맞춘 시작점 목록."""
+    last = image_size - patch_size
+    starts = list(range(0, last + 1, max(1, stride)))
+    if starts[-1] != last:
+        starts.append(last)
+    return starts
 
 
 def _pick_device() -> torch.device:

@@ -2749,3 +2749,26 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 - `scripts/generate_version_info.py`: 성공.
 - `tests/test_build_release.py`: 20 passed.
 - 생성값: EXE/installer `1.9.0`, `SegmentationModelUI`, AppId 유지 확인.
+
+---
+
+## 2026-08-27 — 오토라벨링 원본 해상도 슬라이딩 윈도우 검증
+
+- 코드 리뷰: 입력 이미지를 전체 resize하지 않고 체크포인트 입력 크기의 패치로 분할하며,
+  우측·하단 경계 패치와 작은 이미지는 edge padding 후 원본 크기로 crop하는 것을 확인.
+- 겹침 영역은 클래스별 softmax 확률을 누적한 뒤 방문 횟수로 평균하고 argmax하며,
+  모델 출력 공간 크기가 패치와 다를 때만 bilinear 보간하여 원본 픽셀 좌표를 보존함.
+- 패치 배치 크기 4, 배치 사이 중지 확인, 이미지 단위 결과 누적 및 기존 미라벨 이미지 배치 처리
+  흐름을 정적 검토함.
+- `tests/test_auto_label_sliding.py`: 5 passed. 경계 시작점, 작은 이미지 padding/crop,
+  큰 이미지 원본 크기·겹침 패치·배치, 축소 출력 보간, 중지 경로 확인.
+- 기존 회귀 테스트: 48 passed (`annotation_type_merge`, `build_release`, `canvas_zoom_pan`,
+  `fill_enclosed`, `labeling_multi_ok`). `py_compile` 통과.
+- 전체 테스트를 단일 pytest 프로세스로 수집할 때 로컬 PyQt6 QtSvg DLL import-order 오류가 발생했으나,
+  동일 테스트를 두 프로세스로 분리 실행하면 모두 통과하여 제품 변경 회귀로 판정하지 않음.
+- 비차단 위험: 클래스별 확률 누적 배열은 `클래스 수 × 원본 높이 × 원본 너비 × 4 bytes`에
+  비례하므로 초대형 이미지·다중 클래스에서 CPU 메모리 사용량과 패치 추론 시간이 증가함.
+  또한 고정 GPU 배치 4는 매우 큰 체크포인트 입력 크기에서 장치 메모리 여유에 따라 OOM 가능성이 있음.
+
+### 판정
+**통과 — 커밋 가능.** 요청한 비축소 원본 해상도 오토라벨링 동작과 기존 기능 회귀를 충족함.
