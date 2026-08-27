@@ -68,6 +68,20 @@ def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
     return QPixmap.fromImage(qimg.copy())
 
 
+def _scale_circles(
+    circles: list[tuple[float, float, float]],
+    from_size: tuple[int, int],
+    to_size: tuple[int, int],
+) -> list[tuple[float, float, float]]:
+    """원 좌표를 기준 이미지 크기에서 대상 이미지 크기로 비례 스케일한다."""
+    fw, fh = from_size
+    tw, th = to_size
+    if fw <= 0 or fh <= 0 or (fw, fh) == (tw, th):
+        return list(circles)
+    sx, sy = tw / fw, th / fh
+    return [(cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles]
+
+
 class ZoneAnalysisTab(QWidget):
     """이미지 파일 + 체크포인트 파일을 직접 열어 추론하는 독립 도구."""
 
@@ -785,8 +799,7 @@ class ZoneAnalysisTab(QWidget):
         ref_w, ref_h = self._image_size
         note = ""
         if pop_w > 0 and pop_h > 0 and (pop_w, pop_h) != (ref_w, ref_h):
-            sx, sy = ref_w / pop_w, ref_h / pop_h
-            circles = [(cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles]
+            circles = _scale_circles(circles, (pop_w, pop_h), (ref_w, ref_h))
             note = f" (해상도가 달라 비례 스케일 적용됨: {pop_w}x{pop_h} → {ref_w}x{ref_h})"
         if self._canvas.get_circles():
             reply = QMessageBox.question(
@@ -900,14 +913,8 @@ class ZoneAnalysisTab(QWidget):
                         w, h = im.size
 
                 if apply_to_all:
-                    if ref_w > 0 and ref_h > 0 and (w, h) != (ref_w, ref_h):
-                        # 해상도 방어 — 정교한 워핑이 아닌 비례 스케일 근사(스펙 명시)
-                        sx, sy = w / ref_w, h / ref_h
-                        circles = [
-                            (cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles_ref
-                        ]
-                    else:
-                        circles = circles_ref
+                    # 팝업→메인 라운드트립과 같은 해상도 방어 헬퍼를 재사용한다.
+                    circles = _scale_circles(circles_ref, (ref_w, ref_h), (w, h))
                 else:
                     # 이미지마다 개별 자동검출 — 메인 탭 "자동 검출" 버튼과 동일 호출
                     with Image.open(str(img_path)) as im:
