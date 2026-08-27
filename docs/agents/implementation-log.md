@@ -3884,3 +3884,17 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - 회귀 테스트 `tests/test_zone_github_13_14.py` 추가/보강: R13-A 실제 QTest 드래그,
   지름 변경+Undo, R14 대형 이미지 축소/손상 이미지 초기화, R13-B 연속 스케일 검증.
 - 커밋: `6445b0e`(R14-A), `9b7169e`(R13-B).
+
+---
+
+## 2026-08-27 — zone 빌드 버전·제품 식별 분리
+
+- main의 공통 `release.ini`/메타데이터 생성 구조를 zone 브랜치에 반영.
+- zone 최초 독립 버전을 `1.0.0`, 태그 접두사를 `zone-v`로 설정.
+- 제품명 `Segmentation Model UI - Zone Analysis`, EXE/slug
+  `SegmentationModelUIZone`, 별도 Inno Setup AppId
+  `0997E818-6906-483C-BA3A-324FED0BFF97`로 분리.
+- `docs/CHANGELOG.md`에 `[zone-v1.0.0]` 최초 이력을 추가하고 BUILD 문서에 main과
+  동시 설치 가능한 독립 산출물 규칙을 명시.
+- 생성기 성공, 저장소 내부 basetemp를 사용한 빌드 버전 테스트 20개 통과,
+  `py_compile`/`diff --check` 통과.

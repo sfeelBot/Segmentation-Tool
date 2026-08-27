@@ -49,6 +49,11 @@ build.bat
 - `dist/<exe_name>/`: 실행 파일과 라이브러리
 - `installer/output/<product_slug>-Setup-<version>.exe`: 최종 설치 프로그램
 
+현재 zone 에디션은 `SegmentationModelUIZone.exe`와
+`SegmentationModelUIZone-Setup-<version>.exe`를 생성하며, main과 다른 AppId·설치
+폴더를 사용하므로 두 제품을 동시에 설치할 수 있다. zone 릴리스 태그는
+`zone-vX.Y.Z` 형식을 사용한다.
+
 ## 빠른 검증
 
 ```bat

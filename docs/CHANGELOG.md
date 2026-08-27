@@ -1,7 +1,20 @@
 # Changelog — Segmentation Model UI
 
 버전 구분 기준: 사용자 요청 단위로 묶어 릴리즈.  
-형식: `[vX.Y.Z] YYYY-MM-DD` — Major.Minor.Patch
+main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
+
+---
+
+## [zone-v1.0.0] 2026-08-27
+
+### 추가
+- 존 분석 전용 탭과 원 검출·수동 편집·존별 통계·Excel 내보내기.
+- main과 독립된 제품명, EXE, 설치 폴더, installer 파일명 및 Inno Setup AppId.
+
+### 빌드
+- `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
+- Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
+- zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
 
 ---
 

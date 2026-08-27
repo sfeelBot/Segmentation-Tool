@@ -4414,3 +4414,18 @@ class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`는 no-
   대조하고 동일 크기 항등 변환도 확인.
 - 결과: `OK: GitHub #13/#14 zone-analysis tests passed`. 관련 모듈 import/실행 정상,
   예외·데이터 손상 없음. 판정: R13-A/R14-A/R13-B 전부 통과.
+
+---
+
+## 2026-08-27 — zone 빌드 버전·제품 식별 독립 검증
+
+- `release.ini`의 `1.0.0`/`zone-v`가 CHANGELOG `[zone-v1.0.0]`과 일치.
+- 생성된 Windows 버전 리소스: file/product tuple `(1,0,0,0)`, 표시 버전 `1.0.0`,
+  `SegmentationModelUIZone.exe`; PyInstaller 공식 파서 통과.
+- main 대비 EXE/slug, 설치 폴더, installer basename, AppId가 모두 다름을 확인해
+  동시 설치와 독립 업그레이드가 가능함.
+- 빌드 버전 테스트 20개 통과. `build.spec`와 `setup.iss`가 생성 메타데이터를 올바르게
+  소비하는 정적 연계 확인.
+
+### 판정
+**통과 — zone 커밋 가능**. 실제 전체 패키징은 대용량 의존성 때문에 제외함.
