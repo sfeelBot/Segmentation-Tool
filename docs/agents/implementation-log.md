@@ -3887,6 +3887,18 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 
 ---
 
+## 2026-08-27 — zone 빌드에 main 반영 기준 명시
+
+- `release.ini`에 마지막 반영 main 기준 `v1.8.0` / `fc9deecab27258adec8bc469a124cb8a0665a064`를 추가했다.
+- 빌드 메타데이터 생성기가 기준 태그와 전체 커밋 SHA 형식을 필수 검증하도록 했다.
+- Git 메타데이터가 있는 개발 환경에서는 기준 커밋 존재 여부, 현재 HEAD 조상 관계,
+  기준 태그 커밋과 기준 커밋의 조상 관계를 추가 검증한다. 소스 ZIP은 형식만 검증한다.
+- BUILD/CHANGELOG에 main 동기화 시 갱신 규칙과 zone-v1.0.0의 main 기준을 기록했다.
+- 격리 테스트로 존재하지 않는 기준 커밋·태그와 비조상 기준의 실패, `.git` 없는 source ZIP의
+  형식 검증 fallback, 저장소 한정 `safe.directory` Git 인자를 고정했다.
+
+---
+
 ## 2026-08-27 — zone 빌드 버전·제품 식별 분리
 
 - main의 공통 `release.ini`/메타데이터 생성 구조를 zone 브랜치에 반영.

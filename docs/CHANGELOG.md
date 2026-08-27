@@ -7,6 +7,8 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ## [zone-v1.0.0] 2026-08-27
 
+Main 기준: v1.8.0 + 16 commits (fc9deec)
+
 ### 추가
 - 존 분석 전용 탭과 원 검출·수동 편집·존별 통계·Excel 내보내기.
 - main과 독립된 제품명, EXE, 설치 폴더, installer 파일명 및 Inno Setup AppId.

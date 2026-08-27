@@ -4429,3 +4429,20 @@ class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`는 no-
 
 ### 판정
 **통과 — zone 커밋 가능**. 실제 전체 패키징은 대용량 의존성 때문에 제외함.
+
+---
+
+## 2026-08-27 — zone의 마지막 main 반영 기준 검증
+
+- 두 폴더가 동일 저장소의 별도 worktree임을 확인: main은 `main`, zone은
+  `feature/zone-analysis-tab` 브랜치로 HEAD·인덱스·작업 폴더가 분리됨.
+- zone 기준 `main_base_tag=v1.8.0`, `main_base_commit=fc9deecab27258adec8bc469a124cb8a0665a064`.
+  실제 그래프에서 `v1.8.0 → fc9deec → zone HEAD` 조상 관계 통과, 태그 이후 정확히
+  16커밋임을 확인.
+- 존재하지 않는 commit/tag, non-ancestor, `.git` 없는 source ZIP fallback,
+  repo-scoped `safe.directory` 인자를 포함한 자동 테스트 34개 통과.
+- 기존 버전 메타데이터 생성·PyInstaller/Inno 연계에는 회귀 없음.
+
+### 판정
+**통과 — 커밋 가능**. zone 화면/빌드 담당자는 `release.ini`와 CHANGELOG에서 마지막
+main 기준을 즉시 확인할 수 있음.

@@ -15,6 +15,11 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 > zone 최초 설정은 `zone-v1.0.0`, `SegmentationModelUIZone`, 별도 AppId이며 생성기와
 > 테스트 20개 및 독립 검증 통과. 전체 installer 빌드와 push는 별도 요청 시 진행.
 >
+> **[2026-08-27] zone의 마지막 main 반영 기준 명시 완료.** `release.ini`에
+> `main_base_tag=v1.8.0`, `main_base_commit=fc9deecab27258adec8bc469a124cb8a0665a064`를
+> 기록하고 실제 Git 조상 관계까지 조건부 검증한다. 이는 `v1.8.0 + 16 commits`이며,
+> main sync 때 두 값을 함께 갱신한다. 자동 테스트 34개 통과.
+>
 > **[최신, 2026-08-27] GitHub VOC 라운드4 main 담당 #12/#15/#16/#17 완료.**
 > #16 파일 잠금 재시도, #17 다중선택 파일명 복사, #15 기존 같은 클래스 경계 채우기,
 > #12 도구 타입 무관 4-neighbor 병합까지 구현·독립 검증 완료. #15는 `7f33695`, #12
