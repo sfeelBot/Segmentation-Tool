@@ -1,5 +1,9 @@
 # 구현 (Implementation) 로그
 
+## 2026-08-28 — GitHub #23 존 분석
+
+- 원본/오버레이 `F` 토글과 전체 이미지 QThread 추론, resize/sliding-window 선택 구현.
+
 역할 설명은 [README.md](README.md) 참고. append-only — 최신 항목이 아래에 추가된다.
 
 ---

@@ -5,6 +5,9 @@
 
 ## 현재 상황 요약
 
+> **[최신, 2026-08-28]** GitHub #23 존 분석 완료: `F` 토글(`ad4e391`)과 전체 이미지
+> 비동기 추론/sliding-window 선택(`7055d13`). push는 승인 전 보류.
+
 *(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다. 단, 이 로그 자체가 `feature/
 zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-analysis-tab`)에서
 갱신되는 사본이라, main 브랜치 워크트리(`D:\segmentation model`)의 같은 파일과는 병합

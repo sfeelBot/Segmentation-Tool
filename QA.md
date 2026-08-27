@@ -1,5 +1,9 @@
 # QA — 버그 및 VOC 추적
 
+## 2026-08-28 — GitHub #23 존 분석
+
+- 전체 이미지 비동기 추론, sliding-window 선택 및 `F` 오버레이 전환 self-check 통과.
+
 ## Open Issues
 
 | ID | 우선순위 | 설명 | 보고자 | 상태 |

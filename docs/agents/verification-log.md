@@ -1,5 +1,9 @@
 # 검증 (Verification) 로그
 
+## 2026-08-28 — GitHub #23 존 분석
+
+- 기존 존 회귀 self-check에 `F` 토글과 전체 이미지 worker 검증을 추가해 통과.
+
 역할 설명은 [README.md](README.md) 참고. append-only — 최신 항목이 아래에 추가된다.
 
 ---

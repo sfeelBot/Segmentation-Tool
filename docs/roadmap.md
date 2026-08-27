@@ -1,5 +1,8 @@
 # Roadmap — Segmentation Model UI
 
+> 2026-08-28: GitHub #23 — 존 분석 전체 이미지 비동기 추론, resize/sliding-window 선택,
+> 진행률 표시 및 `F` 원본/오버레이 전환 완료 (`ad4e391`, `7055d13`).
+
 살아있는 문서. 리더가 상태 변경 시마다 직접 갱신한다(체크박스 토글, 완료 항목 정리) —
 append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/CHANGELOG.md](CHANGELOG.md),
 [docs/agents/*-log.md](agents/), [QA.md](../QA.md) 참고.
