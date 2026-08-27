@@ -2,18 +2,14 @@
 ; 빌드 대상: PyInstaller onedir 산출물 dist\SegmentationModelUI\ 전체
 ; 사용: "ISCC.exe installer\setup.iss" (build.bat이 dist\ 생성 후 자동 호출)
 
-#define MyAppName "Segmentation Model UI"
-#define MyAppVersion "1.8.0"
-#define MyAppPublisher "Segmentation Model UI"
-#define MyAppExeName "SegmentationModelUI.exe"
-#define MyDistDir "..\dist\SegmentationModelUI"
+#include "..\build\release-defines.iss"
 
 [Setup]
-AppId={{03C2678A-B979-4B99-A68B-842EA853D667}
+AppId={{{#MyAppId}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\SegmentationModelUI
+DefaultDirName={autopf}\{#MyProductSlug}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; per-user 설치: PrivilegesRequired=lowest 이면 {autopf}가 관리자 권한 없이도
@@ -25,7 +21,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=output
-OutputBaseFilename=SegmentationModelUI-Setup-{#MyAppVersion}
+OutputBaseFilename={#MyProductSlug}-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
