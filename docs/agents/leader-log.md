@@ -324,3 +324,12 @@
 - 기획 검토 후 원본 좌표 sliding-window, edge padding, 겹침 확률 평균 병합으로 구현.
 - 구현 검증 16 passed, 독립 검증 신규 5 passed·관련 회귀 48 passed 후 커밋 진행.
 - 초대형 이미지의 클래스별 확률 누적 메모리 증가는 비차단 주의사항으로 확인.
+
+## 2026-08-27 — 학습 데이터 변경 차단 및 성능 개선
+
+- 사용자 우려를 확인한 결과 학습 데이터가 스냅샷이 아니어서 학습 중 annotation 변경이
+  worker 캐시 시점에 따라 일부 배치에 섞일 수 있음을 확인.
+- 큐 전체 활성 기간에 앱 내부 이미지·라벨·클래스·프로젝트 mutation과 종료를 경고로
+  차단하고, 시작 전 pending/background 저장 완료를 보장함.
+- validation 메모리·worker, streaming metric, GPU 동기화, batch UI 신호·차트 누적,
+  단계별 timing을 개선하고 통합 59 tests 및 독립 lifecycle 검증을 통과함.

@@ -14,8 +14,12 @@ class ClassPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._classes: list[ClassDef] = []
+        self._mutation_guard = lambda: True
         self._build_ui()
         self.reload()
+
+    def set_mutation_guard(self, guard) -> None:
+        self._mutation_guard = guard
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -71,6 +75,8 @@ class ClassPanel(QWidget):
             self.class_selected.emit(self._classes[row].class_id)
 
     def _on_add(self) -> None:
+        if not self._mutation_guard():
+            return
         name, ok = QInputDialog.getText(self, "클래스 추가", "클래스 이름:")
         if not ok or not name.strip():
             return
@@ -83,6 +89,8 @@ class ClassPanel(QWidget):
         self._list.setCurrentRow(len(self._classes) - 1)
 
     def _on_delete(self) -> None:
+        if not self._mutation_guard():
+            return
         row = self._list.currentRow()
         if row < 0:
             return
@@ -95,6 +103,8 @@ class ClassPanel(QWidget):
         self._refresh_list()
 
     def _on_change_color(self) -> None:
+        if not self._mutation_guard():
+            return
         row = self._list.currentRow()
         if row < 0:
             return

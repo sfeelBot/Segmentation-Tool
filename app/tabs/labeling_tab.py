@@ -29,6 +29,7 @@ class LabelingTab(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._ann_list_updating = False   # 재진입 방지 플래그
+        self._mutation_guard = lambda: True
         self._build_ui()
         self._connect_signals()
         # ImageBrowser는 생성 시점(_build_ui 내부, 시그널 연결 전)에 프로젝트에
@@ -38,6 +39,25 @@ class LabelingTab(QWidget):
         initial_path = self._image_browser.current_path()
         if initial_path is not None:
             self._on_image_selected(initial_path)
+
+    def set_mutation_guard(self, guard) -> None:
+        self._mutation_guard = guard
+        self._canvas.set_mutation_guard(guard)
+        self._image_browser.set_mutation_guard(guard)
+        self._class_panel.set_mutation_guard(guard)
+
+    def prepare_for_training(self) -> bool:
+        worker = self._image_browser._import_worker
+        if worker is not None and worker.isRunning():
+            QMessageBox.warning(self, "이미지 가져오기 진행 중",
+                                "이미지 가져오기가 끝난 뒤 학습을 시작해 주세요.")
+            return False
+        if self._canvas._save_timer.isActive():
+            self._canvas._save_timer.stop()
+            self._canvas._do_save(sync=True)
+        else:
+            self._canvas.wait_for_pending_saves()
+        return True
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
@@ -362,6 +382,8 @@ class LabelingTab(QWidget):
         self._lbl_pixel.setText(f"{x},{y}  R:{r}  G:{g}  B:{b}")
 
     def _on_delete_selected(self) -> None:
+        if not self._mutation_guard():
+            return
         """Del 키 — 포커스에 따라 다르게 동작:
         · 이미지 목록에 포커스 → 선택된 이미지 일괄 삭제
         · 그 외(캔버스, 어노테이션 목록 등) → 선택된 어노테이션 삭제"""
@@ -375,6 +397,8 @@ class LabelingTab(QWidget):
 
     def _on_class_selected(self, class_id: int) -> None:
         if self._canvas._tool == TOOL_SELECT and self._canvas._selected_ids:
+            if not self._mutation_guard():
+                return
             self._canvas.change_selected_class(class_id)
         else:
             self._canvas.set_class_id(class_id)
@@ -436,6 +460,8 @@ class LabelingTab(QWidget):
         self._canvas.update()
 
     def _on_clear_all(self) -> None:
+        if not self._mutation_guard():
+            return
         if self._canvas._image_path is None:
             return
         reply = QMessageBox.question(
@@ -447,6 +473,9 @@ class LabelingTab(QWidget):
             self._canvas.clear_all_annotations()
 
     def _on_toggle_ok(self) -> None:
+        if not self._mutation_guard():
+            self._act_ok.setChecked(not self._act_ok.isChecked())
+            return
         if self._canvas._image_path is None:
             self._act_ok.setChecked(False)
             return
@@ -542,6 +571,8 @@ class LabelingTab(QWidget):
         self._image_browser.reload()
 
     def _on_auto_label(self) -> None:
+        if not self._mutation_guard():
+            return
         # 모델 미로드여도 '빠른 학습' 모드에서는 프리셋으로 자체 인스턴스 생성.
         model = self._get_model()
         dlg = AutoLabelDialog(model, parent=self)
@@ -553,7 +584,7 @@ class LabelingTab(QWidget):
 
     def _copy_prev_annotations(self) -> None:
         """이전 이미지의 어노테이션을 현재 이미지에 복사 (Ctrl+Shift+C)."""
-        if self._canvas._image_path is None:
+        if not self._mutation_guard() or self._canvas._image_path is None:
             return
         idx = self._image_browser.current_display_index()
         if idx <= 0:

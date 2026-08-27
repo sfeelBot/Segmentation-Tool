@@ -1,5 +1,6 @@
 """어노테이션 캔버스 — QPainter 기반 Polygon / Brush / Eraser / Select / Pan 도구."""
 import copy
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -266,6 +267,9 @@ class AnnotationCanvas(QWidget):
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(500)
         self._save_timer.timeout.connect(self._do_save)
+        self._save_threads: set[threading.Thread] = set()
+        self._save_threads_lock = threading.Lock()
+        self._mutation_guard = lambda: True
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -275,6 +279,9 @@ class AnnotationCanvas(QWidget):
 
     # overlay 를 최대 이 크기로 제한 (20MP 이미지에서 80MB → 13MB 로 감소)
     _MAX_OVERLAY_DIM = 2048
+
+    def set_mutation_guard(self, guard) -> None:
+        self._mutation_guard = guard
 
     def _store_current_into_cache(self) -> None:
         """현재 이미지의 최신 파생 상태(display_pixmap/pixel_image)를 캐시 엔트리에 반영.
@@ -408,6 +415,8 @@ class AnnotationCanvas(QWidget):
         self.brush_size_changed.emit(self._brush_size)
 
     def undo(self) -> None:
+        if not self._mutation_guard():
+            return
         if not self._undo_stack:
             return
         self._annotations = self._undo_stack.pop()
@@ -419,6 +428,8 @@ class AnnotationCanvas(QWidget):
         self.update()
 
     def clear_all_annotations(self) -> None:
+        if not self._mutation_guard():
+            return
         if not self._annotations:
             return
         self._push_undo()
@@ -435,6 +446,8 @@ class AnnotationCanvas(QWidget):
         self.update()
 
     def toggle_ok(self) -> None:
+        if not self._mutation_guard():
+            return
         if self._image_path is None:
             return
         current = store.get_ok(self._image_path)
@@ -443,7 +456,7 @@ class AnnotationCanvas(QWidget):
 
     def change_selected_class(self, class_id: int) -> None:
         """선택된 어노테이션의 클래스를 변경하고 같은 클래스끼리 재병합."""
-        if not self._selected_ids:
+        if not self._mutation_guard() or not self._selected_ids:
             return
         self._push_undo()
         affected_classes: set[int] = set()
@@ -485,6 +498,8 @@ class AnnotationCanvas(QWidget):
         self.update()
 
     def paste_annotations(self, annotations: list[AnnotationItem]) -> None:
+        if not self._mutation_guard():
+            return
         """이전 이미지의 어노테이션을 현재 이미지에 붙여넣기 (크기 자동 조정)."""
         self._push_undo()
         new_anns = []
@@ -631,6 +646,9 @@ class AnnotationCanvas(QWidget):
         if btn != Qt.MouseButton.LeftButton or self._pixmap is None:
             return
 
+        if self._tool not in (TOOL_PAN, TOOL_SELECT) and not self._mutation_guard():
+            return
+
         img_pos = self._c2i(pos)
 
         if self._tool == TOOL_POLYGON:
@@ -687,6 +705,8 @@ class AnnotationCanvas(QWidget):
 
     def mouseDoubleClickEvent(self, event) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
+            return
+        if self._tool != TOOL_PAN and not self._mutation_guard():
             return
         if self._tool == TOOL_POLYGON and len(self._poly_pts) >= 3:
             self._close_polygon()
@@ -745,6 +765,9 @@ class AnnotationCanvas(QWidget):
                 if (dxp * dxp + dyp * dyp) >= thresh_img * thresh_img:
                     if self._press_hit_id and self._press_hit_id in self._selected_ids:
                         # 선택된 어노테이션에서 드래그 → 이동
+                        if not self._mutation_guard():
+                            self._press_img_pos = None
+                            return
                         self._push_undo()
                         self._move_active = True
                         self._move_last_img = QPointF(self._press_img_pos)
@@ -1477,6 +1500,8 @@ class AnnotationCanvas(QWidget):
     # ── 내부 — 기타 ──────────────────────────────────────────────────────────
 
     def _delete_selected_or_last(self) -> None:
+        if not self._mutation_guard():
+            return
         if self._selected_ids:
             self._push_undo()
             self._annotations = [
@@ -1535,6 +1560,16 @@ class AnnotationCanvas(QWidget):
     def _schedule_save(self) -> None:
         self._save_timer.start()
 
+    def wait_for_pending_saves(self) -> None:
+        """학습 시작 전 이미 실행 중인 백그라운드 저장이 끝날 때까지 기다린다."""
+        while True:
+            with self._save_threads_lock:
+                pending = list(self._save_threads)
+            if not pending:
+                return
+            for worker in pending:
+                worker.join()
+
     def _do_save(self, sync: bool = False) -> None:
         if self._image_path is None or self._pixmap is None:
             return
@@ -1554,10 +1589,21 @@ class AnnotationCanvas(QWidget):
             # 이 저장 직후 같은 파일을 또 건드리는 호출(예: toggle_ok())이 있는 경우
             # 백그라운드 스레드와 경쟁하면 나중에 끝나는 쪽이 먼저 쪽을 덮어써
             # 사이드바 상태 캐시가 stale해질 수 있다(BUG-012) — 동기 실행으로 순서를 보장한다.
+            self.wait_for_pending_saves()
             _save()
         else:
-            import threading
-            threading.Thread(target=_save, daemon=True).start()
+            def _save_async() -> None:
+                try:
+                    _save()
+                finally:
+                    current = threading.current_thread()
+                    with self._save_threads_lock:
+                        self._save_threads.discard(current)
+
+            worker = threading.Thread(target=_save_async, daemon=True)
+            with self._save_threads_lock:
+                self._save_threads.add(worker)
+            worker.start()
         self.annotation_saved.emit()
 
     # ── 내부 — 렌더링 ─────────────────────────────────────────────────────────

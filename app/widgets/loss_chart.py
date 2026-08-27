@@ -24,6 +24,7 @@ class LossChart(FigureCanvasQTAgg):
     _EMA_ALPHA = 0.08       # 낮을수록 부드럽고 느리게 반응
     # 배치 누적 후 몇 개마다 화면 갱신할지
     _DRAW_EVERY = 5
+    _MAX_TRAIN_POINTS = 2000
 
     def __init__(self, parent=None) -> None:
         fig = Figure(facecolor=_DARK, tight_layout=True)
@@ -67,6 +68,7 @@ class LossChart(FigureCanvasQTAgg):
             self._ema = _EMA_ALPHA * loss + (1.0 - _EMA_ALPHA) * self._ema
         self._bx.append(frac_epoch)
         self._by.append(self._ema)
+        self._compact_train_points()
 
         # epoch 경계 세로선 (정수 경계 넘을 때)
         full = int(frac_epoch)
@@ -122,6 +124,13 @@ class LossChart(FigureCanvasQTAgg):
         self._ax.relim()
         self._ax.autoscale_view()
         self.draw_idle()
+
+    def _compact_train_points(self) -> None:
+        """Bound redraw cost while retaining coverage of the full run."""
+        if len(self._bx) <= self._MAX_TRAIN_POINTS:
+            return
+        self._bx = self._bx[::2]
+        self._by = self._by[::2]
 
     def _style_ax(self) -> None:
         ax = self._ax

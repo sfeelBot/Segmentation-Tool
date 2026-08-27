@@ -2772,3 +2772,17 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 
 ### 판정
 **통과 — 커밋 가능.** 요청한 비축소 원본 해상도 오토라벨링 동작과 기존 기능 회귀를 충족함.
+
+## 2026-08-27 — 학습 데이터 잠금 및 병목 개선 통합 검증
+
+- 최신 관련 회귀 묶음 59 passed, 변경 모듈 `py_compile`, `git diff --check` 통과.
+- streaming confusion matrix가 기존 IoU/Dice 계산과 random 5-class·ignore index·분할
+  update 조건에서 동등함을 확인.
+- 두 작업 사이에는 잠금이 유지되고 마지막 작업의 정상 완료·중지·오류 뒤에만 해제됨을
+  fake worker 큐로 직접 확인.
+- 학습 중 annotation import와 창 닫기가 경고 후 차단되고, 이미지 탐색·zoom·pan 등
+  읽기 동작은 허용됨을 확인.
+- 학습 시작 전 저장 타이머 및 이미 실행 중인 background annotation 저장이 모두 끝날
+  때까지 기다리는 경합 방지 동작을 확인.
+- validation worker 0/pin memory, train cache 총 512MiB 분배, val cache 64MiB,
+  batch signal 0.1초 제한·마지막 emit, 차트 2,000포인트 상한과 단계별 로그를 확인.

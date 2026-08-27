@@ -30,6 +30,9 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 
 ## 추론 탭 (`app/tabs/inference_tab.py`)
 - [x] 체크포인트 선택 → 학습 당시 모델 자동 인스턴스화
+- [x] 학습 큐 활성 중 이미지·라벨·클래스·프로젝트 변경 및 앱 종료 경고 차단
+- [x] 학습/검증 단계별 시간 계측, validation 메모리 경량화, streaming metric,
+  실시간 차트·batch signal 상한 적용
 - [x] 오버레이 뷰어
 
 ## 프로젝트 관리 (`app/core/project.py`, `project_start_dialog.py`)

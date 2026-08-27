@@ -34,6 +34,8 @@ class MainWindow(QMainWindow):
         self._labeling_tab  = LabelingTab()
         self._training_tab  = TrainingTab()
         self._inference_tab = InferenceTab()
+        self._labeling_tab.set_mutation_guard(self._guard_training_mutation)
+        self._training_tab.set_start_guard(self._labeling_tab.prepare_for_training)
 
         self._tabs.addTab(self._labeling_tab,  t("tab.labeling"))
         self._tabs.addTab(self._training_tab,  t("tab.training"))
@@ -146,6 +148,8 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_open_import_ann(self) -> None:
+        if not self._guard_training_mutation():
+            return
         if _project.current() is None:
             return
         dlg = ImportAnnotationDialog(self)
@@ -154,6 +158,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         from PyQt6.QtWidgets import QMessageBox
+        if self._training_tab.queue_active:
+            QMessageBox.warning(
+                self, "학습 진행 중",
+                "학습이 진행 중일 때는 창을 닫을 수 없습니다.\n학습을 먼저 중지해 주세요.",
+            )
+            event.ignore()
+            return
         reply = QMessageBox.question(
             self, t("ui.close_confirm_title"),
             t("ui.close_confirm_msg"),
@@ -167,8 +178,21 @@ class MainWindow(QMainWindow):
 
     def _on_switch_project(self) -> None:
         """main() 의 while 루프로 돌아가 다이얼로그를 다시 띄운다."""
+        if not self._guard_training_mutation():
+            return
         self._switch_requested = True
         self.close()
+
+    def _guard_training_mutation(self) -> bool:
+        if not self._training_tab.queue_active:
+            return True
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.warning(
+            self, "학습 데이터 변경 불가",
+            "학습이 진행 중이므로 이미지, 라벨 및 클래스 정보를 변경할 수 없습니다.\n"
+            "학습을 먼저 중지해 주세요.",
+        )
+        return False
 
     def _on_open_project_folder(self) -> None:
         proj = _project.current()
