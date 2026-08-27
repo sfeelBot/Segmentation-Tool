@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QApplication, QProgressDialog, QProgressBar,
 )
 from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QThread, QTimer, pyqtSignal
 
 from app.widgets.icons import icon as svg_icon
 
@@ -82,11 +82,20 @@ class InferenceTab(QWidget):
         self._image_path: Path | None = None
         self._last_result: InferenceResult | None = None
         self._results: dict[Path, InferenceResult] = {}
+        self._displayed_path: Path | None = None
         self._overlay_visible = True
         self._worker: _InferenceWorker | None = None
         self._ckpt_metas: list[CheckpointMeta] = []
         self._auto_model = None   # 체크포인트 선택 시 자동으로 결정된 모델
         self._build_ui()
+        self._opacity_timer = QTimer(self)
+        self._opacity_timer.setSingleShot(True)
+        self._opacity_timer.setInterval(75)
+        self._opacity_timer.timeout.connect(self._apply_opacity)
+        self._threshold_timer = QTimer(self)
+        self._threshold_timer.setSingleShot(True)
+        self._threshold_timer.setInterval(150)
+        self._threshold_timer.timeout.connect(self._apply_threshold)
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
@@ -493,11 +502,13 @@ class InferenceTab(QWidget):
             return
         result = self._results.get(self._image_path)
         self._last_result = result
+        reset_view = self._displayed_path != self._image_path
         if self._overlay_visible and result is not None:
-            self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap)
+            self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap, reset_view)
             self._update_legend(result)
         else:
-            self._viewer_panel.viewer.set_pixmap(QPixmap(str(self._image_path)))
+            self._viewer_panel.viewer.set_pixmap(QPixmap(str(self._image_path)), reset_view)
+        self._displayed_path = self._image_path
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.NoModifier:
@@ -507,29 +518,28 @@ class InferenceTab(QWidget):
             return
         super().keyPressEvent(event)
 
-    def _on_opacity_changed(self, opacity: float) -> None:
-        # 모델 재실행 없이 캐시된 raw_class_map/confidence_map으로 즉시 재합성
-        # (threshold 필터도 함께 유지 — engine.run()으로 되돌리면 필터가 풀린다).
+    def _on_opacity_changed(self, _opacity: float) -> None:
+        self._opacity_timer.start()
+
+    def _apply_opacity(self) -> None:
+        """드래그가 잠시 멈췄을 때 기존 필터 결과의 오버레이만 다시 합성한다."""
         if self._last_result is None:
             return
         try:
-            result = engine.refilter(
-                self._last_result.raw_class_map,
-                self._last_result.confidence_map,
-                self._image_path,
-                min_confidence = self._min_conf_spin.value() / 100.0,
-                min_pixel_size = self._min_px_spin.value(),
-                opacity        = opacity,
+            self._last_result.overlay_pixmap = engine.reblend(
+                self._last_result, self._image_path, self._viewer_panel.opacity,
             )
-            self._last_result = result
             if self._image_path is not None:
-                self._results[self._image_path] = result
+                self._results[self._image_path] = self._last_result
             self._show_current_image()
         except Exception:
             pass
 
     def _on_threshold_changed(self, *_args) -> None:
         """AI 점수·픽셀 크기 threshold 변경 — 모델 재실행 없이 즉시 재필터링."""
+        self._threshold_timer.start()
+
+    def _apply_threshold(self) -> None:
         if self._last_result is None:
             return   # 아직 추론 전이면 다음 "추론 실행" 시 현재 값이 반영됨
         try:

@@ -284,6 +284,22 @@ def refilter(
     )
 
 
+def reblend(
+    result: InferenceResult,
+    image_path_or_pil: "Path | str | Image.Image",
+    opacity: float,
+) -> QPixmap:
+    """기존 필터 결과를 유지한 채 오버레이만 다시 합성한다."""
+    pil_img = (
+        image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
+        else Image.open(str(image_path_or_pil)).convert("RGB")
+    )
+    return _colorize_and_blend(
+        pil_img, result.class_map,
+        {c.class_id: c for c in load_classes()}, opacity,
+    )
+
+
 def export_blobs_to_excel(rows: list[tuple[str, BlobStat]], out_path: Path) -> None:
     """(이미지파일명, BlobStat) 목록을 xlsx로 저장 — 헤더만 볼드, 시트 1개."""
     from openpyxl import Workbook
@@ -425,10 +441,10 @@ def _compute_blobs_and_filter(
 ) -> tuple[np.ndarray, list[BlobStat]]:
     """클래스별 연결 요소(blob)를 분리해 threshold 미달 blob은 배경(0)으로 되돌린다.
 
-    class_id == 0(배경)은 blob 대상에서 제외. 반환하는 class_map은 새 배열이며
-    인자로 받은 class_map은 mutate하지 않는다. blob_id는 이미지 전체 기준 1부터 순차 부여.
+    class_id == 0(배경)은 blob 대상에서 제외. 인자로 받은 class_map은 mutate하지 않으며,
+    실제 reject가 있을 때만 복사한다. blob_id는 이미지 전체 기준 1부터 순차 부여.
     """
-    filtered = class_map.copy()
+    filtered = class_map
     blobs: list[BlobStat] = []
     name_by_id = {c.class_id: c.name for c in classes}
     blob_id = 1
@@ -481,6 +497,8 @@ def _compute_blobs_and_filter(
             blob_id += 1
 
         if reject_labels:
+            if filtered is class_map:
+                filtered = class_map.copy()
             filtered[np.isin(labels, reject_labels)] = 0
 
     return filtered, blobs

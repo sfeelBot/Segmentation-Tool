@@ -1,5 +1,12 @@
 # QA — 버그 및 VOC 추적
 
+## 2026-08-28 — 추론 탭 UI 병목 후속 (Closed)
+
+- 원인: opacity/threshold 값 변경마다 UI 스레드에서 전체 해상도 재필터링·오버레이 합성을 실행하고, 픽스맵 갱신마다 줌/패닝을 초기화함.
+- 조치: opacity는 기존 필터 결과를 재사용하고, opacity 75ms/threshold 150ms debounce를 적용했으며 같은 이미지의 픽스맵 갱신은 현재 뷰를 보존함. reject가 없는 기본 threshold에서는 `class_map` 중복 복사를 생략함.
+- 2000×1500 합성 입력 계측: opacity 처리 중앙값 357.3ms(`refilter`) → 210.9ms(`reblend`), 연속 20 tick은 20회 → 1회 실행.
+- 회귀 검증: `tests/test_github_issue_23.py` 7건 통과.
+
 ## 2026-08-28 — 추론 오버레이 불투명도 배경 밝기 (Closed)
 
 - 증상: 불투명도를 높이면 배경 클래스(`0`)도 검정색과 혼합되어 원본 이미지 전체가 어두워짐.

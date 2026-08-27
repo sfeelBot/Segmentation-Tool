@@ -37,6 +37,8 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - [x] 오버레이 뷰어
 - [x] GitHub #23 — 전체 이미지 QThread 일괄 추론, 즉시 진행률, 추론 전 원본 표시
 - [x] `F` 단축키로 원본/추론 오버레이 표시 전환
+- [x] slider 연속 입력 debounce, opacity blob 재계산 제거, 결과 갱신 시 줌/패닝 유지
+- [ ] 향후 과제 — 모델 선택 UI를 추론 탭에서 별도 탭으로 분리(이번 성능 수정 범위 제외)
 
 ## 프로젝트 관리 (`app/core/project.py`, `project_start_dialog.py`)
 - [x] 프로젝트 단위 images/annotations/checkpoints/user_models 분리 (`projects/<name>/`)
