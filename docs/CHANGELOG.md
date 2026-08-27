@@ -7,11 +7,12 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ## [zone-v1.0.0] 2026-08-27
 
-Main 기준: v1.8.0 + 16 commits (fc9deec)
+Main 기준: v1.8.0 + 19 commits (09933fd)
 
 ### 추가
 - 존 분석 전용 탭과 원 검출·수동 편집·존별 통계·Excel 내보내기.
 - main과 독립된 제품명, EXE, 설치 폴더, installer 파일명 및 Inno Setup AppId.
+- main의 라벨링 이미지 다중선택 일괄 양품화 기능.
 
 ### 빌드
 - `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
