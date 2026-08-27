@@ -4459,3 +4459,11 @@ main 기준을 즉시 확인할 수 있음.
 ### 판정
 **통과.** main/빌드 관련 57개 테스트와 zone 전용 GitHub #13/#14 테스트 통과,
 `py_compile` 통과. zone 전용 제품·버전 설정 및 기능 회귀 없음.
+
+## 2026-08-27 — zone-v1.1.0 릴리스 메타데이터 검증
+
+- `scripts/generate_version_info.py`: 성공.
+- `tests/test_build_release.py`: 34 passed.
+- `tests/test_zone_github_13_14.py`: 통과.
+- 생성값: EXE/installer `1.1.0`, `SegmentationModelUIZone`, zone AppId 분리 확인.
+- main 기준 `v1.8.0 + 19 commits (09933fd)`의 Git 조상 관계 검증 통과.
