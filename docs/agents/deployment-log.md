@@ -107,3 +107,15 @@
 - 범위는 버전 메타데이터 생성·검증, 릴리스 커밋·annotated tag·push까지이며 전체
   PyInstaller/Inno Setup 패키징과 GitHub Release 업로드는 포함하지 않음.
 - 검증 완료: 메타데이터 생성 성공, `tests/test_build_release.py` 20 passed.
+
+## 2026-08-27 — zone-v1.1.0 릴리스 준비
+
+- 상태: 진행 중
+- zone 버전을 `1.0.0`에서 `1.1.0`으로 갱신하고 main 기능 기준을
+  `v1.8.0 + 19 commits`의 `09933fd`로 기록함.
+- zone 전용 제품명·EXE·설치 폴더·AppId와 `zone-v` 태그 체계를 유지함.
+- `zone-v1.0.0`은 기존 논리적 기준 버전이며 Git 태그 이력에는 없음을 확인함.
+- 범위는 메타데이터 생성·검증, 릴리스 커밋·annotated tag·push까지이며 전체 설치
+  패키지 생성과 GitHub Release 업로드는 포함하지 않음.
+- 검증 완료: 메타데이터 생성 성공, build 릴리스 테스트 34 passed, zone #13/#14
+  직접 테스트 통과.

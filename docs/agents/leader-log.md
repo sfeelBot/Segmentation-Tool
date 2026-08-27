@@ -5,17 +5,26 @@
 
 ## 현재 상황 요약
 
-*(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다)*
+*(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다. 단, 이 로그 자체가 `feature/
+zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-analysis-tab`)에서
+갱신되는 사본이라, main 브랜치 워크트리(`D:\segmentation model`)의 같은 파일과는 병합
+전까지 내용이 갈라진다 — 아래 참고.)*
 
-> **[최신, 2026-08-27] 라벨링 이미지 다중선택 일괄 양품화 완료.** 2장 이상 선택 후
-> 양품화하면 기존 OK는 유지하고 나머지를 일괄 `OK=true`, 라벨 있는 이미지는 확인 1회
-> 후 원자적으로 라벨 삭제. 미저장 current 라벨 경쟁, 부분 실패, 필터/정렬 선택 보존까지
-> 구현·독립 검증했으며 전체 43개/신규 11개 테스트 통과. 커밋 후 main push 예정.
+> **[최신, 2026-08-27] main 다중선택 일괄 양품화 기능을 zone에 동기화.** sync 브랜치
+> `sync/main-into-zone-analysis-20260827-r3`에서 main `09933fd`를 반영하고 zone 전용
+> 빌드/제품 설정을 보존했다. 마지막 main 기준은 `v1.8.0 + 19 commits (09933fd)`로
+> 갱신. main/빌드 관련 57개 + zone 전용 #13/#14 테스트 통과. PR로
+> `feature/zone-analysis-tab`에 병합 예정.
 >
 > **[최신, 2026-08-27] main/zone 빌드 버전 관리 분리 완료.** main은 `release.ini`의
 > `vX.Y.Z`, zone은 별도 제품 ID와 `zone-vX.Y.Z`를 단일 편집 지점으로 사용한다.
-> main 공통 구조는 `11a5a84`, zone 적용은 `0a56d01`/`019c2f5`. 생성기와 테스트
-> 20개 및 독립 검증 통과. 전체 installer 빌드와 push는 별도 요청 시 진행.
+> zone 최초 설정은 `zone-v1.0.0`, `SegmentationModelUIZone`, 별도 AppId이며 생성기와
+> 테스트 20개 및 독립 검증 통과. 전체 installer 빌드와 push는 별도 요청 시 진행.
+>
+> **[2026-08-27] zone의 마지막 main 반영 기준 명시 완료.** `release.ini`에
+> `main_base_tag=v1.8.0`, `main_base_commit=fc9deecab27258adec8bc469a124cb8a0665a064`를
+> 기록하고 실제 Git 조상 관계까지 조건부 검증한다. 이는 `v1.8.0 + 16 commits`이며,
+> main sync 때 두 값을 함께 갱신한다. 자동 테스트 34개 통과.
 >
 > **[최신, 2026-08-27] GitHub VOC 라운드4 main 담당 #12/#15/#16/#17 완료.**
 > #16 파일 잠금 재시도, #17 다중선택 파일명 복사, #15 기존 같은 클래스 경계 채우기,
@@ -24,6 +33,40 @@
 > 명시 승인 전까지 보류. 개인 `.claude/settings.local.json`은 커밋 제외.
 >
 > **[최신, 2026-08-21]** **디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
+> **[최신, 2026-08-27] 존(Zone) 분석 탭 — 스펙 3건(최초 R1~R4 / 신규기능3건 / 라운드3
+> 5건) 전부 구현+검증 완료. 에디션 브랜치로 확정, 워크트리 분리 운영 중.**
+>
+> **최초 스펙(R1~R4)**: 탭+체크포인트+추론 / 원 자동검출(Canny+findContours+Kasa
+> 원피팅)+수동편집 / 존별 퍼센티지 / 블랍 클릭삭제. **신규 기능 3건**(오프라인 팝업 /
+> 폴더+일괄처리 / threshold, UI 디자인 승인 Artifact `984ea900`): R-A→R-B(threshold
+> `raw_class_map`→`class_map` 근본원인 버그 수정)→레이아웃뼈대+3a(BUG-020/021 발견,
+> 리더가 직접 수정)→3b(BUG-022(P1) 발견 — Ctrl/Shift 다중선택이 기준이미지 원을
+> 지우는 버그, "가장 중요하다"던 시나리오. 1차 수정 실패(Qt `currentItemChanged`
+> 타이밍 문제, `QTest.mouseClick` 실이벤트로 재현) → 2차 수정으로 해결
+> (`itemSelectionChanged` 전환) → Closed)→3c(Excel). **라운드3 5건**(Undo/브러시지우기/
+> 단일Excel/wide format/팝업라운드트립): R3-1→R3-2→R3-3(브러시, annotation_canvas
+> 엔진 이식)→R3-4(통합 undo 스택, 원편집+블랍삭제+브러시지우기 하나로, 마스크 대신
+> 경량 스트로크 재생 방식)→R3-5(팝업→메인탭 라운드트립). **전 라운드 실GUI(QTest 실제
+> 이벤트) 검증, 정확성 필요 부분은 독립 오라클 픽셀단위 대조 — 라운드3는 버그 없이
+> 한번에 통과.**
+>
+> **동시 세션 충돌 처리(2026-08-25)**: 다른 세션과 워킹 디렉토리 공유 발견 →
+> `git worktree add`로 `D:\segmentation model-zone-analysis-tab` 분리(원래 경로는
+> `main`으로 반환). `projects/nok/{images,checkpoints,user_models}`는 Windows
+> 정션으로 원본과 공유.
+>
+> **에디션 브랜치 운영 규칙 확정**: main 역병합 안 함, sync 브랜치+PR로만 동기화
+> (CLAUDE.md 8번 규칙, main도 반영 커밋 `3cb51d1`). **push 확인 규칙 정정**: "어느
+> 브랜치인지"만 애매할 때 확인(CLAUDE.md 4번 규칙, 커밋 `c8cc58b`).
+> **push 상태**: `origin/feature/zone-analysis-tab`은 신규기능3건까지는 반영됨
+> (`a776f22`까지 push 완료). **라운드3(R3-1~R3-5) 커밋(`3b5b45f`까지)은 아직 push
+> 안 함** — 사용자 확인 필요.
+>
+> **남은 것**: (1) 라운드3 커밋 push 여부, (2) 향후 확장 후보(체크포인트 클래스
+> 메타데이터 저장, DetectParams 고급 파라미터 UI). `docs/decisions-needed.md`는
+> 현재 빈 상태.
+>
+> **[2026-08-21] 디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
 > ([roadmap.md](../roadmap.md) 해당 절): ①아이콘SVG ②장식이모지제거 ③model_tab팔레트
 > ④loss_chart배색 ⑤학습/추론서브스플리터 ⑥i18n en전환(커밋`96b829c`) ⑦팔레트정규화
 > (커밋`8f78f8a`) — **① ~ ⑦ 전부 구현+독립검증 통과**. ⑦ 검증 중 발견된 **BUG-015**
@@ -346,3 +389,20 @@
   원인을 확인하고, 현재 GPU batch 직후 안전 경계에서 작업을 종료하도록 변경.
 - 독립 검증에서 다음 작업의 메인 중지 버튼 복원 누락을 발견해 보완하고 최종 16 tests
   및 stop-current/stop-all lifecycle 검증을 통과함.
+
+---
+
+## 2026-08-27 — zone 세션 이어받기: GitHub #13/#14 완료
+
+- 별도 zone 워크트리의 미완료 상태를 판별해 main 세션의 GitHub #15 변경은 건드리지 않음.
+- R13-A(지름 변경/평균 중심 신규 원)를 독립 재검증하고, R14-A(추론 전 원본 미리보기/
+  픽셀 threshold 라벨) 구현을 보완·검증, 확정 결정에 따라 R13-B(스케일링 공용화와
+  팝업→메인→고정 원 배치 흐름 검증)까지 완료.
+- 로컬 커밋: `6445b0e`, `9b7169e`. 원격 push는 사용자 명시 요청이 없어 수행하지 않음.
+- 현재 zone 이슈 #13/#14의 계획된 R13-A/R14-A/R13-B는 전부 구현+검증 완료.
+
+## 2026-08-27 — zone v1.1.0 빌드 버전 관리
+
+- main 다중 양품화 기능 동기화 완료 후 zone 독립 릴리스 버전을 `1.1.0`으로 결정.
+- main 기능 기준은 `v1.8.0 + 19 commits` / `09933fd`로 명시하고 독립 태그
+  `zone-v1.1.0`을 사용함.

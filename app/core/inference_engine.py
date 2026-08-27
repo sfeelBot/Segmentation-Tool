@@ -59,14 +59,18 @@ def run(
     opacity: float = 0.5,
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
+    classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """
     Returns InferenceResult.
     opacity: 0.0 = 원본만, 1.0 = 마스크만
     min_confidence: blob 평균 신뢰도 하한 (0~1) — 미달 blob은 배경으로 제거
     min_pixel_size: blob 최소 픽셀 수 — 미달 blob은 배경으로 제거
+    classes: None이면 현재 프로젝트의 classes.json (load_classes()) 사용 — 기존 호출부는
+        인자를 넘기지 않으므로 동작 변화 없음. 프로젝트 독립적으로 클래스를 지정하고 싶으면
+        (예: 존 분석 탭) 직접 채워서 넘긴다.
     """
-    classes  = load_classes()
+    classes  = classes if classes is not None else load_classes()
     cls_map  = {c.class_id: c for c in classes}
     device   = _pick_device()
 
@@ -147,6 +151,7 @@ def run_sliding_window(
     opacity: float = 0.5,
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
+    classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """패치 학습 모델용 슬라이딩 윈도우 추론.
 
@@ -155,8 +160,10 @@ def run_sliding_window(
     3) 각 패치 추론 → 소프트맥스 확률 누적
     4) 겹치는 영역 평균(weighted blend) → argmax → class_map
     5) 결과를 원본 해상도로 오버레이 합성
+
+    classes: None이면 load_classes() 폴백 (run()과 동일 규약).
     """
-    classes = load_classes()
+    classes = classes if classes is not None else load_classes()
     cls_map = {c.class_id: c for c in classes}
     device  = _pick_device()
 
@@ -245,14 +252,17 @@ def refilter(
     min_confidence: float,
     min_pixel_size: int,
     opacity: float,
+    classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """모델 재실행 없이 threshold 만 바꿔 InferenceResult를 재계산.
 
     UI(추론 탭)에서 min_confidence/min_pixel_size 슬라이더·스핀박스 값이 바뀔 때
     호출한다 — numpy/cv2 연산만 수행하므로 opacity 슬라이더처럼 forward pass를
     다시 돌리지 않는다.
+
+    classes: None이면 load_classes() 폴백 (run()과 동일 규약).
     """
-    classes = load_classes()
+    classes = classes if classes is not None else load_classes()
     cls_map = {c.class_id: c for c in classes}
     pil_img = (
         image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
