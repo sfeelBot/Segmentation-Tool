@@ -4291,3 +4291,16 @@ class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`는 no-
   요청한 5건(Undo/브러시지우기/단일Excel/wide format/팝업라운드트립) 모두 실 GUI
   `QTest` 기반 독립 검증까지 마쳤고 신규 버그 없음. 다음 단계는 리더 판단에 따라
   push 여부 결정(현재 로컬 커밋만 있고 `origin/feature/zone-analysis-tab`에 미푸시 상태).
+---
+
+## 2026-08-27 — 존 분석 탭 GitHub #13/#14 후속 독립 회귀 검증
+
+- `tests/test_zone_github_13_14.py`를 프로젝트 Anaconda Python/PyQt6 offscreen 환경에서 실행.
+- R13-A: 기존 원 2개의 평균 중심에 신규 원이 고정되는지 실제 QTest 마우스 press/move/
+  release로 확인. 지름 80px 입력 시 반지름 40px 반영, Undo 시 20px 복원 확인.
+- R14-A: 3000x1200 원본 선택 시 논리 좌표 크기는 그대로 유지하면서 표시 픽스맵의 긴 변이
+  2048px 이하인지 확인. 손상 이미지 선택 시 `_image_size==(0,0)` 및 이전 픽스맵 제거 확인.
+- R13-B: 팝업 100x200→메인 300x400→배치 600x200 연속 스케일 결과를 독립 오라클과
+  대조하고 동일 크기 항등 변환도 확인.
+- 결과: `OK: GitHub #13/#14 zone-analysis tests passed`. 관련 모듈 import/실행 정상,
+  예외·데이터 손상 없음. 판정: R13-A/R14-A/R13-B 전부 통과.

@@ -11,7 +11,12 @@
 [docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md)
 "사용자 결정 — 전부 완료" 절에 기록됨)*
 
-*(현재 없음)*
+*(현재 없음 — 아래 2건은 리더가 GitHub 이슈 #13 원문을 직접 재확인해 결정 완료:
+1) 신규 원 대표 중심은 "기존 원들의 평균 중심"으로 확정(기획 제안 그대로). 2) 요구사항4는
+해석 A+B 병행 — 배치처리/팝업라운드트립의 중복 비례스케일 로직을 공용 헬퍼로 통합(A)
+하면서 두 경로가 동일 결과를 내는지 검증(B)까지 함께 진행. 근거는
+[docs/specs/zone-analysis-tab-github-issues-13-14-2026-08-27.md](specs/zone-analysis-tab-github-issues-13-14-2026-08-27.md)
+"판단 2/4" 절 + `docs/agents/leader-log.md` 참고)*
 
 ## 보류된 항목
 

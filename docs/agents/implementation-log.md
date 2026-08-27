@@ -3760,3 +3760,18 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - `docs/roadmap.md`의 R3-5 체크박스를 미착수([ ])에서 구현 완료([x], 검증
   대기)로 갱신 — **신규 기능 라운드3(R3-1~R3-5) 전체 구현 완료**를 명시.
 - 커밋: `ff7dbf8`
+---
+
+## 2026-08-27 — 존 분석 탭 GitHub #14 R14-A + #13 R13-B 구현
+
+- 워크트리/브랜치: `D:\segmentation model-zone-analysis-tab`, `feature/zone-analysis-tab`.
+- R14-A: `zone_analysis_tab.py` 이미지 선택 경로가 추론 전에도 RGB 원본 미리보기를
+  `ZoneCanvas.set_pixmap()`으로 표시하도록 변경. 원본 좌표계는 `_image_size`에 유지하고
+  표시 픽스맵만 긴 변 2048px 이하로 축소해 대형 이미지 메모리 사용을 제한했다. 로드 실패
+  시 이전 픽스맵을 `clear()`하며, 툴바 라벨을 "픽셀 threshold:"로 변경했다.
+- R13-B: 팝업→메인 적용과 고정 원 배치에 중복돼 있던 비례스케일 공식을 순수 헬퍼
+  `_scale_circles(circles, from_size, to_size)`로 통합했다. 동일 크기/잘못된 기준 크기는
+  복사본을 반환해 기존 동작을 유지한다.
+- 회귀 테스트 `tests/test_zone_github_13_14.py` 추가/보강: R13-A 실제 QTest 드래그,
+  지름 변경+Undo, R14 대형 이미지 축소/손상 이미지 초기화, R13-B 연속 스케일 검증.
+- 커밋: `6445b0e`(R14-A), `9b7169e`(R13-B).
