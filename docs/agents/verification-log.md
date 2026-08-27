@@ -2743,3 +2743,9 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 
 ### 판정
 **통과 — 커밋 가능**. 단일 선택의 기존 OK on/off 경로도 그대로 유지됨.
+
+## 2026-08-27 — main v1.9.0 릴리스 메타데이터 검증
+
+- `scripts/generate_version_info.py`: 성공.
+- `tests/test_build_release.py`: 20 passed.
+- 생성값: EXE/installer `1.9.0`, `SegmentationModelUI`, AppId 유지 확인.

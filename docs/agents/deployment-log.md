@@ -96,3 +96,14 @@
 - 알려진 이슈(신규 회귀 아님): 콘솔(cp949) 실행 시 로그 핸들러가 em-dash 문자를
   인코딩 못해 `UnicodeEncodeError`를 반복 출력 — 기능에는 영향 없음, 필요 시 로그
   포매터를 UTF-8 강제 또는 ASCII 대체 문자로 교체하는 별도 이슈로 논의 필요
+
+---
+
+## 2026-08-27 — v1.9.0 릴리스 준비
+
+- 상태: 진행 중
+- 사용자 요청에 따라 main 버전을 `1.8.0`에서 `1.9.0`으로 갱신하고 CHANGELOG에
+  v1.8.0 이후 기능·수정 내역을 정리함.
+- 범위는 버전 메타데이터 생성·검증, 릴리스 커밋·annotated tag·push까지이며 전체
+  PyInstaller/Inno Setup 패키징과 GitHub Release 업로드는 포함하지 않음.
+- 검증 완료: 메타데이터 생성 성공, `tests/test_build_release.py` 20 passed.
