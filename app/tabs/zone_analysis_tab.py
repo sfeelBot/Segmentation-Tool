@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QProgressDialog, QApplication,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QPixmap
 import torch.nn as nn
 
 from app.core import inference_engine as engine
@@ -55,6 +56,16 @@ log = get_logger(__name__)
 # threshold 초기 고정값 — 설정 UI는 만들지 않음(YAGNI), 나중에 바꾸고 싶으면 이 상수만 수정
 _DEFAULT_MIN_CONFIDENCE = 0.0
 _DEFAULT_MIN_PIXEL_SIZE = 0
+_PREVIEW_MAX_DIM = 2048
+
+
+def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
+    """플레인 RGB numpy 배열을 QPixmap으로 변환 — 추론 전 원본 미리보기 전용
+    (circle_detect_preview_dialog._rgb_to_qpixmap()과 동일 패턴, GH#14)."""
+    rgb = np.ascontiguousarray(rgb)
+    h, w, _ = rgb.shape
+    qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
+    return QPixmap.fromImage(qimg.copy())
 
 
 class ZoneAnalysisTab(QWidget):
@@ -81,7 +92,7 @@ class ZoneAnalysisTab(QWidget):
 
         # ── 상단 툴바 (승인된 목업 순서, Artifact 984ea900 — 이번 세션엔 Artifact
         #    도구가 없어 스펙 문서 "승인된 UI 레이아웃" 절 서술을 그대로 따름):
-        #    체크포인트 상태+열기 / ▶ 추론 실행 / 타겟클래스 / AI신뢰도 / 픽셀크기 /
+        #    체크포인트 상태+열기 / ▶ 추론 실행 / 타겟클래스 / AI신뢰도 / 픽셀 threshold /
         #    (민감도 — 자동검출의 파라미터라 바로 옆에 배치) / 자동검출 / 블랍삭제모드
         #    / (오른쪽 끝) 오프라인 원 검출 테스트. 이미지 열기는 좌측 패널로 이동(C-1). ─
         # 두 줄로 분리(BUG-021 수정) — 한 줄에 다 욱여넣으면 최소폭이 1588px까지
@@ -123,7 +134,7 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_confidence.setFixedWidth(32)
         toolbar_row2.addWidget(self._lbl_confidence)
 
-        toolbar_row2.addWidget(QLabel("픽셀크기:"))
+        toolbar_row2.addWidget(QLabel("픽셀 threshold:"))
         self._min_px_spin = QSpinBox()
         self._min_px_spin.setRange(0, 100000)
         self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
@@ -385,12 +396,18 @@ class ZoneAnalysisTab(QWidget):
         self._image_path = path
         try:
             with Image.open(str(path)) as im:
-                self._image_size = im.size   # (w, h)
+                rgb_im = im.convert("RGB")
+                self._image_size = rgb_im.size   # (w, h)
+                preview_im = rgb_im.copy()
+            preview_im.thumbnail((_PREVIEW_MAX_DIM, _PREVIEW_MAX_DIM), Image.BILINEAR)
+            self._canvas.set_image_size(*self._image_size)
+            self._canvas.set_pixmap(_rgb_to_qpixmap(np.array(preview_im)))
         except Exception:
             self._image_size = (0, 0)
-        self._canvas.set_image_size(*self._image_size)
+            self._canvas.set_image_size(*self._image_size)
+            self._canvas.clear()
         self._canvas.clear_circles()
-        self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 캔버스에 표시할 배경 없음
+        self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 원 자동검출은 불가
         self._canvas.set_blob_data(None, None)
         self._btn_blob_delete.setChecked(False)
         self._btn_blob_delete.setEnabled(False)
