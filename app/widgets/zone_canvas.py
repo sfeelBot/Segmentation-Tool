@@ -37,7 +37,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from PyQt6.QtWidgets import QMenu
+from PyQt6.QtWidgets import QMenu, QInputDialog
 from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QKeySequence
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 
@@ -538,10 +538,19 @@ class ZoneCanvas(OverlayViewer):
             self._drag_mode = mode
             self.circle_selected.emit(circle_id)
         else:
-            center = self._screen_to_orig(pt)
+            # 이슈#13 요구사항2: 원이 이미 1개 이상 있으면 신규 원의 중심을
+            # 클릭 위치가 아니라 "기존 원들의 평균 중심"으로 강제한다(판단2,
+            # 배터리 캡 동심원 전제 — 대표 중심 공유). 원이 없으면 기준점이
+            # 없으므로 기존처럼 클릭 위치를 그대로 쓴다.
+            if self._circles:
+                cx = sum(c.cx for c in self._circles) / len(self._circles)
+                cy = sum(c.cy for c in self._circles) / len(self._circles)
+            else:
+                center = self._screen_to_orig(pt)
+                cx, cy = center.x(), center.y()
             new_id = self._next_id
             self._next_id += 1
-            self._circles.append(_CircleItem(new_id, center.x(), center.y(), 0.0))
+            self._circles.append(_CircleItem(new_id, cx, cy, 0.0))
             self._selected_id = new_id
             self._drag_mode = "create"
             self.circle_selected.emit(new_id)
@@ -645,7 +654,30 @@ class ZoneCanvas(OverlayViewer):
         self.circle_selected.emit(circle_id)
         self.update()
         menu = QMenu(self)
+        resize_action = menu.addAction("지름 변경...")
         delete_action = menu.addAction("원 삭제")
         chosen = menu.exec(event.globalPos())
         if chosen == delete_action:
             self.remove_selected()
+        elif chosen == resize_action:
+            self._prompt_diameter_change(circle_id)
+
+    def _prompt_diameter_change(self, circle_id: int) -> None:
+        """이슈#13 요구사항1 — 우클릭 메뉴 "지름 변경...": QInputDialog로 지름
+        (반지름 아님, 원문 표기 그대로)을 직접 입력받는다(판단1). 데이터 모델
+        `_CircleItem.r`은 그대로 반지름 유지 — 존 계산/좌표 변환이 전부 `r`을
+        반지름으로 가정하므로 입력 UI 레이어에서만 지름<->반지름을 환산한다."""
+        item = self._find(circle_id)
+        if item is None:
+            return
+        max_dim = max(self._img_orig_w, self._img_orig_h, 1)
+        diameter, ok = QInputDialog.getDouble(
+            self, "지름 변경", "지름(px):", item.r * 2,
+            0.1, max_dim * 2, 1,
+        )
+        if not ok:
+            return
+        self._push_undo()
+        item.r = diameter / 2
+        self.update()
+        self.circles_changed.emit()
