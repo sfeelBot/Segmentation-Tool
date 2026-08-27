@@ -1,75 +1,59 @@
-# 빌드 & 설치 파일(installer) 만들기
+# 빌드 및 버전 관리
 
-`build.bat` 하나로 exe 빌드부터 설치 프로그램(.exe installer) 생성까지 전부 끝난다.
+Windows 실행 파일과 설치 프로그램의 릴리스 정보는 저장소 루트의
+[`release.ini`](../release.ini) 한 곳에서 관리한다. `build.spec`나
+`installer/setup.iss`의 버전을 직접 수정하지 않는다.
 
-```
+## 버전 변경
+
+1. `release.ini`의 `version`을 `MAJOR.MINOR.PATCH` 형식으로 수정한다.
+2. `docs/CHANGELOG.md` 최상단 릴리스 제목도 `## [<tag_prefix>MAJOR.MINOR.PATCH]`로 갱신한다.
+3. 필요할 때 제품명, 실행 파일명, 배포자 등을 같은 파일에서 수정한다.
+4. `py -3 scripts\generate_version_info.py`로 설정을 검증한다.
+
+CHANGELOG의 최신 버전이 다르거나 필수 키, SemVer, GUID가 잘못되면 생성기는
+실패한다. CHANGELOG는 자동으로 수정하지 않는다.
+
+`release.ini` 항목:
+
+| 키 | 용도 |
+|---|---|
+| `version` | EXE 및 installer 버전 |
+| `tag_prefix` | CHANGELOG 및 Git 태그 접두사(main은 `v`, zone은 `zone-v`) |
+| `product_name` | Windows 제품명과 설치 프로그램 표시명 |
+| `product_slug` | 설치 폴더와 installer 파일명의 안전한 이름 |
+| `exe_name` | PyInstaller EXE 및 dist 디렉터리 이름(확장자 제외) |
+| `publisher` | Windows 버전 정보와 설치 프로그램 배포자 |
+| `app_id` | Inno Setup 업그레이드 식별 GUID; 기존 제품은 변경 금지 |
+
+## 전체 빌드
+
+먼저 Python 빌드 의존성과 [Inno Setup 6](https://jrsoftware.org/isdl.php)를 설치한 뒤
+저장소 루트에서 실행한다.
+
+```bat
 build.bat
-  ├─ [1/3] build\, dist\ 정리
-  ├─ [2/3] PyInstaller → dist\SegmentationModelUI\ (exe + _internal\)
-  └─ [3/3] Inno Setup   → installer\output\SegmentationModelUI-Setup-{버전}.exe
 ```
 
-즉 `build.bat`은 exe만 만드는 게 아니라 **사용자가 더블클릭해서 설치하는 installer까지** 한 번에 만든다.
+스크립트는 다음 순서로 동작한다.
 
----
+1. 기존 `build\`, `dist\` 삭제
+2. `release.ini` 검증 및 생성 파일 작성
+3. PyInstaller onedir 빌드
+4. Inno Setup installer 빌드
 
-## 1. 사전 준비: Inno Setup 설치
+생성 파일은 빌드 중 다시 만들어지므로 직접 편집하지 않는다.
 
-installer 생성 단계(3단계)는 [Inno Setup 6](https://jrsoftware.org/isdl.php)이 로컬에 설치돼 있어야 동작한다.
-없으면 `build.bat`이 아래처럼 에러를 내고 멈춘다.
+- `build/version_info.txt`: PyInstaller Windows `VSVersionInfo`
+- `build/release-defines.iss`: Inno Setup 전처리기 define
+- `dist/<exe_name>/`: 실행 파일과 라이브러리
+- `installer/output/<product_slug>-Setup-<version>.exe`: 최종 설치 프로그램
 
-```
-[ERROR] Inno Setup 6 is not installed. Get it from https://jrsoftware.org/isdl.php
-```
+## 빠른 검증
 
-한 번만 설치하면 이후로는 `build.bat` 실행만으로 계속 재사용된다.
-
----
-
-## 2. build.bat 실행
-
-```
-build.bat
+```bat
+py -3 scripts\generate_version_info.py
+py -3 -m pytest -q tests\test_build_release.py
 ```
 
-- 1~2단계: [build.spec](../build.spec) 기준 PyInstaller `onedir` 빌드
-  - onefile이 아니라 onedir인 이유: onefile은 실행마다 임시 폴더에 압축을 풀어 기동이 느리고, torch(CUDA 포함) 번들이 커서 그 비용이 특히 큼
-- 3단계: [installer\setup.iss](../installer/setup.iss)를 ISCC(Inno Setup 컴파일러)로 컴파일
-
-성공하면 마지막에 결과 경로를 출력한다.
-
-```
-===== Build complete =====
-  D:\segmentation model\installer\output\SegmentationModelUI-Setup-1.8.0.exe
-```
-
----
-
-## 3. setup.iss — installer 세부 설정
-
-앱 이름, 버전, 설치 경로, 바로가기 등 installer 동작은 [installer\setup.iss](../installer/setup.iss)에서 정의한다.
-
-| 항목 | 값 | 의미 |
-|---|---|---|
-| `MyAppName` | Segmentation Model UI | 설치 프로그램/시작 메뉴에 표시되는 이름 |
-| `MyAppVersion` | 1.8.0 | 설치 파일명(`...-Setup-1.8.0.exe`)에 그대로 들어감 — **버전 올릴 때 여기를 수정** |
-| `MyDistDir` | `..\dist\SegmentationModelUI` | PyInstaller 산출물 경로 (2단계 결과물을 그대로 패키징) |
-| `PrivilegesRequired` | `lowest` | 관리자 권한 없이 설치(per-user). 앱이 설치 폴더 밑에 `data\`, `projects\`를 직접 쓰기 때문에 Program Files(admin 전용)에 넣으면 표준 사용자가 쓰기 오류를 겪음 |
-| `DefaultDirName` | `{autopf}\SegmentationModelUI` | `PrivilegesRequired=lowest`와 결합하면 관리자 권한 없이도 쓰기 가능한 `%LocalAppData%\Programs\SegmentationModelUI`로 자동 해석됨 |
-| `Languages` | 한국어 | 설치 마법사 UI 언어 |
-| `Tasks: desktopicon` | 기본 체크 해제 | "바탕화면에 바로가기 만들기" 옵션 (사용자가 켜야 생김) |
-| `[Files]` | `{#MyDistDir}\*` 전체 | dist 폴더 안 exe + `_internal\` 라이브러리를 통째로 복사 |
-| `[Run]` | 설치 완료 후 실행 옵션 | 설치 마법사 마지막 화면에서 "지금 실행" 체크박스 제공 |
-
-### 자주 바꾸게 될 것
-
-- **버전 올리기**: `#define MyAppVersion "1.8.0"` 수정 (배포 에이전트가 `git tag`/CHANGELOG와 맞춰 관리)
-- **바탕화면 바로가기 기본 체크**: `[Tasks]`의 `Flags: unchecked` → `checked`로 변경
-- **설치 경로 강제 지정**: `DefaultDirName` 수정 (단, admin 설치로 바꾸면 `PrivilegesRequired`도 같이 검토 필요 — 위 표의 이유 참고)
-
----
-
-## 4. 범위 밖
-
-- CLAUDE.md 기준 배포 에이전트(deployer)는 버전 태깅 + CHANGELOG 갱신까지만 담당한다.
-- PyInstaller/Inno Setup 실행파일 패키징·배포 자체는 별도 논의 대상 — 이 문서는 "어떻게 만드는가"만 다룬다.
+`build.bat`은 Windows `cmd.exe` 호환성을 위해 ASCII 문자만 사용한다.

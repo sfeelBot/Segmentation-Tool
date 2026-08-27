@@ -2781,3 +2781,21 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - 2048×2048 이미지 + 먼 같은 클래스 폴리곤 100개 후보 탐색 중앙값 0.702ms,
   p95 0.969ms. 후보 단계 전체 이미지 배열 할당 0회 확인.
 - 최종 상태: 검증 에이전트 커밋 가능 판정.
+## 2026-08-27 — main 빌드 버전 단일 소스화
+
+**상태: 구현 완료 / 검증 대기 / 커밋 없음**
+
+- `release.ini`를 EXE와 installer 릴리스 정보의 단일 편집 소스로 추가했다.
+- `scripts/generate_version_info.py`가 필수 설정, SemVer, GUID, CHANGELOG 최신 버전
+  일치를 검증하고 PyInstaller/Inno Setup용 메타데이터를 생성하도록 구현했다.
+- `build.spec`, `build.bat`, `installer/setup.iss`를 생성된 설정과 연결했다.
+- `docs/BUILD.md`를 새 버전 변경 및 빌드 절차에 맞게 갱신했다.
+- `tests/test_build_release.py`에 정상 생성, 잘못된 버전/GUID/필수 키,
+  CHANGELOG 불일치 및 빌드 파일 연결 검증을 추가했다.
+## 2026-08-27 — 빌드 버전 검증 피드백 반영
+
+**상태: 구현 완료 / 재검증 대기 / 커밋 없음**
+
+- 릴리스 테스트가 특정 `1.8.0` 값을 전제하지 않고 `release.ini`에서 기대값을 계산하도록 수정했다.
+- 생성 메타데이터에 CR/LF/NUL 및 기타 제어문자가 삽입되지 않도록 모든 필수 설정값을 검증한다.
+- `tag_prefix`를 필수 설정으로 추가해 main(`v`)과 zone(`zone-v`)의 CHANGELOG/태그 이력을 분리할 수 있게 했다.

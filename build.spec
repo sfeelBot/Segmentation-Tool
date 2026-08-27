@@ -1,4 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
+import configparser
+from pathlib import Path
+
+_root = Path(SPECPATH).resolve()
+_release = configparser.ConfigParser(interpolation=None)
+if not _release.read(_root / "release.ini", encoding="utf-8"):
+    raise RuntimeError("release.ini not found; run from the repository root")
+exe_name = _release["release"]["exe_name"].strip()
+version_info = str(_root / "build" / "version_info.txt")
+if not Path(version_info).is_file():
+    raise RuntimeError("build/version_info.txt not found; run scripts/generate_version_info.py first")
 """PyInstaller onedir 빌드 spec — Segmentation Model UI.
 
 빌드: py -3 -m PyInstaller build.spec  (또는 build.bat 사용)
@@ -73,7 +84,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="SegmentationModelUI",
+    name=exe_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -85,6 +96,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon="app/resources/app_icon.ico",
+    version=version_info,
 )
 
 coll = COLLECT(
@@ -95,5 +107,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="SegmentationModelUI",
+    name=exe_name,
 )

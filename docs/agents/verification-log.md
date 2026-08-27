@@ -2706,3 +2706,22 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 
 ### 판정
 **통과 — 커밋 가능**. 기능·성능·선택 상태 무결성 기준을 모두 충족함.
+
+---
+
+## 2026-08-27 — main/zone 빌드 버전 단일 소스 구조(main 구현) 검증
+
+- `release.ini`에서 버전·제품 정보·태그 접두사를 읽어 PyInstaller
+  `VSVersionInfo`와 Inno Setup define을 생성하는 경로 검증.
+- `tests/test_build_release.py`: 20개 통과. 현재 `1.8.0` 하드코딩 없이 설정값에서
+  기대 결과를 계산하므로 이후 버전 변경에도 테스트가 유지됨.
+- `generate_version_info.py`와 테스트 문법 검사 통과. 생성된 `version_info.txt`를
+  PyInstaller 공식 `load_version_info_from_text_file`로 실제 파싱 성공.
+- SemVer, GUID, 필수 키, 안전한 이름, C0/DEL 제어문자, CHANGELOG 최신 태그
+  (`vX.Y.Z`/`zone-vX.Y.Z`) 불일치 실패 경로 검증.
+- `build.bat` ASCII-only·공백 경로·단계별 errorlevel, `build.spec` 동적 EXE명/버전 리소스,
+  `setup.iss` 생성 define 연계 검토 통과. main 기존 산출물 이름 호환 유지.
+
+### 판정
+**통과 — main 커밋 가능**. 실제 전체 패키징은 대용량 의존성 때문에 이번 검증 범위에서
+제외하고 생성기·PyInstaller 버전 파서·정적 연계로 검증함.
