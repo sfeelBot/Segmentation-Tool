@@ -1,4 +1,5 @@
 """QThread 기반 학습 루프 + TrainingConfig."""
+import json
 import math
 import threading
 import time
@@ -136,6 +137,8 @@ class TrainerWorker(QThread):
     def _train(self) -> None:
         cfg    = self._cfg
         device = pick_device(cfg.device)
+        history: list[dict[str, float | int]] = []
+        best_iou = float("-inf")
         log.info(f"선택된 디바이스: {device}")
 
         # 데이터셋
@@ -342,6 +345,11 @@ class TrainerWorker(QThread):
             metrics["val_time"] = time.perf_counter() - val_start
             metrics["metric_time"] = metric_time
             metrics["current_lr"] = current_lr   # UI·체크포인트에 기록
+            mean_iou = float(metrics.get("mean_iou", 0.0))
+            history.append({
+                "epoch": epoch, "train_loss": train_loss,
+                "val_loss": val_loss, "mean_iou": mean_iou,
+            })
             self.epoch_done.emit(epoch, train_loss, val_loss, metrics)
             log.info(
                 f"epoch {epoch} train={train_loss:.4f} val={val_loss:.4f} "
@@ -351,29 +359,56 @@ class TrainerWorker(QThread):
             )
 
             # ── Checkpoint ────────────────────────────────────────────────────
+            checkpoint = {
+                "epoch":                epoch,
+                "model_state_dict":     model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+                "train_loss":           train_loss,
+                "val_loss":             val_loss,
+                "metrics":              metrics,
+                "config":               {
+                    "image_w":      cfg.image_w,
+                    "image_h":      cfg.image_h,
+                    "sample_mode":  cfg.sample_mode,
+                    "model_source": self._model_source,
+                    "scheduler":    cfg.scheduler,
+                },
+            }
+            prefix = f"{self._ckpt_prefix}_" if self._ckpt_prefix else ""
+            if mean_iou > best_iou:
+                best_iou = mean_iou
+                best_path = _project.checkpoints_dir() / f"{prefix}best.pt"
+                torch.save(checkpoint, best_path)
+                log.info(f"best model saved: {best_path} (IoU={best_iou:.4f})")
+                self.checkpoint_saved.emit(str(best_path))
+
             if epoch % cfg.checkpoint_every == 0:
                 checkpoint_start = time.perf_counter()
-                prefix = f"{self._ckpt_prefix}_" if self._ckpt_prefix else ""
                 path = _project.checkpoints_dir() / f"{prefix}epoch_{epoch:04d}.pt"
-                torch.save({
-                    "epoch":                epoch,
-                    "model_state_dict":     model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
-                    "train_loss":           train_loss,
-                    "val_loss":             val_loss,
-                    "metrics":              metrics,
-                    "config":               {
-                        "image_w":      cfg.image_w,
-                        "image_h":      cfg.image_h,
-                        "sample_mode":  cfg.sample_mode,
-                        "model_source": self._model_source,
-                        "scheduler":    cfg.scheduler,
-                    },
-                }, path)
+                torch.save(checkpoint, path)
                 checkpoint_time = time.perf_counter() - checkpoint_start
                 log.info(f"checkpoint saved: {path} ({checkpoint_time:.2f}s)")
                 self.checkpoint_saved.emit(str(path))
+
+        if history:
+            report_path = _project.checkpoints_dir() / f"{prefix}training_metrics.json"
+            report_path.write_text(
+                json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            from matplotlib.figure import Figure
+            fig = Figure(figsize=(8, 5), tight_layout=True)
+            ax = fig.add_subplot(111)
+            epochs = [row["epoch"] for row in history]
+            ax.plot(epochs, [row["train_loss"] for row in history], label="Train Loss")
+            ax.plot(epochs, [row["val_loss"] for row in history], label="Val Loss")
+            ax.set_xlabel("Epoch")
+            ax.legend(loc="upper left")
+            iou_ax = ax.twinx()
+            iou_ax.plot(epochs, [row["mean_iou"] for row in history],
+                        color="green", label="IoU")
+            iou_ax.set_ylabel("IoU")
+            fig.savefig(_project.checkpoints_dir() / f"{prefix}training_metrics.png")
 
         self.training_finished.emit()
 

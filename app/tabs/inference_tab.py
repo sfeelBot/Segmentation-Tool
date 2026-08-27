@@ -5,10 +5,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
     QFileDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QGroupBox, QSplitter, QHeaderView,
-    QApplication, QProgressDialog,
+    QApplication, QProgressDialog, QProgressBar,
 )
-from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
 
 from app.widgets.icons import icon as svg_icon
 
@@ -30,11 +30,60 @@ _SPLITTER_STYLE = (
 )
 
 
+class _InferenceWorker(QThread):
+    """목록을 한 장씩 추론해 진행 상황을 즉시 UI에 전달한다."""
+    result_ready = pyqtSignal(object, object, int, int)
+    failed = pyqtSignal(object, str)
+
+    def __init__(self, model, paths: list[Path], checkpoint_path: Path,
+                 mode: str, overlap: int, opacity: float,
+                 min_confidence: float, min_pixel_size: int) -> None:
+        super().__init__()
+        self._model = model
+        self._paths = paths
+        self._checkpoint_path = checkpoint_path
+        self._mode = mode
+        self._overlap = overlap
+        self._opacity = opacity
+        self._min_confidence = min_confidence
+        self._min_pixel_size = min_pixel_size
+
+    def run(self) -> None:
+        total = len(self._paths)
+        try:
+            prepared = engine.prepare_inference(self._model, self._checkpoint_path)
+        except Exception as exc:
+            self.failed.emit(self._checkpoint_path, str(exc))
+            return
+        for done, path in enumerate(self._paths, 1):
+            if self.isInterruptionRequested():
+                break
+            try:
+                kwargs = dict(
+                    model=self._model, image_path=path,
+                    checkpoint_path=self._checkpoint_path,
+                    opacity=self._opacity,
+                    min_confidence=self._min_confidence,
+                    min_pixel_size=self._min_pixel_size,
+                    prepared=prepared,
+                )
+                if self._mode == "sliding_window":
+                    result = engine.run_sliding_window(overlap=self._overlap, **kwargs)
+                else:
+                    result = engine.run(**kwargs)
+                self.result_ready.emit(path, result, done, total)
+            except Exception as exc:
+                self.failed.emit(path, str(exc))
+
+
 class InferenceTab(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._image_path: Path | None = None
         self._last_result: InferenceResult | None = None
+        self._results: dict[Path, InferenceResult] = {}
+        self._overlay_visible = True
+        self._worker: _InferenceWorker | None = None
         self._ckpt_metas: list[CheckpointMeta] = []
         self._auto_model = None   # 체크포인트 선택 시 자동으로 결정된 모델
         self._build_ui()
@@ -74,6 +123,12 @@ class InferenceTab(QWidget):
         self._btn_run = QPushButton("▶  추론 실행")
         self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
         ctrl.addWidget(self._btn_run)
+
+        self._infer_progress = QProgressBar()
+        self._infer_progress.setFormat("%v / %m")
+        self._infer_progress.setFixedWidth(120)
+        self._infer_progress.hide()
+        ctrl.addWidget(self._infer_progress)
 
         self._btn_export_excel = QPushButton(" Excel로 내보내기")
         self._btn_export_excel.setIcon(svg_icon("export"))
@@ -296,6 +351,7 @@ class InferenceTab(QWidget):
         self._image_path = path
         self._lbl_filename.setText(path.name)
         self._lbl_filename.setStyleSheet("color:#e5e7eb; padding:2px 4px;")
+        self._show_current_image()
         self._update_nav_label()
 
     def _on_copy_filename(self) -> None:
@@ -388,40 +444,68 @@ class InferenceTab(QWidget):
         if not prompt_gpu_availability(self, "추론"):
             return
 
+        paths = self._img_list.paths() or [self._image_path]
+        self._results.clear()
+        self._last_result = None
+        self._show_current_image()
         self._btn_run.setEnabled(False)
         self._btn_run.setText("추론 중…")
-        try:
-            mode = self._infer_mode.currentData()
-            min_confidence = self._min_conf_spin.value() / 100.0
-            min_pixel_size = self._min_px_spin.value()
-            if mode == "sliding_window":
-                result = engine.run_sliding_window(
-                    model           = model,
-                    image_path      = self._image_path,
-                    checkpoint_path = ckpt_path,
-                    overlap         = self._overlap_spin.value(),
-                    opacity         = self._viewer_panel.opacity,
-                    min_confidence  = min_confidence,
-                    min_pixel_size  = min_pixel_size,
-                )
-            else:
-                result = engine.run(
-                    model           = model,
-                    image_path      = self._image_path,
-                    checkpoint_path = ckpt_path,
-                    opacity         = self._viewer_panel.opacity,
-                    min_confidence  = min_confidence,
-                    min_pixel_size  = min_pixel_size,
-                )
+        self._infer_progress.setRange(0, len(paths))
+        self._infer_progress.setValue(0)
+        self._infer_progress.show()
+        self._worker = _InferenceWorker(
+            model, paths, ckpt_path, self._infer_mode.currentData(),
+            self._overlap_spin.value(), self._viewer_panel.opacity,
+            self._min_conf_spin.value() / 100.0, self._min_px_spin.value(),
+        )
+        self._worker.result_ready.connect(self._on_result_ready)
+        self._worker.failed.connect(self._on_inference_failed)
+        self._worker.finished.connect(self._on_inference_finished)
+        self._worker.start()
+
+    def _on_result_ready(self, path: Path, result: InferenceResult,
+                         done: int, total: int) -> None:
+        self._results[path] = result
+        self._infer_progress.setValue(done)
+        self._infer_progress.setFormat(f"{done} / {total}  {path.name}")
+        if path == self._image_path:
             self._last_result = result
+            self._show_current_image()
+            self._update_legend(result)
+
+    def _on_inference_failed(self, path: Path, message: str) -> None:
+        log.error(f"추론 실패 — image={path}: {message}")
+
+    def _on_inference_finished(self) -> None:
+        failed = self._infer_progress.maximum() - len(self._results)
+        self._btn_run.setEnabled(True)
+        self._btn_run.setText("▶  전체 추론 실행")
+        self._infer_progress.setFormat(
+            f"완료 {len(self._results)} / {self._infer_progress.maximum()}"
+        )
+        self._worker = None
+        if failed:
+            QMessageBox.warning(self, "일괄 추론 완료",
+                                f"{failed}개 이미지의 추론에 실패했습니다.")
+
+    def _show_current_image(self) -> None:
+        if self._image_path is None:
+            return
+        result = self._results.get(self._image_path)
+        self._last_result = result
+        if self._overlay_visible and result is not None:
             self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap)
             self._update_legend(result)
-        except Exception as exc:
-            log.exception(f"추론 실패 — image={self._image_path}, ckpt={ckpt_path}")
-            QMessageBox.critical(self, "추론 오류", str(exc))
-        finally:
-            self._btn_run.setEnabled(True)
-            self._btn_run.setText("▶  추론 실행")
+        else:
+            self._viewer_panel.viewer.set_pixmap(QPixmap(str(self._image_path)))
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self._overlay_visible = not self._overlay_visible
+            self._show_current_image()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _on_opacity_changed(self, opacity: float) -> None:
         # 모델 재실행 없이 캐시된 raw_class_map/confidence_map으로 즉시 재합성
@@ -438,7 +522,9 @@ class InferenceTab(QWidget):
                 opacity        = opacity,
             )
             self._last_result = result
-            self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap)
+            if self._image_path is not None:
+                self._results[self._image_path] = result
+            self._show_current_image()
         except Exception:
             pass
 
@@ -456,7 +542,9 @@ class InferenceTab(QWidget):
                 opacity        = self._viewer_panel.opacity,
             )
             self._last_result = result
-            self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap)
+            if self._image_path is not None:
+                self._results[self._image_path] = result
+            self._show_current_image()
             self._update_legend(result)
         except Exception:
             pass

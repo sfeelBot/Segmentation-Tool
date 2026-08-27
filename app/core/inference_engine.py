@@ -52,6 +52,18 @@ class InferenceResult:
     blobs: list[BlobStat]
 
 
+PreparedInference = tuple[dict, torch.device]
+
+
+def prepare_inference(model: nn.Module, checkpoint_path: Path | str) -> PreparedInference:
+    """일괄 추론에서 체크포인트와 모델 가중치를 한 번만 준비한다."""
+    device = _pick_device()
+    ckpt = torch.load(str(checkpoint_path), map_location=device)
+    model.load_state_dict(ckpt.get("model_state_dict", ckpt), strict=False)
+    model.to(device).eval()
+    return ckpt, device
+
+
 def run(
     model: nn.Module,
     image_path: Path | str,
@@ -59,6 +71,7 @@ def run(
     opacity: float = 0.5,
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
+    prepared: PreparedInference | None = None,
 ) -> InferenceResult:
     """
     Returns InferenceResult.
@@ -68,13 +81,7 @@ def run(
     """
     classes  = load_classes()
     cls_map  = {c.class_id: c for c in classes}
-    device   = _pick_device()
-
-    # ── 체크포인트 로드 ────────────────────────────────────────────────────────
-    ckpt = torch.load(str(checkpoint_path), map_location=device)
-    state = ckpt.get("model_state_dict", ckpt)  # full ckpt 또는 raw state_dict 허용
-    model.load_state_dict(state, strict=False)
-    model.to(device).eval()
+    ckpt, device = prepared or prepare_inference(model, checkpoint_path)
 
     # ── 이미지 전처리 ──────────────────────────────────────────────────────────
     pil_img = Image.open(str(image_path)).convert("RGB")
@@ -147,6 +154,7 @@ def run_sliding_window(
     opacity: float = 0.5,
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
+    prepared: PreparedInference | None = None,
 ) -> InferenceResult:
     """패치 학습 모델용 슬라이딩 윈도우 추론.
 
@@ -158,12 +166,7 @@ def run_sliding_window(
     """
     classes = load_classes()
     cls_map = {c.class_id: c for c in classes}
-    device  = _pick_device()
-
-    ckpt = torch.load(str(checkpoint_path), map_location=device)
-    state = ckpt.get("model_state_dict", ckpt)
-    model.load_state_dict(state, strict=False)
-    model.to(device).eval()
+    ckpt, device = prepared or prepare_inference(model, checkpoint_path)
 
     pil_img = Image.open(str(image_path)).convert("RGB")
     orig_w, orig_h = pil_img.size
