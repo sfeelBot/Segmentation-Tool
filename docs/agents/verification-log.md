@@ -1,5 +1,11 @@
 # 검증 (Verification) 로그
 
+## 2026-08-28 — GitHub #23 존 분석 오버레이 밝기 후속 검증
+
+- 상태: 완료.
+- `tests/test_zone_github_13_14.py`: 배경 RGB 원본 유지 및 전경 50% 혼합 픽셀 검증 포함, 통과.
+- `py_compile app/core/inference_engine.py tests/test_zone_github_13_14.py` 통과.
+
 ## 2026-08-28 — GitHub #23 존 분석
 
 - 기존 존 회귀 self-check에 `F` 토글과 전체 이미지 worker 검증을 추가해 통과.

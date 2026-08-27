@@ -1,5 +1,11 @@
 # 구현 (Implementation) 로그
 
+## 2026-08-28 — GitHub #23 존 분석 오버레이 밝기 후속 수정
+
+- 상태: 완료.
+- `inference_engine._colorize_and_blend()`에서 배경(클래스 0)은 원본 픽셀을 유지하고 전경에만 opacity를 적용하도록 수정.
+- 공통 합성 함수를 사용하는 일반 추론, sliding-window 추론, 재필터링 경로에 함께 적용됨.
+
 ## 2026-08-28 — GitHub #23 존 분석
 
 - 원본/오버레이 `F` 토글과 전체 이미지 QThread 추론, resize/sliding-window 선택 구현.

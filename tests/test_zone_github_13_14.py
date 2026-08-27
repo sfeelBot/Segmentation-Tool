@@ -7,6 +7,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
 from PIL import Image
 from PyQt6 import QtSvg  # noqa: F401  # Windows DLL load order before torch imports
 from PyQt6.QtCore import QPoint, Qt
@@ -18,12 +19,30 @@ from app.tabs.zone_analysis_tab import (
     ZoneAnalysisTab, _PREVIEW_MAX_DIM, _ZoneInferenceWorker, _scale_circles,
 )
 from app.tabs import zone_analysis_tab as zone_tab_module
+from app.core.annotation_store import ClassDef
+from app.core.inference_engine import _colorize_and_blend
 from app.widgets.zone_canvas import ZoneCanvas
 import app.widgets.zone_canvas as zone_canvas_module
 
 
 def _app() -> QApplication:
     return QApplication.instance() or QApplication([])
+
+
+def test_overlay_opacity_preserves_background_brightness() -> None:
+    app = _app()
+    orig = Image.new("RGB", (2, 1))
+    orig.putdata([(120, 100, 80), (100, 80, 60)])
+    class_map = np.array([[0, 1]], dtype=np.int64)
+    classes = {
+        0: ClassDef(0, "background", (0, 0, 0)),
+        1: ClassDef(1, "foreground", (200, 160, 120)),
+    }
+
+    image = _colorize_and_blend(orig, class_map, classes, 0.5).toImage()
+
+    assert image.pixelColor(0, 0).getRgb()[:3] == (120, 100, 80)
+    assert image.pixelColor(1, 0).getRgb()[:3] == (150, 120, 90)
 
 
 def test_shared_center_and_diameter_undo() -> None:
@@ -133,6 +152,7 @@ def test_popup_and_fixed_batch_share_scaling() -> None:
 
 
 if __name__ == "__main__":
+    test_overlay_opacity_preserves_background_brightness()
     test_shared_center_and_diameter_undo()
     test_original_preview_and_failure_clear()
     test_f_toggles_zone_overlay()
