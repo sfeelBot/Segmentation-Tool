@@ -91,6 +91,8 @@ class ZoneAnalysisTab(QWidget):
         self._ckpt_path: Path | None = None
         self._model: nn.Module | None = None
         self._last_result: InferenceResult | None = None
+        self._original_pixmap: QPixmap | None = None
+        self._overlay_visible = True
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
@@ -354,6 +356,7 @@ class ZoneAnalysisTab(QWidget):
         self._btn_brush_erase.toggled.connect(self._on_brush_erase_toggled)
         self._erase_brush_spin.valueChanged.connect(self._canvas.set_erase_brush_size)
         self._canvas.erase_changed.connect(self._recompute_zones)
+        self._canvas.overlay_toggle_requested.connect(self._toggle_overlay)
         self._btn_undo.clicked.connect(self._canvas.undo)
         # Undo 버튼 활성/비활성 갱신 — 신규 시그널을 발명하지 않고 상태를 바꿀 수
         # 있는 기존 세 시그널(원변경/블랍삭제/지우기)에 편승한다(스펙 판단 1).
@@ -415,9 +418,11 @@ class ZoneAnalysisTab(QWidget):
                 preview_im = rgb_im.copy()
             preview_im.thumbnail((_PREVIEW_MAX_DIM, _PREVIEW_MAX_DIM), Image.BILINEAR)
             self._canvas.set_image_size(*self._image_size)
-            self._canvas.set_pixmap(_rgb_to_qpixmap(np.array(preview_im)))
+            self._original_pixmap = _rgb_to_qpixmap(np.array(preview_im))
+            self._canvas.set_pixmap(self._original_pixmap)
         except Exception:
             self._image_size = (0, 0)
+            self._original_pixmap = None
             self._canvas.set_image_size(*self._image_size)
             self._canvas.clear()
         self._canvas.clear_circles()
@@ -556,7 +561,7 @@ class ZoneAnalysisTab(QWidget):
 
         if not ids:
             self._lbl_target_info.setText("배경 외 클래스가 검출되지 않았습니다.")
-            self._canvas.set_pixmap(result.overlay_pixmap)
+            self._show_overlay_state()
             self._target_class_id = None
             self._canvas.set_blob_data(None, None)
             self._btn_blob_delete.setChecked(False)
@@ -615,7 +620,7 @@ class ZoneAnalysisTab(QWidget):
             )
             self._last_result = result
             self._target_class_id = cid
-            self._canvas.set_pixmap(result.overlay_pixmap)
+            self._show_overlay_state()
             # 타겟 클래스가 (재)선택될 때마다 블랍 라벨맵을 새로 계산한다 — 라벨
             # id는 마스크에 종속적이라 클래스가 바뀌면 이전 삭제 이력은 무의미
             # (`ZoneCanvas.set_blob_data`가 삭제 이력도 함께 초기화).
@@ -632,6 +637,23 @@ class ZoneAnalysisTab(QWidget):
         except Exception as exc:
             log.exception("존 분석 타겟 클래스 재필터링 실패")
             QMessageBox.critical(self, "재필터링 오류", str(exc))
+
+    def _toggle_overlay(self) -> None:
+        self._overlay_visible = not self._overlay_visible
+        self._show_overlay_state()
+
+    def _show_overlay_state(self) -> None:
+        if self._overlay_visible and self._last_result is not None:
+            self._canvas.set_pixmap(self._last_result.overlay_pixmap)
+        elif self._original_pixmap is not None:
+            self._canvas.set_pixmap(self._original_pixmap)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self._toggle_overlay()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ── 슬롯 — 존(zone) 퍼센티지 계산/표시 (라운드 3) ────────────────────────
 

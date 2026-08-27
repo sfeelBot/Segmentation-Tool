@@ -83,6 +83,23 @@ def test_original_preview_and_failure_clear() -> None:
     tab.close()
 
 
+def test_f_toggles_zone_overlay() -> None:
+    tab = ZoneAnalysisTab()
+    original = QPixmap(8, 8)
+    overlay = QPixmap(8, 8)
+    original.fill(QColor("red"))
+    overlay.fill(QColor("blue"))
+    tab._original_pixmap = original
+    tab._last_result = type("Result", (), {"overlay_pixmap": overlay})()
+    tab._show_overlay_state()
+
+    QTest.keyClick(tab._canvas, Qt.Key.Key_F)
+
+    assert tab._overlay_visible is False
+    assert tab._canvas._pixmap.toImage().pixelColor(0, 0) == QColor("red")
+    tab.close()
+
+
 def test_popup_and_fixed_batch_share_scaling() -> None:
     circles = [(10.0, 20.0, 5.0), (40.0, 30.0, 8.0)]
     popup_to_main = _scale_circles(circles, (100, 200), (300, 400))
@@ -95,5 +112,6 @@ def test_popup_and_fixed_batch_share_scaling() -> None:
 if __name__ == "__main__":
     test_shared_center_and_diameter_undo()
     test_original_preview_and_failure_clear()
+    test_f_toggles_zone_overlay()
     test_popup_and_fixed_batch_share_scaling()
     print("OK: GitHub #13/#14 zone-analysis tests passed")

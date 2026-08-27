@@ -64,6 +64,7 @@ class _CircleItem:
 class ZoneCanvas(OverlayViewer):
     """추론 오버레이 표시 + 원 검출 결과 편집 캔버스."""
 
+    overlay_toggle_requested = pyqtSignal()
     circles_changed = pyqtSignal()          # 원 목록이 바뀔 때마다 (추가/이동/삭제 등)
     circle_selected = pyqtSignal(object)    # 선택된 원 id (없으면 None)
     zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스
@@ -631,6 +632,9 @@ class ZoneCanvas(OverlayViewer):
         # 모드(원편집/블랍삭제/브러시지우기)와 무관하게 가장 먼저 체크 —
         # 모드별 분기보다 뒤에 두면 블랍삭제/브러시지우기 모드 중 Ctrl+Z가
         # 죽는 회귀가 생긴다(스펙 판단 1).
+        if event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self.overlay_toggle_requested.emit()
+            return
         if event.matches(QKeySequence.StandardKey.Undo):
             self.undo()
             return
