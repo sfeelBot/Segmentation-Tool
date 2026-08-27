@@ -15,7 +15,9 @@ from PyQt6.QtWidgets import (
 )
 
 from app.core import project as _project
-from app.core.annotation_store import load as load_annotations, load_classes, rle_encode
+from app.core.annotation_store import (
+    load as load_annotations, load_classes, rle_encode, has_annotations,
+)
 from app.core.i18n import t
 from app.core.logger import get_logger
 
@@ -32,13 +34,13 @@ class ExportWorker(QThread):
     error    = pyqtSignal(str)
 
     def __init__(
-        self, out_dir: Path, fmt: str, pairs: list[tuple[Path, list]],
+        self, out_dir: Path, fmt: str, image_paths: list[Path],
         include_imgs: bool, relative: bool,
     ) -> None:
         super().__init__()
         self._out_dir      = out_dir
         self._fmt          = fmt
-        self._pairs        = pairs
+        self._image_paths  = image_paths
         self._include_imgs = include_imgs
         self._relative     = relative
 
@@ -46,19 +48,19 @@ class ExportWorker(QThread):
         try:
             self._out_dir.mkdir(parents=True, exist_ok=True)
             if self._fmt == "json":
-                self._export_json(self._pairs, self._include_imgs, self._relative)
+                self._export_json(self._image_paths, self._include_imgs, self._relative)
             elif self._fmt == "yolo":
-                self._export_yolo(self._pairs, self._include_imgs)   # YOLO는 항상 상대좌표
+                self._export_yolo(self._image_paths, self._include_imgs)   # YOLO는 항상 상대좌표
             elif self._fmt == "coco":
-                self._export_coco(self._pairs, self._include_imgs, self._relative)
-            self.finished.emit(len(self._pairs))
+                self._export_coco(self._image_paths, self._include_imgs, self._relative)
+            self.finished.emit(len(self._image_paths))
         except Exception as e:
             log.exception("내보내기 실패")
             self.error.emit(str(e))
 
     # ── 포맷별 ────────────────────────────────────────────────────────────────
 
-    def _export_json(self, pairs, include_images: bool, relative: bool) -> None:
+    def _export_json(self, image_paths, include_images: bool, relative: bool) -> None:
         classes = [
             {"class_id": c.class_id, "name": c.name, "color": list(c.color)}
             for c in load_classes()
@@ -73,7 +75,8 @@ class ExportWorker(QThread):
         if include_images:
             img_out.mkdir(exist_ok=True)
 
-        for i, (img_path, anns) in enumerate(pairs, 1):
+        for i, img_path in enumerate(image_paths, 1):
+            anns = load_annotations(img_path)   # 이미지 1장 분량만 로드 — 전체를 미리 쌓아두지 않음
             w, h = _image_size(img_path)
             ann_list = []
             for a in anns:
@@ -108,9 +111,9 @@ class ExportWorker(QThread):
             )
             if include_images:
                 shutil.copy2(img_path, img_out / img_path.name)
-            self.progress.emit(i, len(pairs), img_path.name)
+            self.progress.emit(i, len(image_paths), img_path.name)
 
-    def _export_yolo(self, pairs, include_images: bool) -> None:
+    def _export_yolo(self, image_paths, include_images: bool) -> None:
         """YOLO segmentation 포맷: `class_id x1 y1 x2 y2 … xn yn` (모두 0~1 상대좌표).
         brush_mask 는 외곽 컨투어를 폴리곤으로 변환해서 저장."""
         import cv2
@@ -125,7 +128,8 @@ class ExportWorker(QThread):
         if include_images:
             img_out.mkdir(exist_ok=True)
 
-        for i, (img_path, anns) in enumerate(pairs, 1):
+        for i, img_path in enumerate(image_paths, 1):
+            anns = load_annotations(img_path)
             w, h = _image_size(img_path)
             lines: list[str] = []
             for a in anns:
@@ -153,9 +157,9 @@ class ExportWorker(QThread):
             )
             if include_images:
                 shutil.copy2(img_path, img_out / img_path.name)
-            self.progress.emit(i, len(pairs), img_path.name)
+            self.progress.emit(i, len(image_paths), img_path.name)
 
-    def _export_coco(self, pairs, include_images: bool, relative: bool) -> None:
+    def _export_coco(self, image_paths, include_images: bool, relative: bool) -> None:
         """COCO segmentation 포맷. relative=True 일 경우 segmentation 좌표만 0~1."""
         import cv2
 
@@ -173,7 +177,8 @@ class ExportWorker(QThread):
         if include_images:
             img_out.mkdir(exist_ok=True)
 
-        for i, (img_path, anns) in enumerate(pairs, 1):
+        for i, img_path in enumerate(image_paths, 1):
+            anns = load_annotations(img_path)
             w, h = _image_size(img_path)
             images.append({
                 "id": i, "file_name": img_path.name,
@@ -227,7 +232,7 @@ class ExportWorker(QThread):
                     ann_id += 1
             if include_images:
                 shutil.copy2(img_path, img_out / img_path.name)
-            self.progress.emit(i, len(pairs), img_path.name)
+            self.progress.emit(i, len(image_paths), img_path.name)
 
         (self._out_dir / "annotations.json").write_text(
             json.dumps({
@@ -340,28 +345,30 @@ class ExportDialog(QDialog):
         relative     = self._chk_relative.isChecked()
         fmt          = self._combo_fmt.currentData()
 
+        # 어노테이션 유무만 가볍게 확인(RLE 디코딩 없음) — 실제 로드는 워커가 이미지마다
+        # 하나씩 수행한다. 대형 프로젝트에서 brush_mask 전체를 미리 메모리에 쌓아두면
+        # MemoryError가 나던 문제(수백 장 × 대형 마스크)를 막기 위함.
         img_dir = _project.images_dir()
-        pairs: list[tuple[Path, list]] = []
+        image_paths: list[Path] = []
         for p in sorted(img_dir.iterdir()):
             if p.suffix.lower() not in SUPPORTED_EXTS:
                 continue
-            anns = load_annotations(p)
-            if labeled_only and not anns:
+            if labeled_only and not has_annotations(p):
                 continue
-            pairs.append((p, anns))
+            image_paths.append(p)
 
-        if not pairs:
+        if not image_paths:
             QMessageBox.information(self, t("export.title"), t("export.no_data"))
             return
 
         self._progress.show()
-        self._progress.setMaximum(len(pairs))
+        self._progress.setMaximum(len(image_paths))
         self._progress.setValue(0)
         self._lbl_status.setText("")
         self._btn_run.setEnabled(False)
         self._btn_close.setEnabled(False)
 
-        self._worker = ExportWorker(self._out_dir, fmt, pairs, include_imgs, relative)
+        self._worker = ExportWorker(self._out_dir, fmt, image_paths, include_imgs, relative)
         self._worker.progress.connect(self._on_worker_progress)
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.error.connect(self._on_worker_error)
