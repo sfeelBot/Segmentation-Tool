@@ -2786,3 +2786,12 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
   때까지 기다리는 경합 방지 동작을 확인.
 - validation worker 0/pin memory, train cache 총 512MiB 분배, val cache 64MiB,
   batch signal 0.1초 제한·마지막 emit, 차트 2,000포인트 상한과 단계별 로그를 확인.
+
+## 2026-08-27 — 학습 설정 휠 변경 차단 검증
+
+- `ConfigForm`의 모든 `QSpinBox`·`QDoubleSpinBox`·`QComboBox`에 wheel event를 전달한
+  뒤 값과 선택 index가 변하지 않음을 확인: 2 passed.
+- 직접 `setValue()` 변경은 유지되며 `py_compile`, 관련 학습 성능 회귀 2 passed,
+  `git diff --check` 통과.
+- 다른 PyQt 테스트와 단일 프로세스 수집 시 기존 QtSvg DLL import-order 오류가 있어
+  관련 테스트를 분리 실행함.

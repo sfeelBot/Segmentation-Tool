@@ -2,11 +2,11 @@
 import os
 
 from PyQt6.QtWidgets import (
-    QWidget, QFormLayout, QHBoxLayout, QSpinBox, QDoubleSpinBox,
+    QWidget, QFormLayout, QHBoxLayout, QSpinBox, QDoubleSpinBox, QAbstractSpinBox,
     QComboBox, QCheckBox, QLabel, QGroupBox, QVBoxLayout,
     QPushButton, QToolTip, QStackedWidget,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QEvent
 
 from app.core.trainer import TrainingConfig
 from app.core.i18n import t
@@ -28,6 +28,20 @@ class ConfigForm(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._build_ui()
+        editors = [
+            *self.findChildren(QAbstractSpinBox),
+            *self.findChildren(QComboBox),
+        ]
+        for editor in editors:
+            editor.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        """학습 인자가 스크롤 중 우발적으로 바뀌지 않도록 휠 입력만 차단한다."""
+        if (event.type() == QEvent.Type.Wheel
+                and isinstance(watched, (QAbstractSpinBox, QComboBox))):
+            event.ignore()
+            return True
+        return super().eventFilter(watched, event)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
