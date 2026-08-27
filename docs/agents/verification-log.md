@@ -4446,3 +4446,16 @@ class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`는 no-
 ### 판정
 **통과 — 커밋 가능**. zone 화면/빌드 담당자는 `release.ini`와 CHANGELOG에서 마지막
 main 기준을 즉시 확인할 수 있음.
+
+---
+
+## 2026-08-27 — main 다중선택 일괄 양품화 zone 동기화 검증
+
+- zone 전용 제품/빌드 설정을 보존하면서 main `09933fd` 기능 코드와 테스트가 병합됐는지
+  정적 diff 및 자동 테스트로 확인.
+- `release.ini`의 마지막 main 기준을 `v1.8.0` / `09933fda4be250e3284cccd9742c76be32787fa5`
+  로 갱신하고 실제 zone HEAD 조상 관계를 검증.
+
+### 판정
+**통과.** main/빌드 관련 57개 테스트와 zone 전용 GitHub #13/#14 테스트 통과,
+`py_compile` 통과. zone 전용 제품·버전 설정 및 기능 회귀 없음.

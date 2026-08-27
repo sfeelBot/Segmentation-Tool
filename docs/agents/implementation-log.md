@@ -3910,3 +3910,13 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
   동시 설치 가능한 독립 산출물 규칙을 명시.
 - 생성기 성공, 저장소 내부 basetemp를 사용한 빌드 버전 테스트 20개 통과,
   `py_compile`/`diff --check` 통과.
+
+---
+
+## 2026-08-27 — main 다중선택 일괄 양품화 기능 zone 동기화
+
+- sync 브랜치 `sync/main-into-zone-analysis-20260827-r3`에서 `origin/main`을 병합.
+- 다중선택 양품화 코드·i18n·테스트·roadmap은 자동 병합됐고, zone 전용 release 설정과
+  build 기준 검증기 및 append-only 로그는 zone 쪽을 보존.
+- `main_base_commit`을 이번 동기화 대상 `09933fda4be250e3284cccd9742c76be32787fa5`로
+  갱신. main 기준 표시는 `v1.8.0 + 19 commits (09933fd)`.

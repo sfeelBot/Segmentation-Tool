@@ -1,5 +1,7 @@
 """JSON 어노테이션 읽기·쓰기 + RLE 코덱."""
 import json
+import os
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -212,6 +214,43 @@ def set_ok(image_path: Path, ok: bool, img_w: int = 0, img_h: int = 0) -> None:
     else:
         data.pop("ok", None)
     json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def set_ok_and_clear_annotations(image_path: Path) -> None:
+    """Mark one image OK and clear labels with one atomic JSON replacement.
+
+    This intentionally does not open or decode the image (or brush masks).  Existing
+    metadata such as image dimensions is retained.  Repeating the operation is safe.
+    """
+    ann_dir = _project.annotations_dir()
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    json_path = _ann_path(image_path)
+    if json_path.exists():
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"Annotation document must be a JSON object: {json_path}")
+    else:
+        data = {}
+    data.setdefault("version", "1.0")
+    data.setdefault("image", image_path.name)
+    data["annotations"] = []
+    data["ok"] = True
+
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{json_path.name}.", suffix=".tmp", dir=ann_dir
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+            json.dump(data, temp_file, ensure_ascii=False, indent=2)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_name, json_path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
 
 
 # ── RLE コーデック ─────────────────────────────────────────────────────────────
