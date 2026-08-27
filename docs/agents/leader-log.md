@@ -13,7 +13,8 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 > **[최신, 2026-08-27] main 다중선택 일괄 양품화 기능을 zone에 동기화.** sync 브랜치
 > `sync/main-into-zone-analysis-20260827-r3`에서 main `09933fd`를 반영하고 zone 전용
 > 빌드/제품 설정을 보존했다. 마지막 main 기준은 `v1.8.0 + 19 commits (09933fd)`로
-> 갱신. 테스트 후 PR로 `feature/zone-analysis-tab`에 병합 예정.
+> 갱신. main/빌드 관련 57개 + zone 전용 #13/#14 테스트 통과. PR로
+> `feature/zone-analysis-tab`에 병합 예정.
 >
 > **[최신, 2026-08-27] main/zone 빌드 버전 관리 분리 완료.** main은 `release.ini`의
 > `vX.Y.Z`, zone은 별도 제품 ID와 `zone-vX.Y.Z`를 단일 편집 지점으로 사용한다.
