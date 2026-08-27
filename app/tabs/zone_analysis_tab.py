@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem, QCheckBox,
     QProgressDialog, QApplication, QProgressBar,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
 import torch.nn as nn
 
@@ -127,6 +127,10 @@ class ZoneAnalysisTab(QWidget):
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
         self._image_size: tuple[int, int] = (0, 0)   # (w, h) — 원본 이미지 픽셀 크기
+        self._threshold_timer = QTimer(self)
+        self._threshold_timer.setSingleShot(True)
+        self._threshold_timer.setInterval(150)
+        self._threshold_timer.timeout.connect(self._on_target_changed)
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -385,10 +389,10 @@ class ZoneAnalysisTab(QWidget):
         self._conf_slider.valueChanged.connect(
             lambda v: self._lbl_confidence.setText(f"{v}%")
         )
-        self._conf_slider.valueChanged.connect(self._on_target_changed)
-        self._min_px_spin.valueChanged.connect(self._on_target_changed)
+        self._conf_slider.valueChanged.connect(lambda _v: self._threshold_timer.start())
+        self._min_px_spin.valueChanged.connect(lambda _v: self._threshold_timer.start())
         self._canvas.circles_changed.connect(self._refresh_circle_list)
-        self._canvas.circles_changed.connect(self._recompute_zones)
+        self._canvas.circles_committed.connect(self._recompute_zones)
         self._canvas.circles_changed.connect(self._update_batch_button_state)
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
@@ -457,10 +461,10 @@ class ZoneAnalysisTab(QWidget):
             with Image.open(str(path)) as im:
                 rgb_im = im.convert("RGB")
                 self._image_size = rgb_im.size   # (w, h)
-                preview_im = rgb_im.copy()
-            preview_im.thumbnail((_PREVIEW_MAX_DIM, _PREVIEW_MAX_DIM), Image.BILINEAR)
+                rgb_im.thumbnail((_PREVIEW_MAX_DIM, _PREVIEW_MAX_DIM), Image.BILINEAR)
+                preview_rgb = np.array(rgb_im)
             self._canvas.set_image_size(*self._image_size)
-            self._original_pixmap = _rgb_to_qpixmap(np.array(preview_im))
+            self._original_pixmap = _rgb_to_qpixmap(preview_rgb)
             self._canvas.set_pixmap(self._original_pixmap)
         except Exception:
             self._image_size = (0, 0)
@@ -702,9 +706,9 @@ class ZoneAnalysisTab(QWidget):
 
     def _show_overlay_state(self) -> None:
         if self._overlay_visible and self._last_result is not None:
-            self._canvas.set_pixmap(self._last_result.overlay_pixmap)
+            self._canvas.set_pixmap(self._last_result.overlay_pixmap, preserve_view=True)
         elif self._original_pixmap is not None:
-            self._canvas.set_pixmap(self._original_pixmap)
+            self._canvas.set_pixmap(self._original_pixmap, preserve_view=True)
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.NoModifier:

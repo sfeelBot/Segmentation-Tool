@@ -1,5 +1,13 @@
 # 구현 (Implementation) 로그
 
+## 2026-08-28 — GitHub #23 존 분석 UI 병목 후속 개선
+
+- 상태: 완료.
+- threshold `valueChanged`의 동기 전체 재계산을 150ms single-shot debounce로 통합했다.
+- 원 드래그 중 목록 표시는 유지하고, 원본 해상도 존 계산은 `circles_committed`로 release 시 1회만 수행한다.
+- 오버레이/원본 픽스맵 교체는 줌·팬을 보존하고, 20MP 미리보기의 불필요한 전체 RGB 복사(약 59.9MB)를 제거했다.
+- 모델 선택 UI 분리는 구현하지 않고 zone 에디션 후속 과제로 문서화했다.
+
 ## 2026-08-28 — GitHub #23 존 분석 오버레이 밝기 후속 수정
 
 - 상태: 완료.

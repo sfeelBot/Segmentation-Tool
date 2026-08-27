@@ -25,9 +25,10 @@ class OverlayViewer(QWidget):
 
     # ── 공개 ─────────────────────────────────────────────────────────────────
 
-    def set_pixmap(self, pixmap: QPixmap) -> None:
+    def set_pixmap(self, pixmap: QPixmap, preserve_view: bool = False) -> None:
         self._pixmap = pixmap
-        self._fit_view()
+        if not preserve_view:
+            self._fit_view()
         self.update()
 
     def clear(self) -> None:

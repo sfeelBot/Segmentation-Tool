@@ -10,9 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 from PIL import Image
 from PyQt6 import QtSvg  # noqa: F401  # Windows DLL load order before torch imports
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtTest import QTest
+from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication
 
 from app.tabs.zone_analysis_tab import (
@@ -43,6 +43,74 @@ def test_overlay_opacity_preserves_background_brightness() -> None:
 
     assert image.pixelColor(0, 0).getRgb()[:3] == (120, 100, 80)
     assert image.pixelColor(1, 0).getRgb()[:3] == (150, 120, 90)
+
+
+def test_pixmap_refresh_preserves_zoom_and_pan() -> None:
+    _app_ref = _app()
+    canvas = ZoneCanvas()
+    canvas.set_pixmap(QPixmap(20, 20))
+    canvas._zoom = 2.5
+    canvas._pan = QPointF(12.0, 34.0)
+
+    canvas.set_pixmap(QPixmap(20, 20), preserve_view=True)
+
+    assert canvas._zoom == 2.5
+    assert canvas._pan == QPointF(12.0, 34.0)
+
+
+def test_threshold_changes_are_debounced() -> None:
+    app = _app()
+    tab = ZoneAnalysisTab()
+    pixmap = QPixmap(2, 2)
+    result = type("Result", (), {
+        "raw_class_map": np.ones((2, 2), dtype=np.int64),
+        "confidence_map": np.ones((2, 2), dtype=np.float32),
+        "class_map": np.ones((2, 2), dtype=np.int64),
+        "overlay_pixmap": pixmap,
+    })()
+    tab._last_result = result
+    tab._detected_ids = [1]
+    tab._image_path = Path("unused.png")
+    calls = []
+    previous = zone_tab_module.engine.refilter
+    try:
+        zone_tab_module.engine.refilter = lambda *args, **kwargs: calls.append(kwargs) or result
+        for value in range(1, 31):
+            tab._conf_slider.setValue(value)
+        assert calls == []
+        QTest.qWait(180)
+        app.processEvents()
+    finally:
+        zone_tab_module.engine.refilter = previous
+    assert len(calls) == 1
+    tab.close()
+
+
+def test_circle_drag_commits_zone_calculation_once() -> None:
+    app = _app()
+    canvas = ZoneCanvas()
+    canvas.resize(500, 400)
+    canvas.set_image_size(400, 300)
+    canvas.set_pixmap(QPixmap(400, 300))
+    canvas.set_circles([(100.0, 100.0, 20.0)])
+    canvas.show()
+    app.processEvents()
+    committed = QSignalSpy(canvas.circles_committed)
+    center, _ = canvas._orig_to_screen(100.0, 100.0, 20.0)
+    start = QPoint(round(center.x()), round(center.y()))
+    end = QPoint(start.x() + 30, start.y() + 20)
+
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=start)
+    for step in range(1, 11):
+        QTest.mouseMove(
+            canvas,
+            QPoint(start.x() + 3 * step, start.y() + 2 * step),
+        )
+    assert len(committed) == 0
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=end)
+
+    assert len(committed) == 1
+    canvas.close()
 
 
 def test_shared_center_and_diameter_undo() -> None:
@@ -106,6 +174,7 @@ def test_original_preview_and_failure_clear() -> None:
 
 
 def test_f_toggles_zone_overlay() -> None:
+    _app_ref = _app()
     tab = ZoneAnalysisTab()
     original = QPixmap(8, 8)
     overlay = QPixmap(8, 8)

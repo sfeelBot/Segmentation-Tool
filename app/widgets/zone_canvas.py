@@ -66,6 +66,7 @@ class ZoneCanvas(OverlayViewer):
 
     overlay_toggle_requested = pyqtSignal()
     circles_changed = pyqtSignal()          # 원 목록이 바뀔 때마다 (추가/이동/삭제 등)
+    circles_committed = pyqtSignal()        # 원 편집 완료 — 원본 해상도 존 계산용
     circle_selected = pyqtSignal(object)    # 선택된 원 id (없으면 None)
     zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스
     blob_deleted = pyqtSignal(int)          # 블랍 삭제 모드에서 클릭으로 삭제된 블랍 라벨 id
@@ -112,6 +113,7 @@ class ZoneCanvas(OverlayViewer):
         self._highlighted_zone = None
         self.update()
         self.circles_changed.emit()
+        self.circles_committed.emit()
         self.circle_selected.emit(None)
 
     def set_circles(self, circles: list[tuple[float, float, float]]) -> None:
@@ -125,6 +127,7 @@ class ZoneCanvas(OverlayViewer):
         self._highlighted_zone = None
         self.update()
         self.circles_changed.emit()
+        self.circles_committed.emit()
 
     def get_circles(self) -> list[tuple[float, float, float]]:
         """반지름 오름차순 (cx, cy, r) 리스트."""
@@ -164,6 +167,7 @@ class ZoneCanvas(OverlayViewer):
         self._highlighted_zone = None
         self.update()
         self.circles_changed.emit()
+        self.circles_committed.emit()
         self.circle_selected.emit(None)
 
     # ── 블랍 삭제 모드 (라운드 4) ────────────────────────────────────────────
@@ -333,6 +337,7 @@ class ZoneCanvas(OverlayViewer):
         self._erasing = False
         self.update()
         self.circles_changed.emit()
+        self.circles_committed.emit()
 
     def _handle_blob_click(self, event) -> None:
         if (self._pixmap is None or event.button() != Qt.MouseButton.LeftButton
@@ -627,6 +632,7 @@ class ZoneCanvas(OverlayViewer):
         super().mouseReleaseEvent(event)
         self.update()
         self.circles_changed.emit()
+        self.circles_committed.emit()
 
     def keyPressEvent(self, event) -> None:
         # 모드(원편집/블랍삭제/브러시지우기)와 무관하게 가장 먼저 체크 —
@@ -685,3 +691,4 @@ class ZoneCanvas(OverlayViewer):
         item.r = diameter / 2
         self.update()
         self.circles_changed.emit()
+        self.circles_committed.emit()
