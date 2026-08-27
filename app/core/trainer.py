@@ -289,6 +289,12 @@ class TrainerWorker(QThread):
                     scheduler.step()
                 batch_wait_start = time.perf_counter()
 
+            # 현재 GPU batch는 안전하게 마친 뒤 즉시 epoch를 빠져나간다. 이전에는
+            # 중지 요청 후에도 validation·metric·checkpoint까지 계속 실행됐다.
+            if self._stop.is_set():
+                log.info("학습 중지 요청 반영 — validation 이전에 현재 작업 종료")
+                break
+
             if len(train_loader) > 0:
                 train_loss /= len(train_loader)
 
@@ -300,6 +306,8 @@ class TrainerWorker(QThread):
             metric_accumulator = StreamingSegmentationMetrics(self._num_classes)
             with torch.no_grad():
                 for images, masks in val_loader:
+                    if self._stop.is_set():
+                        break
                     images = images.to(device, non_blocking=True)
                     masks  = masks.to(device,  non_blocking=True)
                     with torch.autocast(device.type, enabled=use_amp):
@@ -309,6 +317,10 @@ class TrainerWorker(QThread):
                     metric_start = time.perf_counter()
                     metric_accumulator.update(preds, masks)
                     metric_time += time.perf_counter() - metric_start
+
+            if self._stop.is_set():
+                log.info("학습 중지 요청 반영 — validation 중 현재 작업 종료")
+                break
 
             if len(val_loader) > 0:
                 val_loss /= len(val_loader)

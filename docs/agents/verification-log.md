@@ -2795,3 +2795,13 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
   `git diff --check` 통과.
 - 다른 PyQt 테스트와 단일 프로세스 수집 시 기존 QtSvg DLL import-order 오류가 있어
   관련 테스트를 분리 실행함.
+
+## 2026-08-27 — 학습 큐 중지 응답 개선 검증
+
+- 독립 임시 테스트 포함 16 passed, 변경 모듈 `py_compile`, `git diff --check` 통과.
+- train batch 중 stop은 현재 batch 안전 완료 후 validation·epoch metric·checkpoint를
+  생략하고 `training_finished`를 1회 emit함을 확인.
+- validation 중 stop도 현재 validation batch 경계에서 종료하고 이후 metric/checkpoint를
+  실행하지 않음을 확인.
+- 현재 작업만 중지하면 다음 waiting 작업으로 진행하며 메인/진행창 중지 버튼이 복구되고,
+  전체 중지는 다음 작업을 실행하지 않고 큐 잠금을 해제함을 확인.

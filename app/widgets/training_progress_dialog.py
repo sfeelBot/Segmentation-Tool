@@ -162,6 +162,11 @@ class TrainingProgressDialog(QDialog):
         self._btn_stop_current.setEnabled(False)
         self._btn_stop_all.setEnabled(False)
 
+    def set_stopping(self) -> None:
+        """중지 요청 처리 중 중복 요청을 막는다."""
+        self._btn_stop_current.setEnabled(False)
+        self._btn_stop_all.setEnabled(False)
+
     def reset_running_state(self) -> None:
         self._btn_stop_current.setEnabled(True)
         self._btn_stop_all.setEnabled(True)
