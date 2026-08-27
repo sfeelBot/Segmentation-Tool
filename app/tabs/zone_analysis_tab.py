@@ -27,9 +27,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
     QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem, QCheckBox,
-    QProgressDialog, QApplication,
+    QProgressDialog, QApplication, QProgressBar,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
 import torch.nn as nn
 
@@ -57,6 +57,34 @@ log = get_logger(__name__)
 _DEFAULT_MIN_CONFIDENCE = 0.0
 _DEFAULT_MIN_PIXEL_SIZE = 0
 _PREVIEW_MAX_DIM = 2048
+
+
+class _ZoneInferenceWorker(QThread):
+    result_ready = pyqtSignal(object, object, int, int)
+    failed = pyqtSignal(object, str)
+
+    def __init__(self, model, paths: list[Path], checkpoint_path: Path,
+                 mode: str) -> None:
+        super().__init__()
+        self._model = model
+        self._paths = paths
+        self._checkpoint_path = checkpoint_path
+        self._mode = mode
+
+    def run(self) -> None:
+        total = len(self._paths)
+        for done, path in enumerate(self._paths, 1):
+            try:
+                kwargs = dict(
+                    model=self._model, image_path=path,
+                    checkpoint_path=self._checkpoint_path,
+                    opacity=0.5, classes=None,
+                )
+                result = (engine.run_sliding_window(**kwargs)
+                          if self._mode == "sliding_window" else engine.run(**kwargs))
+                self.result_ready.emit(path, result, done, total)
+            except Exception as exc:
+                self.failed.emit(path, str(exc))
 
 
 def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
@@ -93,6 +121,8 @@ class ZoneAnalysisTab(QWidget):
         self._last_result: InferenceResult | None = None
         self._original_pixmap: QPixmap | None = None
         self._overlay_visible = True
+        self._results: dict[Path, InferenceResult] = {}
+        self._worker: _ZoneInferenceWorker | None = None
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
@@ -126,6 +156,17 @@ class ZoneAnalysisTab(QWidget):
         self._btn_run = QPushButton("▶  추론 실행")
         self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
         toolbar_row1.addWidget(self._btn_run)
+
+        self._infer_mode = QComboBox()
+        self._infer_mode.addItem("resize", "resize")
+        self._infer_mode.addItem("sliding window", "sliding_window")
+        self._infer_mode.setToolTip("패치 학습 모델은 sliding window를 선택하세요")
+        toolbar_row1.addWidget(self._infer_mode)
+
+        self._infer_progress = QProgressBar()
+        self._infer_progress.setFixedWidth(110)
+        self._infer_progress.hide()
+        toolbar_row1.addWidget(self._infer_progress)
 
         toolbar_row1.addWidget(QLabel("타겟(녹) 클래스:"))
         self._target_name_edit = QLineEdit()
@@ -411,6 +452,7 @@ class ZoneAnalysisTab(QWidget):
         선택)했을 때 — 기존 단일 이미지 로드 로직 그대로 재사용. 자동 추론은
         실행하지 않는다(스펙 명시 — 수동 '▶ 추론 실행' 트리거 유지)."""
         self._image_path = path
+        self._last_result = self._results.get(path)
         try:
             with Image.open(str(path)) as im:
                 rgb_im = im.convert("RGB")
@@ -433,6 +475,8 @@ class ZoneAnalysisTab(QWidget):
         self._btn_brush_erase.setChecked(False)
         self._btn_brush_erase.setEnabled(False)
         self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
+        if self._last_result is not None:
+            self._setup_target_classes(self._last_result)
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -529,25 +573,39 @@ class ZoneAnalysisTab(QWidget):
             )
             return
 
+        paths = self._img_list.paths() or [self._image_path]
+        self._results.clear()
         self._btn_run.setEnabled(False)
         self._btn_run.setText("추론 중…")
-        try:
-            # 1차 실행 — classes=None (프로젝트 classes.json과 무관, raw_class_map 확보용)
-            result = engine.run(
-                model=self._model,
-                image_path=self._image_path,
-                checkpoint_path=self._ckpt_path,
-                opacity=0.5,
-                classes=None,
-            )
+        self._infer_progress.setRange(0, len(paths))
+        self._infer_progress.setValue(0)
+        self._infer_progress.show()
+        self._worker = _ZoneInferenceWorker(
+            self._model, paths, self._ckpt_path, self._infer_mode.currentData()
+        )
+        self._worker.result_ready.connect(self._on_inference_result)
+        self._worker.failed.connect(
+            lambda path, message: log.error(f"존 분석 추론 실패 — {path}: {message}")
+        )
+        self._worker.finished.connect(self._on_inference_finished)
+        self._worker.start()
+
+    def _on_inference_result(self, path: Path, result: InferenceResult,
+                             done: int, total: int) -> None:
+        self._results[path] = result
+        self._infer_progress.setValue(done)
+        self._infer_progress.setFormat(f"{done} / {total}")
+        if path == self._image_path:
             self._last_result = result
             self._setup_target_classes(result)
-        except Exception as exc:
-            log.exception(f"존 분석 추론 실패 — image={self._image_path}, ckpt={self._ckpt_path}")
-            QMessageBox.critical(self, "추론 오류", str(exc))
-        finally:
-            self._btn_run.setEnabled(True)
-            self._btn_run.setText("▶  추론 실행")
+
+    def _on_inference_finished(self) -> None:
+        self._btn_run.setEnabled(True)
+        self._btn_run.setText("▶  전체 추론 실행")
+        self._infer_progress.setFormat(
+            f"완료 {len(self._results)} / {self._infer_progress.maximum()}"
+        )
+        self._worker = None
 
     # ── 타겟(녹) 클래스 즉석 구성 (판단 4) ────────────────────────────────────
 

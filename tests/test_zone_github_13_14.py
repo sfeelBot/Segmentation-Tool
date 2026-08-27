@@ -14,7 +14,10 @@ from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from app.tabs.zone_analysis_tab import ZoneAnalysisTab, _PREVIEW_MAX_DIM, _scale_circles
+from app.tabs.zone_analysis_tab import (
+    ZoneAnalysisTab, _PREVIEW_MAX_DIM, _ZoneInferenceWorker, _scale_circles,
+)
+from app.tabs import zone_analysis_tab as zone_tab_module
 from app.widgets.zone_canvas import ZoneCanvas
 import app.widgets.zone_canvas as zone_canvas_module
 
@@ -100,6 +103,26 @@ def test_f_toggles_zone_overlay() -> None:
     tab.close()
 
 
+def test_zone_worker_runs_all_images() -> None:
+    paths = [Path("a.png"), Path("b.png")]
+    calls = []
+    previous = zone_tab_module.engine.run_sliding_window
+    try:
+        zone_tab_module.engine.run_sliding_window = lambda **kwargs: calls.append(
+            kwargs["image_path"]
+        ) or kwargs["image_path"]
+        worker = _ZoneInferenceWorker(object(), paths, Path("model.pt"), "sliding_window")
+        progress = []
+        worker.result_ready.connect(
+            lambda path, _result, done, total: progress.append((path, done, total))
+        )
+        worker.run()
+    finally:
+        zone_tab_module.engine.run_sliding_window = previous
+    assert calls == paths
+    assert progress == [(paths[0], 1, 2), (paths[1], 2, 2)]
+
+
 def test_popup_and_fixed_batch_share_scaling() -> None:
     circles = [(10.0, 20.0, 5.0), (40.0, 30.0, 8.0)]
     popup_to_main = _scale_circles(circles, (100, 200), (300, 400))
@@ -113,5 +136,6 @@ if __name__ == "__main__":
     test_shared_center_and_diameter_undo()
     test_original_preview_and_failure_clear()
     test_f_toggles_zone_overlay()
+    test_zone_worker_runs_all_images()
     test_popup_and_fixed_batch_share_scaling()
     print("OK: GitHub #13/#14 zone-analysis tests passed")
