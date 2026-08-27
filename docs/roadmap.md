@@ -25,6 +25,7 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 
 ## 학습 탭 (`app/tabs/training_tab.py`)
 - [x] QThread 학습 루프 + 실시간 손실 그래프
+- [x] GitHub #23 — 최고 IoU `*_best.pt` 자동 선정 + 모델별 train/val loss·IoU JSON/PNG 저장
 - [x] LR 스케줄러 9종
 - [x] CUDA 종합 진단 팝업 (`cuda_diag.py`, `cuda_diag_dialog.py`) — 논블로킹
 
@@ -34,6 +35,8 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - [x] 학습/검증 단계별 시간 계측, validation 메모리 경량화, streaming metric,
   실시간 차트·batch signal 상한 적용
 - [x] 오버레이 뷰어
+- [x] GitHub #23 — 전체 이미지 QThread 일괄 추론, 즉시 진행률, 추론 전 원본 표시
+- [x] `F` 단축키로 원본/추론 오버레이 표시 전환
 
 ## 프로젝트 관리 (`app/core/project.py`, `project_start_dialog.py`)
 - [x] 프로젝트 단위 images/annotations/checkpoints/user_models 분리 (`projects/<name>/`)
