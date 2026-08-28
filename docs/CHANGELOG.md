@@ -5,6 +5,20 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.2.2] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.2 커밋 / ac83412
+
+### 수정
+- GitHub #27: 일반 PowerShell/CMD에서 `WindowsApps\\python.exe` 실행 별칭을
+  빌드 Python으로 오인하지 않도록 수정.
+- 가상환경 활성화 없이 Windows Python Launcher의 시스템 Python 3.12를 우선 사용.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.2`로 갱신.
+
+---
+
 ## [zone-v1.2.1] 2026-08-28
 
 Main 기준: v1.9.0 이후 1.10.1 커밋 / 69af9f7
@@ -81,6 +95,20 @@ Main 기준: v1.8.0 + 19 commits (09933fd)
 - `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
 - Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
 - zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
+
+---
+
+## [v1.10.2] 2026-08-28
+
+### 수정
+- GitHub #27: 일반 PowerShell/CMD에서 `build.bat` 실행 시 Microsoft Store용
+  `WindowsApps\\python.exe` 별칭을 실제 Python으로 오인하던 문제 수정.
+- 가상환경 활성화 없이 `py -3.12`로 등록된 시스템 Python 3.12를 우선 선택하고,
+  실패 시에도 `WindowsApps` 별칭은 후보에서 제외.
+- 필수 패키지가 없으면 선택된 Python에 실행할 정확한 pip 명령을 안내.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.2`로 갱신.
 
 ---
 

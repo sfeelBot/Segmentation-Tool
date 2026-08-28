@@ -4013,3 +4013,7 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - main의 단일 빌드 Python 및 전체 런타임 사전검사 변경을 zone에 동기화했다.
 - 다른 Qt binding과 Anaconda 개발용 선택 의존성을 제외하고 matplotlib backend를 제한했다.
 - frozen Windows에서 CUDA Torch를 PyQt6보다 먼저 초기화해 `c10.dll` WinError 1114를 방지했다.
+## 2026-08-28 — GitHub #27 Python 3.12 빌드 탐색 zone 반영
+
+- 일반 PowerShell/CMD에서 `py -3.12`로 시스템 Python을 찾고 WindowsApps 별칭을 제외하는
+  main의 `build.bat` 수정을 zone에 동기화했다.

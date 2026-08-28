@@ -433,3 +433,6 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 
 - zone 고유 분석 기능을 유지하면서 main의 오프라인 패키징 수정과 Torch-before-Qt 순서를 동기화했다.
 - zone installer/EXE 버전은 `1.2.1`, main 기준 커밋은 `69af9f7`로 기록했다.
+## 2026-08-28 — GitHub #27 zone 반영
+
+- zone 제품 설정을 유지하며 일반 셸 Python 3.12 탐색 수정과 버전 `1.2.2`를 반영했다.
