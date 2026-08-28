@@ -5,6 +5,23 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.2.0] 2026-08-28
+
+Main 기준: v1.10.0 대상 커밋 (434b169)
+
+### 추가
+- main의 GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
+- zone 전체 이미지 비동기 추론과 resize/sliding-window 선택, `F` 오버레이 전환.
+
+### 수정 및 성능
+- 추론·zone 오버레이 배경 밝기 유지.
+- threshold 디바운스, 원 편집 완료 시 1회 존 계산, 줌·팬 보존과 대형 미리보기 복사 제거.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.0`으로 갱신.
+
+---
+
 ## 동기화 준비 2026-08-28
 
 Main 기준: v1.9.0 + 8 commits (434b169)

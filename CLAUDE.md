@@ -162,6 +162,15 @@ segmentation model/
 
 > **코드 수정이 있을 때마다 반드시 커밋한다.**
 
+### 버전 점검 루틴
+
+- 기능 추가·버그 수정 완료 시 커밋 전에 `release.ini`의 installer/EXE 버전을 확인한다.
+- 아직 릴리스되지 않은 동일 버전에 포함된 작업이 아니라면 SemVer에 따라 기능은 MINOR,
+  호환 버그 수정은 PATCH, 호환성 파괴 변경은 MAJOR를 올린다.
+- 버전을 변경하면 `docs/CHANGELOG.md`에 같은 zone 태그 제목을 추가하고
+  `scripts/generate_version_info.py`로 installer/EXE 메타데이터를 검증한다.
+- main 동기화 때도 zone 버전과 `main_base_commit`을 함께 확인한다.
+
 - 기능 추가, 버그 수정, 성능 개선 등 **모든 코드 변경** 후 즉시 `git commit`
 - 커밋 메시지 형식:
   ```
