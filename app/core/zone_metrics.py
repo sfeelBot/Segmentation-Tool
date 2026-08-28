@@ -73,14 +73,14 @@ def zone_stats(zone_mask: np.ndarray, target_class_mask: np.ndarray) -> float:
 def compute_blob_labels(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """타겟 클래스 이진 마스크 -> (라벨맵, stats). 라운드 4 블랍 클릭 삭제 전용 헬퍼.
 
-    `cv2.connectedComponentsWithStats(connectivity=8)`를 그대로 노출한다 —
+    상하좌우로 이어진 픽셀만 같은 블랍으로 보는 4-connectivity를 사용한다 —
     `inference_engine._compute_blobs_and_filter()`와 API는 비슷하지만 confidence/
     size threshold 필터링까지 가져오면 이 탭엔 불필요한 결합이 생겨(스펙 "블랍 삭제"
     절) 별도로 둔다. 라벨 0 = 배경. `stats[label] = [x, y, w, h, area]`(OpenCV 표준
     컬럼 순서, `CC_STAT_LEFT/TOP/WIDTH/HEIGHT/AREA`).
     """
     _, labels, stats, _ = cv2.connectedComponentsWithStats(
-        mask.astype(np.uint8), connectivity=8
+        mask.astype(np.uint8), connectivity=4
     )
     return labels, stats
 

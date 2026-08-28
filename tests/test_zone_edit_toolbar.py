@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication
 
 from app.tabs.inference_tab import InferenceTab
 from app.tabs.zone_analysis_tab import ZoneAnalysisTab
+from app.core.zone_metrics import compute_blob_labels
 from app.widgets.config_form import ConfigForm
 from app.widgets.zone_canvas import ZoneCanvas
 
@@ -43,4 +44,13 @@ def test_zone_toolbar_is_exclusive_and_defaults_are_patch_based() -> None:
     assert zone._infer_mode.currentData() == "sliding_window"
     assert inference._infer_mode.currentData() == "sliding_window"
     assert training._sample_mode.currentData() == "random_crop"
+
+
+def test_diagonally_touching_pixels_are_separate_blobs() -> None:
+    mask = np.array([[1, 0], [0, 1]], dtype=np.uint8)
+
+    labels, stats = compute_blob_labels(mask)
+
+    assert set(labels.ravel()) == {0, 1, 2}
+    assert sorted(stats[1:, 4].tolist()) == [1, 1]
 
