@@ -1,7 +1,53 @@
 # Changelog — Segmentation Model UI
 
 버전 구분 기준: 사용자 요청 단위로 묶어 릴리즈.  
-형식: `[vX.Y.Z] YYYY-MM-DD` — Major.Minor.Patch
+main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
+
+---
+
+## 동기화 준비 2026-08-28
+
+Main 기준: v1.9.0 + 8 commits (434b169)
+
+- GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
+- 추론 오버레이 배경 밝기 유지와 슬라이더·줌/팬 UI 병목 개선 반영.
+- zone 전용 전체 이미지/sliding-window 추론과 원·threshold 성능 개선은 그대로 유지.
+
+---
+
+## [zone-v1.1.0] 2026-08-27
+
+Main 기준: v1.9.0 + 4 commits (450f520)
+
+### 추가
+- 라벨링 탭에서 여러 이미지를 선택해 한 번에 양품화하는 main 공통 기능.
+- 원 우클릭 지름 변경, 신규 원의 중심 공유와 좌표 스케일링 경로 통합 (GitHub #13).
+- 이미지 선택 즉시 원본 미리보기와 `픽셀 threshold` 명칭 제공 (GitHub #14).
+- 기존 라벨 경계 채우기, 도구 타입과 무관한 동일 클래스 병합, 파일명 복사와
+  내보내기 잠금 재시도 등 main 공통 개선 (GitHub #12, #15, #16, #17).
+- 오토라벨링 원본 해상도 패치 추론, 학습 데이터 변경 잠금·병목 개선, 학습 설정
+  휠 변경 차단과 학습 큐 중지 응답 개선.
+
+### 빌드
+- zone 버전을 `1.1.0`으로 갱신하고 main과 분리된 제품명·EXE·설치 폴더·AppId 및
+  `zone-vX.Y.Z` 태그 체계를 유지.
+- 동기화된 최신 main 기능 기준을 `v1.9.0 + 4 commits` / `450f520`으로 명시.
+
+---
+
+## [zone-v1.0.0] 2026-08-27
+
+Main 기준: v1.8.0 + 19 commits (09933fd)
+
+### 추가
+- 존 분석 전용 탭과 원 검출·수동 편집·존별 통계·Excel 내보내기.
+- main과 독립된 제품명, EXE, 설치 폴더, installer 파일명 및 Inno Setup AppId.
+- main의 라벨링 이미지 다중선택 일괄 양품화 기능.
+
+### 빌드
+- `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
+- Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
+- zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
 
 ---
 
