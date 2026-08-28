@@ -150,6 +150,7 @@ class InferenceTab(QWidget):
         self._infer_mode = QComboBox()
         self._infer_mode.addItem("resize        (전체 이미지 축소)", "resize")
         self._infer_mode.addItem("sliding_window (패치 학습 모델용, 원본 해상도)", "sliding_window")
+        self._infer_mode.setCurrentIndex(self._infer_mode.findData("sliding_window"))
         self._infer_mode.setToolTip(
             "resize: 이미지 전체를 학습 크기로 줄여서 한 번에 추론\n"
             "sliding_window: 원본 해상도로 패치를 겹쳐가며 추론 후 병합\n"

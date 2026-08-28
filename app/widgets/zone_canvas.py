@@ -81,12 +81,13 @@ class ZoneCanvas(OverlayViewer):
         self._img_orig_w = 0
         self._img_orig_h = 0
         self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링, N=바깥쪽
-        self._mode: str = "circle"   # "circle" | "blob_delete" | "brush_erase"
+        self._mode: str = "circle"
         self._blob_labels: np.ndarray | None = None   # (H, W) int32 라벨맵, 원본 이미지 좌표계
         self._blob_stats: np.ndarray | None = None     # [label] = [x, y, w, h, area]
         self._removed_blob_ids: set[int] = set()
         # ── 브러시 지우기(R3-3) ──────────────────────────────────────────────
-        self._erase_strokes: list[list[tuple[float, float, float]]] = []  # 스트로크별 (cx,cy,r) 스탬프 목록
+        self._erase_strokes: list[list[tuple[float, float, float]]] = []  # 하위 호환 지우기 합집합
+        self._manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]] = []
         self._erase_mask_np: np.ndarray | None = None   # 원본 해상도 bool, 파생 캐시(undo 대상 아님)
         self._erase_brush_size = 30   # 원본 이미지 픽셀 단위 지름
         self._current_stroke: list[tuple[float, float, float]] = []
@@ -194,6 +195,7 @@ class ZoneCanvas(OverlayViewer):
         self._blob_stats = stats
         self._removed_blob_ids = set()
         self._erase_strokes = []
+        self._manual_strokes = []
         self._erase_mask_np = None
         self._current_stroke = []
         self._last_erase_pos = None
@@ -207,6 +209,14 @@ class ZoneCanvas(OverlayViewer):
         """활성화 시 좌클릭 드래그가 타겟 마스크를 픽셀 단위로 지운다
         (블랍 삭제 모드와 배타적, `self._mode` 하나로 관리)."""
         self._mode = "brush_erase" if enabled else "circle"
+        self.update()
+
+    def set_brush_draw_mode(self, enabled: bool) -> None:
+        self._mode = "brush_draw" if enabled else "circle"
+        self.update()
+
+    def set_pan_mode(self, enabled: bool) -> None:
+        self._mode = "pan" if enabled else "circle"
         self.update()
 
     def brush_erase_mode(self) -> bool:
@@ -223,6 +233,16 @@ class ZoneCanvas(OverlayViewer):
         """지운 영역(bool, 원본 이미지 좌표계) — `removed_blob_ids()`/
         `blob_labels()`와 동일한 "캔버스가 상태의 단일 출처" getter 패턴."""
         return self._erase_mask_np
+
+    def apply_manual_strokes(self, mask: np.ndarray) -> np.ndarray:
+        """수동 그리기/지우기를 시간순으로 적용한다(마지막 스트로크 우선)."""
+        result = mask.copy()
+        for draw, stroke in self._manual_strokes:
+            stroke_mask = np.zeros(mask.shape, dtype=bool)
+            for cx, cy, r in stroke:
+                stroke_mask |= disk_mask(cx, cy, r, mask.shape)
+            result[stroke_mask] = draw
+        return result
 
     def _erase_mask_shape(self) -> tuple[int, int]:
         if self._blob_labels is not None:
@@ -311,6 +331,7 @@ class ZoneCanvas(OverlayViewer):
             "circles": [(c.id, c.cx, c.cy, c.r) for c in self._circles],
             "removed_blob_ids": set(self._removed_blob_ids),
             "erase_strokes": list(self._erase_strokes),
+            "manual_strokes": list(self._manual_strokes),
         })
 
     def can_undo(self) -> bool:
@@ -330,6 +351,7 @@ class ZoneCanvas(OverlayViewer):
         ]
         self._removed_blob_ids = snap["removed_blob_ids"]
         self._erase_strokes = snap["erase_strokes"]
+        self._manual_strokes = snap.get("manual_strokes", [])
         self._replay_erase_strokes()   # 스트로크 좌표에서 지우기 마스크를 재생(스펙 판단 1)
         self._selected_id = None
         self._current_stroke = []
@@ -424,7 +446,7 @@ class ZoneCanvas(OverlayViewer):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self._removed_blob_ids:
             self._paint_removed_blobs(p)
-        if self._erase_strokes or self._current_stroke:
+        if self._manual_strokes or self._current_stroke:
             self._paint_erase_preview(p)
         if not self._circles:
             p.end()
@@ -501,11 +523,15 @@ class ZoneCanvas(OverlayViewer):
         합성하지 않고 스탬프 좌표를 그대로 화면에 투영해 그리므로 드래그 중에도
         이미지 크기와 무관하게 가볍다."""
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(255, 60, 60, 110))
-        for stroke in self._erase_strokes:
+        for draw, stroke in self._manual_strokes:
+            p.setBrush(QColor(0, 230, 140, 110) if draw else QColor(255, 60, 60, 110))
             for cx, cy, r in stroke:
                 center, radius = self._orig_to_screen(cx, cy, r)
                 p.drawEllipse(center, radius, radius)
+        p.setBrush(
+            QColor(0, 230, 140, 110)
+            if self._mode == "brush_draw" else QColor(255, 60, 60, 110)
+        )
         for cx, cy, r in self._current_stroke:
             center, radius = self._orig_to_screen(cx, cy, r)
             p.drawEllipse(center, radius, radius)
@@ -513,13 +539,16 @@ class ZoneCanvas(OverlayViewer):
     # ── 마우스 ───────────────────────────────────────────────────────────────
 
     def mousePressEvent(self, event) -> None:
+        if self._mode == "pan":
+            super().mousePressEvent(event)
+            return
         if self._mode == "blob_delete":
             if event.button() == Qt.MouseButton.LeftButton:
                 self._handle_blob_click(event)
             else:
                 super().mousePressEvent(event)   # 좌클릭 외(중클릭 팬 등)는 기존 동작 유지
             return
-        if self._mode == "brush_erase":
+        if self._mode in ("brush_draw", "brush_erase"):
             if event.button() == Qt.MouseButton.LeftButton and self._pixmap is not None:
                 self._push_undo()   # 스트로크 시작 시점 1회(annotation_canvas 브러시 push와 동일 타이밍)
                 self._current_stroke = []
@@ -563,10 +592,13 @@ class ZoneCanvas(OverlayViewer):
         self.update()
 
     def mouseMoveEvent(self, event) -> None:
+        if self._mode == "pan":
+            super().mouseMoveEvent(event)
+            return
         if self._mode == "blob_delete":
             super().mouseMoveEvent(event)   # 팬 드래그(중클릭)는 계속 동작해야 함
             return
-        if self._mode == "brush_erase":
+        if self._mode in ("brush_draw", "brush_erase"):
             if self._erasing and (event.buttons() & Qt.MouseButton.LeftButton):
                 img_pt = self._screen_to_orig(QPointF(event.position()))
                 self._erase_paint_stroke(img_pt)
@@ -592,13 +624,20 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._mode == "pan":
+            super().mouseReleaseEvent(event)
+            return
         if self._mode == "blob_delete":
             super().mouseReleaseEvent(event)   # 팬 종료 처리(커서 복원 등)
             return
-        if self._mode == "brush_erase":
+        if self._mode in ("brush_draw", "brush_erase"):
             if self._erasing:
                 if self._current_stroke:
-                    self._erase_strokes.append(self._current_stroke)
+                    self._manual_strokes.append(
+                        (self._mode == "brush_draw", self._current_stroke)
+                    )
+                    if self._mode == "brush_erase":
+                        self._erase_strokes.append(self._current_stroke)
                 self._current_stroke = []
                 self._last_erase_pos = None
                 self._erasing = False

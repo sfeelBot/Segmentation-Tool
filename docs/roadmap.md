@@ -887,6 +887,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       중복 비례스케일 공식을 `_scale_circles()`로 통합하고 두 단계 연속 스케일 회귀 테스트 통과.
 
 ## 다음 후보
+- [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
+  그리기/지우기/연결 블랍 삭제/팬/Undo), 수동 스트로크 last-write-wins와 혼합 LIFO Undo.
+- [x] 기본 파이프라인 통일 — 학습 `random_crop` 유지, 추론·Zone 분석
+  `sliding_window` 기본 선택을 `findData()`로 명시하고 회귀 테스트 추가.
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징·존 분석 탭 외 추가 신규 기능 요청 없음. 새
   요청은 [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에
   반영된다.

@@ -4040,3 +4040,15 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 
 - main `15c2282`의 손상·버전 불일치 venv 자동 재생성과 설치 후 Python 3.12 검증을 동기화했다.
 - zone 제품 설정을 유지하고 installer/EXE 버전을 1.2.4로 갱신했다.
+
+## 2026-08-28 — Zone VOC 편집 툴바 및 기본 patch 파이프라인
+
+- Zone 분석의 블랍 삭제/브러시 지우기 텍스트 버튼을 기존 SVG를 재사용한 exclusive
+  툴바로 교체하고 원 편집, 브러시 그리기/지우기, 연결 블랍 삭제, 팬, Undo를 제공했다.
+- `ZoneCanvas` 수동 스트로크를 시간순으로 저장·적용해 add/erase 마지막 스트로크 우선과
+  기존 원/블랍 삭제를 포함한 혼합 LIFO Undo를 구현했다.
+- 추론과 Zone 분석의 기본값을 sliding window로 명시하고 학습 random crop 기본값과 함께
+  `tests/test_zone_edit_toolbar.py`로 회귀 검증했다.
+- 자체 테스트: 신규 테스트 2건 통과. 기존 `test_zone_github_13_14.py`는 환경의 QtTest DLL
+  로드 실패로 수집 불가하여 독립 검증 단계에서 재확인이 필요하다.
+- 상태: 구현 완료, 독립 검증 대기. 커밋 해시는 커밋 직후 후속 로그에서 기록한다.

@@ -27,10 +27,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
     QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem, QCheckBox,
-    QProgressDialog, QApplication, QProgressBar,
+    QProgressDialog, QApplication, QProgressBar, QToolBar,
 )
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize
+from PyQt6.QtGui import QImage, QPixmap, QAction, QActionGroup
 import torch.nn as nn
 
 from app.core import inference_engine as engine
@@ -50,6 +50,7 @@ from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.circle_detect_preview_dialog import CircleDetectPreviewDialog
 from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
+from app.widgets.icons import icon as svg_icon
 
 log = get_logger(__name__)
 
@@ -164,6 +165,7 @@ class ZoneAnalysisTab(QWidget):
         self._infer_mode = QComboBox()
         self._infer_mode.addItem("resize", "resize")
         self._infer_mode.addItem("sliding window", "sliding_window")
+        self._infer_mode.setCurrentIndex(self._infer_mode.findData("sliding_window"))
         self._infer_mode.setToolTip("패치 학습 모델은 sliding window를 선택하세요")
         toolbar_row1.addWidget(self._infer_mode)
 
@@ -219,36 +221,47 @@ class ZoneAnalysisTab(QWidget):
         self._btn_detect.setToolTip("추론을 먼저 실행하면 검출된 원이 캔버스에 표시됩니다")
         toolbar_row2.addWidget(self._btn_detect)
 
-        self._btn_blob_delete = QPushButton("블랍 삭제 모드")
-        self._btn_blob_delete.setCheckable(True)
-        self._btn_blob_delete.setEnabled(False)
-        self._btn_blob_delete.setToolTip(
-            "활성화하면 캔버스 좌클릭이 원 편집 대신 오검출 블랍 삭제로 동작합니다"
+        self._edit_toolbar = QToolBar()
+        self._edit_toolbar.setIconSize(QSize(20, 20))
+        self._edit_toolbar.setStyleSheet(
+            "QToolBar QToolButton { min-width:36px; min-height:30px; padding:4px 8px; }"
         )
-        toolbar_row2.addWidget(self._btn_blob_delete)
+        self._tool_group = QActionGroup(self)
+        self._tool_group.setExclusive(True)
 
-        self._btn_brush_erase = QPushButton("브러시 지우기 모드")
-        self._btn_brush_erase.setCheckable(True)
-        self._btn_brush_erase.setEnabled(False)
-        self._btn_brush_erase.setToolTip(
-            "활성화하면 캔버스 좌클릭 드래그로 타겟 마스크를 픽셀 단위로 지웁니다"
-            "(블랍 삭제 모드와 배타적)"
-        )
-        toolbar_row2.addWidget(self._btn_brush_erase)
+        def tool_action(icon_name: str, text: str, mode: str) -> QAction:
+            action = QAction(svg_icon(icon_name), "", self)
+            action.setToolTip(text)
+            action.setCheckable(True)
+            action.setData(mode)
+            self._tool_group.addAction(action)
+            self._edit_toolbar.addAction(action)
+            return action
 
-        toolbar_row2.addWidget(QLabel("지우개 크기:"))
+        self._act_circle = tool_action("tool_polygon", "원 편집", "circle")
+        self._act_brush_draw = tool_action("tool_brush", "브러시로 타겟 영역 그리기", "brush_draw")
+        self._act_brush_erase = tool_action("tool_eraser", "브러시로 타겟 영역 지우기", "brush_erase")
+        self._act_blob_delete = tool_action("tool_eraser_flood", "클릭한 연결 블랍 삭제", "blob_delete")
+        self._act_pan = tool_action("tool_pan", "화면 이동", "pan")
+        self._act_circle.setChecked(True)
+        for action in self._tool_group.actions():
+            action.setEnabled(False)
+        self._edit_toolbar.addSeparator()
+        self._edit_toolbar.addWidget(QLabel("브러시 크기:"))
         self._erase_brush_spin = QSpinBox()
         self._erase_brush_spin.setRange(1, 200)
         self._erase_brush_spin.setValue(30)
         self._erase_brush_spin.setSuffix(" px")
         self._erase_brush_spin.setFixedWidth(90)
-        self._erase_brush_spin.setToolTip("브러시 지우기 모드의 브러시 지름(원본 이미지 픽셀 단위)")
-        toolbar_row2.addWidget(self._erase_brush_spin)
+        self._erase_brush_spin.setToolTip("그리기/지우기 브러시 지름(원본 이미지 픽셀 단위)")
+        self._erase_brush_spin.setEnabled(False)
+        self._edit_toolbar.addWidget(self._erase_brush_spin)
 
-        self._btn_undo = QPushButton("실행 취소 (Ctrl+Z)")
-        self._btn_undo.setEnabled(False)
-        self._btn_undo.setToolTip("원 편집/블랍 삭제/브러시 지우기를 시간순으로 되돌립니다")
-        toolbar_row2.addWidget(self._btn_undo)
+        self._edit_toolbar.addSeparator()
+        self._act_undo = self._edit_toolbar.addAction(svg_icon("undo"), "")
+        self._act_undo.setEnabled(False)
+        self._act_undo.setToolTip("원/그리기/지우기/블랍 삭제를 시간순으로 되돌립니다 (Ctrl+Z)")
+        toolbar_row2.addWidget(self._edit_toolbar)
 
         toolbar_row2.addStretch()
         self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
@@ -397,12 +410,11 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
         self._canvas.blob_deleted.connect(self._on_blob_deleted)
-        self._btn_blob_delete.toggled.connect(self._on_blob_delete_toggled)
-        self._btn_brush_erase.toggled.connect(self._on_brush_erase_toggled)
+        self._tool_group.triggered.connect(self._on_edit_tool_changed)
         self._erase_brush_spin.valueChanged.connect(self._canvas.set_erase_brush_size)
         self._canvas.erase_changed.connect(self._recompute_zones)
         self._canvas.overlay_toggle_requested.connect(self._toggle_overlay)
-        self._btn_undo.clicked.connect(self._canvas.undo)
+        self._act_undo.triggered.connect(self._canvas.undo)
         # Undo 버튼 활성/비활성 갱신 — 신규 시그널을 발명하지 않고 상태를 바꿀 수
         # 있는 기존 세 시그널(원변경/블랍삭제/지우기)에 편승한다(스펙 판단 1).
         self._canvas.circles_changed.connect(self._update_undo_button_state)
@@ -466,18 +478,22 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_image_size(*self._image_size)
             self._original_pixmap = _rgb_to_qpixmap(preview_rgb)
             self._canvas.set_pixmap(self._original_pixmap)
+            self._act_circle.setEnabled(True)
+            self._act_pan.setEnabled(True)
         except Exception:
             self._image_size = (0, 0)
             self._original_pixmap = None
             self._canvas.set_image_size(*self._image_size)
             self._canvas.clear()
+            for action in self._tool_group.actions():
+                action.setEnabled(False)
         self._canvas.clear_circles()
         self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 원 자동검출은 불가
         self._canvas.set_blob_data(None, None)
-        self._btn_blob_delete.setChecked(False)
-        self._btn_blob_delete.setEnabled(False)
-        self._btn_brush_erase.setChecked(False)
-        self._btn_brush_erase.setEnabled(False)
+        self._act_circle.setChecked(True)
+        self._on_edit_tool_changed(self._act_circle)
+        for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
+            action.setEnabled(False)
         self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
         if self._last_result is not None:
             self._setup_target_classes(self._last_result)
@@ -626,10 +642,10 @@ class ZoneAnalysisTab(QWidget):
             self._show_overlay_state()
             self._target_class_id = None
             self._canvas.set_blob_data(None, None)
-            self._btn_blob_delete.setChecked(False)
-            self._btn_blob_delete.setEnabled(False)
-            self._btn_brush_erase.setChecked(False)
-            self._btn_brush_erase.setEnabled(False)
+            self._act_circle.setChecked(True)
+            self._on_edit_tool_changed(self._act_circle)
+            for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
+                action.setEnabled(False)
             self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
             self._recompute_zones()
             return
@@ -692,8 +708,8 @@ class ZoneAnalysisTab(QWidget):
             target_mask = result.class_map == cid
             labels, stats = compute_blob_labels(target_mask)
             self._canvas.set_blob_data(labels, stats)
-            self._btn_blob_delete.setEnabled(True)
-            self._btn_brush_erase.setEnabled(True)
+            for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
+                action.setEnabled(True)
             self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
             self._recompute_zones()
         except Exception as exc:
@@ -731,10 +747,7 @@ class ZoneAnalysisTab(QWidget):
         labels = self._canvas.blob_labels()
         if removed and labels is not None:
             mask = mask & ~np.isin(labels, list(removed))
-        erase_mask = self._canvas.erase_mask()   # 브러시 지우기(R3-3)
-        if erase_mask is not None:
-            mask = mask & ~erase_mask
-        return mask
+        return self._canvas.apply_manual_strokes(mask)
 
     def _on_blob_deleted(self, _label_id: int) -> None:
         # ZoneCanvas가 이미 removed_blob_ids에 반영·재도색까지 마친 뒤 emit한다
@@ -745,20 +758,21 @@ class ZoneAnalysisTab(QWidget):
     # `QButtonGroup` 같은 새 추상화 없이 버튼 2개가 서로를 끄는 2줄짜리 상호배제로
     # 충분하다(스펙 판단 2, "원편집"은 둘 다 꺼진 기본 상태로 암묵적으로 표현).
 
-    def _on_blob_delete_toggled(self, checked: bool) -> None:
-        if checked:
-            self._btn_brush_erase.setChecked(False)
-        self._canvas.set_blob_delete_mode(checked)
-
-    def _on_brush_erase_toggled(self, checked: bool) -> None:
-        if checked:
-            self._btn_blob_delete.setChecked(False)
-        self._canvas.set_brush_erase_mode(checked)
+    def _on_edit_tool_changed(self, action: QAction) -> None:
+        mode = action.data()
+        self._canvas.set_blob_delete_mode(mode == "blob_delete")
+        if mode != "blob_delete":
+            self._canvas.set_brush_draw_mode(mode == "brush_draw")
+        if mode not in ("blob_delete", "brush_draw"):
+            self._canvas.set_brush_erase_mode(mode == "brush_erase")
+        if mode == "pan":
+            self._canvas.set_pan_mode(True)
+        self._erase_brush_spin.setEnabled(mode in ("brush_draw", "brush_erase"))
 
     # ── 슬롯 — Undo (R3-4) ────────────────────────────────────────────────────
 
     def _update_undo_button_state(self) -> None:
-        self._btn_undo.setEnabled(self._canvas.can_undo())
+        self._act_undo.setEnabled(self._canvas.can_undo())
 
     def _compute_zone_percentages(self) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
