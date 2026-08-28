@@ -5,6 +5,33 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.2.4] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.4 커밋 / 15c2282
+
+### 수정
+- 기존 `build\venv`가 Python 3.12가 아니거나 Python 실행 파일이 손상된 경우 자동 삭제 후 재생성.
+- 의존성 설치 후에도 정확한 Python 3.12인지 재검증해 잘못된 환경의 빌드 진행 차단.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.4`로 갱신.
+
+---
+
+## [zone-v1.2.3] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.3 커밋 / 1518c01
+
+### 수정
+- 일반 PowerShell/CMD에서 `build\venv`를 자동 생성하고 CUDA PyTorch, 런타임 패키지,
+  PyInstaller를 최초 1회 설치한 뒤 재사용.
+- 사용자가 conda 또는 venv를 직접 활성화하지 않아도 zone installer를 빌드하도록 변경.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.3`으로 갱신.
+
+---
+
 ## [zone-v1.2.2] 2026-08-28
 
 Main 기준: v1.9.0 이후 1.10.2 커밋 / ac83412
@@ -95,6 +122,30 @@ Main 기준: v1.8.0 + 19 commits (09933fd)
 - `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
 - Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
 - zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
+
+---
+
+## [v1.10.4] 2026-08-28
+
+### 수정
+- 기존 `build\venv`가 Python 3.12가 아니거나 Python 실행 파일이 손상된 경우 자동 삭제 후 재생성.
+- 의존성 설치 후 최종 검사에서도 Python 3.12를 다시 확인해 잘못된 환경의 빌드 진행 차단.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.4`로 갱신.
+
+---
+
+## [v1.10.3] 2026-08-28
+
+### 수정
+- 새 Python 3.12에 PyQt6 등 빌드 패키지가 없어 `build.bat`가 즉시 종료되던 문제 수정.
+- 일반 PowerShell/CMD 실행 시 `build\venv`를 자동 생성하고 CUDA PyTorch, 런타임 패키지,
+  PyInstaller를 최초 1회 설치한 뒤 이후 빌드에서 재사용.
+- 사용자가 conda 또는 venv를 직접 활성화할 필요가 없도록 빌드 환경을 스크립트 내부에서 관리.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.3`으로 갱신.
 
 ---
 

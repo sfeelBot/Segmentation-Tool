@@ -26,6 +26,17 @@ def test_build_script_uses_one_validated_python() -> None:
     assert "py -3 -m" not in script
     assert "py -3.12 -c" in script
     assert 'findstr /i /v "WindowsApps"' in script
+    assert 'set "BUILD_VENV=%ROOT%build\\venv"' in script
+    assert '"%SYSTEM_PYTHON%" -m venv "%BUILD_VENV%"' in script
+    assert (
+        '"%BUILD_PYTHON%" -m pip install torch torchvision '
+        "--index-url https://download.pytorch.org/whl/cu128"
+    ) in script
+    assert '"%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller' in script
+    assert 'rmdir /s /q "%BUILD_VENV%"' in script
+    assert 'if not exist "%BUILD_VENV%\\Scripts\\python.exe"' in script
+    assert 'if exist "%BUILD_VENV%" (' in script
+    assert script.count("sys.version_info[:2] == (3, 12)") >= 4
 
 
 def test_build_script_preserves_unrelated_build_artifacts() -> None:

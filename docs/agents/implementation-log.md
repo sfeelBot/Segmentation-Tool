@@ -4017,3 +4017,26 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 
 - 일반 PowerShell/CMD에서 `py -3.12`로 시스템 Python을 찾고 WindowsApps 별칭을 제외하는
   main의 `build.bat` 수정을 zone에 동기화했다.
+
+## 2026-08-28 — zone 빌드 전용 환경 자동 준비
+
+- main의 `build\venv` 자동 생성과 cu128/requirements/PyInstaller 최초 설치 흐름을 동기화했다.
+- zone 제품 설정을 유지하고 installer/EXE 버전을 1.2.3으로 갱신했다.
+
+## 2026-08-28 — build.bat 전용 환경 자동 준비
+
+- 새 Python 3.12에서 패키지 누락으로 중단되는 경로를 `build\venv` 자동 생성·설치로 변경했다.
+- 기존 CUDA installer 구성을 유지하도록 cu128 PyTorch를 먼저 설치하고 나머지 requirements와
+  PyInstaller를 같은 빌드 환경에 설치한다.
+- installer/EXE 버전을 1.10.3으로 갱신했다.
+
+## 2026-08-28 — 잘못된 기존 build venv 복구
+
+- `build\venv`의 Python 버전과 실행 파일을 패키지 설치 전에 검사하고, 3.12가 아니거나 손상됐으면 삭제·재생성한다.
+- 설치 후 검사에도 정확한 3.12 검증을 유지하고 버전을 1.10.4로 갱신했다.
+- `tests/test_build_release.py` 24건과 Python 컴파일, `git diff --check`를 통과했다.
+
+## 2026-08-28 — 잘못된 build venv 복구를 zone에 반영
+
+- main `15c2282`의 손상·버전 불일치 venv 자동 재생성과 설치 후 Python 3.12 검증을 동기화했다.
+- zone 제품 설정을 유지하고 installer/EXE 버전을 1.2.4로 갱신했다.
