@@ -52,6 +52,18 @@ class InferenceResult:
     blobs: list[BlobStat]
 
 
+PreparedInference = tuple[dict, torch.device]
+
+
+def prepare_inference(model: nn.Module, checkpoint_path: Path | str) -> PreparedInference:
+    """일괄 추론에서 체크포인트와 모델 가중치를 한 번만 준비한다."""
+    device = _pick_device()
+    ckpt = torch.load(str(checkpoint_path), map_location=device)
+    model.load_state_dict(ckpt.get("model_state_dict", ckpt), strict=False)
+    model.to(device).eval()
+    return ckpt, device
+
+
 def run(
     model: nn.Module,
     image_path: Path | str,
@@ -59,6 +71,7 @@ def run(
     opacity: float = 0.5,
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
+    prepared: PreparedInference | None = None,
     classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """
@@ -72,13 +85,7 @@ def run(
     """
     classes  = classes if classes is not None else load_classes()
     cls_map  = {c.class_id: c for c in classes}
-    device   = _pick_device()
-
-    # ── 체크포인트 로드 ────────────────────────────────────────────────────────
-    ckpt = torch.load(str(checkpoint_path), map_location=device)
-    state = ckpt.get("model_state_dict", ckpt)  # full ckpt 또는 raw state_dict 허용
-    model.load_state_dict(state, strict=False)
-    model.to(device).eval()
+    ckpt, device = prepared or prepare_inference(model, checkpoint_path)
 
     # ── 이미지 전처리 ──────────────────────────────────────────────────────────
     pil_img = Image.open(str(image_path)).convert("RGB")
@@ -151,6 +158,7 @@ def run_sliding_window(
     opacity: float = 0.5,
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
+    prepared: PreparedInference | None = None,
     classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """패치 학습 모델용 슬라이딩 윈도우 추론.
@@ -165,12 +173,7 @@ def run_sliding_window(
     """
     classes = classes if classes is not None else load_classes()
     cls_map = {c.class_id: c for c in classes}
-    device  = _pick_device()
-
-    ckpt = torch.load(str(checkpoint_path), map_location=device)
-    state = ckpt.get("model_state_dict", ckpt)
-    model.load_state_dict(state, strict=False)
-    model.to(device).eval()
+    ckpt, device = prepared or prepare_inference(model, checkpoint_path)
 
     pil_img = Image.open(str(image_path)).convert("RGB")
     orig_w, orig_h = pil_img.size
@@ -288,6 +291,22 @@ def refilter(
         overlay_pixmap=overlay_pix,
         class_stats=stats,
         blobs=blobs,
+    )
+
+
+def reblend(
+    result: InferenceResult,
+    image_path_or_pil: "Path | str | Image.Image",
+    opacity: float,
+) -> QPixmap:
+    """기존 필터 결과를 유지한 채 오버레이만 다시 합성한다."""
+    pil_img = (
+        image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
+        else Image.open(str(image_path_or_pil)).convert("RGB")
+    )
+    return _colorize_and_blend(
+        pil_img, result.class_map,
+        {c.class_id: c for c in load_classes()}, opacity,
     )
 
 
@@ -432,10 +451,10 @@ def _compute_blobs_and_filter(
 ) -> tuple[np.ndarray, list[BlobStat]]:
     """클래스별 연결 요소(blob)를 분리해 threshold 미달 blob은 배경(0)으로 되돌린다.
 
-    class_id == 0(배경)은 blob 대상에서 제외. 반환하는 class_map은 새 배열이며
-    인자로 받은 class_map은 mutate하지 않는다. blob_id는 이미지 전체 기준 1부터 순차 부여.
+    class_id == 0(배경)은 blob 대상에서 제외. 인자로 받은 class_map은 mutate하지 않으며,
+    실제 reject가 있을 때만 복사한다. blob_id는 이미지 전체 기준 1부터 순차 부여.
     """
-    filtered = class_map.copy()
+    filtered = class_map
     blobs: list[BlobStat] = []
     name_by_id = {c.class_id: c.name for c in classes}
     blob_id = 1
@@ -488,6 +507,8 @@ def _compute_blobs_and_filter(
             blob_id += 1
 
         if reject_labels:
+            if filtered is class_map:
+                filtered = class_map.copy()
             filtered[np.isin(labels, reject_labels)] = 0
 
     return filtered, blobs

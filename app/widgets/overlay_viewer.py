@@ -25,9 +25,13 @@ class OverlayViewer(QWidget):
 
     # ── 공개 ─────────────────────────────────────────────────────────────────
 
-    def set_pixmap(self, pixmap: QPixmap, preserve_view: bool = False) -> None:
+    def set_pixmap(self, pixmap: QPixmap, reset_view: bool = True,
+                   *, preserve_view: bool | None = None) -> None:
+        """픽스맵 교체. 기존 zone 호출의 preserve_view도 호환한다."""
+        if preserve_view is not None:
+            reset_view = not preserve_view
         self._pixmap = pixmap
-        if not preserve_view:
+        if reset_view:
             self._fit_view()
         self.update()
 

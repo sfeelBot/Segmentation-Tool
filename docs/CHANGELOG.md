@@ -5,6 +5,16 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## 동기화 준비 2026-08-28
+
+Main 기준: v1.9.0 + 8 commits (434b169)
+
+- GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
+- 추론 오버레이 배경 밝기 유지와 슬라이더·줌/팬 UI 병목 개선 반영.
+- zone 전용 전체 이미지/sliding-window 추론과 원·threshold 성능 개선은 그대로 유지.
+
+---
+
 ## [zone-v1.1.0] 2026-08-27
 
 Main 기준: v1.9.0 + 4 commits (450f520)
