@@ -29,10 +29,9 @@ def test_build_script_uses_one_validated_python() -> None:
     assert 'set "BUILD_VENV=%ROOT%build\\venv"' in script
     assert '"%SYSTEM_PYTHON%" -m venv "%BUILD_VENV%"' in script
     assert (
-        '"%BUILD_PYTHON%" -m pip install torch torchvision '
-        "--index-url https://download.pytorch.org/whl/cu128"
+        '"%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller '
+        "--extra-index-url https://download.pytorch.org/whl/cu128"
     ) in script
-    assert '"%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller' in script
     assert 'rmdir /s /q "%BUILD_VENV%"' in script
     assert 'if not exist "%BUILD_VENV%\\Scripts\\python.exe"' in script
     assert 'if exist "%BUILD_VENV%" (' in script
@@ -43,6 +42,15 @@ def test_build_script_preserves_unrelated_build_artifacts() -> None:
     script = (ROOT / "build.bat").read_text(encoding="ascii")
     assert "if exist build rmdir /s /q build" not in script
     assert "build\\build" in script
+
+
+def test_installer_build_uses_tested_cuda_torch_pair() -> None:
+    script = (ROOT / "build.bat").read_text(encoding="ascii")
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert "torch==2.7.1" in requirements
+    assert "torchvision==0.22.1" in requirements
+    assert "version('torch').startswith('2.7.1')" in script
+    assert "version('torchvision').startswith('0.22.1')" in script
 
 
 def test_build_spec_excludes_other_qt_bindings() -> None:

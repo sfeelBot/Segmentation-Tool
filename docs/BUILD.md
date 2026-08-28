@@ -57,6 +57,10 @@ build.bat
 최초 1회 생성하고 CUDA PyTorch와 빌드/런타임 패키지를 설치한 뒤 재사용한다. 첫 실행은
 대용량 패키지 다운로드 때문에 오래 걸릴 수 있다.
 
+installer에는 Python 3.12와 PyQt6, PyTorch 2.7.1 cu128 등 실행에 필요한 런타임이 모두
+포함되므로 설치 대상 PC는 Python 설치나 인터넷 연결이 필요 없다. NVIDIA GPU가 없는 PC는
+동봉된 PyTorch의 CPU 경로로 실행된다.
+
 스크립트는 다음 순서로 동작한다.
 
 1. 기존 `build\`, `dist\` 삭제

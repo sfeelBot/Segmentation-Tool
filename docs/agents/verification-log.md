@@ -4612,3 +4612,18 @@ main 기준을 즉시 확인할 수 있음.
 - 공통 빌드·시작 회귀 테스트 41건과 zone 전용 GitHub #13/#14 검사를 통과했다.
 - Python 컴파일과 `git diff --check`, main `15c2282` ancestry 및 zone 1.2.4 메타데이터를 확인했다.
 - 실제 의존성 다운로드와 installer 생성은 빌드 PC에서 확인한다.
+
+## 2026-08-28 — installer 1.10.5 타 PC·오프라인 설치 조건 검증
+
+- Python 3.12 전용 venv에서 `torch 2.11.0+cu128`의 `c10.dll` WinError 1114를 실재현하고,
+  `torch 2.7.1+cu128`/`torchvision 0.22.1+cu128` 교체 후 import 검사를 통과했다.
+- `build.bat` 전체 실행 성공: PyInstaller onedir 및 Inno Setup 6.7.3 installer 생성 완료.
+- 산출물 `SegmentationModelUI-Setup-1.10.5.exe`는 2,144,638,257 bytes이며 Python 3.12,
+  PyQt6, OpenCV, Torch CPU/CUDA/cuDNN DLL 포함을 설치 폴더에서 직접 확인했다.
+- 새 테스트 폴더에 무인 설치 성공 후 설치 EXE를 20초 실행해 조기 종료 없이 정상 유지됨을 확인했다.
+- `tests/test_build_release.py` 25건, 메타데이터 생성, `git diff --check`를 통과했다.
+
+## 2026-08-28 — main 빌드 수정 zone 선택 동기화 검증
+
+- zone 제품명·GUID·태그 접두사와 기존 main ancestry를 보존하고 버전을 1.3.1로 갱신했다.
+- zone 빌드 릴리스 테스트 39건, 1.3.1 메타데이터 생성, `git diff --check`를 통과했다.

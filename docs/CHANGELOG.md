@@ -5,6 +5,20 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.3.1] 2026-08-28
+
+Main 기준: v1.9.0 이후 빌드 수정 c984f7e 선택 동기화
+
+### 수정
+- Python 3.12 installer 빌드에서 `c10.dll` WinError 1114를 일으킨 PyTorch wheel 대신
+  검증된 PyTorch 2.7.1 cu128과 torchvision 0.22.1 조합으로 고정.
+- 빌드 의존성 설치와 버전 검사를 통합해 다른 빌드 PC에서도 같은 CUDA 런타임을 패키징.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.3.1`로 갱신.
+
+---
+
 ## [zone-v1.3.0] 2026-08-28
 
 ### 추가
@@ -135,6 +149,20 @@ Main 기준: v1.8.0 + 19 commits (09933fd)
 - `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
 - Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
 - zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
+
+---
+
+## [v1.10.5] 2026-08-28
+
+### 수정
+- Python 3.12 빌드 환경에서 최신 CUDA PyTorch wheel의 `c10.dll`이 WinError 1114로
+  초기화되지 않아 installer 빌드가 중단되던 문제 수정.
+- Windows/Python 3.12/RTX 50 계열을 지원하는 검증 조합인 PyTorch 2.7.1 cu128과
+  torchvision 0.22.1로 installer 런타임을 고정.
+- 빌드 의존성 설치를 한 번의 해석 과정으로 통합해 torch/torchvision 호환 조합 유지.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.5`로 갱신.
 
 ---
 

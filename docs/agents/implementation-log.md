@@ -4053,3 +4053,11 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
   로드 실패로 수집 불가하여 독립 검증 단계에서 재확인이 필요하다.
 - 상태: 구현 완료, 독립 검증 대기. 커밋 해시는 커밋 직후 후속 로그에서 기록한다.
 - 구현 커밋: `eabd25e` (`feat: 존 VOC 편집 도구와 패치 기본값 통합`).
+
+## 2026-08-28 — Python 3.12 CUDA installer 빌드 복구
+
+- 새 빌드 venv의 `torch 2.11.0+cu128` Python 3.12 wheel에서 `c10.dll` WinError 1114를
+  실빌드로 재현했다. 같은 PC의 Python 3.13 wheel과 GPU/VC 런타임은 정상임을 비교 확인했다.
+- 공식 Windows cu128 호환 조합인 `torch 2.7.1`/`torchvision 0.22.1`을 고정하고,
+  requirements와 CUDA 인덱스를 한 pip 명령에서 해석하도록 단순화했다.
+- zone installer/EXE 버전을 1.3.1로 갱신했다.

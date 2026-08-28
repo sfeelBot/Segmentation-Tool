@@ -455,3 +455,9 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 
 - main `15c2282`를 ancestry로 동기화하고 zone 고유 설정과 로그를 보존했다.
 - zone 릴리스 버전을 1.2.4로 갱신했다.
+
+## 2026-08-28 — 타 PC용 오프라인 installer 빌드 안정화
+
+- 목표를 "온라인 빌드 허용, 설치 대상 PC는 완전 오프라인"으로 확정했다.
+- Python 3.12용 최신 cu128 wheel의 실빌드 실패를 재현해 검증된 PyTorch 조합 고정으로 조치했다.
+- main `c984f7e`의 빌드 수정만 zone 설정을 보존해 선택 동기화하고 zone 버전을 1.3.1로 갱신했다.
