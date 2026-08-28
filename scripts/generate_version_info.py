@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import configparser
 import re
+import shutil
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -18,6 +20,8 @@ INNO_DEFINES_FILE = OUTPUT_DIR / "release-defines.iss"
 REQUIRED_KEYS = (
     "version",
     "tag_prefix",
+    "main_base_tag",
+    "main_base_commit",
     "product_name",
     "product_slug",
     "exe_name",
@@ -28,6 +32,36 @@ SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 CHANGELOG_RELEASE_RE = re.compile(r"^##\s+\[([^\]]+)\]", re.MULTILINE)
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TAG_PREFIX_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+MAIN_BASE_TAG_RE = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-c", f"safe.directory={root.as_posix()}", "-C", str(root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def validate_main_base_repository(release: dict[str, str], root: Path = ROOT) -> None:
+    """Validate the recorded main baseline when Git metadata is available."""
+    if not (root / ".git").exists() or shutil.which("git") is None:
+        return
+
+    tag = release["main_base_tag"]
+    commit = release["main_base_commit"]
+    if _git(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode:
+        raise ValueError(f"main_base_commit does not exist in this repository: {commit}")
+    if _git(root, "merge-base", "--is-ancestor", commit, "HEAD").returncode:
+        raise ValueError("main_base_commit must be an ancestor of the current HEAD")
+    tag_result = _git(root, "rev-parse", "--verify", f"{tag}^{{commit}}")
+    if tag_result.returncode:
+        raise ValueError(f"main_base_tag does not exist in this repository: {tag}")
+    tag_commit = tag_result.stdout.strip()
+    if _git(root, "merge-base", "--is-ancestor", tag_commit, commit).returncode:
+        raise ValueError("main_base_tag commit must be an ancestor of main_base_commit")
 
 
 def load_release(path: Path = RELEASE_FILE) -> dict[str, str]:
@@ -55,10 +89,15 @@ def load_release(path: Path = RELEASE_FILE) -> dict[str, str]:
             raise ValueError(f"{key} may contain only letters, digits, dot, underscore, and hyphen")
     if not TAG_PREFIX_RE.fullmatch(values["tag_prefix"]):
         raise ValueError("tag_prefix may contain only letters, digits, dot, underscore, and hyphen")
+    if not MAIN_BASE_TAG_RE.fullmatch(values["main_base_tag"]):
+        raise ValueError("main_base_tag must be in vMAJOR.MINOR.PATCH form")
+    if not COMMIT_RE.fullmatch(values["main_base_commit"]):
+        raise ValueError("main_base_commit must be a full 40-character hexadecimal commit")
     try:
         values["app_id"] = str(uuid.UUID(values["app_id"])).upper()
     except ValueError as exc:
         raise ValueError("app_id must be a valid GUID") from exc
+    validate_main_base_repository(values, path.resolve().parent)
     return values
 
 

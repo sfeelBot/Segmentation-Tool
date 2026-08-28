@@ -1,5 +1,6 @@
 import configparser
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,8 @@ def write_release(path: Path, **overrides: str) -> None:
     values = {
         "version": "1.8.0",
         "tag_prefix": "v",
+        "main_base_tag": "v1.8.0",
+        "main_base_commit": "fc9deecab27258adec8bc469a124cb8a0665a064",
         "product_name": "Segmentation Model UI",
         "product_slug": "SegmentationModelUI",
         "exe_name": "SegmentationModelUI",
@@ -93,6 +96,101 @@ def test_rejects_invalid_guid(tmp_path: Path):
     write_release(release_file, app_id="not-a-guid")
     with pytest.raises(ValueError, match="GUID"):
         generator.load_release(release_file)
+
+
+@pytest.mark.parametrize("tag", ["1.8.0", "v1.8", "v01.8.0", "zone-v1.8.0"])
+def test_rejects_invalid_main_base_tag(tmp_path: Path, tag: str):
+    release_file = tmp_path / "release.ini"
+    write_release(release_file, main_base_tag=tag)
+    with pytest.raises(ValueError, match="main_base_tag"):
+        generator.load_release(release_file)
+
+
+@pytest.mark.parametrize("commit", ["fc9deec", "g" * 40, "a" * 39, "a" * 41])
+def test_rejects_invalid_main_base_commit(tmp_path: Path, commit: str):
+    release_file = tmp_path / "release.ini"
+    write_release(release_file, main_base_commit=commit)
+    with pytest.raises(ValueError, match="main_base_commit"):
+        generator.load_release(release_file)
+
+
+def test_repository_main_base_is_a_valid_ancestor():
+    release = generator.load_release()
+    generator.validate_main_base_repository(release)
+
+
+def test_repository_rejects_nonexistent_main_base_commit(tmp_path: Path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    release = generator.load_release()
+    monkeypatch.setattr(generator.shutil, "which", lambda _name: "git")
+    monkeypatch.setattr(
+        generator,
+        "_git",
+        lambda _root, *args: subprocess.CompletedProcess(args, 1, "", "missing"),
+    )
+    with pytest.raises(ValueError, match="main_base_commit does not exist"):
+        generator.validate_main_base_repository(release, tmp_path)
+
+
+def test_repository_rejects_nonexistent_main_base_tag(tmp_path: Path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    release = generator.load_release()
+    monkeypatch.setattr(generator.shutil, "which", lambda _name: "git")
+
+    def fake_git(_root: Path, *args: str):
+        returncode = 1 if args[:2] == ("rev-parse", "--verify") else 0
+        return subprocess.CompletedProcess(args, returncode, "", "")
+
+    monkeypatch.setattr(generator, "_git", fake_git)
+    with pytest.raises(ValueError, match="main_base_tag does not exist"):
+        generator.validate_main_base_repository(release, tmp_path)
+
+
+def test_repository_rejects_non_ancestor_main_base(tmp_path: Path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    release = generator.load_release()
+    monkeypatch.setattr(generator.shutil, "which", lambda _name: "git")
+
+    def fake_git(_root: Path, *args: str):
+        returncode = 1 if args[:2] == ("merge-base", "--is-ancestor") else 0
+        return subprocess.CompletedProcess(args, returncode, "tag-commit\n", "")
+
+    monkeypatch.setattr(generator, "_git", fake_git)
+    with pytest.raises(ValueError, match="ancestor of the current HEAD"):
+        generator.validate_main_base_repository(release, tmp_path)
+
+
+def test_source_zip_without_git_metadata_uses_format_validation_only(
+    tmp_path: Path, monkeypatch
+):
+    release_file = tmp_path / "release.ini"
+    write_release(release_file)
+    monkeypatch.setattr(
+        generator,
+        "_git",
+        lambda *_args: pytest.fail("Git must not be called without .git metadata"),
+    )
+    assert generator.load_release(release_file)["main_base_tag"] == "v1.8.0"
+
+
+def test_git_command_scopes_safe_directory_to_repository(tmp_path: Path, monkeypatch):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(generator.subprocess, "run", fake_run)
+    generator._git(tmp_path, "status", "--short")
+    assert captured["argv"][:4] == [
+        "git",
+        "-c",
+        f"safe.directory={tmp_path.as_posix()}",
+        "-C",
+    ]
+    assert captured["argv"][4:] == [str(tmp_path), "status", "--short"]
+    assert captured["kwargs"]["check"] is False
 
 
 @pytest.mark.parametrize("key", ["product_name", "publisher"])

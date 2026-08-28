@@ -6,6 +6,25 @@
 - `test_project_recent.py`: 접근 불가 최근 경로 건너뛰기 검증.
 - release 회귀 포함 23 passed, `py_compile`, `git diff --check` 통과.
 
+## 2026-08-28 — GitHub #23 존 분석 UI 병목 후속 검증
+
+- 상태: 완료.
+- 2048×2048 합성 계측: refilter 289.7ms, 존 계산 50.5ms. threshold 30연속 입력의 동기 작업은
+  30회/약 10,204.2ms에서 1회/약 340.1ms로, 원 드래그 10회 이동은 11회/약 555.3ms에서
+  release 1회/약 50.5ms로 감소했다.
+- 5472×3648 RGB 미리보기 계측에서 전체 복사 11.1ms와 59,885,568바이트 임시 메모리를 제거했다.
+- zone 회귀 9개 통과: debounce, 편집 완료 신호, 줌/팬 보존, 기존 #13/#14 및 `F` 전환 포함.
+
+## 2026-08-28 — GitHub #23 존 분석 오버레이 밝기 후속 검증
+
+- 상태: 완료.
+- `tests/test_zone_github_13_14.py`: 배경 RGB 원본 유지 및 전경 50% 혼합 픽셀 검증 포함, 통과.
+- `py_compile app/core/inference_engine.py tests/test_zone_github_13_14.py` 통과.
+
+## 2026-08-28 — GitHub #23 존 분석
+
+- 기존 존 회귀 self-check에 `F` 토글과 전체 이미지 worker 검증을 추가해 통과.
+
 역할 설명은 [README.md](README.md) 참고. append-only — 최신 항목이 아래에 추가된다.
 
 ---
@@ -2535,6 +2554,429 @@ opacity 슬라이더가 threshold를 깨지 않는 회귀 수정 확인, Excel �
 첫 이미지 자동 로드 실패)은 직접 수정 후 재검증 완료. push는 하지 않음 — 리더가
 사용자 확인 후 진행.
 
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 1 검증 (커밋 `13f2952`, 별도 워크트리)
+
+기획 산출물: [docs/specs/zone-analysis-tab-2026-08-25.md](../specs/zone-analysis-tab-2026-08-25.md).
+구현 로그: [implementation-log.md](implementation-log.md) "2026-08-25 — 존(Zone) 분석 탭
+라운드 1" 항목. **동시 세션 충돌로 이전 검증 시도가 중단·유실**되어(2026-08-25 leader-log
+"워크트리 분리" 기록 참고) 원본 디렉토리(`D:\segmentation model`)와 완전히 분리된 전용
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치)에서
+처음부터 재검증. 이번 라운드는 신규 5번째 탭 추가라 "주요 기능 추가" 기준으로 실제 GUI
+골든패스까지 확인.
+
+### 정적 검토
+- `git show 13f2952 --stat` — `app/core/i18n.py`(+2), `app/core/inference_engine.py`(+16/-3),
+  `app/main_window.py`(+3), `app/tabs/zone_analysis_tab.py`(신규, 331줄),
+  `app/widgets/zone_canvas.py`(신규, 19줄) 5개 파일만 변경. 스펙 "라운드 1" 범위와 일치.
+- `app/core/inference_engine.py`의 `run()`/`run_sliding_window()`/`refilter()` 3곳에 추가된
+  `classes: list[ClassDef] | None = None`가 전부 `classes = classes if classes is not None
+  else load_classes()` 패턴으로 기존 동작을 보존함을 코드로 확인.
+- `grep -rn "classes="  app/tabs/inference_tab.py`(및 `engine.run/run_sliding_window/refilter`
+  호출부 3곳 확인) 결과 **`classes=` 인자를 넘기는 곳이 전혀 없음** — 기존 4탭 호출부는
+  이번 변경으로 시그니처만 늘어났을 뿐 인자 미전달 시 완전히 동일하게 동작.
+- `app/main_window.py` — `ZoneAnalysisTab`이 5번째 탭으로 등록(`t("tab.zone_analysis")`),
+  `app/core/i18n.py`에 ko("존 분석")/en("Zone Analysis") 키 정상 추가됨을 확인.
+- `zone_analysis_tab.py` 판단 3(체크포인트→모델 재구성)·판단 4(타겟 클래스 즉석 구성) 로직을
+  코드로 직접 읽어 스펙과 일치함을 확인. `model_loader.save_user_code()`를 호출하는 지점이
+  없음(커스텀 코드는 세션 메모리에만 유지)도 확인.
+
+### 실제 GUI(QTest) 골든패스 검증
+스크래치 프로젝트 2개(`zone_verify_preset`, `zone_verify_custom`, `projects/nok`의 실제
+배터리 캡 사진 `7번.bmp`를 복사해 사용 — `projects/nok` 원본은 읽기 전용, 무변경 확인)에
+동일 이미지 2장 + 사각형 폴리곤 어노테이션을 만들어 `TrainerWorker.run()`(QThread를
+`.start()` 대신 동기 직접 호출)으로 실제 체크포인트 2종을 학습 생성:
+- **preset 체크포인트**(`lraspp_mobilenet`, `model_source="preset:lraspp_mobilenet"`,
+  타겟 클래스 1개만 존재하도록 이미지 왼쪽 60%만 라벨링) — 25 epoch CPU 학습.
+- **custom 체크포인트**(직접 작성한 `TinyCustomNet`, `model_source="loaded"`, 타겟 클래스
+  2개(좌/우 절반)가 모두 검출되도록 라벨링) — 25 epoch CPU 학습.
+- 학습 후 `engine.run()`으로 직접 raw_class_map을 조회해 preset은 `{0, 1}`(단일 타겟),
+  custom은 `{1, 2}`(2개 타겟)가 실제로 검출됨을 사전 확인 — 목표한 두 분기(텍스트필드 vs
+  드롭다운)를 재현 가능한 테스트 데이터임을 검증.
+
+`python main.py`와 동일한 임포트 순서(`numpy/cv2/PIL/torch/matplotlib` 선행 임포트 후
+`QApplication` 생성 — 이 순서를 지키지 않고 `torch`만 단독으로 먼저 임포트하면 이 conda
+환경에서 `QtSvg` DLL 임포트가 깨지는 것을 이번 세션에서 발견했으나, main.py와 동일한 순서로
+맞추면 재현되지 않음을 별도로 확인함 — **실제 `main.py` 실행에는 영향 없는, 이 테스트
+스크립트 자체의 임포트 순서 이슈**였으므로 QA.md에 등록하지 않음)로 `MainWindow`를 오프스크린
+`QApplication`에서 실제 구동, `QFileDialog.getOpenFileName`만 몽키패치(헤드리스 환경에서
+모달 다이얼로그 자체가 불가)하고 나머지는 전부 `QTest.mouseClick`/`QTest.keyClicks`로 실제
+위젯 이벤트를 발생시켜 골든패스 31개 assertion 전부 통과:
+
+1. **탭 표시/전환** — `QTabWidget.count()==5`, `tabText`=="존 분석", `QTest.mouseClick`으로
+   탭바를 실제 클릭해 `currentWidget()`이 `ZoneAnalysisTab`으로 전환됨을 확인.
+2. **preset 체크포인트 경로** — 이미지 선택 → 체크포인트 선택(`QFileDialog` 몽키패치 후
+   실제 버튼 클릭) → `load_checkpoint_meta()`가 `preset:lraspp_mobilenet`을 읽어 자동
+   인스턴스화(`_model is not None`, 코드박스 숨김, 라벨에 "자동 준비됨") → 추론 실행 버튼
+   클릭 → 실제 추론 결과 반환, 단일 타겟 클래스 → 텍스트필드 표시(드롭다운 숨김), 기본 이름
+   `class_1`, 캔버스에 오버레이 표시 → 텍스트필드 값을 `QTest.keyClicks`로 "rust"로 실제
+   편집 후 Enter(`editingFinished`) → `refilter()` 재실행 정상.
+3. **커스텀("loaded") 체크포인트 경로** — 체크포인트 선택 시 `model_source="loaded"`를 읽어
+   `_model`이 `None`으로 유지되고 코드박스가 노출됨(라벨에 "사용자 정의 모델") 확인 →
+   `_code_editor.setPlainText()`로 커스텀 코드 입력 → Validate 버튼 실제 클릭 → 로그에
+   `[OK]` + Load 버튼 활성화 → Load 버튼 실제 클릭 → `_model` 준비됨(라벨에 "커스텀 모델
+   로드됨") → 추론 실행 → 실제 결과에 타겟 클래스 2개 검출 → 드롭다운 표시(텍스트필드 숨김,
+   항목 2개) → `setCurrentIndex(1)`로 실제 전환 → `refilter()` 재실행 정상, 오버레이 갱신.
+4. **타겟 클래스 즉석 구성** — 위 2/3에서 단일→텍스트필드, 2개 이상→드롭다운 분기가 실제
+   추론 결과 기반으로 정확히 스위칭됨을 확인(스펙 판단 4 그대로 동작).
+5. **기존 4탭 회귀 없음** — `inference_tab.py`가 `classes=`를 넘기지 않는 것을 정적 확인한
+   데 더해, 동일한 방식(`classes` 인자 생략)으로 `engine.run()`을 실제 실행해 예외 없이
+   `load_classes()` 폴백(nok 프로젝트의 기본 `classes.json`, `class_stats`에 `object`/
+   `background` 정상 표시)으로 동작함을 실행 확인. `win._inference_tab`도 `MainWindow` 내
+   정상 생성됨을 확인.
+6. **크래시 없음** — `py_compile` 통과는 구현 로그에서 이미 확인됐고, 이번 세션은 실제
+   런타임(체크포인트 학습 2회 + GUI 골든패스 전체)에서 예외/크래시 0건.
+
+### 프로세스 정리
+- `win.close()` 호출 시 이 헤드리스(offscreen) 환경 특성상 모달 확인 다이얼로그가 뜨면
+  응답 없이 대기하는 기존에 문서화된 제약(R1/R2 검증 로그 등에 반복 기록됨)이 이번에도
+  재현되어 스크립트 프로세스가 자연 종료되지 않았음 — **모든 assertion이 이미 로그 파일에
+  기록된 뒤**의 후행 정리 단계였음을 출력 로그(`ALL CHECKS PASSED`까지 출력됨)로 확인한 뒤
+  `taskkill`로 명시적으로 종료, `tasklist`로 좀비 프로세스 없음 재확인. 이 라운드가 만든
+  회귀가 아니라 기존부터 있던 헤드리스 환경 제약(GUI 자동화 셸이 아닌 대화형 데스크톱에서는
+  발생하지 않을 것으로 추정)이라 QA.md에 신규 등록하지 않음.
+- 스크래치 학습 산출물(`zone_verify_preset/`, `zone_verify_custom/`, 체크포인트 2개)은 전부
+  스크래치 디렉토리에만 생성, `projects/nok/`은 이미지 읽기 전용 참고만 하고 무수정
+  (`git status --short`로 재확인).
+
+### 판정
+- 구현 로그의 주장과 코드가 전부 일치, 실제 GUI 골든패스(preset/커스텀 체크포인트 양쪽,
+  타겟 클래스 단일/복수 양쪽) 전부 통과, 기존 4탭 회귀 없음. **버그 발견 없음 — 라운드 1
+  검증 통과.**
+- 리더에게: **라운드 1 검증 통과, 라운드 2(원 자동검출/수동편집) 착수 가능.**
+- `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 라운드 1 체크박스를
+  "구현 완료, 검증 대기"에서 "구현+독립검증 통과"로 갱신.
+
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 2 검증: 원(circle) 자동검출 + 수동편집
+
+### 범위
+`docs/specs/zone-analysis-tab-2026-08-25.md` 판단 2(원 검출/편집), 커밋 `1815921`(circle_detector.py
++ scripts/zone_circle_proto.py) + `b1f05bc`(zone_canvas.py 편집 UI + zone_analysis_tab.py 연결) +
+`0178ce5`(구현 로그) 검증. 라운드 1(탭 스켈레톤+체크포인트 로드+추론)은 이미 독립검증 통과(커밋
+`8cec06d`) — 재검증 대상 아님, 회귀만 확인. 존 계산/퍼센티지(라운드3)·블랍삭제(라운드4)는 범위 밖.
+**중요**: `D:\segmentation model-zone-analysis-tab` 워크트리에서 작업(`D:\segmentation model`은
+다른 세션이 `main` 브랜치로 동시 사용 중이라 미접촉).
+
+### 방법
+- 정적 리뷰: `circle_detector.py`(Canny→findContours→원형도/면적 필터→Kasa 강건 원피팅) +
+  `zone_canvas.py`(원 렌더링/히트테스트/드래그 편집) + `zone_analysis_tab.py`(자동검출 버튼+
+  민감도 슬라이더+사이드 패널) 전체 코드 리딩.
+- 실제 GUI(QTest) 골든패스: 스크래치 프로젝트(`zone_verify_r2_project`, `projects/nok`의 실제
+  배터리 캡 사진 `7번.bmp`(5472×3648)+`8번.bmp`을 복사해 사용 — nok 원본은 읽기 전용, 무변경
+  확인)에 왼쪽 절반을 class_1로 라벨링한 뒤 `TrainerWorker.run()`(QThread `.start()` 대신 동기
+  직접 호출, 라운드1 검증 관례)으로 `lraspp_mobilenet` preset 체크포인트를 실제 학습 생성(1
+  epoch, 128×128 resize 모드 — 정확도 무관, 추론 파이프라인 통과만 목적). `python main.py`와
+  동일한 임포트 순서로 `MainWindow`를 오프스크린(`QT_QPA_PLATFORM=offscreen`) 구동, `QFileDialog`
+  만 몽키패치하고 나머지는 전부 `QTest.mouseClick`/`mousePress`/`mouseMove`/`mouseRelease`/
+  `keyClick`으로 실제 위젯 이벤트 발생. `QMenu.exec`(모달)만 "삭제" 액션 즉시 반환하도록
+  몽키패치(우클릭 삭제 테스트용, 헤드리스 제약).
+
+### 확인한 것 (수정 후 37개 assertion 전부 통과)
+1. **탭/회귀** — `QTabWidget.count()==5`, 존 분석 탭 전환 정상. 탭 순서 재확인:
+   라벨링/학습/추론/모델/존분석(모델탭이 4번째, 로드맵 표기 "5번째 탭"은 개수 기준으로 정확 —
+   최초 내 테스트 스크립트가 "index 0 = 모델탭"으로 잘못 가정해 FAIL 냈던 것은 테스트 버그였음,
+   실제로는 `LabelingTab`이 index 0 — 정정 후 통과).
+2. **preset 체크포인트 자동 인스턴스화 + 추론 실행** — 실제 학습된 체크포인트로 이미지 선택→
+   체크포인트 선택→"자동 준비됨"→추론 실행까지 정상, 캔버스에 오버레이 pixmap 설정 확인.
+3. **자동 검출** — 민감도 50%에서 2개 원(반지름 1213px/1347px, 중심 거의 동일) 검출, 90%에서
+   4개 원(534/604/1193/1548px) 검출 — 배터리 캡 동심원 구조(바깥 케이스 테두리/크림핑 링/
+   원판 가장자리/원판 개구부)와 개수·상대 크기가 육안상 합리적으로 일치. 민감도를 바꾸면
+   검출 결과가 실제로 달라짐을 확인. 원 목록이 항상 반지름 오름차순인 것도 확인.
+4. **원본 대비 다운스케일 좌표 역산 정확성** — 5472×3648 원본에서 검출된 모든 원의 `(cx,cy,r)`가
+   `0~W`, `0~H` 범위 안(원본 픽셀 스케일)에 있음을 확인 — `_MAX_DETECT_DIM=2048` 다운스케일 후
+   역산이 정상 동작.
+5. **수동 편집 4종 전부 실제 조작으로 확인**:
+   - (a) 중심 드래그 이동 — `QTest.mousePress→mouseMove→mouseRelease`로 원 중심을 화면상
+     (+40,+25)px 이동 후 `(cx,cy)`가 실제로 바뀌고 `r`은 불변임을 확인.
+   - (b) 테두리 드래그 반지름 조절 — 테두리 지점을 화면상 +30px 바깥으로 드래그 후 반지름이
+     실제로 커짐을 확인(초기 재현 시도에서 "변화 없음"으로 잘못 나왔던 것은 **내 테스트
+     스크립트의 버그**였음 — mutable dataclass(`_CircleItem`) 참조를 들고 있다가 드래그 후
+     같은 참조로 "이전 값"을 재조회해 자기 자신과 비교하는 실수. `before` 값을 드래그 전에
+     `float`로 스냅샷하도록 수정 후 재현하니 1213.4px→1383.1px로 정상 변경 확인됨 — **앱
+     버그 아님**).
+   - (c) 빈 공간 드래그로 신규 원 생성 — 캔버스 좌상단 빈 영역 드래그로 원 1개 추가, 최소
+     생성 반지름(`_MIN_CREATE_R_PX`) 미만이면 취소되는 로직도 코드로 확인.
+   - (d) 삭제 — Delete 키로 선택된 원 삭제 확인 + 우클릭 컨텍스트 메뉴("원 삭제") 실행으로도
+     삭제 확인(`QMenu.exec` 몽키패치, 헤드리스 제약 우회).
+6. **사이드 패널 동기화** — 반지름 오름차순 표시 확인. 리스트→캔버스 방향은 정상이었으나
+   **캔버스→리스트 방향에서 실버그 발견**(아래 "발견한 버그" 참고, 수정 후 재검증 통과).
+
+### 발견한 버그 — BUG-018 (수정 완료, `QA.md` Closed로 등록)
+`ZoneCanvas.mouseReleaseEvent()`가 드래그 종류(단순 클릭 선택 포함)와 무관하게 매번
+`circles_changed`를 emit 하는데, `ZoneAnalysisTab._refresh_circle_list()`가 이 신호마다
+`QListWidget.clear()`로 리스트를 통째로 비우고 다시 채워 `currentRow`가 -1로 리셋됨 — 캔버스에서
+원을 클릭 선택(드래그 없이)하거나 이동/반지름조절/생성해도 사이드 리스트 하이라이트가 즉시
+사라짐(원 데이터 자체는 정상, 표시 동기화만 깨짐). 디버그 스크립트로 `mousePressEvent`의
+`circle_selected` emit 직후엔 `currentRow`가 정확히 0으로 설정됨을 확인했으나, 곧이어
+`mouseReleaseEvent`의 `circles_changed` emit이 리스트를 재구성하며 그 선택을 지우는 것까지
+단계별로 재현 확인.
+
+**수정(검증 에이전트가 직접, 국소적·원인 명확)**: `ZoneCanvas.selected_id()` getter 추가 +
+`_refresh_circle_list()`가 리스트 재구성 전 현재 선택 id를 읽어두고 재구성 후 해당 행을
+`setCurrentRow()`로 복원 — 공유 함수 1곳만 고쳐 클릭/이동/반지름조절/생성 등 `circles_changed`를
+emit하는 모든 경로에 동시 적용(개별 호출부마다 패치하지 않음). 부수적으로, 같은 세션에서 "추론
+실행 전 자동 검출을 누르면 캔버스에 아무것도 안 보여 혼란스러울 수 있다"(구현 로그가 직접 짚은
+우려사항)도 실제로 재현됨(원 데이터는 저장되지만 오버레이 pixmap이 없어 `paintEvent`가 그리지
+않음) — 버튼 비활성화로 해결(`_btn_detect`를 추론 완료 전까지 `setEnabled(False)` + 툴팁 안내,
+추론 성공 시 활성화). 두 수정 모두 `python -m py_compile` 통과, 전체 37개 assertion 재실행으로
+재검증 통과(수정 전: 클릭선택 동기화 실패 1건 + 테스트 스크립트 버그 2건 오탐, 수정 후: 0건 실패).
+
+### 회귀 확인
+- 라운드 1 골든패스(체크포인트 로드+추론) 재확인 — preset 자동 인스턴스화, 추론 실행, 오버레이
+  표시 전부 정상.
+- 탭 5개 유지, 다른 탭(`LabelingTab`)으로 전환도 정상.
+- `py_compile` 통과, 런타임 크래시 0건(학습 1회+GUI 골든패스 전체 세션 동안).
+
+### 프로세스 정리
+- 스크래치 프로젝트(`zone_verify_r2_project`, 체크포인트 포함)는 검증 종료 후 삭제.
+- 헤드리스 환경 특성상 `win.close()`가 모달 없이도 이벤트 루프 부재로 자연 종료되지 않는
+  기존에 문서화된 제약(R1~R6/라운드1 검증 로그에서 반복 확인된 패턴) 재현 — 모든 assertion이
+  이미 출력된 뒤였음을 확인하고 `taskkill`로 명시적 종료, `tasklist`로 좀비 프로세스 0건 재확인.
+- `git status --short` 결과 `app/tabs/zone_analysis_tab.py`, `app/widgets/zone_canvas.py`만
+  변경(BUG-018 수정), `projects/nok/`은 무변경.
+
+### 판정
+**통과(조건부 아님 — 발견된 버그를 검증 에이전트가 즉시 수정하고 재검증까지 완료)**. 자동
+검출(민감도 반응 + 원본 스케일 좌표 정확성 + 배터리 캡 동심원 구조 개연성) + 수동 편집 4종
+(이동/반지름조절/생성/삭제) + 사이드 패널 양방향 동기화(수정 후) 전부 실제 GUI 조작으로 확인.
+라운드 1 회귀 없음.
+- 리더에게: **라운드 2 검증 통과. 라운드 3(zone_metrics — 존 리스트+퍼센티지 계산) 착수 가능.**
+- `QA.md`에 BUG-018 등록(Closed, 수정+재검증 완료 상태로 기록) — 후속 재작업 불필요.
+
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 3 검증: 존 리스트 + 퍼센티지 계산
+
+### 범위
+`docs/specs/zone-analysis-tab-2026-08-25.md` "존 계산 로직"·"UX 흐름 상세 > 존 선택 및
+네이밍" 절, 커밋 `d0fcfd9`(feat) + `5691791`(구현 로그). 라운드 1(탭 스켈레톤+체크포인트
+로드+추론, 커밋 `13f2952`)·라운드 2(원 검출/편집, 커밋 `1815921`+`b1f05bc`, BUG-018 수정
+포함)는 이미 독립검증 통과 — 재검증 대상 아님, 회귀만 확인. 블랍 삭제(라운드4)는 범위 밖.
+**워크트리**: `D:\segmentation model-zone-analysis-tab`(`D:\segmentation model`은 다른
+세션이 `main` 브랜치로 동시 사용 중이라 미접촉).
+
+### 방법
+- 정적 리뷰: `zone_metrics.py`(원판 마스크 벡터화 거리식 차집합, `Circle`/`Zone`
+  데이터클래스, `zone_stats`) + `zone_canvas.py`(`zone_clicked`, `set_highlighted_zone`,
+  `_paint_zone_highlight` OddEven 채우기) + `zone_analysis_tab.py`(`_recompute_zones`,
+  캔버스↔리스트 동기화 슬롯) 전체 코드 리딩. `py -3 app/core/zone_metrics.py` self-check
+  (5×5 합성 이미지 손계산 검산 + 원 2개 파티션 불변식)이 실제로 통과함을 재확인.
+- 실제 GUI(QTest) 골든패스: `python main.py`와 동일한 임포트 순서(numpy/cv2/PIL/torch/
+  matplotlib 선행 → PyQt6.QtWidgets → QApplication)로 `MainWindow` 실구동. 스크래치
+  프로젝트(`zone_r3_dummy`, `projects/nok`과 무관)를 열어 5개 탭 구성만 재사용하고, 존
+  계산 자체는 학습된 모델의 노이즈 있는 예측 대신 **손계산 가능한 합성
+  `raw_class_map`**(300×300, 중심 (150,150) 반지름 60 디스크가 타겟 클래스)을 쓰기 위해
+  `engine.run`/`engine.refilter`를 몽키패치(모델 자체는 `preset:lraspp_mobilenet` 체크포인트
+  로 실제 `load_model_from_ckpt()` 경로를 그대로 태워 실제 아키텍처 인스턴스화까지 확인,
+  다만 실제 순전파 결과 대신 합성 클래스맵으로 대체 — 이번 라운드 검증 목표가 "퍼센티지
+  계산·리스트 표시·동기화 로직"이라 모델 정확도는 무관). `QFileDialog`만 몽키패치, 원
+  생성/이동/반지름조절은 전부 `QTest.mousePress`/합성 `mouseMoveEvent`(`QApplication.
+  sendEvent`)/`QTest.mouseRelease`로 실제 캔버스 이벤트 발생.
+
+### 확인한 것 (수정 후 31개 assertion 전부 통과)
+1. **탭/회귀** — `QTabWidget.count()==5`, 존 분석 탭이 5번째, 탭 전환 정상. preset
+   체크포인트(`model_source="preset:lraspp_mobilenet"`) 선택 시 자동 인스턴스화(코드박스
+   숨김), 추론 실행 후 타겟 클래스 단일 검출→텍스트필드 노출, 자동검출 버튼 활성화까지
+   라운드 1·2 골든패스 재확인.
+2. **존 계산 정확성** — 원 1개(중심 (150,150), r≈50)를 실제 드래그로 생성 → 존 리스트
+   항목 정확히 2개(`중심부`/`바깥쪽`) 표시. 표시된 퍼센티지를 **`zone_metrics.py`를 거치지
+   않는 독립 numpy 오라클**(원판 마스크 차집합을 스크립트 안에서 별도로 재구현)과 대조 —
+   완전 일치(`중심부=100.00%`, `바깥쪽=4.19%`, 오차 0.5%p 미만). 손으로 유도한 수식
+   (`바깥쪽 % = (타겟면적 − 중심원과 겹치는 면적) / (전체면적 − 중심원면적)`)과도 소수점
+   6자리까지 일치(`hand=4.187% vs oracle=4.187%`) — `zone_stats()`의 산술 자체와 GUI
+   와이어링(캔버스 원 → `zone_metrics.Circle` 변환 → `raw_class_map` AND → 표시) 양쪽
+   모두 정확함을 확인.
+3. **실시간 재계산** — 기존 원의 테두리를 실제 드래그(반지름 50→~80px)한 직후 존 리스트
+   텍스트가 즉시 변경됨을 확인, 새 반지름 기준 오라클 재계산값(`56.16%`)과 GUI 표시가
+   일치. 반지름 변경 시 "중심부"가 이제 원 자체 디스크(타겟 디스크보다 커짐)를 뜻하게
+   되어 100%에서 56.16%로 정확히 낮아지는 것도 기하학적으로 타당함을 확인.
+4. **타겟 클래스 전환 재계산** — 이번 합성 시나리오는 타겟 클래스가 1개뿐이라 드롭다운
+   분기(2개 이상)는 라운드 1 검증에서 이미 확인된 범위 — 이번엔 텍스트필드 이름 변경
+   (`class_1`→`rust`) 후 `editingFinished`로 재필터링이 실행돼도 `target_class_id`가
+   유지되고 존 리스트가 여전히 정상 표시됨을 확인(재필터링 경로도 `_recompute_zones()`를
+   타는지 확인하는 목적).
+5. **캔버스↔리스트 양방향 하이라이트 동기화 — BUG-019 발견** (아래 참고).
+6. **크래시 없음** — `py_compile` 3개 파일 통과, 학습된 체크포인트 로드+추론 몽키패치+
+   전체 GUI 골든패스 세션 동안 예외 0건.
+
+### 발견한 버그 — BUG-019 (수정 완료, `QA.md` Closed로 등록)
+BUG-018과 동일한 근본 원인이 라운드 3 신규 코드(`_recompute_zones()`)에 재발했다.
+`ZoneCanvas.mouseReleaseEvent()`는 원 편집·생성·단순 클릭 등 모든 경로에서 무조건
+`circles_changed`를 emit하는데(라운드 2부터 있던 기존 동작), 라운드 3이 이 신호에 새로
+연결한 `_recompute_zones()`가 `blockSignals` 없이 `self._zone_list.clear()`로 리스트를
+통째로 비워 `currentRowChanged(-1)`을 발생시키고, 이것이 `_on_zone_row_selected(-1)` →
+`canvas.set_highlighted_zone(None)`으로 이어져 캔버스 하이라이트까지 지워버린다. 실측으로
+재현한 두 갈래:
+- **캔버스 빈 곳 클릭으로 존 선택하는 기능 자체가 사실상 전혀 동작하지 않음** — 클릭 시
+  `mouseReleaseEvent` 안에서 `set_highlighted_zone(zone_idx)` + `zone_clicked` emit까지는
+  정상 실행되지만, 같은 메서드 끝의 `circles_changed.emit()`이 **같은 이벤트 처리 안에서
+  곧바로** 그 하이라이트를 지운다(디버그 로그로 press 직후 임시 원 생성 → release 시
+  `_zone_index_at()`가 정확한 인덱스(1="바깥쪽")를 계산해 emit하는 것까지 단계별 재현,
+  최종 `_canvas._highlighted_zone`은 `None`으로 남는 것까지 확인).
+- **존 하이라이트가 유지된 상태에서 무관한 원을 이동해도 하이라이트가 사라짐** — 리스트에서
+  "바깥쪽" 항목을 선택해둔 뒤(캔버스 하이라이트=1) 기존 원을 살짝 드래그 이동하면
+  `mouseMoveEvent`/`mouseReleaseEvent`가 emit하는 `circles_changed`마다 리스트가 재구성돼
+  하이라이트가 `None`/리스트 선택이 `-1`로 리셋됨(수정 전: `canvas_highlight=1,list_row=1`
+  → 이동 후 `canvas_highlight=None,list_row=-1`).
+
+**수정(검증 에이전트가 직접, BUG-018과 동일한 패턴 재사용)**: `ZoneCanvas`에
+`highlighted_zone()` getter 추가(기존 `selected_id()`와 동일 용도) + `_recompute_zones()`가
+재구성 전 `self._canvas.highlighted_zone()`을 읽어두고 `self._zone_list.blockSignals(True)`로
+감싼 채 `clear()`+재구성한 뒤, 존 개수가 여전히 유효한 범위면 `setCurrentRow()`로 복원,
+무효(원 삭제 등으로 존 개수 자체가 줄어든 경우)면 리스트 선택(`-1`)과 캔버스 하이라이트
+(`None`)를 명시적으로 정리하도록 수정 — 공유 함수 1곳만 고쳐 원 추가/이동/크기조절/삭제·
+타겟 클래스 전환 등 `_recompute_zones()`를 타는 모든 경로에 동시 적용. `py_compile` 통과,
+전체 31개 assertion 재실행으로 재검증 통과(수정 전: 캔버스 클릭 존 선택 실패 2건 + 하이라이트
+유지 실패 2건, 수정 후: 0건 실패).
+
+### 회귀 확인
+- 라운드 1·2 골든패스 재확인 — 탭 5개, preset 체크포인트 자동 인스턴스화+추론, 원 생성/
+  반지름조절 정상.
+- `py_compile` 통과, 런타임 크래시 0건.
+
+### 프로세스 정리
+- 스크래치 자산(`zone_r3_assets/` — 합성 이미지, 가짜 체크포인트, 더미 프로젝트)은 전용
+  스크래치 디렉토리에만 생성 후 검증 종료 시 삭제. `projects/nok/`은 이번 라운드에서 아예
+  열지 않음(합성 데이터로 충분).
+- 헤드리스 환경에서 `win.close()`가 `QMessageBox.question()` 모달로 무한 대기하는 기존에
+  문서화된 제약(R1~R6/라운드1·2 검증 로그에서 반복 확인)을 이번엔 아예 `win.close()`를
+  호출하지 않고 `os._exit(0)`로 스크립트를 종료하는 방식으로 회피(모든 assertion이 이미
+  출력된 뒤). `tasklist`로 좀비 python 프로세스 0건 확인.
+- `git status --short` 결과 `app/tabs/zone_analysis_tab.py`, `app/widgets/zone_canvas.py`만
+  변경(BUG-019 수정), `projects/nok/`은 무변경.
+
+### 판정
+**통과(조건부 아님 — 발견된 버그를 검증 에이전트가 즉시 수정하고 재검증까지 완료)**. 존
+계산 정확성(독립 오라클 대조 완전 일치)·실시간 재계산·타겟 클래스 전환 시 재계산·캔버스↔
+리스트 양방향 동기화(수정 후) 전부 실제 GUI 조작으로 확인. 라운드 1·2 회귀 없음.
+- 리더에게: **라운드 3 검증 통과. 라운드 4(블랍 클릭 삭제 + 재계산) 착수 가능.**
+- `QA.md`에 BUG-019 등록(Closed, 수정+재검증 완료 상태로 기록) — 후속 재작업 불필요.
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 라운드 4 검증: 블랍 클릭 삭제 + 재계산 (스펙 마지막 라운드)
+
+### 범위
+`docs/specs/zone-analysis-tab-2026-08-25.md` "UX 흐름 상세 > 블랍 삭제" 절, 커밋
+`80405fd`(feat: 블랍 클릭 삭제 + 존 퍼센티지 재계산) + `b288e82`(구현 로그). 라운드
+1~3(커밋 `c77ccba`까지)은 이미 독립검증 통과 — 재검증 대상 아님, 회귀만 확인. 이번
+라운드가 스펙의 마지막 라운드.
+**워크트리**: `D:\segmentation model-zone-analysis-tab`(`D:\segmentation model`은 다른
+세션이 `main` 브랜치로 동시 사용 중이라 미접촉).
+
+### 방법
+- 정적 리뷰: `zone_metrics.py`(`compute_blob_labels` — `cv2.connectedComponentsWithStats`
+  얇은 래퍼) + `zone_canvas.py`(`set_blob_delete_mode`/`_handle_blob_click`/
+  `_paint_removed_blobs`/`removed_blob_ids()`/`blob_labels()` getter + 마우스/키/컨텍스트
+  메뉴 핸들러의 블랍 삭제 모드 가드) + `zone_analysis_tab.py`(`_current_target_mask`,
+  `_on_blob_deleted`, 토글 버튼 배선) 전체 코드 리딩. `py_compile` 4개 파일
+  (`zone_metrics.py`/`zone_canvas.py`/`zone_analysis_tab.py`/`circle_detector.py`) 통과
+  확인. `zone_metrics.py` self-check(`__main__`, 블랍 2개 합성 검산 포함) 재확인 통과.
+- 실제 GUI(QTest) 골든패스: `python main.py`와 동일한 임포트 순서(numpy/cv2/PIL/torch/
+  matplotlib 선행 → PyQt6.QtWidgets → QApplication)로 `MainWindow` 실구동. 라운드3
+  검증과 동일한 패턴으로 `engine.run`/`engine.refilter`를 몽키패치해, 손계산 가능한
+  합성 `raw_class_map`(300×300, 서로 떨어진 블랍 3개 — A: 중심(60,60) r=18/면적1009px,
+  B: 중심(240,60) r=22/면적1517px, C: 중심(150,230) r=14/면적613px, 전부 타겟클래스
+  id=1)을 반환하도록 대체. 모델 인스턴스화 자체는 `preset:lraspp_mobilenet` 체크포인트로
+  `load_model_from_ckpt()`(실제 프리셋 코드 로드+`nn.Module` 인스턴스화) 경로를 그대로
+  태움. 원 생성/드래그, 블랍 클릭, 중클릭 팬은 전부 `QTest.mousePress/mouseRelease`+
+  합성 `QMouseEvent`(`QApplication.sendEvent`)로 실제 캔버스 이벤트 발생시켜 확인.
+  스크래치 스크립트 2종(`verify_r4.py` 48개 assertion, `verify_r4_extra.py` 부가 회귀
+  5개 assertion), 프로젝트에는 추가하지 않음.
+
+### 확인한 것 (`verify_r4.py` 48개 assertion 전부 통과, `verify_r4_extra.py` 5개 별도 통과)
+
+1. **탭/체크포인트/추론 골든패스(라운드1 회귀)** — 5개 탭 존재, 존 분석 탭이 5번째,
+   이미지 로드 시 크기 인식(300×300), preset 체크포인트 선택 시 자동 인스턴스화(코드
+   박스 숨김), 추론 실행 후 타겟 클래스 단일 검출(id=1) → 텍스트필드 노출, 자동검출
+   버튼 활성화까지 정상.
+2. **블랍 삭제 모드 토글** — 기본 OFF 확인. OFF 상태에서 캔버스 빈 곳 클릭 시 기존
+   원 편집 로직(생성 취소 조건 미만 드래그 처리 등)이 그대로 타 크래시 없음(회귀).
+   토글 버튼 클릭 시 `canvas.blob_delete_mode()`가 즉시 True/False로 반영됨.
+3. **원 1개 실제 드래그 생성** — 중심(150,150), 반지름 84.2px 생성 확인, 존 리스트
+   항목 정확히 2개(중심부/바깥쪽). 삭제 전 퍼센티지(`[1.85%, 4.03%]`)를 `zone_metrics`를
+   거치지 않는 독립 numpy 오라클(원판 마스크 차집합 스크립트 내 재구현)과 대조 —
+   소수점 4자리까지 완전 일치(`1.8519349% / 4.0266474%`).
+4. **배경(0) 클릭 시 무동작** — 블랍 삭제 모드 ON 후 어떤 블랍도 포함하지 않는
+   좌표(10,290) 클릭 시 `removed_blob_ids()` 불변 확인.
+5. **블랍 A 클릭 삭제 + 존 재계산 정확성** — 블랍 A 중심(60,60) 클릭 시 정확히 그
+   라벨 1개만 `removed_blob_ids`에 추가됨(`labels[60,60]`과 일치 확인). 기하학적으로
+   블랍 A는 그려진 원(반지름 84.2, 블랍 A까지 거리 127.3) **바깥**에 위치해 "바깥쪽"
+   존만 영향받아야 하는데, 실제로 "바깥쪽" 퍼센티지만 4.03%→2.54%로 변하고(오라클
+   `2.5362265%`와 완전 일치) "중심부"는 1.85%로 불변 — 존별 AND 연산이 기하학적으로도
+   정확히 들어맞음을 확인. (검증 스크립트 자체에 존 인덱스를 잘못 짚어 "중심부가 변해야
+   한다"고 잘못 기대한 assertion 1건이 있었는데, 좌표 기하 계산으로 재확인한 결과
+   앱 동작이 맞고 검증 스크립트의 기대값이 틀렸던 것으로 확인 — 앱 버그 아님, 스크립트
+   버그로 판정.)
+6. **동일 블랍 재클릭 시 무동작(idempotent)** — 블랍 A를 다시 클릭해도
+   `removed_blob_ids` 불변, 존 리스트 텍스트도 완전히 동일하게 유지됨을 확인.
+7. **블랍 B 추가 삭제 — 누적 반영** — 블랍 B 클릭 시 `removed_blob_ids=={A,B}`로
+   누적, 표시 마스크(A+B 제외)로 재계산한 퍼센티지가 오라클과 재차 완전 일치
+   (`0.2954253%`).
+8. **줌/팬 상태 유지** — 블랍 삭제 조작 직전 `canvas._zoom=2.3`, `canvas._pan=(11,-7)`로
+   강제 설정 후 블랍 A/B 삭제(총 2회 클릭)를 거쳐도 `_zoom`/`_pan` 값이 완전히 동일하게
+   유지됨을 부동소수점 오차 없이 확인(`abs(diff) < 1e-9`) — 구현자가 주장한
+   "`set_pixmap()` 미호출로 줌/팬 리셋 없음"이 실측으로 검증됨.
+9. **BUG-018/019 패턴 3번째 재발 여부 — 재발 없음** — 블랍 삭제 조작 전 원 선택
+   상태(`selected_id`)와 존 하이라이트(`highlighted_zone=1`)를 각각 세팅해두고
+   블랍 A 삭제를 거친 뒤 두 상태 모두 완전히 동일하게 유지됨을 확인. `_on_blob_deleted`
+   → `_recompute_zones()` 경로가 R3에서 이미 확립된 "재구성 전 하이라이트 저장 →
+   `blockSignals`로 감싼 재구성 → 복원" 패턴을 그대로 타는지 코드 리딩으로도 재확인.
+10. **중클릭 팬이 블랍 삭제 모드에서도 동작** — 블랍 삭제 모드 ON 상태에서 중클릭
+    드래그(100,100)→(140,130) 실행 시 `canvas._pan`이 실제로 이동함을 확인(≥1px 변화),
+    같은 조작 중 삭제 이력(`{A,B}`)도 그대로 유지됨(팬 조작이 블랍 삭제 상태를 건드리지
+    않음).
+11. **블랍 삭제 모드 OFF 전환 후 원 편집 정상 복귀(회귀)** — 토글 OFF 후 기존 원을
+    실제 드래그로 이동시켜 중심 좌표가 실제로 바뀜을 확인, 원 개수는 불변(편집이지
+    생성/삭제가 아님).
+12. **타겟 클래스 재선택 시 라벨맵 재계산 + 삭제 이력 초기화** — 텍스트필드 이름을
+    `class_1`→`rust2`로 바꿔 `editingFinished`를 트리거하면 `_on_target_changed()`가
+    재필터링+`compute_blob_labels()` 재계산을 거쳐 `removed_blob_ids()`가 빈 집합으로
+    초기화되고 `blob_labels()`는 새로 채워짐을 확인(스펙 의도대로 "라벨 id는 마스크
+    종속적이라 재계산 시 이전 삭제 이력 무의미"가 실제로 반영됨).
+13. **5개 탭 전환 크래시 없음** — 순회하며 전부 확인.
+14. **부가 회귀(`verify_r4_extra.py`, 별도 소형 스크립트)** — 자동 검출 버튼(`_on_auto_detect`)
+    을 배경 단색 합성 이미지로 직접 호출해도 크래시 없음(원 미검출은 정상, 검출 파라미터
+    자체는 라운드2에서 이미 검증됨 — 이번엔 무크래시 확인이 목적). non-preset
+    (`model_source="loaded"`) 체크포인트 선택 시 코드박스 노출+모델 미준비 상태 확인,
+    간단한 `TinyModel` 코드를 Validate→Load 2단계로 실제 로드 성공까지 확인 — 판단3
+    (커스텀 모델 경로) 회귀 없음.
+
+### 발견한 버그
+없음. 정적 리뷰 + 48+5개 assertion 실제 GUI 조작 전부 통과. `QA.md` 신규 등록 없음.
+
+### 회귀 확인
+- 라운드 1~3 골든패스 재확인 — 탭 5개, preset 체크포인트 자동 인스턴스화+추론, 원
+  생성/드래그 편집, 존 계산(오라클 대조 완전 일치), 캔버스↔리스트 양방향 동기화
+  (BUG-018/019 수정분) 전부 정상.
+- `py_compile` 4개 파일 통과, 런타임 크래시 0건, `tasklist`로 좀비 python 프로세스
+  0건 확인(스크립트 종료 시 `os._exit()` 사용 후 즉시 확인).
+
+### 프로세스 정리
+- 스크래치 자산(`zone_r4/` — 합성 이미지 1장, 가짜 체크포인트 2개, 검증 스크립트 2개,
+  로그/결과 파일)은 전용 스크래치 디렉토리에만 생성. `projects/nok/`은 이번 라운드에서
+  아예 열지 않음(합성 데이터로 충분).
+- `git status --short` 결과 이번 검증 세션에서 앱 코드 변경 없음(리뷰만, 버그 미발견) —
+  `docs/roadmap.md`/`QA.md`(변경 없음)/`docs/agents/verification-log.md`(이 항목)만
+  커밋 대상.
+
+### 판정
+**통과.** 블랍 삭제 모드 토글·블랍 클릭 삭제(정확한 개별 삭제+idempotent)·존 퍼센티지
+재계산(독립 오라클과 소수점 4자리까지 완전 일치)·줌/팬 상태 유지·원 선택/존 하이라이트
+상태 유지(BUG-018/019 패턴 3번째 재발 없음)·중클릭 팬 유지·블랍 삭제 모드 OFF 전환 시
+원 편집 정상 복귀·타겟 클래스 재선택 시 라벨맵 재계산 전부 실제 GUI 조작으로 확인.
+라운드 1~3 회귀 없음. 발견된 버그 없음.
+- **스펙 `zone-analysis-tab-2026-08-25.md`의 전체 라운드(R1~R4)가 이번 검증으로 모두
+  완료됨.** "존(Zone) 분석 탭" 기능 자체는 이제 스펙 범위 내에서 실사용 가능한 상태.
+  main 병합 여부는 스펙에 이미 명시된 대로 별도 사용자 확인 필요(이번 검증 범위 아님).
+- 리더에게: **라운드 4(스펙 마지막 라운드) 검증 통과. 존 분석 탭 R1~R4 전체 완료.**
+  후속 논의가 필요하면 main 병합 여부, 결정 대기 1건(`docs/decisions-needed.md`의
+  타겟 클래스 2개 이상 시 v1 범위), 향후 확장 후보(블랍 삭제 Undo, 체크포인트 클래스
+  메타데이터 저장 등)만 남음.
+
 ---
 
 ## 2026-08-26 — 어노테이션 삭제/내보내기/가져오기 성능 병목 수정 검증 (커밋 46eb77b/e48b4a0, main 반영 e48b4a0/159c5be)
@@ -2720,40 +3162,351 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 
 ### 판정
 **통과 — 커밋 가능**. 기능·성능·선택 상태 무결성 기준을 모두 충족함.
+## 2026-08-26 — 존(Zone) 분석 탭 R-A 검증: 오프라인 원 검출 테스트 팝업 (커밋 `ea28b68`)
 
----
+기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"판단 A" 절. 구현 로그: [implementation-log.md](implementation-log.md) "2026-08-26 — R-A: 오프라인
+원 검출 테스트 팝업" 항목. 워크트리 `D:\segmentation model-zone-analysis-tab`
+(`feature/zone-analysis-tab` 브랜치, main과 완전 분리 운영). 레이아웃(디자인 목업 대조)은
+리더가 이미 확인 완료 — 이번 검증은 실제 동작(골든패스)에 집중.
 
-## 2026-08-27 — main/zone 빌드 버전 단일 소스 구조(main 구현) 검증
+### 정적 검토
+- `git show ea28b68 --stat` — `app/tabs/zone_analysis_tab.py`(+15), `app/widgets/circle_detect_preview_dialog.py`
+  (신규, 170줄), 기획/로그/로드맵 문서만 변경. 스펙 R-A 범위와 일치.
+- `CircleDetectPreviewDialog`는 `app.core.project`/체크포인트/모델 관련 import가 전혀 없음을
+  확인(완전 독립). `ZoneAnalysisTab._on_open_offline_test()`가 `CircleDetectPreviewDialog(self)`를
+  **매 클릭마다 새로 생성**하고, 이 탭의 상태(`_image_path`/`_ckpt_path`/`_last_result` 등)를
+  생성자에 전혀 전달하지 않는 구조를 코드로 확인 — 구조적으로 상태 누수가 불가능함.
+- `ZoneCanvas`/`OverlayViewer`는 전부 인스턴스 속성만 사용(클래스 변수·전역 상태 없음)을
+  `__init__` 확인 — 팝업이 매번 새 `ZoneCanvas` 인스턴스를 만드므로 재오픈 시 stale 상태가
+  구조적으로 남을 수 없음.
+- `py_compile`로 `circle_detect_preview_dialog.py`/`zone_analysis_tab.py` 양쪽 문법 확인 통과
+  (`C:\Users\Feel\anaconda3\python.exe`).
 
-- `release.ini`에서 버전·제품 정보·태그 접두사를 읽어 PyInstaller
-  `VSVersionInfo`와 Inno Setup define을 생성하는 경로 검증.
-- `tests/test_build_release.py`: 20개 통과. 현재 `1.8.0` 하드코딩 없이 설정값에서
-  기대 결과를 계산하므로 이후 버전 변경에도 테스트가 유지됨.
-- `generate_version_info.py`와 테스트 문법 검사 통과. 생성된 `version_info.txt`를
-  PyInstaller 공식 `load_version_info_from_text_file`로 실제 파싱 성공.
-- SemVer, GUID, 필수 키, 안전한 이름, C0/DEL 제어문자, CHANGELOG 최신 태그
-  (`vX.Y.Z`/`zone-vX.Y.Z`) 불일치 실패 경로 검증.
-- `build.bat` ASCII-only·공백 경로·단계별 errorlevel, `build.spec` 동적 EXE명/버전 리소스,
-  `setup.iss` 생성 define 연계 검토 통과. main 기존 산출물 이름 호환 유지.
+### 실제 GUI(QTest) 골든패스 검증
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, `numpy/cv2/PIL/torch/matplotlib`
+선행 임포트 후 PyQt6 임포트 순서(기존 검증 관례 준수). `QFileDialog.getOpenFileName`만
+몽키패치(헤드리스 환경 제약), `CircleDetectPreviewDialog.exec()`도 모달 블로킹 회피를 위해
+`show()`로 대체(dialog 자체 로직·시그널 배선은 원본 그대로, `findChildren()`으로 실제 생성된
+인스턴스를 잡아 조작). 스크래치 스크립트 2종(`verify_ra.py`, `verify_ra_drag.py`, 프로젝트에는
+추가 안 함), `projects/nok/images/7번.bmp`/`8번.bmp`(실제 배터리 캡 사진) 사용, 42개 + 5개
+assertion 전부 통과:
+
+1. **완전 독립성(핵심) — 초기 상태**: `ZoneAnalysisTab()`을 이미지/체크포인트 아무것도 로드
+   하지 않은 상태로 생성 → "오프라인 원 검출 테스트…" 버튼이 처음부터 `isEnabled()==True`
+   (별도 조건부 비활성화 없음) → 실제 `QTest.mouseClick`으로 클릭 → `CircleDetectPreviewDialog`
+   인스턴스가 정상 생성됨 → 팝업 안에서 이미지 열기(`7번.bmp`) → 자동 1차 검출 실행되어
+   `_lbl_stats`가 `"검출 개수: 2    소요시간: 26ms"`로 채워짐(초기값 `"검출 개수: -    소요시간: -"`
+   에서 실제 갱신 확인) → 캔버스에 원 2개 표시(`get_circles()` 길이 확인) → **이 모든 조작
+   후에도 메인 탭 `_image_path`/`_ckpt_path`가 여전히 `None`** — 팝업이 메인 탭 상태에
+   전혀 영향을 주지 않음을 실행으로 확인.
+2. **팝업 골든패스**: 민감도 슬라이더를 5%로 낮춘 뒤 "다시 검출" 클릭 → 검출 개수 2개(변화
+   없음, 유효한 결과), 95%로 올린 뒤 재검출 → 검출 개수 4개로 실제 변경됨 — 민감도 변경이
+   검출 결과에 실제로 반영됨을 확인. `set_circles`/`get_circles` API 왕복도 크래시 없이 정상.
+3. **원 수동 편집 — 실제 마우스 드래그(`verify_ra_drag.py`)**: `QTest.mousePress/mouseMove/
+   mouseRelease`로 화면 좌표 계산(`canvas._orig_to_screen()`) 후 실제 드래그 이벤트 발생:
+   - 중심 클릭 후 드래그 → 원 중심 좌표(cx, cy)가 실제로 이동함(PASS)
+   - 테두리 클릭 후 바깥으로 드래그 → 반지름(r)이 실제로 변경됨(PASS)
+   - 원 클릭 선택 후 `QTest.keyClick(Delete)` → 원 개수 1개 감소(2→1, PASS)
+   전부 크래시 없이 정상 동작(스펙이 요구한 "부가 기능이지만 크래시 없는지" 확인 완료).
+4. **닫기 동작**: 하단 "닫기" 버튼 클릭 → `dialog.isVisible()==False`. 별도 인스턴스에서
+   우상단 "✕" 버튼(`QPushButton` 텍스트 "✕"로 탐색) 클릭 → 마찬가지로 정상 종료.
+5. **재오픈 시 clean state**: 버튼을 다시 클릭해 연 두 번째 `CircleDetectPreviewDialog`
+   인스턴스가 `is` 비교로 **첫 번째 인스턴스와 다른 객체**임을 확인(재사용 아님) + 파일명
+   라벨/스탯 라벨이 초기값으로 되돌아가 있고 원 목록이 비어있음(`get_circles()==[]`) —
+   stale 상태 없음.
+6. **메인 탭에 이미 체크포인트+이미지+추론 결과가 있는 상태에서 팝업 열기**: 스크래치
+   체크포인트(`app.model_presets.load_preset_code("lraspp_mobilenet")`로 프리셋 모델을
+   인스턴스화해 fresh weight로 `config.model_source="preset:lraspp_mobilenet"` 메타와 함께
+   저장 — 학습 없이 배선만 확인하는 용도이므로 정확도는 무관, `engine.run()`이 체크포인트
+   내부에서 `load_state_dict(strict=False)`로 로드하므로 이 방식으로 충분) → 메인 탭에서
+   이미지(`8번.bmp`) 열기 → 체크포인트 열기(자동 모델 인스턴스화 확인) → "▶ 추론 실행" →
+   `_last_result` 생성 확인 → "자동 검출"로 원 2개(`[(2661.7, 1779.4, 1209.3), (2661.9, 1754.7,
+   1527.1)]`, 배터리 캡 사진 특성상 육안상 합리적인 크기·위치)까지 채운 상태에서 팝업을
+   열어(`8번.bmp`가 아닌 `7번.bmp`로 별도 이미지 로드) 민감도 조절+재검출까지 수행 후 닫음 →
+   **팝업을 닫은 뒤 메인 탭의 `_image_path`/`_ckpt_path`/`_last_result`(객체 참조까지 동일)/
+   원 목록(`get_circles()` 값 완전 일치)/존 리스트 개수가 전부 조작 전과 동일** — 팝업이
+   메인 탭 상태를 전혀 오염시키지 않음을 "이미 상태가 있는" 케이스로도 재확인.
+7. **BUG-018/019 패턴 재발 없음**: 팝업 자체에 원/존 사이드 리스트가 없어(스펙이 예상한 대로)
+   그 패턴이 성립할 대상이 구조적으로 없음을 실행으로도 재확인(팝업 조작 중 크래시나 상태
+   불일치 0건).
+8. **R1~R4 회귀(간단 재확인)**: 위 6번 시나리오 안에서 체크포인트 로드+추론(R1), 자동 원
+   검출(R2, 배터리 캡 사진에서 실제 원 2개 검출), 존 리스트 생성(R3, `_zone_list.count()`
+   원 개수에 맞게 채워짐), 블랍 삭제 모드 토글(R4, 체크박스 토글 시 크래시 없음) 전부 정상
+   동작 확인 — 이번 라운드가 회귀를 일으키지 않음.
+9. **크래시 없음**: `py_compile` 통과 + 위 실행 시나리오 전체(팝업 단독/메인탭 병행) 예외
+   0건, 42개+5개 assertion 전부 PASS.
+
+### 프로세스 정리
+- 검증 스크립트는 `app.exec()` 이벤트 루프를 돌리지 않고 `QTest`로 직접 위젯 이벤트만
+  발생시켰으므로 스크립트 자체가 정상 종료됨(좀비 프로세스 없음). 스크래치 체크포인트 파일
+  (`verify_ra_ckpt.pt`)은 검증 종료 후 삭제. `git status --short`로 `projects/nok/`을 포함한
+  워크트리 전체 무변경 확인(읽기 전용 사용).
+- `tasklist` 확인 중 이 워크트리 경로로 실행 중인 별도 `python.exe`(PID 16488, "Segmentation
+  Model UI — nok" 창) 1개를 발견했으나, 시작 시각(09:31)이 이번 검증 세션 시작보다 이르고
+  이번 검증 스크립트가 사용한 인터프리터(anaconda) 경로와도 달라(다른 Python 배포본) 이번
+  검증이 만든 프로세스가 아님을 확인 — 리더 또는 다른 세션이 디자인 목업 대조용으로 띄워둔
+  것으로 추정되어 임의로 종료하지 않음(내가 시작한 프로세스만 정리 대상).
 
 ### 판정
-**통과 — main 커밋 가능**. 실제 전체 패키징은 대용량 의존성 때문에 이번 검증 범위에서
-제외하고 생성기·PyInstaller 버전 파서·정적 연계로 검증함.
+- 구현 로그의 주장과 코드가 전부 일치, 완전 독립성(초기 상태·기존 상태 있는 상태 양쪽)·
+  골든패스(이미지 열기→자동검출→민감도조절→재검출→실제 마우스 드래그 편집→삭제)·재오픈
+  clean state·닫기(하단/✕ 둘 다)·R1~R4 회귀 전부 실행 확인으로 통과. **버그 발견 없음 — R-A
+  검증 통과.**
+- 리더에게: **R-A 검증 통과. R-B(threshold + root-cause 수정) 착수 가능.**
+- `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 R-A 체크박스를 "구현 완료,
+  검증 대기"에서 "구현+독립검증 통과"로 갱신.
+
 
 ---
 
-## 2026-08-27 — 라벨링 이미지 다중선택 일괄 양품화 검증
+## 2026-08-26 — 존(Zone) 분석 탭 R-B 검증: threshold UI + root-cause 수정 (커밋 `22c9e60`, `96b3530`)
 
-- offscreen 전체 테스트 43개, 신규 `tests/test_labeling_multi_ok.py` 11개 통과.
-- 무라벨/라벨 있음/기존 OK 3장 선택에서 확인 1회, 기존 OK skip, 라벨 삭제+OK 처리,
-  현재 캔버스·어노테이션 목록·OK 액션·상태 아이콘 동기화 확인.
-- 현재 캔버스 저장 타이머가 활성인 미저장 라벨 경로에서 sync save → 원자 clear/OK →
-  reload 순서를 확인해 지연 저장이 라벨을 되살리는 경쟁 회귀 방지.
-- 취소 무변경, 일부 JSON 실패 시 나머지 성공 유지·경고, 손상/non-dict JSON 원본 보존,
-  임시 파일 정리, RLE/이미지 decode 미호출 확인.
-- 이름 정렬은 변경된 k개 항목만 갱신. 상태 정렬은 상태 I/O k개 후 표시 트리만 재정렬하며
-  프로젝트 filesystem rescan 없이 current/multi-selection을 보존하고 중복
-  `image_selected`를 발생시키지 않음.
+기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"판단 B" 절. 구현 로그: [implementation-log.md](implementation-log.md) "2026-08-26 — 존 분석 탭
+R-B: threshold 무시 근본원인 수정 + AI신뢰도/픽셀크기 UI" 항목. 워크트리 `D:\segmentation
+model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치). R-A(오프라인 팝업, 커밋
+`ea28b68`+`a0afbe3`)와 R1~R4는 기존 검증 통과 — 이번엔 회귀만 재확인, 이번 라운드 핵심은
+"버그 수정이 실제로 숫자를 바꾸는지" 정량 검증.
+
+### 정적 검토
+- `git show 22c9e60` diff 확인 — `app/tabs/zone_analysis_tab.py`만 변경(+36/-5), `_on_target_changed()`
+  의 `target_mask = result.raw_class_map == cid` → `result.class_map == cid`,
+  `_current_target_mask()`의 `mask = self._last_result.raw_class_map == ...` → `class_map`으로
+  교체된 것을 라인 단위로 확인. `_recompute_zones()`의 `h, w = ...raw_class_map.shape`는 shape만
+  읽는 용도(threshold와 무관, 존 자체가 필요로 하는 이미지 크기)라 그대로 둔 것도 타당함을 확인.
+- `inference_engine.refilter()`가 `raw_class_map=raw_class_map`(인자로 받은 배열을 그대로,
+  복사 없이) 반환하는 것을 확인 — threshold를 몇 번 바꿔도 `InferenceResult.raw_class_map`의
+  object identity가 최초 `run()` 호출 결과와 계속 같아야 하고(모델 재실행 없음의 근거),
+  `class_map`만 매번 `_compute_blobs_and_filter()`로 새로 계산됨을 코드로 확인.
+- UI 추가분(`_conf_slider` QSlider 0~100, `_min_px_spin` QSpinBox 0~100000, 승인된 순서:
+  타겟클래스→AI신뢰도→픽셀크기→자동검출→블랍삭제모드→오프라인테스트)이 스펙과 일치.
+  두 컨트롤의 `valueChanged`가 새 슬롯 없이 기존 `_on_target_changed()`에 직결된 것도 확인.
+- `py_compile` — `zone_analysis_tab.py`/`circle_detect_preview_dialog.py`/`zone_canvas.py`/
+  `inference_engine.py`/`zone_metrics.py` 5개 파일 전부 통과.
+
+### 실제 GUI(QTest) 골든패스 검증 — 정량적 버그 수정 확인 (핵심)
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, 기존 관례대로
+numpy/cv2/PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. R3 검증 때 쓴 방식을 그대로
+재사용해 `engine.run`만 몽키패치(모델 forward pass 대신 손계산 가능한 합성 데이터 주입,
+`refilter()`/`_compute_blobs_and_filter()`는 실제 프로덕션 코드 그대로 실행)하고
+`QMessageBox.warning/information/critical`은 헤드리스 모달 무한대기 회피용으로만 no-op
+처리. 스크래치 스크립트(`verify_rb.py`, 프로젝트에는 추가 안 함) 작성, 100×100 합성
+`raw_class_map`에 신뢰도/크기가 다른 blob 3개를 배치(blob1: conf 0.9, 400px, 중심부 존
+안쪽에 위치 / blob2: conf 0.5, 225px, 링1 존 위치 / blob3: conf 0.2, 9px, 바깥쪽 존 위치),
+원 2개(r=15, r=35 → 존 3개: 중심부/링1/바깥쪽) 배치. 30개 assertion 전부 통과:
+
+1. **정량 검증 — GUI 존 퍼센티지가 threshold마다 실제로 바뀌고 독립 오라클과 정확히
+   일치**: 오라클은 `zone_analysis_tab.py`를 전혀 거치지 않고 `engine._compute_blobs_and_filter()`
+   +`zone_metrics.zones_from_circles()`/`zone_stats()`를 테스트 스크립트 안에서 직접 호출해
+   별도로 계산. AI 신뢰도 0%(기본값)/30%/60%/100%, 픽셀크기 0(기본값)/50/250 총 6가지 조합에서
+   GUI 표시값(`_zone_list` 텍스트 파싱)과 오라클 값이 반올림 오차(0.006%p) 이내로 완전 일치.
+   - 신뢰도 0%: blob 3개 전부 반영(중심부 56.42%/링1 6.68%/바깥쪽 0.39%).
+   - 신뢰도 60%: blob2(0.5)/blob3(0.2) 제거, blob1(0.9)만 반영 — 중심부만 >0%, 나머지 0%로
+     GUI 수치가 **실제로 바뀜**(수정 전 버그였다면 신뢰도를 아무리 바꿔도 raw_class_map
+     기준이라 항상 56.42/6.68/0.39로 고정됐을 것).
+   - 신뢰도 30%: blob3만 제거, blob1/blob2 반영(중심부·링1 >0%) — 오라클과 정확히 일치.
+   - 픽셀크기 250: blob2(225px)/blob3(9px) 제거, blob1(400px)만 반영.
+   - 픽셀크기 50: blob3(9px)만 제거, blob1/blob2 반영.
+   - 신뢰도 100%(`QTest.keyClick(Key_End)`로 실제 키보드 슬라이더 조작): 3개 blob 전부
+     conf<1.0이라 전부 제거 — 3개 존 전부 0%.
+2. **블랍 목록도 threshold 반영**: `ZoneCanvas.blob_labels()`(블랍 삭제 모드가 클릭 대상으로
+   쓰는 라벨맵)의 고유 라벨 개수가 threshold에 따라 3개(0%) → 1개(60%) → 2개(30%) → 0개
+   (100%)로 정확히 변화 — threshold로 이미 제거된 blob은 라벨맵 자체에 없어 블랍 삭제
+   모드에서 클릭 대상이 될 수 없음을 확인(수정 전이라면 raw_class_map 기준이라 항상 3개
+   그대로였을 것).
+3. **BUG-018/019 패턴 재발 없음**: 신뢰도 60%/30%, 픽셀크기 250 조작 전에 원 1개를
+   `select_circle()`로 선택 + 존 리스트 "링1"을 `setCurrentRow(1)`로 하이라이트해둔 뒤,
+   threshold를 4차례(60%→30%→0%+px250→px50) 바꾸는 동안 `_canvas.selected_id()`/
+   `_canvas.highlighted_zone()`이 매번 그대로 유지됨을 확인 — 리셋 없음.
+4. **모델 재실행 없음**: `engine.run` 호출 카운터가 threshold를 5차례 바꾼 뒤에도 계속 1
+   (최초 1회)로 유지, `InferenceResult.raw_class_map`의 `id()`가 최초 실행 직후와 threshold
+   변경 여러 차례 후에도 완전히 동일(object identity 불변) — `refilter()`만 호출되고
+   forward pass가 재실행되지 않음을 확인.
+5. **R-A/R1~R4 회귀**: `CircleDetectPreviewDialog(tab)` 오픈/닫기 정상(체크포인트 상태
+   무관 독립 동작), `_on_auto_detect()`(R2 자동검출, `detect_circles()` 실제 파이프라인)
+   크래시 없음, 추론 실행→타겟 클래스 단일 검출→텍스트필드 노출(R1) 정상.
+6. **전체 앱 부팅 확인**: `python main.py`와 동일하게 `MainWindow()` 생성 시 탭 5개
+   (라벨링/학습/추론/모델/존 분석) 정상 구성, 존 분석 탭이 5번째 위치에 `ZoneAnalysisTab`
+   인스턴스로 올바르게 붙어있음을 확인 — R-B 변경이 탭 임베딩 자체에 영향 없음.
+
+### 테스트 설계상 참고 (버그 아님)
+- 신뢰도 30% 케이스에서 blob2(15:30,45:60 영역)의 모서리 일부가 반지름 35 경계를 살짝
+  넘어 "바깥쪽" 존에도 소량(hit=15px) 걸치는 것을 발견 — 좌표를 직접 계산해보니 blob2의
+  한쪽 모서리(45,15)가 중심(50,50)에서 거리 ≈35.36으로 링 경계(r=35)를 미세하게 초과하는
+  기하학적 배치 때문(테스트 데이터 설계상의 우연, 실제 zone_stats 계산 자체는 GUI와
+  오라클이 정확히 같은 값을 냈으므로 정상 동작). 애초에 "바깥쪽=정확히 0%"를 기대한
+  내 사전 가정이 잘못이었던 것으로 판단해 해당 세부 assertion만 완화(퍼센티지 일치
+  assertion 자체는 그대로 유지·통과).
+
+### 프로세스 정리
+- 스크래치 자산(`verify_rb.py`, `rb_dummy.png`)은 전용 스크래치 디렉토리에만 생성, 검증
+  종료 후 이미지 파일 삭제. `git status --short` 결과 워크트리 무변경 확인.
+- 검증 도중 헤드리스 환경에서 `QMessageBox.information()`(자동검출 결과 0건 시)이
+  무한 대기하는 것을 실제로 겪어(첫 시도에서 `verify_rb.py` 프로세스가 블로킹) `taskkill`로
+  종료 — `tasklist`로 PID 확인 후 이번 세션이 직접 띄운 프로세스(시작 시각이 이번 세션
+  이후, 인터프리터 경로가 스크립트 실행 명령과 일치)만 골라 종료했고, 이 워크트리 경로로
+  이미 실행 중이던 다른 `python.exe`(PID 16488, R-A 검증 로그에도 기록된 것과 동일 프로세스
+  — 시작 시각이 이번 세션보다 훨씬 이르고 인터프리터 경로도 다름)는 건드리지 않음.
+  종료 후 `tasklist` 재확인 결과 이 워크트리 관련 잔여 프로세스는 PID 16488 하나뿐(이번
+  세션이 새로 띄운 것 0건).
+
+### 판정
+**통과 — 버그 발견 없음.** root-cause 수정(`raw_class_map`→`class_map`)이 실제로 존
+퍼센티지·블랍 목록에 반영됨을 6가지 threshold 조합에서 독립 오라클과 정확히 일치하는
+정량 데이터로 확인했고, 수정 전이었다면 재현됐을 "오버레이는 바뀌는데 숫자는 그대로"
+증상이 지금은 없음을 직접 실측으로 반증. BUG-018/019 패턴 재발 없음, 모델 재실행 없음,
+R-A/R1~R4 회귀 없음.
+- 리더에게: **R-B 검증 통과. R-C(폴더 단위 가져오기 + 일괄 처리, 최대 스코프) 착수 가능.**
+- `QA.md` 신규 등록 없음(발견된 결함 없음). `docs/roadmap.md`의 R-B 체크박스를 "구현 완료,
+  검증 대기"에서 "구현+독립검증 통과"로 갱신.
+
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 R-C 레이아웃 뼈대 + 3a 검증: 좌·중·우 3분할 + 좌측 이미지 목록 패널 (커밋 `62187c0`+`285151c`)
+
+기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"승인된 UI 레이아웃"/"판단 C > C-1"/"라운드 분할 제안" 라운드1·3a 절. 구현 로그:
+[implementation-log.md](implementation-log.md) "2026-08-26 — 존 분석 탭 R-C: 좌·중·우 3분할
+레이아웃 뼈대 + 좌측 이미지 목록 패널 조립 (3a)" 항목. 워크트리 `D:\segmentation
+model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치, `D:\segmentation model`(main)과
+분리된 별도 워크트리에서 작업). R-A/R-B/R1~R4는 기존 검증 통과 — **이번 라운드는 레이아웃
+자체를 뜯어고친 라운드라 리더 지시대로 라벨링/학습/추론이 아닌 존 분석 탭 자체와 공유 위젯
+(`inference_tab.py`)에 대해 `python`+`QTest` 실제 GUI 조작 골든패스 검증을 수행했다(주요
+기능 추가에 준하는 검증 수준).**
+
+### 정적 검토
+- `git show 62187c0 --stat` — `app/tabs/zone_analysis_tab.py`(+246/-100 net), `app/widgets/inference_image_list.py`
+  (+72), `docs/roadmap.md`만 변경. 스펙 R-C 3a 범위와 일치.
+- `zone_analysis_tab.py`에서 3-way `QSplitter` 생성부(`splitter = QSplitter(...)`,
+  `left`/`self._canvas`/`side` 3개 addWidget, `setStretchFactor(0,0)/(1,1)/(2,0)`,
+  `setSizes([200,700,180])`)를 라인 단위로 확인 — **`setChildrenCollapsible(False)` 호출이
+  코드에 없음**을 정적으로 먼저 확인(`grep -n "splitter" zone_analysis_tab.py` 전체 결과에
+  해당 호출 0건). 다른 4개 탭(`inference_tab.py` L51/L167, `labeling_tab.py` L51/L67/L106,
+  `training_tab.py` L265)은 전부 이 호출이 있어 BUG-008 수정(`7a98760`) 대상이었음을 재확인
+  — 이번 신규 스플리터만 그 수정 관례를 놓쳤을 가능성을 실제 조작으로 검증하기로 함.
+- `inference_image_list.py`의 애디티브 API 4개(`set_item_status`/`clear_status`/
+  `set_multi_select`/`selected_paths`) 코드 확인 — `selected_paths()`의 "선택 개수 ≤1이면
+  `paths()`(전체) 반환" 로직과 그 옆의 `ponytail:` 주석(Qt가 `setCurrentItem()` 시 currentItem을
+  selectionModel에도 자동 포함시켜 "선택 1개"와 "미선택"을 구별 못 한다는 문제 설명)을 확인 —
+  구현자가 예상한 대로 실제로 "이미지 1장만 명시적으로 고르기"가 불가능한지 실제 클릭
+  이벤트로 검증 필요하다고 판단.
+- `py_compile` — `zone_analysis_tab.py`/`inference_image_list.py`/`inference_tab.py`/
+  `circle_detect_preview_dialog.py` 4개 파일 전부 통과(`C:\Users\Feel\anaconda3\python.exe`).
+
+### 실제 GUI(QTest) 골든패스 검증
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, 기존 관례대로
+numpy/cv2/PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. `QFileDialog.getOpenFileNames`/
+`getOpenFileName`/`getExistingDirectory`만 몽키패치, `QMessageBox.warning/information`은
+헤드리스 무한대기 회피용 no-op(critical은 내용을 출력하도록 유지). `CircleDetectPreviewDialog.exec`는
+`self.show()`로 대체(모달 블로킹 회피 — **주의**: `Dialog.exec = Dialog.show`처럼 클래스
+속성을 다른 바운드 메서드로 그대로 별칭 지정하면 sip 메서드 바인딩이 꼬여 실제로는 원래
+`exec()`가 그대로 호출돼 무한 블로킹하는 것을 직접 겪음 — `lambda self: self.show()`처럼
+평범한 파이썬 함수로 감싸야 정상 동작함을 확인, 이후 스크립트는 전부 이 방식 사용).
+`projects/nok/images/`의 실제 배터리 캡 사진 5장(`7~11번.bmp`) 사용. 스크래치 스크립트
+6종(`verify_rc3a.py`, `debug_h.py`, `verify_nav_and_h2.py`, `verify_ra_toolbar2.py`,
+`verify_ra_final.py`, `verify_width.py`, 전용 스크래치 디렉토리에만 생성, 프로젝트에는
+추가 안 함) 작성·실행, 총 40개 이상 assertion:
+
+1. **3-way 스플리터 렌더링 — 정상**: `ZoneAnalysisTab`을 `QMainWindow`에 얹어 실제
+   `show()`+`qWaitForWindowExposed()` 후 `findChildren(QSplitter)`로 스플리터 정확히 1개,
+   자식 3개(좌/중/우) 확인.
+2. **BUG-008 패턴 재발 확인(핵심 발견, 신규 등록) — `BUG-020`**: `moveSplitter(0, 1)`(첫
+   핸들을 맨 왼쪽 끝으로 실제 이동)로 좌측 패널이 `setMinimumWidth(180)`을 무시하고
+   `sizes()[0]`이 200→**0px**로 완전히 붕괴함을 실측. 복구 후 `moveSplitter(sp.width(), 2)`
+   (둘째 핸들을 맨 오른쪽 끝으로)로 우측 패널도 `setMinimumWidth(160)`을 무시하고
+   180→**0px**로 붕괴 확인. 코드에 `setChildrenCollapsible(False)`가 없다는 정적 확인과
+   일치 — `sp.childrenCollapsible()`이 실제로 `True`(Qt 기본값)임을 직접 조회해 재확인.
+   다른 4개 탭의 스플리터 6개는 전부 이 설정이 있어 동일 조작으로 붕괴하지 않음(과거
+   BUG-008 재검증 로그 기준) — **이번 신규 스플리터에서만 그 관례가 누락된 회귀**.
+   `QA.md`에 `BUG-020`(P2)으로 신규 등록.
+3. **툴바 통합 — 창을 좁혀도 겹침은 없으나 다른 형태의 실측 결함 발견(신규 등록) —
+   `BUG-021`**: 리더 지시대로 창 폭 1100px로 `resize()` 시도 → 위젯 순서 자체는 겹치거나
+   뒤집히지 않음(PASS)이지만, **`win.width()`가 요청한 1100이 아니라 실제로는 1588로
+   강제 확대됨**을 확인 — 원인을 추적하니 `ZoneAnalysisTab.minimumSizeHint().width()`가
+   **1588px**(다른 4개 탭은 630~837px)에 달함. 상단 툴바 `QHBoxLayout`에 위젯 12개(체크포인트
+   열기/추론실행/타겟클래스/AI신뢰도 슬라이더+라벨/픽셀크기/민감도 슬라이더+라벨/자동검출/
+   블랍삭제모드/오프라인테스트)를 한 줄에 몰아넣어 줄바꿈·스크롤 없이 최소폭이 누적된 결과.
+   더 결정적으로, **`MainWindow()`를 실제로 생성해 `app/main_window.py:31`의 코드상 명시된
+   기본 창 크기 `resize(1280, 800)`이 런타임에 그대로 적용되는지 확인한 결과 `win.size()`가
+   `QSize(1280,800)`이 아니라 `QSize(1592,800)`로 나타남** — 존 분석 탭이 5번째 탭으로 이미
+   `QTabWidget`에 포함돼 있어 앱을 그냥 실행하기만 해도(별도 탭 전환 없이) Qt가 레이아웃
+   최소크기 제약 때문에 코드가 의도한 기본 창 크기를 무시하고 확대시킴. `QA.md`에
+   `BUG-021`(P2)로 신규 등록.
+4. **좌측 패널 — 단일 이미지 워크플로우 회귀 없음**: `getOpenFileNames`를 이미지 1장만
+   반환하도록 몽키패치 후 "이미지 열기…" 버튼 로직(`_on_select_image()`) 실행 →
+   `count()==1`, `_img_list.isHidden()==True`(스펙 "count>1일 때만 표시" 정확히 지켜짐),
+   `_image_path` 자동 설정, **자동 추론 미실행**(`_last_result is None` 유지) 전부 확인 —
+   기존 R1~R4 골든패스가 이 조건에서 전혀 안 바뀌었음을 재확인(가장 중요한 회귀 지점).
+5. **좌측 패널 — 다중 이미지 워크플로우**: `getOpenFileNames`로 3장 반환 → `count()==3`,
+   목록 패널 `isVisible()==True`, 자동 추론 미실행(엔진 `run` 호출 카운터 0) 확인.
+   `getExistingDirectory`로 `projects/nok/images` 폴더 지정 → `load_folder()` 재귀 스캔으로
+   실제 이미지 5장 전부 로드, 경로 라벨 갱신, 목록 표시 확인.
+6. **이미지 클릭 시 자동 추론 안 됨**: 트리 위젯에서 실제 `QTest.mouseClick`으로 다른
+   이미지 항목 클릭 → `engine.run` 호출 카운터 0(자동 추론 안 됨), 자동검출/블랍삭제 버튼
+   둘 다 비활성화(추론 전 상태로 정확히 리셋) 확인.
+7. **`selected_paths()` 3가지 케이스 실측(구현자가 남긴 우려사항 검증)**:
+   - **초기 상태**(폴더 로드 직후, 사용자가 명시적으로 아무것도 클릭 안 함) — 내부적으로는
+     Qt가 `setCurrentItem()`으로 이미 1개를 "선택"해 둔 상태이지만, `selected_paths()`가
+     `paths()`(전체 5장)를 정확히 반환함을 확인.
+   - **정확히 1개만 명시적으로 클릭**(다른 이미지로 실제 마우스 클릭 전환) — `selectedItems()`가
+     정확히 1개(클릭한 그 이미지)임에도 `selected_paths()`는 **여전히 전체 5장을 반환**함을
+     실측 확인 — **구현자가 `ponytail:` 주석에서 예상한 우려사항이 실제로 재현됨**: 사용자가
+     "이 이미지 1장만 배치 처리하고 싶다"는 의도로 명시적으로 1장을 클릭해도, 현재 설계상
+     `selected_paths()`는 그 의도를 구별하지 못하고 "전체 처리"로 해석한다. **판단**: 이번
+     라운드(3a)엔 이 반환값을 사용하는 배치 처리 버튼 자체가 아직 없어 사용자가 이 문제를
+     직접 겪을 수 있는 진입점이 없으므로 지금 당장 버그로 등록하지는 않음 — 다만 3b에서
+     "▶ 선택 이미지 일괄 처리 (N장)" 버튼이 이 값을 그대로 쓰게 되면 "이미지 1장만 정말
+     고르고 싶을 때 못 고름"이 실사용 버그가 되므로, 3b 스펙/구현 단계에서 반드시 재검토가
+     필요함을 로드맵에 명시(예: `selectionChanged`를 명시적 사용자 조작으로만 트리거하는
+     별도 플래그 방식 등 대안 검토 필요 — 구현자가 이미 주석에 남긴 해법 후보와 동일).
+   - **Ctrl+클릭으로 2개 명시적 다중 선택** — `selected_paths()`가 정확히 그 2개만 반환함을
+     확인(정상 동작).
+8. **`inference_tab.py` 회귀 없음(공유 위젯 애디티브 변경 검증, 필수 항목)**: `InferenceTab`을
+   별도로 인스턴스화해 `_img_list`의 `SelectionMode`가 여전히 기본값 `SingleSelection`임을
+   재확인, 폴더 열기(재귀 스캔, 5장), 목록 패널 표시, 검색 필터("7번" 입력 → 1장, 해제 →
+   5장 복원), 정렬(파일명 내림차순 전환 후 실제 정렬 순서 확인), "다음"/"이전" 네비게이션
+   버튼(1칸씩 정확히 이동·복귀) 전부 실제 클릭/입력 이벤트로 정상 동작 확인 — 존 분석 탭
+   전용 애디티브 API 추가가 추론 탭 기존 골든패스에 전혀 영향을 주지 않음.
+9. **R1~R4/R-A/R-B 골든패스 회귀 없음**: 실제 `simple_unet` 프리셋 모델을 fresh weight로
+   인스턴스화해 스크래치 체크포인트(`config.model_source="preset:simple_unet"`)로 저장 후
+   R1(체크포인트 자동 준비+추론 실행), R2(자동 검출 버튼 클릭 크래시 없음), R3(합성 결정론적
+   `raw_class_map`/`confidence_map`을 `engine.run` 몽키패치로 주입해 원 1개→존 2개 생성 확인),
+   R-B(AI신뢰도 슬라이더를 blob 신뢰도(0.9)보다 높은 95%로 올리면 퍼센티지가 65.02%→0.00%로
+   실제로 바뀜을 확인 + 조작 전후 원 선택(`selected_id()`)·존 하이라이트(`highlighted_zone()`)가
+   그대로 유지됨을 확인해 BUG-018/019 패턴 재발 없음 재확인), R4(블랍 삭제 모드 토글 시
+   `_canvas._blob_delete_mode` 정상 전환, 크래시 없음), R-A(툴바의 실제 "오프라인 원 검출
+   테스트…" 버튼을 `QTest.mouseClick`으로 클릭해 실제 팝업 생성 확인 → 팝업 안에서 이미지
+   열기 시 자동 1차 검출 실행 확인 → 팝업 조작 후에도 메인 탭 `_image_path`가 여전히
+   `None`으로 유지됨을 확인해 완전 독립성 재확인 → 닫기 버튼으로 정상 종료) 전부 정상 동작.
+10. **크래시 없음 / `py_compile`**: 위 모든 시나리오 실행 중 예외 0건(테스트 스크립트 자체의
+    시행착오 2건 — 중복 버튼 클릭으로 인한 nav 인덱스 오프바이원, 랜덤 초기화 모델이 배경만
+    예측해 타겟 클래스가 검출되지 않은 케이스 — 은 전부 테스트 스크립트 설계 문제로 확인되어
+    합성 데이터로 대체 후 재실행해 해소, 앱 코드의 결함이 아님). `py_compile` 4개 파일 전부
+    통과.
+
+### 발견된 결함 — `QA.md` 신규 등록
+- **`BUG-020`(P2)** — 3-way `QSplitter`에 `setChildrenCollapsible(False)` 누락, 핸들 드래그로
+  좌/우 패널 0px 붕괴(BUG-008 패턴 재발). 수정은 기존 해법과 동일하게 스플리터 생성부에
+  `splitter.setChildrenCollapsible(False)` 1줄 추가로 충분할 것으로 예상(구현 담당은 다음
+  라운드 착수 에이전트).
+- **`BUG-021`(P2)** — 상단 툴바 위젯 과밀로 `minimumSizeHint` 1588px, 앱 코드상 기본 창 크기
+  `1280×800`이 런타임에 `1592×800`으로 강제 확대됨. 수정 방향은 검증 범위 밖(디자인 판단
+  필요 — 위젯 폭 축소/2줄 분리/스크롤 영역 등 여러 옵션 가능)이므로 QA.md에 현상만 등록,
+  해법 결정은 디자인/리더 판단으로 남김.
+- `selected_paths()`의 "1개 선택=전체" 설계는 이번 라운드엔 버그로 등록하지 않음(사용
+  진입점 없음) — 3b 스펙/구현 시 재검토 필요 사항으로 위 roadmap.md에 명시.
+
+### 프로세스 정리
+- 스크래치 스크립트 전부 `QTest`로 위젯 이벤트만 발생시키고 `app.exec()` 이벤트 루프를
+  돌리지 않아 스크립트 자체가 정상 종료됨. 백그라운드(`&`)로 띄운 디버그 스크립트 1건이
+  모달 `exec()` 오배선(위 "주의" 참고)으로 응답 없이 멈춰 `pkill`로 정리 — `tasklist` 확인
+  결과 이 워크트리 관련 잔여 프로세스는 이전부터 떠 있던 `PID 16488`("Segmentation Model
+  UI — nok" 창, 시작 시각이 이번 세션보다 이르고 이번 세션이 띄운 것이 아님, R-A/R-B 검증
+  로그에도 동일 PID로 기록됨) 하나뿐 — 이번 세션이 새로 만든 좀비 프로세스 0건, 건드리지
+  않음. 스크래치 체크포인트 파일(`docs/agents/_scratch_verify_ckpt.pt`)은 검증 종료 후 삭제.
+  `git status --short` 결과 이 문서/QA.md/roadmap.md 갱신 외 워크트리 무변경 확인.
 
 ### 판정
 **통과 — 커밋 가능**. 단일 선택의 기존 OK on/off 경로도 그대로 유지됨.
@@ -2819,17 +3572,1021 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
   실행하지 않음을 확인.
 - 현재 작업만 중지하면 다음 waiting 작업으로 진행하며 메인/진행창 중지 버튼이 복구되고,
   전체 중지는 다음 작업을 실행하지 않고 큐 잠금을 해제함을 확인.
-## 2026-08-28 — installer 1.10.1 오프라인 설치·기동 검증
 
-- Python 3.12 빌드 인터프리터를 기준으로 PyInstaller onedir 빌드를 구성했다.
-- Inno Setup 6.7.3 설치본 생성 성공: 1,949,116,446 bytes(약 1.815GB), 설치 후 약 4.403GB.
-- 설치본에서 Python 런타임 DLL, PyQt6 `QtCore.pyd`, OpenCV `cv2.pyd`, Torch
-  `torch_cuda.dll`(811,555,328 bytes)을 직접 확인했다.
-- 최초 설치본은 `c10.dll` WinError 1114로 종료됨을 콘솔 진단 빌드로 확인했다.
-- Torch 선행 로드 수정 후 EXE 직접 기동 20초 유지 통과.
-- 수정된 installer를 새 임시 경로에 `/VERYSILENT`로 설치(종료 코드 0)하고 설치된 EXE를
-  20초 실행해 정상 유지되는 것을 확인한 뒤 검증 프로세스를 종료했다.
-## 2026-08-28 — GitHub #27 build.bat Python 탐색 검증
+**조건부 통과 — 골든패스 자체(레이아웃 조립, 좌측 패널 통합, 회귀 없음)는 전부 정상
+동작하나, 이번 라운드가 새로 만든 코드에서 실제 조작으로만 드러나는 결함 2건(`BUG-020`
+스플리터 붕괴, `BUG-021` 창 강제 확대)을 발견했다.** 둘 다 앱을 크래시시키거나 데이터를
+손상시키지 않고(P2), 사용자가 수동으로 우회 가능(스플리터는 다시 드래그해 복구, 창 크기는
+더 넓게 유지됨일 뿐 기능 자체는 정상 동작)하므로 R-C 3a 자체를 "블로커"로 판단하지는
+않았으나, 3b(배치 컨트롤이 좌측 패널 하단에 추가될 예정) 착수 전에 `BUG-020`을 먼저 고쳐두는
+것을 권장한다(좌측 패널이 붕괴된 채로 배치 컨트롤까지 추가되면 발견성이 더 나빠짐).
+- 리더에게: **R-C 3a 검증 완료(조건부 통과, BUG-020/021 신규 등록). 3b/3c 착수 전 BUG-020
+  수정 여부 판단 필요 — P2라 반드시 선행 조건은 아니지만 좌측 패널이 3b의 핵심 작업 대상이라
+  먼저 고치는 편이 재작업이 적음.**
+- `QA.md`에 `BUG-020`/`BUG-021` 신규 등록(둘 다 Open, P2). `docs/roadmap.md`의 R-C 레이아웃
+  뼈대+3a 체크박스를 "구현 완료, 실제 GUI 조작 검증 대기"에서 "구현+검증 완료(조건부 통과)"로
+  갱신.
 
-- 일반 PowerShell/CMD 실행을 기준으로 `py -3.12`가 실제 `sys.executable`을 반환하는 경로를 확인했다.
-- `where python.exe` 대체 경로에서 `WindowsApps`가 제외되는 정적 회귀 검사를 추가했다.
+---
+
+## 2026-08-26 — BUG-020/BUG-021 재검증 (존 분석 탭 3분할 스플리터 붕괴 + 툴바 폭 초과)
+
+### 범위
+직전 라운드(R-C 레이아웃 뼈대+3a, 커밋 `22e9725`)에서 발견한 `BUG-020`(3-way `QSplitter`
+붕괴)과 `BUG-021`(툴바 폭 초과로 `MainWindow` 기본크기 무시)을 리더가 직접 수정(커밋
+`9efcd14`, `app/tabs/zone_analysis_tab.py`)한 것에 대한 **좁은 범위 재검증만** 수행. 다른
+항목(R1~R4/R-A/R-B/R-C 3a 골든패스, BUG-018/019 등)은 직전 라운드에서 이미 통과 확인돼
+전체 재검증 생략. 워크트리 `D:\segmentation model-zone-analysis-tab`
+(`feature/zone-analysis-tab` 브랜치)에서 작업.
+
+### 검증 방법
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, `numpy/cv2/PIL/torch/
+matplotlib` 선행 임포트 후 `QApplication` 생성(기존 세션들과 동일 순서). `py_compile`로
+`app/tabs/zone_analysis_tab.py`/`app/main_window.py` 정적 확인 후, 3개의 오프스크린
+스모크 스크립트로 실측:
+
+1. **BUG-020**: `ZoneAnalysisTab()` 실제 인스턴스에서 `findChildren(QSplitter)`로 3-way
+   스플리터를 찾아 `childrenCollapsible()`이 `False`인지 확인 후, `moveSplitter(0, 1)`(좌측
+   핸들을 x=0까지)과 `moveSplitter(splitter.width(), 2)`(우측 핸들을 맨 끝까지) 두 방향
+   모두 극단까지 이동시켜 좌/우 패널 실제 폭을 측정.
+2. **BUG-021**: `ZoneAnalysisTab().minimumSizeHint().width()` 측정 + 실제 `MainWindow()`를
+   생성해 `win.size()`가 코드 상 `resize(1280, 800)`과 일치하는지 확인(`app/main_window.py:31`).
+3. 두 줄로 나뉜 툴바(`toolbar_row1`/`toolbar_row2`) 위젯 전수 존재 확인(`hasattr`) +
+   `QTest.mouseClick()`/`QTest.keyClick()`/`QTest.keyClicks()`로 실제 이벤트 3건 발생시켜
+   동작 확인: 블랍삭제모드 토글 버튼 클릭 → `isChecked()` 반영, 민감도 슬라이더 키보드
+   좌측 화살표 → 값 변경, 타겟 클래스 이름 입력란 실제 타이핑 → 텍스트 반영.
+4. `python -m py_compile` 크래시 없음 확인.
+
+**주의(프로세스)**: 초기 시도에서 `print()`가 flush 안 된 채 `2>&1` 리다이렉션으로 실행해
+출력이 전혀 안 보여 "행"으로 오인, 두 차례 프로세스를 직접 확인 후 종료(`taskkill /F`)함 —
+실제로는 (a) `tab._btn_ckpt.click()`으로 실제 네이티브 파일 열기 다이얼로그가 뜨면서
+offscreen 플랫폼에서도 모달 이벤트 루프가 자동으로 안 닫혀 대기 상태가 된 것, (b)
+`MainWindow.close()`가 `closeEvent()`의 `QMessageBox.question()` 종료 확인창을 띄워 같은
+이유로 대기 상태가 된 것 — 둘 다 **테스트 스크립트 자체의 설계 문제**(실제 앱 동작 자체는
+의도대로 정상, 파일 다이얼로그/종료 확인창이 뜨는 것 자체가 맞는 동작)였음. 이후 스크립트에서
+파일 다이얼로그를 여는 버튼 클릭과 `MainWindow.close()`를 제거해 문제 없이 완료. `tasklist`로
+매 단계 프로세스 상태 확인, 이번 세션이 새로 띄운 스크립트 프로세스 전부 정상 종료/필요 시
+직접 종료 확인 완료 — 세션 종료 시점에 이 워크트리 관련 잔여 프로세스 0건(사전에 떠 있던
+`PID 16488`, "Segmentation Model UI — nok" 창은 이번 세션이 띄운 것이 아니라 건드리지 않음,
+이전 검증 로그에도 동일 PID로 기록돼 있음).
+
+### 결과
+- **BUG-020**: `childrenCollapsible()` → `False` 확인. `moveSplitter(0,1)` 후 좌측 패널
+  폭 = 180px(설정된 `setMinimumWidth(180)`), `moveSplitter(total,2)` 후 우측 패널 폭 =
+  160px(설정된 `setMinimumWidth(160)`) — 양방향 모두 0px 붕괴 재현 안 됨. **재현 안 됨 →
+  Closed.**
+- **BUG-021**: `ZoneAnalysisTab().minimumSizeHint().width()` = **982px**(리더가 보고한
+  982px와 일치). 실제 `MainWindow()` 생성 후 `win.size()` = **1280×800**(코드 상
+  `resize(1280, 800)` 그대로) — 이전 재현된 `1592×800` 강제 확대 재현 안 됨. **재현 안 됨
+  → Closed.**
+- 두 줄 툴바 위젯 12개(체크포인트 열기/추론실행/타겟클래스 이름·콤보/AI신뢰도 슬라이더/
+  픽셀크기/민감도 슬라이더/자동검출/블랍삭제모드/오프라인테스트) 전부 `hasattr` 확인, 실제
+  `QTest` 클릭/키입력 3건(블랍삭제모드 토글, 민감도 슬라이더 키보드 조작, 타겟 클래스 이름
+  입력란 타이핑) 모두 정상 반영 — 레이아웃 변경으로 인한 기능 회귀 없음.
+- `py_compile app/tabs/zone_analysis_tab.py app/main_window.py` 정상, 런타임 크래시 없음.
+
+### 판정
+**통과.** `QA.md`에서 BUG-020/BUG-021을 Open → Closed로 이동(수정 커밋 `9efcd14`, 재검증
+내용 포함). `docs/roadmap.md`의 R-C 레이아웃 뼈대+3a 항목을 "조건부 통과(BUG-020/021)"에서
+"구현+검증 완료(BUG-020/021 수정 및 재검증 통과)"로 갱신 필요.
+
+
+---
+
+## 2026-08-26 — 존(Zone) 분석 탭 R-C 3b 검증: 폴더 일괄 처리 로직 + 결과 테이블 (커밋 `b391075`+`ca83829`+`bab8fad`)
+
+기획 산출물: [docs/specs/zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)
+"판단 C > C-2"/"라운드 분할 제안 3b" 절. 구현 로그: [implementation-log.md](implementation-log.md)
+"2026-08-26 — 존 분석 탭 R-C 3b: 폴더 일괄 처리 로직 + 결과 테이블" 항목. 워크트리
+`D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치, `D:\segmentation
+model`(main)과 분리). 레이아웃 뼈대+3a(커밋 `62187c0`+`285151c`)와 BUG-020/021 재검증(커밋
+`9efcd14`)은 기존 검증 통과 — 이번 라운드는 회귀만 재확인하고, 핵심은 "일괄 처리로 나온
+퍼센티지가 실제로 정확한지"를 R3/R-B 검증 때 쓴 방식(`engine.run`만 몽키패치 + 손계산 가능한
+합성 데이터 + 독립 numpy 오라클 대조)으로 정량 확인하는 것.
+
+### 정적 검토
+- `git show b391075 --stat`/`ca83829`/`bab8fad` diff 확인 — `app/tabs/zone_analysis_tab.py`
+  (+139/-3), `app/widgets/inference_image_list.py`(+2, `selection_changed` 시그널만 추가),
+  신설 `app/widgets/zone_batch_result_dialog.py`(+41) — 스펙 3b 범위와 일치, `zone_metrics.py`/
+  `inference_engine.py`/`circle_detector.py`는 무변경(스펙 명시대로 core 로직 재사용만).
+- `_on_batch_process()` 라인 단위 확인 — 원 적용 방식(체크 시 `self._canvas.get_circles()`
+  재사용 + 해상도 다르면 `(w_i/w_ref, h_i/h_ref)` 비례 스케일, 체크 해제 시 이미지별
+  `detect_circles(bgr, sensitivity=슬라이더값)`), 타겟 마스크가 `result.class_map ==
+  target_cid`(R-B와 동일하게 `raw_class_map` 아님)를 쓰는 것 확인, 현재 표시 중인 이미지는
+  `self._last_result` 재사용(재추론 생략) 확인, 배치 루프가 `self._img_list
+  .set_item_status()`만 호출하고 `self._canvas.set_circles()`/`set_pixmap()` 등 캔버스 API를
+  전혀 호출하지 않아(구현 로그 "리스크" 절 지시 그대로) BUG-018/019 패턴 재발 경로 자체가
+  없음을 코드로 먼저 확인 — 실제 GUI로 재확인 필요 항목으로 표시.
+- `InferenceImageList.selected_paths()`("선택 개수 ≤1이면 `paths()`(전체) 반환")와 배치 버튼
+  툴팁 안내 문구(`ca83829`)를 확인 — 3a 검증에서 이미 발견된 한계를 그대로 유지하고 안내만
+  추가한 것으로, 이번 라운드에서 실사용 영향(특히 다중 선택 상호작용)을 재검토하기로 함.
+- `py_compile` — `zone_analysis_tab.py`/`inference_image_list.py`/`zone_batch_result_dialog.py`/
+  `zone_metrics.py`/`inference_engine.py`/`inference_tab.py` 6개 파일 전부 통과.
+
+### 실제 GUI(QTest) 골든패스 검증 — 정량적 정확성 확인 (핵심)
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`, 기존 관례대로 numpy/cv2/
+PIL/torch/matplotlib 선행 임포트 후 PyQt6 임포트. `engine.run`(모델 forward pass 대신
+손계산 가능한 합성 `raw_class_map`/`confidence_map` 주입, `_compute_blobs_and_filter`/
+`_colorize_and_blend`는 실제 프로덕션 함수 그대로 호출)과 `detect_circles`(개별 자동검출
+모드 전용, 이미지별로 다른 고정 원 목록 반환)만 몽키패치, `QMessageBox.warning/information`은
+헤드리스 무한대기 회피용 no-op, `ZoneBatchResultDialog`는 `rows` 인자를 캡처하고 `exec()`만
+무력화(모달 회피, 이전 세션에서 확인된 "plain 함수로 감싸야 함" 관례 그대로 준수)한 서브클래스로
+치환. 스크래치 스크립트 3종(`verify_3b.py`, `verify_ctrlclick_bug.py`,
+`verify_inference_tab_regression.py`, 전용 스크래치 디렉토리에만 생성, 검증 종료 후 이미지·
+스크립트 전부 삭제) 작성·실행, 총 96개 assertion 전부 통과 + 별도 집중 재현 스크립트 1건:
+
+1. **정량 검증 — 합성 이미지 5장(동일 해상도 4장 100×80 + 다른 해상도 1장 150×120), AI신뢰도
+   40%/픽셀크기 20px 고정**: 이미지마다 신뢰도·크기가 다른 블랍 3~4개를 배치(임계값 경계
+   부근 값 포함 — 예: 신뢰도 0.39/0.45로 임계값 0.4 양쪽), 기준 이미지에 원 2개(반지름
+   15/35) 정의 후 "1번째 이미지 원을 전체에 적용"(기본 체크) 상태로 일괄 처리 실행. 결과
+   테이블(캡처된 `rows`)의 이미지×존 15개 조합 전부가 `zone_analysis_tab.py`를 전혀 거치지
+   않는 독립 오라클(`engine._compute_blobs_and_filter()` + `zone_metrics.zones_from_circles()`/
+   `zone_stats()`를 테스트 스크립트 안에서 직접 호출)과 **부동소수점 오차(1e-6) 이내로 완전
+   일치**. 다른 해상도 이미지(150×120)는 `(1.5, 1.5)` 비례 스케일된 원 좌표로 재계산한
+   오라클과도 정확히 일치 — "해상도 방어" 로직이 실제로 정확한 좌표 변환을 수행함을 확인.
+   빈 타겟(블랍 없는 이미지)은 3개 존 전부 정확히 0.00% 확인.
+2. **threshold가 배치 결과에도 실제 반영됨(R-B 근본원인 수정 재발 없음 재확인)**: 신뢰도
+   0.45 블랍(임계값 0.4 이상이라 kept)이 반영된 중심부 퍼센티지(9.03%)를, 같은 좌표를
+   `raw_class_map`(threshold 미적용) 기준으로 직접 계산한 값(10.30%)과 대조해 **서로 다름**을
+   확인 — 배치 경로가 `class_map`(threshold 적용 후)을 쓰고 있음을 정량적으로 반증.
+3. **개별 자동검출 모드(체크 해제)**: `detect_circles()`를 이미지별로 다른 고정 원 목록
+   (0~3개, 존 개수 0~4개)을 반환하도록 몽키패치 후 재실행 — 5장 전부에서 `detect_circles`가
+   정확히 1회씩(총 5회) 호출됨을 확인, 원 없는 이미지는 결과 행 0개 + 배지 "원 없음" 정확히
+   표시, 나머지 4장은 원 개수+1개의 존이 생성되고 각 존 퍼센티지가 오라클과 정확히 일치.
+   이미지마다 원 개수(0/1/2/3개)가 실제로 다름을 재확인.
+4. **좌측 목록 상태/배지 실시간 갱신**: 배치 처리 후 5장 전부 `_status` 딕셔너리에
+   `("done", 배지)`로 정확히 기록됨, 배지 텍스트가 각 이미지의 가장 바깥쪽 존 퍼센티지와
+   일치함을 확인. 현재 표시 중이던 기준 이미지(img_01)는 `engine.run` 호출 로그에서
+   제외됨(캐시 재사용), 나머지 4장만 실제 호출됨을 호출 카운터로 확인.
+5. **캐시 없는 재계산 검증(결정론적 재현성)**: 배치 처리 후 좌측 목록에서 img_03을
+   실제로 클릭(`currentItem` 변경) → `_image_path`가 img_03으로 갱신되고 원이 자동
+   초기화됨(새 이미지 전환의 정상 동작, 회귀 아님) 확인 → `_on_run()`으로 실제 재추론
+   (`engine.run` 재호출 확인) → 타겟 클래스 자동 재확정 → 기준 원(동일 해상도라 스케일
+   불필요) 재설정 → `_zone_list` 표시값이 배치 결과 테이블의 img_03 값과 반올림 오차
+   (<0.005, 화면 표시가 소수점 2자리라 발생하는 표시상 오차일 뿐, 저장값 자체는 동일 float)
+   이내로 완전 일치.
+6. **진행률 다이얼로그 + 취소**: `QProgressDialog.__init__`을 캡처해 `minimum()==0`/
+   `maximum()==5`(전체 이미지 수) 확인. `wasCanceled()`를 2번째 호출부터 `True`를 반환하도록
+   몽키패치해 "1번째 이미지 처리 후 취소" 시나리오 재현 — 실제로 1장만 `"done"` 상태가
+   되고 나머지 4장은 `_status`에 항목 자체가 생기지 않음(미처리)을 확인, 루프가 정확히
+   중단됨을 재확인.
+7. **BUG-018/019 패턴 재발 없음**: 개별 자동검출 배치 실행 전 원 1개를 `select_circle()`로
+   선택 + 존 리스트 "링 1"을 하이라이트해둔 뒤, 배치 처리(5장, `detect_circles` 5회 호출)
+   완료 후에도 `_canvas.selected_id()`/`highlighted_zone()`이 정확히 그대로 유지됨을 확인 —
+   구현 로그의 "배치 루프는 캔버스 API를 호출하지 않는다"는 코드 리뷰 결론이 실측으로도
+   재확인됨.
+8. **`inference_tab.py` 회귀 없음**: `InferenceTab`을 별도 인스턴스화해 `_img_list`가 여전히
+   `SingleSelection` 기본값 유지, 폴더 재귀 스캔(5장), 검색 필터("img_02" -> 1장, 해제 ->
+   5장 복원), 다음/이전 네비게이션 정상 동작 확인 — `selection_changed` 시그널 추가가
+   무해함을 재확인.
+9. **R1~R4/R-A/R-B/3a 회귀 없음(가벼운 재확인)**: 블랍삭제모드 토글(체크/해제 모두 캔버스에
+   정확히 반영), 오프라인 원 검출 팝업(`CircleDetectPreviewDialog`) 생성 크래시 없음.
+
+### `selected_paths()` "≤1개 선택=전체" 판단 (지시사항 9번 — 리더 위임)
+3a 검증에서 이미 확인된 한계("정확히 1장만 클릭해도 전체 목록이 반환됨")가 3b에서도 그대로
+재현됨을 확인(구현자가 안내 문구만 추가하고 로직은 그대로 둔 것과 일치). **다만 이번
+검증에서 그보다 심각한 별개의 신규 결함을 발견했다 — 아래 참고.**
+
+### 발견된 결함 — `QA.md` 신규 등록
+- **`BUG-022`(P1, Open, 신규)** — Ctrl/Shift 클릭으로 배치 대상 이미지를 2장 이상 **명시적으로**
+  선택하면(예: 이미지1 단일클릭 -> 이미지2 Ctrl+클릭, `QTest.mouseClick`으로 실제 재현), 그
+  클릭이 `QTreeWidget`의 `currentItem`도 함께 바꾸면서 `image_selected` 시그널이 발화되고
+  `ZoneAnalysisTab._on_list_image_selected()`가 "새 이미지로 전환됨"으로 해석해
+  `self._canvas.clear_circles()`를 호출 — 방금 기준 이미지에서 정의해둔 원이 그 즉시 전부
+  삭제되고 `_update_batch_button_state()`가 원 0개를 감지해 "▶ 선택 이미지 일괄 처리" 버튼을
+  비활성화한다. 집중 재현 스크립트(`verify_ctrlclick_bug.py`)로 실측: 이미지1 클릭(기존
+  선택 유지, 정상) -> 이미지2 Ctrl+클릭 -> `selected_paths()`는 정확히 `["img_01.png",
+  "img_02.png"]` 2개를 올바르게 반환하지만 `canvas.get_circles()`가 즉시 `[]`로 비고
+  `_btn_batch.isEnabled()`가 `False`로 전환됨을 확인. **즉 "특정 이미지 몇 장만 골라 일괄
+  처리"라는 이번 라운드의 핵심 기능이, 그 대상을 실제로 마우스로 고르는 행위 자체 때문에
+  매번 무력화된다** — 우회법은 선택을 건드리지 않고 `selected_paths()`의 "≤1개 선택=전체"
+  기본 동작에 의존해 항상 전체 목록을 처리하는 것뿐(부분집합 지정 사실상 불가능). 근본
+  원인은 `_on_list_image_selected()`가 "사용자가 미리보기할 다른 이미지로 전환"과 "다중
+  선택 확장을 위한 클릭"을 구분하지 못하고 항상 캔버스를 리셋하는 것 — 스펙의 "리스크" 절이
+  경고했던 "다중 선택과 현재 미리보기 이미지는 다른 개념"이라는 우려가 실제로 배치 버튼의
+  핵심 전제조건(캔버스 원 존재)을 깨뜨리는 형태로 현실화됨. 3a에서 이미 알려졌던 "1개
+  선택=전체 반환" 한계(YAGNI로 보류)와는 별개의, 더 심각한 신규 결함으로 판단해 P1로 등록.
+  수정 방향은 검증 범위 밖(디자인/구현 판단 필요 — 예: 다중 선택 모드에서는
+  `currentItemChanged`가 아니라 최초 단일 클릭시에만 프리뷰를 갱신하거나, 배치 버튼의
+  "기준 원" 상태를 캔버스의 현재 원이 아니라 별도로 캡처해 보존하는 방식 등 여러 옵션
+  가능)이므로 QA.md에 현상만 등록.
+
+### 프로세스 정리
+- 스크래치 스크립트 3종 + 합성 이미지 5장은 전용 스크래치 디렉토리에만 생성, 검증 종료 후
+  전부 삭제(`rm -rf`). `git status --short` 결과 `QA.md`/`docs/roadmap.md`/이 로그 파일
+  갱신 외 워크트리 무변경 확인.
+- `tasklist`로 프로세스 확인 — 이 워크트리 관련 잔여 프로세스는 이전 세션들과 동일한
+  `PID 16488`("Segmentation Model UI — nok" 창, 이번 세션 시작 이전부터 떠 있던 것, 건드리지
+  않음) 하나뿐. 이번 세션이 새로 띄운 스크립트는 전부 `Bash` 동기 실행으로 완료 후 자동
+  종료(백그라운드 프로세스 0건).
+
+### 판정
+**조건부 통과 — 일괄 처리의 핵심 요구사항인 "정확성"은 완벽하게 확인됨(96개 assertion,
+동일/다른 해상도·threshold 반영·개별 자동검출·캐시 없는 재계산 전부 오라클과 정확히 일치,
+버그 0건). 진행률/취소/상태아이콘/BUG-018·019 패턴 재발 없음/`inference_tab.py` 회귀 없음도
+전부 정상.** 다만 이번 라운드가 신설한 "선택 이미지 일괄 처리" 기능 자체가 다중 선택
+상호작용에서 실사용 가능한 수준으로 동작하지 않는 **신규 P1 결함(`BUG-022`)**을 발견했다 —
+크래시나 데이터 손상은 없고 우회(선택 안 함=전체 처리)는 가능하지만, "선택 이미지"라는
+버튼 문구가 약속하는 핵심 시나리오(부분집합 지정)가 사실상 막혀 있어 R-C 3a의 BUG-020/021
+보다 심각도가 높다고 판단(P1 vs P2). 정확성 계산 로직 자체(3b의 가장 중요한 부분)는 흠결이
+없으므로 3b를 "실패"로 되돌리지는 않되, 3c(Excel 내보내기) 착수 또는 최종 배포 전에
+`BUG-022` 수정이 필요하다고 권고한다.
+- 리더에게: **R-C 3b 정확성 검증 통과(96/96 assertion). 신규 P1 버그(`BUG-022`, 다중 선택
+  시 배치 버튼 무력화) 발견 — 3c 착수 전 수정 여부를 사용자와 상의해 결정 필요. 3a에서
+  이미 알려진 "1개 선택=전체" 한계는 이번에도 재확인했으나 우선순위상 `BUG-022`가 더
+  시급함.**
+- `QA.md`에 `BUG-022`(P1, Open) 신규 등록. `docs/roadmap.md`의 R-C 3b 항목을 "구현 완료,
+  검증 대기"에서 "구현+검증 완료(조건부 통과, BUG-022 신규 발견)"로 갱신.
+
+---
+
+## 2026-08-26 — BUG-022 재검증: 다중선택(Ctrl/Shift) 시 원 소실 방지 수정, 재현됨(수정 실패)
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치). 리더가
+구현 에이전트에게 맡긴 BUG-022(P1) 1차 수정(커밋 `9b28987`, `_multi_select` 플래그 가드)의
+재검증만 수행 — 3b의 나머지 부분(정확성 96 assertion 등)은 직전 세션에서 이미 통과 확인돼
+범위 밖.
+
+### 방법
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`. numpy/cv2/PIL/torch/
+matplotlib 선행 임포트 후 PyQt6(기존 관례). `engine.run`/`engine.refilter`만 몽키패치(손계산
+가능한 합성 `InferenceResult` 반환, `class_stats`/`blobs`는 빈 리스트), `QMessageBox.*`
+no-op, `ZoneBatchResultDialog.exec` 무력화(모달 회피) — 3b 검증 세션과 동일 패턴. 스크래치
+스크립트 3종(`verify_bug022.py`, `debug_timing.py`/`debug_timing2.py`, 전용 스크래치 디렉토리)
++ 합성 이미지 4장. **지시사항대로 `_on_current_item_changed()`를 직접 호출하지 않고 반드시
+`QTest.mouseClick` + 실제 `Qt.KeyboardModifier.ControlModifier`/`ShiftModifier`로 마우스
+이벤트를 재현**(원 보고서와 동일 방법).
+
+### 결과 — BUG-022 재현됨(수정이 실제로 작동하지 않음)
+원본 재현 시나리오(이미지1 실제 단일클릭으로 선택 확정 → 원 2개 정의 → 이미지2 실제
+Ctrl+클릭)를 그대로 재실행한 결과, **수정 이전과 동일하게 증상이 재현**됐다:
+- `tab._canvas.get_circles()`가 Ctrl+클릭 직후 `[]`로 즉시 비워짐(기대: 원 2개 유지).
+- `tab._btn_batch.isEnabled()`가 `False`로 전환(기대: 계속 `True`).
+- `tab._image_path`가 이미지1에서 이미지2로 바뀜(기대: 이미지1 유지, Ctrl+클릭은 확장
+  선택일 뿐 "미리보기 전환"이 아니어야 함).
+- Shift 범위선택(이미지1 → 이미지3)도 동일하게 재현(`image_selected`가 이미지3에 대해
+  잘못 emit됨, 최종 `selectedItems()`는 3개로 정상이지만 그 사이에 이미 잘못된 emit 발생).
+
+### 근본 원인 규명 — 왜 1차 수정의 "검증 완료" 주장이 틀렸는가
+`inference_image_list.py`의 `_on_current_item_changed()`에 추가된 가드(`if self._multi_select
+and len(self._tree.selectedItems()) != 1: return`)는 **`selectedItems()`를 인위적으로
+미리 세팅한 뒤 메서드를 직접 호출하는 헤드리스 테스트에서만 통과**하고, 실제 Qt 마우스
+클릭 이벤트 시퀀스에서는 작동하지 않는다. `debug_timing.py`/`debug_timing2.py`로
+`_on_current_item_changed`(소스에 임시 디버그 print 삽입 후 원상복구, `git status`로 무변경
+확인)와 `currentItemChanged`/`itemSelectionChanged` raw 시그널 발화 순서를 직접 관찰한 결과:
+
+```
+RAW 시퀀스 (이미지1 선택된 상태에서 이미지2 Ctrl+클릭 시):
+1) currentItemChanged 발화 — 이 시점 selectedItems() = [이미지1] (1개, 이미지2는 아직 미반영)
+   → 가드 조건(len != 1)이 False → "정상 단일 선택"으로 오판 → image_selected(이미지2) 잘못 emit
+2) (Qt 내부에서 Ctrl 토글 선택 커맨드 적용)
+3) itemSelectionChanged 발화 — 이제야 selectedItems() = [이미지1, 이미지2] (2개, 뒤늦게 정확해짐)
+```
+
+Qt의 `QAbstractItemView` 마우스 클릭 처리는 `mousePressEvent` 안에서 (a) `currentIndex`를
+먼저 바꿔 `currentItemChanged`를 동기 발화한 뒤에야 (b) 실제 선택 커맨드(Ctrl=Toggle,
+Shift=Range)를 `selectionModel`에 적용하는 순서로 동작한다. 즉 `currentItemChanged` 핸들러
+실행 시점엔 아직 이번 클릭의 선택 효과가 반영되지 않은 "직전" 상태만 관측 가능 — 가드가
+검사하는 `len(selectedItems())`가 이 순간엔 항상 "이전 선택 개수"를 보게 돼, Ctrl/Shift로
+선택을 2개 이상으로 늘리는 첫 클릭마다 매번 뚫린다(정확히 원래 버그가 발생하던 경로).
+1차 수정 시도의 헤드리스 검증(QA.md 원문: "`_on_current_item_changed()`를 실제
+`selectedItems()` 상태별로 직접 호출")은 이 인트라 이벤트 타이밍을 재현할 수 없는 방법이라
+거짓 양성(false positive)이었다.
+
+### 회귀 없음 확인 (변경 안 됨 — 코드 레벨 보장)
+`inference_tab.py`는 `set_multi_select()`를 호출하지 않아 `_multi_select`가 항상 `False`이고,
+가드 전체가 `self._multi_select and ...`로 게이팅돼 있어 이 조건이 거짓이면 가드 블록에
+진입 자체를 안 한다 — 즉 SingleSelection 경로는 이번 수정 전후로 코드 실행 흐름이 100%
+동일함을 코드 레벨로 보장. 실측으로도 `InferenceImageList(set_multi_select 미호출)`에서
+`_multi_select is False`, 실제 클릭 시 `image_selected` 정상 발화(이미 선택된 항목을 다시
+클릭하는 경우엔 애초에 Qt가 `currentItemChanged`를 발화하지 않는데 이는 이번 수정과 무관한
+기존 Qt 동작이며 3b 검증 때도 동일하게 관찰됨).
+
+### 시나리오 5(부분집합 배치 처리 실제 실행)는 별도로 미실행
+원이 시나리오 1 단계에서 이미 사라지는 게 재현됐으므로, "이제 원이 안 사라지니 실제로
+일괄 처리가 되는지" 확인하는 지시사항 5번은 전제(원 유지)가 성립하지 않아 의미가 없어
+스킵 — 원 손실 버그부터 실제로 수정된 뒤 재확인 필요.
+
+### 판정
+**블로커 — BUG-022 수정 실패, 재현됨.** `QA.md`의 상태를 "수정함, 검증 필요"에서
+**Open**으로 되돌리고, 근본 원인(`currentItemChanged`가 선택 커맨드 적용보다 먼저 동기
+발화되는 Qt 내부 순서)과 1차 수정이 왜 헤드리스 테스트를 통과했는지, 수정 방향 후보
+(예: `itemSelectionChanged` 기반으로 재설계, `QApplication.keyboardModifiers()`로 클릭
+시점 모디파이어 직접 확인, `QTimer.singleShot(0, ...)`으로 선택 커맨드 적용 완료 후 재확인
+등)를 상세히 기록. 리더에게: **1차 수정이 실제로 작동하지 않으므로 재구현 필요 — 이번엔
+반드시 `QTest.mouseClick` + 실제 모디파이어로 재검증할 것을 구현 에이전트에게도 명시
+권고.**
+
+### 프로세스 정리
+디버그 스크립트 실행 중 `inference_image_list.py`에 임시 print를 삽입했다가 즉시 백업본으로
+복원(`git status --short`로 무변경 확인, `py_compile` 재확인). 스크래치 스크립트/합성
+이미지는 전용 스크래치 디렉토리에만 생성. `tasklist`로 확인한 잔여 GUI 프로세스는 이전
+세션들과 동일한 기존 창(PID 16488, 이번 세션이 새로 띄운 것 아님) 하나뿐 — 이번 세션은
+전부 `Bash` 동기 실행으로 완료, 백그라운드 프로세스 0건.
+
+
+---
+
+## 2026-08-26 — BUG-022 2차 수정 독립 재검증: 완전 해결 확인 (커밋 `6695f77`+`7d8e406`, 검증 3번째 시도)
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치). 리더가
+구현 에이전트에게 맡긴 BUG-022(P1) 2차 수정 재검증. 1차 수정(`9b28987`)은 이전 세션(2026-08-26,
+위 항목)에서 `QTest.mouseClick` 실측으로 재현 확인돼 Open으로 되돌아갔었다 — 이번이 3번째
+독립 재현 시도. 구현자 로그(`docs/agents/implementation-log.md` "2026-08-26 — BUG-022 2차 수정")도
+자체적으로 `QTest.mouseClick` + 실제 모디파이어로 확인했다고 주장해, 지시대로 **메서드 직접 호출이나
+상태 사전 세팅 없이 반드시 진짜 마우스 클릭 이벤트를 실제 위젯 좌표에 재현**하는 방식으로
+독립적으로 재확인했다.
+
+### 방법
+`C:\Users\Feel\anaconda3\python.exe`, `QT_QPA_PLATFORM=offscreen`. numpy/cv2/PIL/torch/
+matplotlib 선행 임포트 후 PyQt6(기존 관례). `QMessageBox.*` no-op, `engine.run`/`engine.refilter`만
+몽키패치(손계산 가능한 합성 `InferenceResult` 반환), `ZoneBatchResultDialog.__init__`을 감싸
+`rows`를 캡처하고 `exec()`를 무력화(모달 회피). 전용 스크래치 디렉토리에 스크립트 1종
+(`verify_bug022_v2.py`) + 합성 이미지 4장 작성, 43개 assertion 실행. 모든 목록 클릭은
+`InferenceImageList._tree.visualItemRect(item).center()`로 실제 아이템 좌표를 구한 뒤
+`QTest.mouseClick(tree.viewport(), LeftButton, modifier, pos)`로 진짜 마우스 이벤트를 뷰포트에
+주입(모디파이어는 `Qt.KeyboardModifier.ControlModifier`/`ShiftModifier` 실제 값 사용, 메서드 직접
+호출 0건). 원 정의도 `set_circles()` 같은 직접 API가 아니라 `ZoneCanvas`에 실제
+`QTest.mousePress`→`mouseMove`→`mouseRelease` 드래그로 생성(BUG-018 검증 때 쓴 방식과 동일).
+
+### 결과 — 원본 재현 시나리오, 재현 시도 전부 실패(=버그 해결 확인)
+1. **`InferenceImageList` 단독**: 로드 직후 img1 auto-select(기존 Qt 동작) 확인 후, img2 단일
+   클릭 → emit 1회. img3 실제 **Ctrl+클릭**(2개 선택) → `image_selected` emit **없음**(정상,
+   수정 전엔 여기서 잘못 emit됐음), `selectedItems()` 정확히 2개. img4 실제 **Shift+클릭**(3개
+   선택) → 역시 emit 없음. 모디파이어 없이 img1 단일 클릭 → 1개로 좁혀지며 emit 정확히 1회.
+2. **`ZoneAnalysisTab` 원본 시나리오**: 이미지1 실제 단일클릭(선택 확정) → 캔버스에 실제 드래그로
+   원 2개 정의(`get_circles()`==2, 배치 버튼 활성화) → 이미지2 실제 **Ctrl+클릭** → **원 2개
+   그대로 유지**(수정 전엔 즉시 `[]`), **배치 버튼 계속 활성화**(수정 전엔 `False`),
+   `tab._image_path`가 이미지1로 **유지**(수정 전엔 이미지2로 전환), `selected_paths()`가 정확히
+   `[img_01.png, img_02.png]` 반환. **셋 다 원래 증상이 재현되지 않음.**
+3. **Shift 범위선택(이미지1→이미지3)도 동일하게 원 유지** 확인.
+4. **선택을 1개로 좁히면 정상 전환**: 다중 선택 상태에서 모디파이어 없이 이미지4를 클릭하면
+   캔버스가 이미지4로 정상 전환되고 원이 클리어됨(이건 "새 이미지 로드"의 의도된 정상 동작,
+   버그 아님) + `image_selected`가 **정확히 1회만** 발화(중복 emit 없음, 두 emit 경로가 겹치지
+   않는다는 구현 로그 주장 확인).
+5. **3b 배치 처리 실제 부분집합 실행을 이번에 처음으로 끝까지 확인**(1·2차 검증에서는 원 소실
+   버그 때문에 전제가 성립하지 않아 스킵됐던 항목): 이미지1을 기준으로 원 2개 재정의 →
+   `engine.run`/`engine.refilter` 몽키패치 후 실제 `▶ 추론 실행` 버튼 클릭(`QTest.mouseClick`)
+   → `_last_result`/`_target_class_id`/`_target_classes` 자동 확정, 원 2개 여전히 유지 확인 →
+   이미지2를 실제 Ctrl+클릭으로 부분집합 지정(배치 버튼 라벨 "(2장)"으로 갱신 확인) →
+   `▶ 선택 이미지 일괄 처리` 버튼 실제 클릭 → `engine.run`이 **이미지2에 대해서만** 재호출됨
+   (이미지1은 "현재 표시 중 + `_last_result` 존재" 캐시 재사용 경로를 실제로 탐, 호출 로그로
+   확인) → `ZoneBatchResultDialog`에 캡처된 `rows`가 정확히 이미지1/이미지2 조합만 포함하고
+   이미지3/이미지4는 아예 없음, 좌측 목록 `_status`에도 이미지3/이미지4는 항목 자체가 생기지
+   않음(미처리) — "선택 이미지만 골라 일괄 처리"가 **실제로 부분집합에만 적용됨**을 실증.
+6. **`inference_tab.py` 회귀 없음**: 별도 `InferenceTab` 인스턴스에서 `_multi_select is False`
+   (기본 SingleSelection) 확인, 실제 클릭 시 `image_selected` 정상 발화, 검색 필터
+   ("img_03"→1건, 해제→4건 복원, 디바운스 타이머 직접 트리거), `navigate(+1)`/`navigate(-1)`
+   이전·다음 네비게이션 전부 정상.
+
+총 43개 assertion 전부 PASS(실패 0건). 최초 작성한 baseline assertion 1건(로드 직후 이미 선택된
+항목을 재클릭하면 Qt가 `currentItemChanged`를 재발화하지 않는 기존 Qt 동작을 "버그"로 잘못
+기대해 FAIL로 나왔던 테스트 설계 실수)은 baseline을 다른 항목 클릭으로 조정해 재확인 후 제거 —
+BUG-022 수정 자체와는 무관.
+
+### 회귀/안전 확인
+- `py_compile app/widgets/inference_image_list.py app/tabs/zone_analysis_tab.py
+  app/tabs/inference_tab.py` 전부 통과.
+- `git status --short` — 스크래치 디렉토리 밖 워크트리 변경 없음(디버그 코드 삽입/원복 없음,
+  이번엔 소스 수정 자체가 필요 없었음).
+- `tasklist`로 확인한 잔여 GUI 프로세스는 이전 세션들과 동일한 기존 창(PID 16488, 이번 세션이
+  새로 띄운 것 아님) 하나뿐 — 이번 세션은 전부 `Bash` 동기 실행으로 완료, 백그라운드 프로세스
+  0건, 좀비 프로세스 없음.
+- 스크래치 스크립트/합성 이미지는 전용 세션 스크래치 디렉토리에만 생성, 저장소에는 포함하지
+  않음.
+
+### 판정
+**통과 — BUG-022 완전 해결 확인(2차 수정 유효, 3번째 재검증 시도에서 처음으로 재현 실패).**
+`QA.md`의 BUG-022를 Open 테이블에서 제거하고 Closed 테이블로 이동, `docs/roadmap.md`의 R-C 3b
+항목을 "구현+독립검증 통과 — BUG-022(P1) 완전 해결 반영"으로 갱신.
+- 리더에게: **BUG-022(P1) 최종 해결 확인. R-C 3b(폴더 일괄 처리) 전체 스코프 — 정확성(1차 검증
+  96 assertion) + 다중 선택 상호작용(이번 43 assertion, 부분집합 배치 처리 최초 실증 포함) 둘 다
+  통과. 3c(Excel 내보내기) 착수 가능.**
+
+
+---
+
+## 2026-08-26 — 존 분석 탭 R-C 3c(Excel 내보내기) 검증: 신규 기능 3건 스펙 전체 마지막 라운드, 통과
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치).
+리더가 맡긴 R-C 3c(일괄 처리 결과 Excel 내보내기, 커밋 `143c518`+`caef517`) 검증 —
+스펙 [zone-analysis-tab-features-2026-08-26.md](../specs/zone-analysis-tab-features-2026-08-26.md)의
+마지막 라운드. 레이아웃 뼈대+3a+3b(BUG-022 완전 해결 포함)는 최신 커밋 `02835c7`까지
+전부 검증 통과 상태라 이번 라운드는 3c 신규 부분 + 회귀만 확인.
+
+### 환경 확인 (구현자가 로컬에서 못 했던 부분)
+구현자가 로컬 셸의 기본 `python`에 `cv2`/`openpyxl`이 없어 `zone_metrics.py`의
+`__main__` self-check를 실행하지 못했다고 보고했음 — `C:\Users\Feel\anaconda3\python.exe`
+(이전 라운드들에서 `python main.py` 검증에 실제로 쓰인 것과 동일 인터프리터)로 직접 확인:
+- `python -m py_compile app/core/zone_metrics.py app/widgets/zone_batch_result_dialog.py
+  app/tabs/zone_analysis_tab.py app/widgets/inference_image_list.py` 전부 통과.
+- `python app/core/zone_metrics.py` (self-check) → `zone_metrics self-check OK`.
+- `import cv2, openpyxl, PyQt6, torch` 전부 정상 임포트(`openpyxl 3.1.5`, `cv2 4.13.0`).
+- `main.py`를 동일 인터프리터로 실제 기동(offscreen) — 전처리(`_preload_libs`) →
+  `QApplication` → `ProjectStartDialog` 노출까지 크래시 없음(콘솔에 `cp949` 코덱으로
+  한글 로그 문자열을 못 쓰는 로깅 인코딩 경고만 발생 — 이번 기능과 무관한 기존 환경
+  이슈, Windows 콘솔 코드페이지 문제. 파일 로거는 영향 없음. 버그로 등록하지 않음).
+  프로세스는 확인 직후 `taskkill`로 정리.
+
+### 골든 패스 (전용 스크립트, `QTest` 실이벤트, 저장소에 포함 안 함)
+`QT_QPA_PLATFORM=offscreen`, `numpy/cv2/PIL/torch/matplotlib` 선행 임포트 후 PyQt6(기존
+관례). `QMessageBox.*` no-op로 교체하며 호출 기록, `engine.run`/`engine.refilter`와
+`load_checkpoint_meta`/`load_model_from_ckpt`만 몽키패치(결정론적 합성 `InferenceResult`
+— 40×40 합성 이미지, 중심 (20,20) 반지름 8px 원판을 클래스1로 심음), `ZoneBatchResultDialog.exec()`도
+몽키패치해 모달을 가로채고 인스턴스를 캡처. 나머지 실제 프로덕션 코드
+(`zone_metrics.zones_from_circles`/`zone_stats`, `ZoneAnalysisTab._on_batch_process`,
+`ZoneBatchResultDialog._on_export`, `export_zone_percentages_to_excel`)는 몽키패치 없이
+그대로 실행.
+
+1. **체크포인트 열기 버튼(`QTest.mouseClick`)** → `_model`/`_ckpt_path` 준비 확인.
+2. **이미지 열기 버튼(다중 파일 4장)** → `_img_list.count()==4`, 첫 이미지 자동 선택 확인.
+3. **▶ 추론 실행 버튼 클릭** → `_last_result` 확정, 단일 클래스 자동 타겟 확정
+   (`_target_class_id==1`).
+4. 캔버스에 원 1개(r=12, 합성 클래스1 원판 r=8보다 크게) 설정 → 배치 버튼 활성화 확인.
+5. **미선택 상태에서 `selected_paths()`가 전체 4장 반환**(3a에서 이미 확인된 관례) 확인.
+6. **▶ 선택 이미지 일괄 처리 버튼 실클릭** → `ZoneBatchResultDialog` 캡처, `rows` 8행
+   (이미지4 × 존2[중심부/바깥쪽]) 생성 확인. 각 행의 퍼센티지를 numpy 오라클
+   (`(x-20)²+(y-20)²<=12²` 중심부 마스크 vs `<=8²` 클래스1 마스크의 교집합/면적비)과
+   대조 — 전부 일치(`abs(diff) < 1e-6`). 화면 `QTableWidget`의 셀 텍스트도 `rows`와
+   1:1 일치(이미지명/존이름 문자열, `f"{pct:.2f}"` 반올림 표시 형식까지).
+7. **"Excel로 내보내기" 버튼 실클릭** — `QFileDialog.getSaveFileName`을 고정 경로
+   반환으로 몽키패치(기존 관례). 저장된 xlsx를 `openpyxl.load_workbook()`으로 재오픈해
+   시트명(`zones`), 헤더(`이미지파일명`/`존이름`/`타겟비율(%)`, 볼드 폰트) 확인 후
+   데이터 8행 전부를 화면 `QTableWidget` 값과 셀 단위로 대조 — 문자열/반올림값까지
+   완전 일치(`abs(diff) < 1e-9`). 완료 `QMessageBox.information` 호출 확인.
+8. **저장 취소 시나리오**: `getSaveFileName`이 `("", "")` 반환하도록 재몽키패치 후 같은
+   버튼 재클릭 — 크래시 없음, 추가 메시지박스 호출 없음(조용히 무시) 확인.
+
+### 회귀 확인
+- 원 개수를 2개로 바꾸면 `_zone_list.count()==3`(중심부/링1/바깥쪽)으로 즉시 갱신,
+  1개로 되돌리면 `2`로 복귀 — 3b/R2~R3 존 재계산 경로 정상.
+- **R-A(오프라인 원 검출 팝업)**: `CircleDetectPreviewDialog.exec()`를 몽키패치해 모달
+  회피 후 툴바 버튼 실클릭 — 열림/닫힘 정상, 크래시 없음.
+- **R-B(threshold)**: `_conf_slider.setValue(50)` 변경 시 `_on_target_changed()`가
+  예외 없이 재필터링 완료(`_last_result` 유지) 확인.
+- 이번 라운드는 3a/3b의 다중 선택·상태아이콘·해상도 방어 로직을 다시 파고들지 않음
+  (이미 최신 커밋 `02835c7`까지 독립검증 통과 상태, 리더 지시대로 회귀만 간단 확인).
+
+### 프로세스 정리
+- 확인용 `main.py` 기동 프로세스(PID 21700, 이번 세션이 새로 띄운 것) `taskkill //F`로
+  종료 확인. 검증 스크립트 자체는 동기 실행(`QApplication.exec()` 호출 없이 위젯
+  구성/시그널만 사용)이라 백그라운드 프로세스 없음. `tasklist` 최종 확인 결과 이전
+  세션들과 동일한 기존 창(PID 16488) 하나만 잔존 — 좀비 프로세스 없음.
+- 스크래치 스크립트/합성 이미지/합성 xlsx는 전용 세션 스크래치 디렉토리에만 생성,
+  저장소에는 포함하지 않음. `git status --short` — 워크트리 소스 변경 없음(문서 갱신
+  제외).
+
+### 판정
+**통과 — R-C 3c(Excel 내보내기) 구현+검증 완료. 신규 기능 3건(요청1 오프라인 팝업/
+요청2 폴더+일괄처리/요청3 threshold) 스펙 전체 완료.**
+`docs/roadmap.md`의 R-C 3c 항목을 "검증 대기"에서 "구현+독립검증 통과"로 갱신하고
+스펙 전체 완료를 명시. `QA.md`는 이번 라운드에서 신규 버그 발견 없음(갱신 없음).
+- 리더에게: **존(Zone) 분석 탭 신규 기능 3건 스펙(zone-analysis-tab-features-2026-08-26.md)
+  전체가 검증까지 완료됐습니다. 다음 작업 판단 바랍니다.**
+
+---
+
+## 2026-08-27 — 존 분석 탭 라운드3 R3-1(단일 이미지 Excel)+R3-2(wide format 뷰) 검증: 통과
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치).
+리더가 맡긴 R3-1/R3-2 검증 — 스펙
+[zone-analysis-tab-features-round3-2026-08-27.md](../specs/zone-analysis-tab-features-round3-2026-08-27.md)
+판단 3/4, 커밋 `6bd7226`(feat)+`c3aa943`(docs). R1~R4/R-A~R-C는 이전 세션들에서 전부 검증
+통과+push 완료 상태라 이번은 R3-1/R3-2 신규 부분 + 회귀만 확인.
+
+### 정적 검토
+- `app/core/zone_metrics.py`: `_disk_mask()` → `disk_mask()` 공개 전환, 내부 유일 호출부
+  (`zones_from_circles()`)도 새 이름으로 갱신 확인(`grep`으로 구/신 이름 잔존 여부 확인 —
+  `_disk_mask` 잔존 0건). `pivot_wide_format()`은 Qt 의존 없는 순수 함수, 열 정렬 키
+  (`_zone_name_sort_key`)가 중심부(0,0)→링N(1,N)→바깥쪽(2,0) 순으로 정확히 구현됨.
+  `export_zone_percentages_to_excel()`이 시그니처 불변으로 `zones`(기존)+`zones_wide`(신규)
+  두 시트를 쓰도록 애디티브 확장됨 — 기존 호출부(배치 처리) 무변경 확인.
+- `app/tabs/zone_analysis_tab.py`: `_compute_zone_percentages()` 헬퍼가 `_recompute_zones()`
+  존 계산 로직을 순수 추출(동작 변화 없음), 신규 `_on_export_single()`이 이 헬퍼를 그대로
+  재사용해 `export_zone_percentages_to_excel()` 호출. 우측 패널에 "Excel로 내보내기" 버튼
+  추가, 시그널 배선 확인.
+- `app/widgets/zone_batch_result_dialog.py`: `QTabWidget`으로 "목록별 (Long)"/"이미지별
+  (Wide)" 2탭 구성, Wide 탭이 `pivot_wide_format()` 결과로 `QTableWidget` 채움 + 안내 라벨.
+  Excel 버튼 로직은 변경 없음(zone_metrics 확장 덕에 자동으로 wide 시트 포함).
+
+### 실행 확인 (`python -m py_compile`, self-check)
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe -m py_compile app/core/zone_metrics.py
+  app/widgets/zone_batch_result_dialog.py app/tabs/zone_analysis_tab.py
+  app/widgets/zone_canvas.py app/widgets/circle_detect_preview_dialog.py` 전부 통과.
+- `python app/core/zone_metrics.py` self-check(구현자가 이미 추가한 `pivot_wide_format`
+  케이스 포함) → `zone_metrics self-check OK`.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QTest`/실제 위젯 조작, 저장소에 포함 안 함)
+`QT_QPA_PLATFORM=offscreen`, numpy/cv2/torch/PIL 선행 임포트 후 PyQt6(기존 관례).
+`engine.run`/`engine.refilter`/`load_checkpoint_meta`/`load_model_from_ckpt`/
+`detect_circles`만 몽키패치(결정론적 합성 40x40 이미지, 클래스1 원판 r=8), `QMessageBox.*`
+no-op, `QFileDialog.get*`는 고정 경로 반환으로 몽키패치. 나머지 실제 프로덕션 코드
+(`zone_metrics.zones_from_circles`/`zone_stats`/`pivot_wide_format`,
+`ZoneAnalysisTab._on_export_single`/`_on_batch_process`, `ZoneBatchResultDialog` 전체,
+`export_zone_percentages_to_excel`)는 몽키패치 없이 그대로 실행.
+
+1. **체크포인트 열기 → 이미지 3장 열기 → ▶ 추론 실행** 버튼 전부 `QTest.mouseClick`으로
+   실클릭 — `_model`/`_last_result`/`_target_class_id==1` 확정.
+2. **시나리오1(R3-1, 단일 이미지 Excel)**: 캔버스에 원 2개(`set_circles([(20,20,12),
+   (20,20,5)])`, 존 3개: 중심부/링1/바깥쪽) → `_compute_zone_percentages()`/화면
+   `_zone_list` 텍스트를 numpy 오라클과 대조(전부 `<1e-6` 일치) → "Excel로 내보내기" 버튼
+   실클릭(`QFileDialog.getSaveFileName` 고정 경로 몽키패치) → 저장된 xlsx를 `openpyxl`로
+   재오픈, **`zones`/`zones_wide` 두 시트 모두 값이 화면 존 리스트·오라클과 일치**(단일
+   이미지라 `zones_wide`는 1행)함을 셀 단위로 확인. 완료 `QMessageBox.information` 호출
+   확인.
+3. **시나리오2/3(R3-2, wide format 피벗)**: "1번째 이미지 원을 전체에 적용" 체크 해제(개별
+   자동검출 모드) → 이미지마다 `detect_circles`가 **다른 원 개수**를 반환하도록 몽키패치
+   (img1=1개→존2개, img2=2개→존3개, img3=1개(다른 반지름)→존2개) → "▶ 선택 이미지 일괄
+   처리" 버튼 실클릭(선택 없음=전체 3장, 기존 관례) → 캐시 최적화(현재 로드된 img1은
+   재추론 생략) 유지 확인(`call_log`로 `run`이 img2/img3에만 호출됨 실증) →
+   `ZoneBatchResultDialog` 캡처, long rows(7행)를 numpy 오라클과 전부 대조(`<1e-6` 일치) →
+   `QTabWidget` 탭 순서/제목("목록별 (Long)"/"이미지별 (Wide)") 확인 → Wide 탭
+   `QTableWidget`이 `pivot_wide_format()` 반환값(이미지 3개×열 3개: 중심부/링1/바깥쪽,
+   합집합 정렬)과 정확히 일치, **img1/img3처럼 "링 1" 데이터가 없는 이미지의 셀이 정확히
+   공란("")으로 렌더링**됨을 확인 → Long 탭과 Wide 탭 화면 값 교차 대조(표시 반올림
+   오차만 존재, `<5e-3` 일치) → "Excel로 내보내기" 버튼 실클릭 → 저장된 xlsx의
+   `zones_wide` 시트가 화면 Wide 탭과 열 합집합·공란 처리 포함 정확히 일치함을 확인.
+4. **회귀**: `disk_mask()` 공개 전환 후 `zones_from_circles()` 호출부 정상 동작(오프라인
+   팝업 `circle_detect_preview_dialog.py`는 애초에 `zone_metrics`를 import하지 않아 영향
+   없음, `grep`으로 확인). 배치 처리의 "현재 로드된 이미지는 재추론 캐시 재사용" 최적화가
+   개별 자동검출(원 개수 상이) 모드에서도 깨지지 않음(위 3번에서 실증). `main.py`와 동일한
+   구성으로 `MainWindow()` 전체(5탭 전부, `ZoneAnalysisTab` 포함) 생성 확인 — 크래시 없음.
+
+총 assertion 다수 전부 PASS(실패 0건, 중간에 발견한 실패 1건은 화면 표시 반올림(2자리)과
+비반올림 오라클을 `1e-6`로 비교한 테스트 설계 실수 — 허용오차를 `5e-3`로 조정 후 재확인,
+구현 버그 아님).
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지/xlsx는 전용 세션 스크래치 디렉토리에만 생성, 저장소에는
+  포함하지 않음.
+- `MainWindow` 스모크 확인은 `QApplication.exec()`(이벤트 루프)를 호출하지 않는 동기
+  스크립트로 수행 — 백그라운드 프로세스 생성 없음. `tasklist`로 `python.exe`/`pythonw.exe`
+  잔존 프로세스 0건 확인(좀비 프로세스 없음).
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션 문서 갱신 제외).
+
+### 판정
+**통과 — R3-1(단일 이미지 Excel 내보내기) + R3-2(일괄 처리 wide format 뷰) 구현+검증
+완료.** 신규 버그 발견 없음(`QA.md` 갱신 없음). `docs/roadmap.md`의 R3-1/R3-2 항목을
+"구현 완료, 검증 대기"에서 "구현+독립검증 통과"로 갱신.
+- 리더에게: **R3-1/R3-2 검증 통과. 다음은 R3-3(브러시 지우기, `zone_canvas.py` 신규
+  3-way 모드) 착수 가능 — 스펙에 명시된 대로 성능(스트로크 종료 시에만 존 재계산) 실측이
+  이 라운드 검증의 핵심 포인트가 될 것.**
+
+
+## 2026-08-27 — 존 분석 탭 R3-3(브러시 지우기 모드) 검증: 통과
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치).
+리더가 맡긴 R3-3 검증 — 스펙
+[zone-analysis-tab-features-round3-2026-08-27.md](../specs/zone-analysis-tab-features-round3-2026-08-27.md)
+"판단 2 — 브러시 지우기", 구현 로그는 `docs/agents/implementation-log.md`
+"2026-08-27 — 존 분석 탭 R3-3(브러시 지우기 모드) 구현" 항목, 커밋 `c32139c`(feat)+
+`ea4e6a5`(docs). 캔버스 인터랙션이 복잡하다는 리더 지시에 따라 이번 라운드는 **실제
+`QTest.mousePress/mouseMove/mouseRelease` 이벤트 주입**으로 골든패스를 확인했다(구현자가
+오프스크린 스모크로 자체 확인한 내용을 그대로 신뢰하지 않고 독립 재확인).
+
+### 정적 검토
+- `app/widgets/zone_canvas.py`: `annotation_canvas.py`의 브러시 스탬프(`_paint_circle`/
+  `_paint_stroke`, bbox-crop 벡터화 원판 + 반지름 40% 간격 선형보간)가 `_erase_stamp`/
+  `_erase_paint_at`/`_erase_paint_stroke`로 정확히 이식됨. `self._mode`(`"circle"|
+  "blob_delete"|"brush_erase"`) 단일 필드로 3-way 배타 구현, `set_blob_delete_mode()`는
+  하위 호환 얕은 래퍼로 리라이트됨. `mousePressEvent`/`mouseMoveEvent`/`mouseReleaseEvent`
+  전부 `brush_erase` 분기에서 좌클릭만 가로채고 나머지 버튼(중클릭 등)은 `super()`로 위임 —
+  `blob_delete` 분기와 동일 패턴. `erase_changed` 시그널이 `mouseReleaseEvent`에서만 emit되고
+  `mouseMoveEvent`는 `self.update()`만 호출(무거운 재계산 트리거 없음) — 스펙 "성능" 절 그대로.
+  `set_blob_data()`가 `_erase_strokes`/`_erase_mask_np`/진행중 스트로크를 함께 초기화함을 코드로
+  확인.
+- `app/tabs/zone_analysis_tab.py`: "브러시 지우기 모드" 체크 가능 버튼 + "지우개 크기"
+  `QSpinBox`(1~200px) 추가, `_on_blob_delete_toggled`/`_on_brush_erase_toggled`가 서로 상대
+  버튼을 `setChecked(False)`하는 2줄 상호배제로 3-way 배타 구현(신규 `QButtonGroup` 없음,
+  스펙 그대로). `_current_target_mask()`에 `erase_mask()` 배경 처리 1줄 추가 확인. 새
+  이미지 로드/추론결과 없음 등 기존 "블랍 삭제 모드" 버튼 리셋 지점 3곳 모두에 "브러시
+  지우기 모드" 버튼도 동일하게 처리돼 있음(BUG-018~022류 리셋 누락 재발 방지 확인).
+
+### 실행 확인 (`py_compile`)
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe -m py_compile app/widgets/zone_canvas.py
+  app/tabs/zone_analysis_tab.py app/core/zone_metrics.py
+  app/widgets/circle_detect_preview_dialog.py app/widgets/zone_batch_result_dialog.py
+  app/main_window.py` 전부 통과.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QT_QPA_PLATFORM=offscreen`, `QTest` 실제 마우스
+이벤트 — 저장소에 포함 안 함, 세션 종료 후 스크래치 파일 삭제)
+
+`load_checkpoint_meta`/`load_model_from_ckpt`/`engine.run`/`engine.refilter`만 몽키패치
+(결정론적 합성 240x240 이미지 — 왼쪽 절반 class_id=1, 오른쪽 절반 class_id=2, confidence
+전부 1.0), `QMessageBox.*` no-op, `QFileDialog.getOpenFileName(s)`/`getSaveFileName`은 고정
+경로 반환. 나머지(`ZoneCanvas` 전체, `ZoneAnalysisTab` 슬롯, `zone_metrics.zones_from_circles`/
+`zone_stats`, `export_zone_percentages_to_excel`, `CircleDetectPreviewDialog`, `MainWindow`)는
+몽키패치 없이 실제 프로덕션 코드 그대로 실행. 체크포인트 열기→이미지 열기→▶ 추론 실행까지
+전부 `QTest.mouseClick` 실클릭으로 수행, 타겟 클래스 2개(class_1/class_2) 검출돼 콤보 표시
+확인.
+
+1. **3-way 모드 배타성(항목1)**: 원편집 모드에서 실제 `QTest.mousePress→Move→Release` 드래그로
+   원 생성(반지름 25.26px) 확인 → 같은 방식으로 원 중심 드래그 이동 확인(좌표 정확히 반영) →
+   "블랍 삭제 모드" 버튼 실클릭 → `canvas.blob_delete_mode()==True`+`brush_erase_mode()==False`
+   전환 확인 → 블랍삭제 모드에서 좌클릭해도 원이 생성되지 않음(원 개수 불변) 확인 →
+   "브러시 지우기 모드" 버튼 실클릭 → `brush_erase_mode()==True`+블랍삭제 버튼 자동
+   `setChecked(False)`까지 확인 → 브러시지우기 모드에서 드래그해도 원이 생성되지 않음 확인 →
+   버튼 재클릭으로 circle 모드 복귀 후 원 이동이 다시 정상 동작함을 재확인. **전부 실제 버튼
+   클릭 + 캔버스 드래그로 확인, 내부 메서드 직접 호출 없음.**
+2. **브러시 지우기 정확성(항목2, 독립 오라클 대조)**: `canvas.set_circles([(120,120,200)])`로
+   전체 이미지를 덮는 원 1개(중심부=전체 존) 설정, 타겟을 class_1(왼쪽 절반, 사전 50.0%)로
+   재확인 → 브러시 지우기 모드에서 서로 겹치지 않는 3곳(30,30)/(30,80)/(30,130)에 실제
+   `QTest.mousePress+Release`(단일 스탬프)로 지우기 실행 → **`canvas.erase_mask()`가
+   production 코드를 전혀 재사용하지 않고 새로 작성한 독립 오라클(`np.ogrid` 원판 비교)과
+   픽셀 단위로 정확히 일치**(2127px = 2127px) → 존 퍼센티지도 오라클 계산값과
+   `<1e-6` 정확히 일치(46.307291666666664% = 46.307291666666664%) → 화면 `_zone_list` 텍스트도
+   반올림 오차(`<5e-3`) 내로 일치.
+3. **재계산 타이밍(항목3, 성능 요구사항 핵심)**: `erase_changed`를 카운팅 래퍼로 재연결 →
+   실제 드래그(press+move 7회+release)에서 **press와 7번의 move 동안 재계산 호출 0회
+   유지**(구현자 주장 재확인) → 라이브 드래그 중에도 `erase_mask()`가 bbox 증분으로 실시간
+   갱신됨(화면 피드백 정상) → **release 시점에 정확히 1회만 재계산 호출**됨을 카운터로 실증.
+4. **지우개 크기 조절(항목4)**: `QSpinBox`를 60px로 변경(실제 값 변경 시그널 경로) →
+   `canvas.erase_brush_size()==60` 반영 확인 → 새 위치에 단일 클릭 지우기 → 새 스탬프 면적이
+   반지름 30 기준 독립 오라클과 정확히 일치(2821px = 2821px), 이전 반지름 15 오라클(193px,
+   가장자리 근접이라 원 일부가 캔버스 밖으로 잘림)보다 확연히 넓음 — 브러시 크기 변경이 실제
+   반경에 반영됨을 확인.
+5. **`set_blob_data()` 리셋(항목5)**: 타겟 콤보를 실제 `setCurrentIndex(1)`로 class_2(id=2)
+   전환 → `canvas.erase_mask()`가 `None`으로 리셋, `blob_labels()`가 새 배열 객체로 교체,
+   `removed_blob_ids()`도 빈 집합으로 리셋됨을 확인 → class_1로 재전환 후에도 지우기 이력이
+   복원되지 않음(새 타겟 기준으로 완전히 무효화됨) 확인.
+6. **중클릭 팬(항목6)**: 브러시 지우기 모드가 활성인 상태에서 실제 `QTest.mousePress/Move/
+   Release(MiddleButton)` 드래그 → `canvas._pan` 오프셋이 실제로 이동함(12,12→69,-26) 확인,
+   팬 조작 자체는 `erase_mask()`에 영향 없음(불변) 확인.
+7. **BUG-018~022 패턴 재발 여부(항목7)**: 원편집 모드에서 실제 클릭으로 원 선택 →
+   빈 곳 클릭으로 존 하이라이트 설정 → 브러시 지우기 모드 진입해 캔버스 반대편에서 실제
+   스트로크 실행 후 다시 원편집 모드로 복귀 → **원 선택 상태(`selected_id()`)와 존
+   하이라이트(`highlighted_zone()`) 둘 다 스트로크 전후로 완전히 동일하게 유지**됨을 확인
+   (재발 없음).
+8. **회귀(항목8)**: R3-1(단일 이미지 Excel 내보내기) 버튼이 여전히 정상 동작해 xlsx 파일을
+   생성함을 확인, `CircleDetectPreviewDialog` 생성/닫기 시 크래시 없고 메인 탭 상태(타겟
+   클래스/원 목록)가 완전히 불변임을 확인(완전 독립 회귀 없음), `MainWindow` 5탭 전체(존 분석
+   탭 포함) 생성 시 크래시 없음. R1~R4/R-A~R-C/R3-1/R3-2는 이전 세션들에서 이미 검증
+   통과+push 완료 상태라 이번엔 R3-3 신규 부분 + 위 회귀 확인으로 충분하다고 판단(리더 지시와
+   동일 원칙).
+9. **크래시 없음**: 전체 시나리오 진행 중 예외/크래시 0건.
+
+총 assertion 다수(항목1 11개 + 항목2~4 12개 + 항목5 7개 + 항목6 3개 + 항목7 4개 + 항목8 4개
+등) 전부 PASS. 검증 과정에서 스크립트 자체의 시나리오 설계 실수 2건을 발견해 수정
+(둘 다 애플리케이션 버그 아님):
+- 첫 시도에서 "블랍삭제 모드 좌클릭이 원을 생성하지 않는지" 테스트에 class_1 영역 좌표를
+  써서 실제로 좌측 절반 전체(단일 연결요소)가 삭제돼 이후 정밀 오라클 테스트를 오염시킴 —
+  배경(class_2) 좌표로 교체.
+- 체크 가능 버튼을 여러 항목에 걸쳐 `QTest.mouseClick`으로 반복 토글하면서 이전 상태를
+  추적하지 못해 의도와 반대로 꺼지는 시퀀싱 버그 — `ensure_checked()` 헬퍼(원하는 상태가
+  아닐 때만 실제 클릭)로 교체해 해결.
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지·체크포인트·xlsx는 세션 스크래치 디렉토리에만 생성 후 검증
+  종료 시 삭제, 저장소에는 포함하지 않음.
+- 부가로 `main.py`와 동일하게 `MainWindow().show()`까지 띄우는 스모크를 별도 시도했다가
+  오프스크린 플랫폼에서 응답 없는 모달(원인 미조사, R3-3 범위 밖)로 추정되는 이유로 행이
+  걸려 `taskkill`로 강제 종료함 — 이 스모크는 필수 검증 항목이 아니었고(`MainWindow()` 생성
+  자체는 위 항목8에서 `.show()` 없이 이미 크래시 없음 확인 완료), 별도 이슈로 등록할 만큼
+  재현/조사하지 않음(필요 시 후속 세션에서 재확인 권장). 검증 스크립트 자체는 매번
+  `tab.close()`로 정리했고, 최종 `tasklist` 확인 결과 잔존 `python.exe` 프로세스 0건.
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션 문서 갱신 제외).
+
+### 판정
+**통과 — R3-3(브러시 지우기 모드) 구현+검증 완료.** 신규 버그 발견 없음(`QA.md` 갱신
+없음). `docs/roadmap.md`의 R3-3 항목을 "구현 완료, 검증 대기"에서 "구현+독립검증 통과"로
+갱신.
+- 리더에게: **R3-3 검증 통과(실제 `QTest` 마우스 이벤트로 3-way 배타성/브러시 지우기
+  정확성/재계산 타이밍(release 시 1회)/브러시 크기/타겟 전환 리셋/중클릭 팬/선택·하이라이트
+  유지 전부 실증, 회귀 없음). 다음은 R3-4(Undo 통합, `zone_canvas.py` 추가 상태) 착수
+  가능 — 스펙상 원편집+블랍삭제+브러시지우기 3종을 하나의 undo 스택으로 묶는 게 핵심이라
+  각 mutator의 push 위치(특히 "빈 곳 클릭 취소 시 no-op 엔트리 pop" 처리)를 정밀하게
+  확인해야 할 것.**
+
+---
+
+## 2026-08-27 — 존 분석 탭 R3-4(통합 Undo 스택) 검증
+
+`docs/specs/zone-analysis-tab-features-round3-2026-08-27.md` R3-4(판단 1), 구현 커밋
+`0d74f4e`(feat)+`bc48517`(docs). 브랜치 `feature/zone-analysis-tab`, 워크트리
+`D:\segmentation model-zone-analysis-tab`. 리더 지시대로 캔버스 인터랙션이 복잡해
+**실제 UI 조작(QTest 실 마우스/키보드 이벤트)로 독립 재현** — 구현자 자체 확인을 그대로
+신뢰하지 않음.
+
+### 정적 검토
+- `app/widgets/zone_canvas.py`: `_undo_stack: list[dict]` 통합 스택, 스냅샷 3필드(원
+  튜플/`removed_blob_ids` set 사본/`erase_strokes` 리스트 사본)만 저장 — 마스크 배열은
+  스택에 안 들어감(BUG-014류 재발 방지, 스펙 그대로). `_push_undo()` 호출 위치가 스펙과
+  정확히 일치: `set_circles()`/`remove_selected()`/`_handle_blob_click()`(조기 return 이후)/
+  `mousePressEvent`의 원편집 분기(생성·이동·반지름조절 공통 진입점, 분기 전에 무조건
+  1회)/브러시지우기 분기(스트로크 시작). `mouseReleaseEvent`의 "짧은 드래그=생성취소"
+  분기에서 `if self._undo_stack: self._undo_stack.pop()`으로 투기적 push를 되무르는 코드
+  확인. `keyPressEvent` 최상단에 `QKeySequence.StandardKey.Undo` 체크(모드 무관 최우선) —
+  `_mode != "circle"`이어도 Ctrl+Z가 먼저 잡힘. `undo()`가 기존 `circles_changed`를
+  재사용해 emit → `_refresh_circle_list()`/`_recompute_zones()`의 getter 기반 복원 경로에
+  올라타 BUG-018/019류 재발 방지 패턴이 신규 배선 없이 적용됨. `set_blob_data()`에
+  `self._undo_stack = []` 추가 확인(클래스 전환 시 정합성 문제 대응).
+- `app/tabs/zone_analysis_tab.py`: `_btn_undo` 추가, `circles_changed`/`blob_deleted`/
+  `erase_changed` 3개 시그널 + `set_blob_data()` 호출 3개 지점(신규 이미지 선택/타겟없음/
+  타겟 재선택 성공) 전부에 `_update_undo_button_state()` 배선 확인 — 스펙이 지적한
+  "이 3개 지점은 위 시그널이 자동 발생하지 않아 누락하기 쉬움" 경고 그대로 반영돼 있음.
+
+### 실행 확인 (`py_compile`)
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe -m py_compile app/widgets/zone_canvas.py
+  app/tabs/zone_analysis_tab.py app/core/zone_metrics.py
+  app/widgets/circle_detect_preview_dialog.py app/widgets/zone_batch_result_dialog.py
+  app/main_window.py` 전부 통과.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QT_QPA_PLATFORM=offscreen`, `QTest.mousePress/
+mouseMove/mouseRelease/keyClick` 실제 이벤트 — 저장소에 포함 안 함, 세션 종료 후 스크래치
+파일 삭제)
+
+`C:\Users\Feel\anaconda3\python.exe` 사용(기존 관례). `load_checkpoint_meta`/
+`load_model_from_ckpt`/`engine.run`/`engine.refilter`만 몽키패치(결정론적 합성 240x240
+이미지 — 왼쪽 절반 class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`
+no-op/고정경로. 나머지(`ZoneCanvas` 전체, `ZoneAnalysisTab` 슬롯, `zone_metrics`,
+`export_zone_percentages_to_excel`, `CircleDetectPreviewDialog`, `MainWindow`)는 프로덕션
+코드 그대로. 체크포인트 열기→이미지 열기→▶ 추론 실행→타겟 클래스 선택까지 전부 실클릭.
+
+1. **원 편집 undo(항목1)**: 실제 `mousePress→mouseMove→mouseRelease` 드래그로 원 생성 →
+   `can_undo()==True`, undo 버튼 활성화 → `Ctrl+Z` 키 입력 → 원 0개로 정확히 사라짐, 버튼
+   재비활성화 확인. 재생성 후 원 중심을 실제 드래그로 이동 → 좌표 변경 확인 → Ctrl+Z →
+   이동 전 좌표로 **부동소수점 오차 없이(<1e-6)** 정확히 복원. 이어서 테두리를 실제
+   드래그로 반지름 조절 → 변화 확인 → Ctrl+Z → 반지름 정확히 원복.
+2. **블랍 삭제 undo(항목2, 독립 오라클 대조)**: 큰 원 1개(전체를 덮는 중심부 존)로 재설정
+   후 블랍 삭제 모드 실제 클릭으로 블랍 1개 삭제 → `removed_blob_ids` 증가·
+   `_compute_zone_percentages()` 값 변화(감소) 확인 → Ctrl+Z → `removed_blob_ids` 삭제
+   전 집합과 **완전히 동일 복원**, 존 퍼센티지도 삭제 전 값과 **정확히 일치**(별도로
+   저장해둔 오라클 값과 대조).
+3. **브러시 지우기 undo(항목3, 픽셀 단위 오라클 대조)**: 브러시 지우기 모드에서 실제
+   드래그(press+move×2+release) 1스트로크 실행 → `erase_mask()`에 True 픽셀 생김 확인 →
+   Ctrl+Z → `erase_mask()`가 스트로크 이전 상태(`None`, 지운 적 없음)로 **완전히 복원**
+   (스트로크가 1개뿐이라 재생 결과가 빈 마스크가 되는 경우까지 포함해 픽셀 단위 확인).
+4. **섞인 순서 undo(LIFO, 항목4)**: 원 생성 → 블랍 삭제(항목2와 겹치지 않는 별도 좌표) →
+   브러시 지우기(별도 좌표) 순으로 실제 조작 후 Ctrl+Z 3회 연속 — **정확히 역순**으로
+   되돌아감 확인: 1회차(브러시 지우기만 복원, 원/블랍 상태 불변) → 2회차(블랍삭제만 복원,
+   원 상태 불변) → 3회차(원 생성만 취소, 원 개수 정확히 감소). 매 단계에서 다른 두 상태가
+   전혀 영향받지 않음을 확인.
+5. **"빈 곳 클릭 생성취소" no-op 미적재(항목5)**: 깨끗한 스택 상태에서 원 1개를 진짜
+   액션으로 생성 → 빈 곳을 드래그 없이 짧게 클릭(press+release, 위치 이동 없음) → 원 개수
+   불변(생성취소됨) **및 undo 스택 크기도 클릭 전후 완전히 동일**(no-op 엔트리 미적재
+   확인) → 그 상태에서 Ctrl+Z 실행 → 그 취소된 클릭이 아니라 **그 이전의 진짜 마지막
+   액션(원 생성)이 정확히 되돌아감**(원 0개) — 스펙이 우려한 "취소된 시도가 undo 스택에
+   쌓여 엉뚱한 걸 되돌리는" 회귀 없음. (첫 시도에서 스택에 이전 라운드 잔여 엔트리가 남아
+   있어 검증 스크립트 자체의 시나리오 설계 오류로 오탐이 났었음 — 스택을 완전히 비운
+   깨끗한 상태에서 재시도해 앱 버그가 아님을 확인, 아래 "스크립트 설계 실수" 참고.)
+6. **Undo 버튼 활성화 상태(항목6)**: 스택이 비어있을 때 버튼 비활성화(초기·undo 스택
+   완전 소진 후 둘 다) → 액션 실행 시 활성화 → 버튼 클릭으로도 `canvas.undo()`와 동일하게
+   동작(원 복원) 확인.
+7. **`set_blob_data()` 스택 초기화(항목7)**: 원 생성 후 `can_undo()==True` 확인 → 타겟
+   클래스 콤보를 실제 `setCurrentIndex()`로 전환 → `can_undo()==False`로 즉시 리셋, undo
+   버튼도 비활성화 → 리셋 이후 `undo()`를 호출해도 원 상태가 전혀 바뀌지 않음(no-op)
+   확인 — 리셋 이전 상태로 되돌아갈 방법이 없음을 실증.
+8. **BUG-018~022 패턴 재발 여부(항목8)**: 항목2~4 전체에 걸쳐 undo 실행 전후 선택/하이라이트
+   상태가 `undo()`가 `_selected_id = None`으로 명시 리셋하는 것 외에 예상치 못하게
+   깨지는 사례 없음(기존 `circles_changed` 재사용 경로의 getter 기반 복원이 그대로
+   작동함을 실증).
+9. **Ctrl+Z와 버튼 동일 동작(항목9)**: 원 삭제 후 Ctrl+Z 대신 "실행 취소" 버튼을 실제
+   `QTest.mouseClick`으로 클릭 → 동일하게 원이 복원됨 확인.
+10. **오프라인 팝업 부가 확인**: `CircleDetectPreviewDialog`에 이미지를 직접 로드한 뒤
+    실제 드래그로 원 생성 → 팝업 캔버스에서도 Ctrl+Z로 정상 undo됨 확인(스펙이 명시한
+    "부가 혜택", 회귀 아님).
+11. **회귀**: R3-1(단일 이미지 Excel 내보내기) 버튼이 여전히 xlsx를 정상 생성함을 재확인,
+    `MainWindow` 5탭 전체(존 분석 탭 포함) 생성 시 크래시 없음. R1~R4/R-A~R-C/R3-1~R3-3은
+    이전 세션에서 이미 검증 통과 상태라 이번 라운드는 R3-4 신규 부분 + 핵심 회귀 확인으로
+    범위를 좁힘(리더 지시와 동일 원칙).
+12. **크래시 없음**: 전체 시나리오 진행 중 예외/트레이스백 0건. `py_compile` 전체 통과.
+
+총 47개 assertion 전부 PASS(0 FAIL). 검증 스크립트 자체의 시나리오 설계 실수 1건 발견(앱
+버그 아님): 항목5(no-op 미적재)를 검증하며 이전 항목들에서 undo/redo를 반복한 뒤라
+스택에 "circle2 생성" 잔여 엔트리가 남아있었는데, 이를 고려하지 않고 "Ctrl+Z 이후
+반지름이 되돌아갈 것"이라 잘못 기대해 첫 시도에서 `IndexError`가 났음 — 스택을
+`while can_undo(): undo()`로 완전히 비운 뒤 "원 생성 1개"를 깨끗한 "진짜 마지막 액션"으로
+새로 만들어 재시도해 의도한 시나리오(no-op 다음 Ctrl+Z가 그 이전 진짜 액션을 정확히
+되돌리는지)를 올바르게 재현·통과시켰다(annotation_canvas 계열 검증에서도 반복돼 온
+"스택 상태를 정확히 추적하지 못한 스크립트 실수" 패턴과 동일 원인).
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지·체크포인트·xlsx는 세션 스크래치 디렉토리에만 생성 후
+  검증 종료 시 삭제, 저장소에는 포함하지 않음.
+- 프로세스 종료 코드가 127로 관찰됐으나(`sys.exit(0)` 직전까지 전 assertion PASS 출력,
+  stderr 빈 상태) 이는 R1~R6/UI라운드1 등 기존 검증 로그에서 반복 관찰된 "비대화형
+  offscreen 환경에서 이벤트 루프 없이 조기 종료할 때 생기는 종료 코드 이상" 패턴과 동일 —
+  실제 실패가 아님. `tasklist`로 잔존 `python.exe`/`pythonw.exe` 프로세스 0건 확인.
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션의 `docs/roadmap.md`,
+  `QA.md`, `docs/agents/verification-log.md` 갱신 제외).
+
+### 판정
+**통과 — R3-4(통합 Undo 스택) 구현+독립검증 완료.** 신규 버그 발견 없음(`QA.md` 갱신
+없음). `docs/roadmap.md`의 R3-4 항목을 "구현 완료, 검증 대기"에서 "구현+독립검증 통과"로
+갱신. R3-5(오프라인 팝업→메인 탭 라운드트립)는 R3-4의 `set_circles()` undo 배선을 그대로
+공짜로 활용할 수 있는 상태 — 다음 라운드 착수 가능.
+
+
+---
+
+## 2026-08-27 — 존 분석 탭 R3-5(오프라인 팝업→메인 탭 라운드트립) 검증 — 신규 기능 라운드3(R3-1~R3-5) 전체 마지막 라운드
+
+`docs/specs/zone-analysis-tab-features-round3-2026-08-27.md`(R3-5 절, 판단 5), 구현 커밋
+`ff7dbf8`(feat)+`f8868a9`(docs). 브랜치 `feature/zone-analysis-tab`, 워크트리
+`D:\segmentation model-zone-analysis-tab`(main과 공유 방지를 위해 지정된 워크트리에서
+작업). 리더 지시대로 관련 탭(모델/라벨링/학습/추론 탭은 이 에디션 브랜치 전용 존 분석
+탭과 무관 — 존 분석 탭 자체가 검증 대상) 골든 패스를 **실제 QTest 마우스/키보드 이벤트**로
+독립 재현. 구현자 자체 검증을 신뢰하지 않고 별도 스크립트로 재현.
+
+### 정적 검토
+- `app/widgets/circle_detect_preview_dialog.py`: "닫기"/X 버튼은 그대로 `self.close()`(부수
+  효과 없음), 신규 "메인 탭에 적용" 버튼이 `self.accept()`에 연결. 신규 getter
+  `result_circles()`(`self._canvas.get_circles()` 위임)/`result_image_size()`
+  (`self._orig_size`) 확인. 다이얼로그 자체는 여전히 `app.core.project`/체크포인트/메인 탭
+  관련 import가 전혀 없는 완전 독립 구조 유지(스펙 판단 5 그대로).
+- `app/tabs/zone_analysis_tab.py`: `_on_open_offline_test()`가 `auto_label_dialog.py`와
+  동일한 `if dialog.exec(): circles = dialog.result_circles(); if circles:
+  self._apply_circles_from_popup(...)` 패턴으로 정확히 리라이트됨.
+  `_apply_circles_from_popup()`가 스펙 의사코드와 1:1로 일치: (1) `self._image_path is None
+  or self._image_size == (0,0)` 가드 → `QMessageBox.warning` 후 무동작, (2) 해상도 다르면
+  `sx=ref_w/pop_w, sy=ref_h/pop_h`로 `(cx*sx, cy*sy, r*(sx+sy)/2)` 비례 스케일(3b 배치처리
+  로직과 동일 공식, 방향만 반대), (3) `self._canvas.get_circles()`가 비어있지 않으면
+  `QMessageBox.question`으로 확인 후 `Yes`가 아니면 조기 return(기존 원 완전 보존), (4)
+  최종 `self._canvas.set_circles(circles)` 호출 — R3-4에서 이미 `set_circles()` 내부에
+  `_push_undo()`가 박혀 있어 이 적용도 신규 배선 없이 자동으로 undo 가능함을 코드 확인.
+
+### 실행 확인 (`py_compile`)
+`C:/Users/Feel/anaconda3/python.exe -m py_compile app/widgets/zone_canvas.py
+app/tabs/zone_analysis_tab.py app/core/zone_metrics.py
+app/widgets/circle_detect_preview_dialog.py app/widgets/zone_batch_result_dialog.py
+app/main_window.py` 전부 통과.
+
+### 실 GUI 골든 패스 (전용 스크립트, `QT_QPA_PLATFORM=offscreen`, `QTest.mousePress/
+mouseMove/mouseRelease/mouseClick/keyClick` 실제 이벤트 — 저장소에 포함 안 함, 세션 종료
+후 스크래치 파일 삭제)
+
+`C:/Users/Feel/anaconda3/python.exe` 사용(PATH에 `anaconda3/Library/bin` 추가 필요 — 이
+환경에서 `torch`를 `PyQt6.QtSvg` 임포트보다 먼저 실행하면 DLL 로드 순서 문제로 `QtSvg`
+임포트가 깨지는 환경 이슈를 발견해 `QtSvg`를 먼저 임포트하는 것으로 우회, 애플리케이션
+버그 아님 — `main.py`도 동일 이유로 torch를 `QApplication` 생성보다 먼저 로드하는 주석이
+있어 프로덕션 실행 경로에서는 발생하지 않음). `load_checkpoint_meta`/`load_model_from_ckpt`/
+`engine.run`/`engine.refilter`만 몽키패치(결정론적 합성 240x240 이미지 — 왼쪽 절반
+class_id=1, 오른쪽 절반 class_id=2), `QMessageBox.*`/`QFileDialog.*`는 no-op/고정경로로
+몽키패치. 나머지(`ZoneCanvas` 전체, `ZoneAnalysisTab` 슬롯, `CircleDetectPreviewDialog`,
+`zone_metrics`, `export_zone_percentages_to_excel`, `MainWindow`)는 프로덕션 코드 그대로
+실행. 모달 `CircleDetectPreviewDialog.exec()` 안에서 실제 클릭/드래그를 수행하기 위해
+`zone_analysis_tab.CircleDetectPreviewDialog`를 실제 클래스를 그대로 생성만 하고 참조를
+캡처하는 spy로 일시 교체 + `QTimer.singleShot(50, ...)`으로 모달 이벤트 루프 진행 중
+콜백을 실행하는 표준 Qt 모달 테스트 패턴 사용(다이얼로그 로직 자체는 변경 없이 실제
+`exec()`/`accept()`/`close()`를 그대로 탐). 체크포인트 열기→이미지 열기→▶ 추론 실행까지
+전부 `QTest.mouseClick` 실클릭으로 수행, 타겟 클래스 2개 검출돼 콤보 자동 표시 확인.
+
+1. **메인 이미지 없을 때 가드(항목1)**: 아직 이미지를 전혀 로드하지 않은 별도 `ZoneAnalysisTab`
+   인스턴스에서 "오프라인 원 검출 테스트…" 버튼 실클릭 → 팝업에서 이미지 로드 후 실제
+   드래그로 원 1개 생성 → "메인 탭에 적용" 버튼 실클릭 → `QMessageBox.warning` 호출됨(1회)
+   확인, 메인 탭 캔버스 원 개수 0 유지, 크래시 없음 확인.
+2. **같은 해상도 적용(항목2)**: 메인 탭에 이미지(240x240)+체크포인트+추론+타겟클래스까지
+   실클릭으로 완료한 상태(원 0개)에서, 팝업으로 같은 해상도(240x240) 이미지를 열어 실제
+   드래그로 원 2개 생성 → 적용 버튼 실클릭 → 덮어쓰기 확인 다이얼로그 안 뜸(기존 원 없었음)
+   확인 → 메인 탭 `ZoneCanvas.get_circles()`가 팝업에서 만든 원 2개와 **좌표까지 정확히
+   일치**(`<1e-6`, 스케일 1.0이므로 그대로) 확인.
+3. **다른 해상도 적용 — 비례 스케일(항목3)**: 팝업으로 다른 해상도(120x160) 이미지를 열어
+   실제 드래그로 원 1개 생성 → 적용 → 팝업에서 얻은 실제 좌표에 대해 스크립트가 독립적으로
+   `sx=240/120, sy=240/160`로 `(cx*sx, cy*sy, r*(sx+sy)/2)` 오라클을 계산 → 메인 탭에 반영된
+   좌표와 **정확히 일치**(`<1e-6`) 확인.
+4. **기존 원 있을 때 덮어쓰기 확인(항목4)**: 항목3에서 메인 탭에 원이 이미 있는 상태에서
+   다시 팝업으로 새 원을 만들어 적용 → **"아니오" 응답**: `QMessageBox.question` 호출됨
+   확인, 메인 탭 원 목록이 적용 시도 전과 완전히 동일하게 유지됨 확인(교체 안 됨).
+   **"예" 응답**: 같은 방식으로 재시도 → 새 원으로 정확히 교체됨 확인(좌표 일치).
+5. **Undo 통합(항목5)**: 항목2에서 적용한 직후 `can_undo()==True` 확인 → `Ctrl+Z` 실제
+   키입력 → 원 0개(적용 전 상태)로 정확히 복원, `can_undo()==False`(스택 소진) 확인.
+   항목4의 "예"(덮어쓰기) 적용 이후에도 `Ctrl+Z` → 덮어쓰기 직전(=항목4 "아니오" 결과) 원
+   목록으로 **정확히** 복원됨을 확인 — R3-4 통합 undo 스택에 이 "적용" 동작이 실제로
+   하나의 엔트리로 들어갔음을 실증.
+6. **적용 안 하고 닫기(항목6)**: 팝업에서 원을 생성했지만 "닫기" 버튼(그리고 별도로 X
+   버튼도) 실클릭으로 닫기 → 두 경우 모두 `dialog.result() == QDialog.DialogCode.Rejected`
+   확인, 메인 탭의 원 목록/선택 상태(`selected_id()`)/하이라이트 상태
+   (`highlighted_zone()`) 전부 완전히 불변임을 확인(완전 독립성 유지, R-A 재확인).
+7. **BUG-018~022 패턴 재발 여부(항목7)**: 적용 직전 원 선택·존 하이라이트를 설정해둔 뒤
+   팝업 적용을 실행 → `set_circles()`가 명시적으로 `_selected_id=None`/
+   `_highlighted_zone=None`으로 리셋하는 스펙 그대로의 정상 동작만 확인(크래시·불일치
+   없음), 존 리스트 사이드 패널이 크래시 없이 재구성됨 확인 — 재발 없음.
+8. **회귀**: 원 편집 모드 실제 드래그로 원 생성, 블랍 삭제 모드/브러시 지우기 모드
+   토글+상호배타(R3-3/R4), Undo 버튼 클릭 동작(R3-4), 단일 이미지 Excel 내보내기 버튼
+   실클릭으로 xlsx 생성 확인 및 `zones`/`zones_wide` 두 시트 존재 확인(R3-1/R3-2 회귀),
+   `MainWindow()` 5탭 생성 크래시 없음.
+9. **크래시 없음**: 전체 시나리오 진행 중 예외/트레이스백 0건. `py_compile` 전체 통과.
+
+총 49개 assertion 전부 PASS(0 FAIL).
+
+### 프로세스 정리
+- 스크래치 스크립트/합성 이미지·체크포인트·xlsx는 세션 스크래치 디렉토리에만 생성 후
+  검증 종료 시 삭제, 저장소에는 포함하지 않음.
+- 프로세스 종료 코드가 127로 관찰됐으나(`ALL CHECKS PASSED` 출력 이후) 이는 R3-3/R3-4 등
+  기존 검증 로그에서 반복 관찰된 "비대화형 offscreen 환경에서 이벤트 루프 없이 조기
+  종료할 때 생기는 종료 코드 이상" 패턴과 동일 — 실제 실패가 아님. `tasklist`로 잔존
+  `python.exe`/`pythonw.exe` 프로세스 0건 확인(이번 검증은 `python main.py`로 GUI를 띄우지
+  않고 `QApplication`+실제 위젯 인스턴스를 직접 구동하는 방식이라 애초에 별도 종료 대상
+  프로세스가 남지 않음).
+- 이번 세션에서 새로 발견한 환경 이슈(애플리케이션 버그 아님, 참고용): 이 anaconda 환경에서
+  `torch`를 `PyQt6.QtSvg`보다 먼저 임포트하면(`QApplication` 생성 여부와 무관하게 재현)
+  `QtSvg` DLL 로드가 깨짐 — `main.py`는 애초에 torch를 `QApplication` 생성보다 먼저
+  로드하지만 `QtSvg`는 그보다도 더 나중(탭 위젯 생성 시점)에 임포트되므로 실제 프로덕션
+  실행 경로에서는 이 문제가 나타나지 않는 것으로 보임(정식 `python main.py` 스모크는 이번
+  세션 범위 밖이라 별도 확인은 안 함, 후속 세션에서 필요 시 재확인 권장).
+- `git status --short` — 워크트리 소스 변경 없음(이번 검증 세션의 `docs/roadmap.md`,
+  `docs/agents/verification-log.md` 갱신 제외, `QA.md`는 신규 버그 없어 변경 없음).
+
+### 판정
+**통과 — R3-5(오프라인 팝업→메인 탭 라운드트립) 구현+독립검증 완료.** 신규 버그 발견
+없음(`QA.md` 갱신 없음). `docs/roadmap.md`의 R3-5 항목을 "구현 완료, 검증 대기"에서
+"구현+독립검증 통과"로 갱신.
+
+**라운드3 전체(R3-1~R3-5) 완료** — R3-1(단일 이미지 Excel)/R3-2(wide format)/R3-3(브러시
+지우기)/R3-4(통합 Undo)/R3-5(오프라인 팝업 라운드트립) 5건 전부 구현+독립검증 통과.
+- 리더에게: **R3-5 검증 통과로 신규 기능 라운드3(R3-1~R3-5) 전체 완료**. 사용자가
+  요청한 5건(Undo/브러시지우기/단일Excel/wide format/팝업라운드트립) 모두 실 GUI
+  `QTest` 기반 독립 검증까지 마쳤고 신규 버그 없음. 다음 단계는 리더 판단에 따라
+  push 여부 결정(현재 로컬 커밋만 있고 `origin/feature/zone-analysis-tab`에 미푸시 상태).
+---
+
+## 2026-08-27 — 존 분석 탭 GitHub #13/#14 후속 독립 회귀 검증
+
+- `tests/test_zone_github_13_14.py`를 프로젝트 Anaconda Python/PyQt6 offscreen 환경에서 실행.
+- R13-A: 기존 원 2개의 평균 중심에 신규 원이 고정되는지 실제 QTest 마우스 press/move/
+  release로 확인. 지름 80px 입력 시 반지름 40px 반영, Undo 시 20px 복원 확인.
+- R14-A: 3000x1200 원본 선택 시 논리 좌표 크기는 그대로 유지하면서 표시 픽스맵의 긴 변이
+  2048px 이하인지 확인. 손상 이미지 선택 시 `_image_size==(0,0)` 및 이전 픽스맵 제거 확인.
+- R13-B: 팝업 100x200→메인 300x400→배치 600x200 연속 스케일 결과를 독립 오라클과
+  대조하고 동일 크기 항등 변환도 확인.
+- 결과: `OK: GitHub #13/#14 zone-analysis tests passed`. 관련 모듈 import/실행 정상,
+  예외·데이터 손상 없음. 판정: R13-A/R14-A/R13-B 전부 통과.
+
+---
+
+## 2026-08-27 — zone 빌드 버전·제품 식별 독립 검증
+
+- `release.ini`의 `1.0.0`/`zone-v`가 CHANGELOG `[zone-v1.0.0]`과 일치.
+- 생성된 Windows 버전 리소스: file/product tuple `(1,0,0,0)`, 표시 버전 `1.0.0`,
+  `SegmentationModelUIZone.exe`; PyInstaller 공식 파서 통과.
+- main 대비 EXE/slug, 설치 폴더, installer basename, AppId가 모두 다름을 확인해
+  동시 설치와 독립 업그레이드가 가능함.
+- 빌드 버전 테스트 20개 통과. `build.spec`와 `setup.iss`가 생성 메타데이터를 올바르게
+  소비하는 정적 연계 확인.
+
+### 판정
+**통과 — zone 커밋 가능**. 실제 전체 패키징은 대용량 의존성 때문에 제외함.
+
+---
+
+## 2026-08-27 — zone의 마지막 main 반영 기준 검증
+
+- 두 폴더가 동일 저장소의 별도 worktree임을 확인: main은 `main`, zone은
+  `feature/zone-analysis-tab` 브랜치로 HEAD·인덱스·작업 폴더가 분리됨.
+- zone 기준 `main_base_tag=v1.8.0`, `main_base_commit=fc9deecab27258adec8bc469a124cb8a0665a064`.
+  실제 그래프에서 `v1.8.0 → fc9deec → zone HEAD` 조상 관계 통과, 태그 이후 정확히
+  16커밋임을 확인.
+- 존재하지 않는 commit/tag, non-ancestor, `.git` 없는 source ZIP fallback,
+  repo-scoped `safe.directory` 인자를 포함한 자동 테스트 34개 통과.
+- 기존 버전 메타데이터 생성·PyInstaller/Inno 연계에는 회귀 없음.
+
+### 판정
+**통과 — 커밋 가능**. zone 화면/빌드 담당자는 `release.ini`와 CHANGELOG에서 마지막
+main 기준을 즉시 확인할 수 있음.
+
+---
+
+## 2026-08-27 — main 다중선택 일괄 양품화 zone 동기화 검증
+
+- zone 전용 제품/빌드 설정을 보존하면서 main `09933fd` 기능 코드와 테스트가 병합됐는지
+  정적 diff 및 자동 테스트로 확인.
+- `release.ini`의 마지막 main 기준을 `v1.8.0` / `09933fda4be250e3284cccd9742c76be32787fa5`
+  로 갱신하고 실제 zone HEAD 조상 관계를 검증.
+
+### 판정
+**통과.** main/빌드 관련 57개 테스트와 zone 전용 GitHub #13/#14 테스트 통과,
+`py_compile` 통과. zone 전용 제품·버전 설정 및 기능 회귀 없음.
+
+## 2026-08-27 — zone-v1.1.0 릴리스 메타데이터 검증
+
+- `scripts/generate_version_info.py`: 성공.
+- `tests/test_build_release.py`: 34 passed.
+- `tests/test_zone_github_13_14.py`: 통과.
+- 생성값: EXE/installer `1.1.0`, `SegmentationModelUIZone`, zone AppId 분리 확인.
+- main 기준 `v1.8.0 + 19 commits (09933fd)`의 Git 조상 관계 검증 통과.
+
+# 2026-08-28 — feature/zone-analysis-tab GitHub #23 후속 독립 검증
+
+- 상태: 통과(제약 1건)
+- HEAD: `8e1a1ee` (`perf: 존 분석 UI 재계산 병목 완화`)
+- 관련 자동검증: `test_zone_github_13_14.py`, `test_annotation_type_merge.py`,
+  `test_fill_enclosed.py`, `test_canvas_zoom_pan.py` — **21 passed**. pytest cache는
+  샌드박스 권한으로 쓰지 못했으나 테스트 결과에는 영향 없음.
+- offscreen 실제 Qt 통합 골든패스: 임시 이미지 2장을 목록에 로드해 첫 원본 선표시,
+  resize/sliding-window 선택값, 결과 수신·진행률·표시, threshold 연속 변경 후 view 유지,
+  실제 mouse event 기반 blob 삭제/undo, brush drag 중 미계산 및 release 1회 emit/undo,
+  zoom/pan 후 `F` 왕복 유지, 양 모드 worker의 2장 순차 결과·진행률을 확인 — **PASS**.
+- 원 드래그는 `QTest` 실제 press/move/release에서 이동 중 commit 0회, release 후 1회로 확인.
+- `QT_QPA_PLATFORM=offscreen python main.py`는 앱/GPU 정보 출력 후 이벤트루프에 진입한
+  상태로 유지되어 시간 제한 중단 — **smoke PASS**. offscreen 환경의 Qt font directory
+  경고 1건이 있었으나 기동을 막지 않음. 최초 sandbox 실행은 `data/logs/app.log` 쓰기 권한으로
+  실패해 승인된 실환경 재실행 결과로 판정함.
+- 제약: zone 탭은 opacity 조절 UI가 없고 내부 합성값이 0.5로 고정되어 있어 opacity 조작
+  골든패스는 수행 불가. 배경 밝기 합성 단위검증과 `F` 전환 view 보존은 통과함.
+## 2026-08-28 — zone installer 1.2.1 동기화 검증
+
+- main에서 실제 오프라인 설치와 20초 GUI 기동을 통과한 빌드 설정 및 DLL 로드 순서를 반영했다.
+- zone 제품명·EXE명·`zone-v` 태그 체계를 유지하고 버전을 `1.2.1`로 갱신했다.
+## 2026-08-28 — zone GitHub #27 빌드 탐색 검증
+
+- zone 빌드도 가상환경 활성화 없이 시스템 Python 3.12를 선택하는 정적 회귀 검사를 공유한다.
