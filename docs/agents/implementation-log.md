@@ -2907,3 +2907,11 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - `build\venv`의 Python 버전과 실행 파일을 패키지 설치 전에 검사하고, 3.12가 아니거나 손상됐으면 삭제·재생성한다.
 - 설치 후 검사에도 정확한 3.12 검증을 유지하고 버전을 1.10.4로 갱신했다.
 - `tests/test_build_release.py` 24건과 Python 컴파일, `git diff --check`를 통과했다.
+
+## 2026-08-28 — Python 3.12 CUDA installer 빌드 복구
+
+- 새 빌드 venv의 `torch 2.11.0+cu128` Python 3.12 wheel에서 `c10.dll` WinError 1114를
+  실빌드로 재현했다. 같은 PC의 Python 3.13 wheel과 GPU/VC 런타임은 정상임을 비교 확인했다.
+- 공식 Windows cu128 호환 조합인 `torch 2.7.1`/`torchvision 0.22.1`을 고정하고,
+  requirements와 CUDA 인덱스를 한 pip 명령에서 해석하도록 단순화했다.
+- installer/EXE 버전을 1.10.5로 갱신했다.

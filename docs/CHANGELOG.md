@@ -5,6 +5,20 @@
 
 ---
 
+## [v1.10.5] 2026-08-28
+
+### 수정
+- Python 3.12 빌드 환경에서 최신 CUDA PyTorch wheel의 `c10.dll`이 WinError 1114로
+  초기화되지 않아 installer 빌드가 중단되던 문제 수정.
+- Windows/Python 3.12/RTX 50 계열을 지원하는 검증 조합인 PyTorch 2.7.1 cu128과
+  torchvision 0.22.1로 installer 런타임을 고정.
+- 빌드 의존성 설치를 한 번의 해석 과정으로 통합해 torch/torchvision 호환 조합 유지.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.5`로 갱신.
+
+---
+
 ## [v1.10.4] 2026-08-28
 
 ### 수정

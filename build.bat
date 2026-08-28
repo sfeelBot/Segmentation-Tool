@@ -43,14 +43,12 @@ if errorlevel 1 (
 )
 
 echo [0/4] Checking Python 3.12 and offline runtime packages: "%BUILD_PYTHON%"
-"%BUILD_PYTHON%" -c "import sys; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'; import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
+"%BUILD_PYTHON%" -c "import sys; from importlib.metadata import version; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'; assert version('torch').startswith('2.7.1') and version('torchvision').startswith('0.22.1'), 'Tested torch pair is required'; import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
 if errorlevel 1 (
     echo [0/4] Installing CUDA and build/runtime packages. This is required once ...
-    "%BUILD_PYTHON%" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+    "%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller --extra-index-url https://download.pytorch.org/whl/cu128
     if errorlevel 1 goto :error
-    "%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller
-    if errorlevel 1 goto :error
-    "%BUILD_PYTHON%" -c "import sys; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'; import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
+    "%BUILD_PYTHON%" -c "import sys; from importlib.metadata import version; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'; assert version('torch').startswith('2.7.1') and version('torchvision').startswith('0.22.1'), 'Tested torch pair is required'; import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
     if errorlevel 1 goto :error
 )
 

@@ -2844,3 +2844,13 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 
 - 검증 에이전트가 기존 venv의 Python 버전 불일치 시 설치 후 빌드가 계속될 수 있음을 발견했다.
 - 불일치 환경 삭제·재생성과 설치 후 3.12 검증을 회귀 검사 대상으로 추가했다.
+
+## 2026-08-28 — installer 1.10.5 타 PC·오프라인 설치 조건 검증
+
+- Python 3.12 전용 venv에서 `torch 2.11.0+cu128`의 `c10.dll` WinError 1114를 실재현하고,
+  `torch 2.7.1+cu128`/`torchvision 0.22.1+cu128` 교체 후 import 검사를 통과했다.
+- `build.bat` 전체 실행 성공: PyInstaller onedir 및 Inno Setup 6.7.3 installer 생성 완료.
+- 산출물 `SegmentationModelUI-Setup-1.10.5.exe`는 2,144,638,257 bytes이며 Python 3.12,
+  PyQt6, OpenCV, Torch CPU/CUDA/cuDNN DLL 포함을 설치 폴더에서 직접 확인했다.
+- 새 테스트 폴더에 무인 설치 성공 후 설치 EXE를 20초 실행해 조기 종료 없이 정상 유지됨을 확인했다.
+- `tests/test_build_release.py` 25건, 메타데이터 생성, `git diff --check`를 통과했다.
