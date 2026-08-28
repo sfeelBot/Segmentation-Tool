@@ -14,6 +14,34 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(generator)
 
 
+def test_build_script_uses_one_validated_python() -> None:
+    script = (ROOT / "build.bat").read_text(encoding="ascii")
+    assert (
+        "import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, "
+        "albumentations, openpyxl, matplotlib"
+    ) in script
+    assert '"%BUILD_PYTHON%" scripts\\generate_version_info.py' in script
+    assert '"%BUILD_PYTHON%" -m PyInstaller build.spec' in script
+    assert "py -3" not in script
+
+
+def test_build_script_preserves_unrelated_build_artifacts() -> None:
+    script = (ROOT / "build.bat").read_text(encoding="ascii")
+    assert "if exist build rmdir /s /q build" not in script
+    assert "build\\build" in script
+
+
+def test_build_spec_excludes_other_qt_bindings() -> None:
+    spec = (ROOT / "build.spec").read_text(encoding="utf-8")
+    for package in ("PyQt5", "PySide2", "PySide6", "IPython", "pytest", "sphinx"):
+        assert f'"{package}"' in spec
+
+
+def test_build_spec_limits_matplotlib_to_app_backends() -> None:
+    spec = (ROOT / "build.spec").read_text(encoding="utf-8")
+    assert 'hooksconfig={"matplotlib": {"backends": ["Agg", "QtAgg"]}}' in spec
+
+
 def write_release(path: Path, **overrides: str) -> None:
     values = {
         "version": "1.8.0",

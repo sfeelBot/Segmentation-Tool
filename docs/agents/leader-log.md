@@ -429,3 +429,7 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 - main 다중 양품화 기능 동기화 완료 후 zone 독립 릴리스 버전을 `1.1.0`으로 결정.
 - main 기능 기준은 `v1.8.0 + 19 commits` / `09933fd`로 명시하고 독립 태그
   `zone-v1.1.0`을 사용함.
+## 2026-08-28 — main 오프라인 installer 수정 zone 반영
+
+- zone 고유 분석 기능을 유지하면서 main의 오프라인 패키징 수정과 Torch-before-Qt 순서를 동기화했다.
+- zone installer/EXE 버전은 `1.2.1`, main 기준 커밋은 `69af9f7`로 기록했다.

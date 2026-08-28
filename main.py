@@ -1,6 +1,10 @@
 import sys
 from pathlib import Path
 
+# CUDA PyTorch must initialize before Qt in frozen Windows builds; otherwise
+# c10.dll can fail with WinError 1114 even when every runtime DLL is bundled.
+import torch  # noqa: F401
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QSplashScreen
