@@ -107,3 +107,10 @@
 - 범위는 버전 메타데이터 생성·검증, 릴리스 커밋·annotated tag·push까지이며 전체
   PyInstaller/Inno Setup 패키징과 GitHub Release 업로드는 포함하지 않음.
 - 검증 완료: 메타데이터 생성 성공, `tests/test_build_release.py` 20 passed.
+
+## 2026-08-28 — v1.10.4 배포
+
+- 상태: 배포 승인 및 검증 PASS, `origin/main` push와 annotated tag `v1.10.4` 생성 예정.
+- 내용: 일반 PowerShell/CMD에서 Python 3.12 빌드 venv를 자동 준비하고, 손상되었거나 다른 Python 버전인 기존 venv를 자동 재생성.
+- 검증: main build/release 테스트 24 passed.
+- 제외: 실제 PyInstaller/Inno Setup installer 생성 및 GitHub Release 업로드는 수행하지 않음.
