@@ -355,3 +355,8 @@
   원인을 확인하고, 현재 GPU batch 직후 안전 경계에서 작업을 종료하도록 변경.
 - 독립 검증에서 다음 작업의 메인 중지 버튼 복원 누락을 발견해 보완하고 최종 16 tests
   및 stop-current/stop-all lifecycle 검증을 통과함.
+## 2026-08-28 — 오프라인 installer 1.10.1 완료
+
+- 사용자 요구: 설치 대상 PC에 Python/Anaconda/PyQt6/PyTorch가 없어도 추가 다운로드 없이 설치·실행.
+- 조치: 전체 런타임 사전검사, 단일 빌드 Python, Qt binding 충돌 제거, Torch-before-Qt DLL 순서 수정.
+- 결과: 약 1.815GB installer 생성, 실제 무인 설치 및 설치된 GUI 20초 기동 검증 통과.

@@ -72,9 +72,20 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={"matplotlib": {"backends": ["Agg", "QtAgg"]}},
     runtime_hooks=[],
-    excludes=[],
+    # Anaconda 환경의 IPython/개발 도구가 PyQt5/PySide를 간접 참조해도 앱은
+    # PyQt6만 사용한다. 여러 Qt binding 동시 수집 시 PyInstaller가 빌드를 중단한다.
+    excludes=[
+        "PyQt5", "PySide2", "PySide6",
+        "IPython", "pytest", "sphinx", "docutils", "astroid", "jedi",
+        "pygame", "dask", "tensorboard",
+        "qtpy", "tkinter", "notebook", "jupyterlab", "nbformat", "nbconvert",
+        "pandas", "pyarrow", "distributed", "panel", "bokeh", "plotly",
+        "statsmodels", "xarray", "intake", "altair", "astropy", "tensorflow",
+        "tables", "sqlalchemy", "botocore", "h5py", "numba", "llvmlite",
+        "win32com",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

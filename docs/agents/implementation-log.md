@@ -2880,3 +2880,11 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
   주 화면 중지 버튼을 즉시 비활성화한다.
 - 독립 검증에서 발견된 큐 전환 UI 회귀를 보완해 다음 작업 시작 시 메인 중지 버튼을
   복구하고, 중지 처리 중에는 진행 창의 현재/전체 중지 버튼도 함께 비활성화한다.
+## 2026-08-28 — 오프라인 installer 1.10.1 런타임 완전 포함
+
+- `build.bat`이 검증·메타데이터·PyInstaller에 동일한 Python을 사용하도록 고정하고 PyQt6,
+  PyTorch, torchvision, OpenCV, NumPy, Pillow, Albumentations, openpyxl, matplotlib을 사전 검사했다.
+- `build.spec`에서 다른 Qt binding과 Anaconda 개발용 선택 의존성을 제외하고 matplotlib
+  backend를 `Agg`/`QtAgg`로 제한했다.
+- frozen Windows에서 Qt 선행 초기화 후 CUDA Torch `c10.dll`이 WinError 1114로 실패하는
+  문제를 재현하고 `main.py`에서 Torch를 PyQt6보다 먼저 초기화하도록 수정했다.

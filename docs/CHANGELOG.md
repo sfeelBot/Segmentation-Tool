@@ -5,6 +5,24 @@
 
 ---
 
+## [v1.10.1] 2026-08-28
+
+### 수정
+- `build.bat`이 프로젝트 의존성이 없는 다른 Python을 선택해 설치판에서
+  `ModuleNotFoundError: No module named 'PyQt6'`가 발생할 수 있던 문제 수정.
+- 선택한 단일 Python에서 PyQt6·PyInstaller를 먼저 검증하고 메타데이터 생성과
+  PyInstaller 빌드까지 같은 인터프리터만 사용.
+- Anaconda의 간접 의존성이 PyQt5/PySide를 함께 수집하지 않도록 PyQt6 외 Qt 바인딩 제외.
+- PyQt6·PyTorch·torchvision·OpenCV·NumPy·Pillow·Albumentations·openpyxl·matplotlib을
+  빌드 전에 모두 검사해, 오프라인 설치본에서 필수 패키지가 누락되는 불완전한 빌드를 차단.
+- Windows 독립 실행본에서 Qt가 CUDA Torch보다 먼저 초기화되어 `c10.dll` WinError 1114가
+  발생하지 않도록 Torch를 PyQt6보다 먼저 로드.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.1`로 갱신.
+
+---
+
 ## [v1.10.0] 2026-08-28
 
 ### 추가
