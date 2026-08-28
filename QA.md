@@ -1,5 +1,13 @@
 # QA — 버그 및 VOC 추적
 
+## 2026-08-28 — BUG-026 Zone 블랍 4방향 연결 삭제 (Closed)
+
+- 우선순위: P2
+- 증상: 대각선으로만 맞닿은 두 타겟 픽셀이 하나의 블랍으로 취급되어 클릭 삭제 시 함께 삭제됨.
+- 원인: `compute_blob_labels()`가 8-connectivity를 사용해 이번 VOC의 4-connected 수용 기준과 불일치.
+- 조치: 4-connectivity로 변경하고 대각선 접촉 픽셀 분리 회귀 테스트를 추가(`74025dd`).
+- 독립 재검증: 신규 Zone 편집 테스트 3건과 기존 Zone #13/#14 회귀 9건 통과.
+
 ## 2026-08-28 — installer 시작 대기 안내 (Closed)
 
 - QApplication과 splash를 무거운 AI/그래프 라이브러리보다 먼저 생성해 즉시 준비 상태 표시.

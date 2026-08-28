@@ -4627,3 +4627,19 @@ main 기준을 즉시 확인할 수 있음.
 
 - zone 제품명·GUID·태그 접두사와 기존 main ancestry를 보존하고 버전을 1.3.1로 갱신했다.
 - zone 빌드 릴리스 테스트 39건, 1.3.1 메타데이터 생성, `git diff --check`를 통과했다.
+## 2026-08-28 — Zone VOC 편집 툴바 및 패치 기본값 독립 검증
+
+- 상태: 통과
+- 대상: `eabd25e`, `8f2a14c`, 4-connected 후속 수정 `74025dd`.
+- 정적 검토 및 offscreen 실제 `ZoneAnalysisTab`/`InferenceTab`/`ConfigForm` 생성으로
+  QActionGroup 배타 선택과 캔버스 mode 동기화, brush draw 증가/erase 감소,
+  stroke last-write-wins, 혼합 LIFO Undo, `set_blob_data()` 편집 초기화를 확인했다.
+- 대각선 접촉 2픽셀이 서로 다른 두 블랍으로 분리되는 4-connectivity를 확인했다.
+- 기본값은 학습 `random_crop`, 추론·Zone `sliding_window`로 확인했다.
+- `tests/test_zone_edit_toolbar.py`: 3 passed.
+- `tests/test_zone_github_13_14.py`: 9 passed.
+- 두 파일을 같은 pytest 프로세스에서 신규 테스트부터 수집하면 Windows에서 `QtTest`
+  DLL 0xc0000139가 발생하지만 각각 단독 실행은 전부 통과했다. 기능 코드가 아니라
+  torch/PyQt 선행 import 순서에 민감한 기존 테스트 환경 제약으로 판정했다.
+- 전체 `MainWindow` 무창 생성은 프로젝트 초기화 경로에서 40초 이상 대기해 중단했고,
+  관련 탭들의 실제 생성·show·event 처리 스모크로 대체했다.
