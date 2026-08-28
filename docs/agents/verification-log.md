@@ -2839,3 +2839,8 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 - `build\venv` 생성, cu128 PyTorch 선행 설치, requirements/PyInstaller 설치 명령을 정적 회귀 검사에 추가했다.
 - 빌드 릴리스 테스트 24개와 1.10.3 메타데이터 생성을 통과했다.
 - 실제 대용량 의존성 다운로드와 installer 생성은 빌드 PC 실행 단계에서 확인한다.
+
+## 2026-08-28 — 잘못된 기존 build venv 경로 재검증 준비
+
+- 검증 에이전트가 기존 venv의 Python 버전 불일치 시 설치 후 빌드가 계속될 수 있음을 발견했다.
+- 불일치 환경 삭제·재생성과 설치 후 3.12 검증을 회귀 검사 대상으로 추가했다.

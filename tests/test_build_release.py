@@ -32,6 +32,10 @@ def test_build_script_uses_one_validated_python() -> None:
         "--index-url https://download.pytorch.org/whl/cu128"
     ) in script
     assert '"%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller' in script
+    assert 'rmdir /s /q "%BUILD_VENV%"' in script
+    assert 'if not exist "%BUILD_VENV%\\Scripts\\python.exe"' in script
+    assert 'if exist "%BUILD_VENV%" (' in script
+    assert script.count("sys.version_info[:2] == (3, 12)") >= 4
 
 
 def test_build_script_preserves_unrelated_build_artifacts() -> None:

@@ -24,11 +24,23 @@ if errorlevel 1 goto :error
 
 set "BUILD_VENV=%ROOT%build\venv"
 if not exist "%BUILD_VENV%\Scripts\python.exe" (
-    echo [0/4] Creating the Python 3.12 build environment ...
+    if exist "%BUILD_VENV%" (
+        echo [0/4] Recreating the damaged build environment with Python 3.12 ...
+        rmdir /s /q "%BUILD_VENV%"
+    ) else (
+        echo [0/4] Creating the Python 3.12 build environment ...
+    )
     "%SYSTEM_PYTHON%" -m venv "%BUILD_VENV%"
     if errorlevel 1 goto :error
 )
 set "BUILD_PYTHON=%BUILD_VENV%\Scripts\python.exe"
+"%BUILD_PYTHON%" -c "import sys; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'"
+if errorlevel 1 (
+    echo [0/4] Recreating the build environment with Python 3.12 ...
+    rmdir /s /q "%BUILD_VENV%"
+    "%SYSTEM_PYTHON%" -m venv "%BUILD_VENV%"
+    if errorlevel 1 goto :error
+)
 
 echo [0/4] Checking Python 3.12 and offline runtime packages: "%BUILD_PYTHON%"
 "%BUILD_PYTHON%" -c "import sys; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'; import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
@@ -38,7 +50,7 @@ if errorlevel 1 (
     if errorlevel 1 goto :error
     "%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller
     if errorlevel 1 goto :error
-    "%BUILD_PYTHON%" -c "import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
+    "%BUILD_PYTHON%" -c "import sys; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'; import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
     if errorlevel 1 goto :error
 )
 

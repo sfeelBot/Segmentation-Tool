@@ -2901,3 +2901,9 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - 기존 CUDA installer 구성을 유지하도록 cu128 PyTorch를 먼저 설치하고 나머지 requirements와
   PyInstaller를 같은 빌드 환경에 설치한다.
 - installer/EXE 버전을 1.10.3으로 갱신했다.
+
+## 2026-08-28 — 잘못된 기존 build venv 복구
+
+- `build\venv`의 Python 버전과 실행 파일을 패키지 설치 전에 검사하고, 3.12가 아니거나 손상됐으면 삭제·재생성한다.
+- 설치 후 검사에도 정확한 3.12 검증을 유지하고 버전을 1.10.4로 갱신했다.
+- `tests/test_build_release.py` 24건과 Python 컴파일, `git diff --check`를 통과했다.
