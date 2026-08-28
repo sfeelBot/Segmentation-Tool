@@ -20,6 +20,13 @@ Windows 실행 파일과 설치 프로그램의 릴리스 정보는 저장소 �
 호환성 파괴 변경은 MAJOR를 올리고 `release.ini`와 `docs/CHANGELOG.md`를 함께 갱신한 뒤
 `scripts/generate_version_info.py` 검증을 실행한다.
 
+### 기능·버그 수정 완료 루틴
+
+모든 기능 추가와 버그 수정은 커밋 전에 installer 버전을 확인한다. 아직 릴리스되지 않은
+동일 버전 작업에 포함되지 않았다면 기능 추가는 MINOR, 호환 버그 수정은 PATCH,
+호환성 파괴 변경은 MAJOR를 올리고 `release.ini`와 `docs/CHANGELOG.md`를 함께 갱신한 뒤
+`scripts/generate_version_info.py` 검증을 실행한다.
+
 CHANGELOG의 최신 버전이 다르거나 필수 키, SemVer, GUID가 잘못되면 생성기는
 실패한다. CHANGELOG는 자동으로 수정하지 않는다.
 

@@ -1,10 +1,14 @@
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
+from PyQt6.QtWidgets import QApplication, QSplashScreen
+
 
 # ── 무거운 라이브러리 선행 import ──────────────────────────────────────────────
 # 일부 환경에서 DLL 로딩 순서·PATH 문제로 나중에 import 하면 에러가 날 수 있어서
-# QApplication 생성 전에 미리 로드한다.
+# 메인 창 구성 전에 미리 로드한다. QApplication과 splash만 먼저 만들어 대기 상태를 표시한다.
 #
 # torchvision·albumentations는 여기서 빼고 실제 사용 시점(학습/추론/오토라벨 등,
 # app/core/dataset.py·inference_engine.py·auto_labeler.py·augmentations.py·
@@ -13,12 +17,14 @@ from pathlib import Path
 # 사용되고 torchvision이 torch 확장이라 torch가 먼저 로드돼 있어야 안전하므로
 # 계속 즉시 로드한다.
 
-def _preload_libs() -> None:
+def _preload_libs(progress=None) -> None:
     """핵심 라이브러리를 앱 시작 시점에 미리 로드.
     importlib.import_module() 로 로컬 변수 없이 로드 → 린터 경고 없음."""
     import importlib
 
     for pkg in ("numpy", "cv2", "PIL.Image"):
+        if progress:
+            progress(f"{pkg} 준비 중…")
         try:
             importlib.import_module(pkg)
         except ImportError as e:
@@ -27,6 +33,8 @@ def _preload_libs() -> None:
     # PyTorch — DLL 로드 실패(OSError) 별도 처리. torchvision은 지연 로드하되,
     # torch는 그 전제(확장 모듈이 링크하는 베이스)이므로 항상 먼저 로드해 둔다.
     try:
+        if progress:
+            progress("AI 엔진 준비 중…")
         importlib.import_module("torch")
     except OSError as e:
         _die_dll(e)
@@ -35,6 +43,8 @@ def _preload_libs() -> None:
 
     # matplotlib — Agg 백엔드 강제 (Qt 스레드 충돌 방지)
     try:
+        if progress:
+            progress("그래프 엔진 준비 중…")
         mpl = importlib.import_module("matplotlib")
         mpl.use("Agg")
     except ImportError as e:
@@ -58,12 +68,6 @@ def _die_dll(exc: Exception) -> None:
     print("     pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu", file=sys.stderr)
     sys.exit(1)
 
-
-_preload_libs()   # QApplication 생성 전에 실행
-
-
-from PyQt6.QtWidgets import QApplication
-from app.main_window import MainWindow
 
 DATA_DIRS = ["data/images", "data/annotations", "data/checkpoints", "data/user_models"]
 
@@ -334,7 +338,41 @@ def ensure_data_dirs() -> None:
         (base / d).mkdir(parents=True, exist_ok=True)
 
 
+def _create_startup_splash() -> QSplashScreen:
+    pixmap = QPixmap(460, 180)
+    pixmap.fill(QColor("#1a1d23"))
+    painter = QPainter(pixmap)
+    painter.setPen(QColor("#60a5fa"))
+    painter.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+    painter.drawText(28, 68, "Segmentation Model UI")
+    painter.setPen(QColor("#9ca3af"))
+    painter.setFont(QFont("Arial", 10))
+    painter.drawText(29, 100, "AI 모델과 작업 환경을 준비하고 있습니다.")
+    painter.end()
+    splash = QSplashScreen(pixmap)
+    splash.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+    return splash
+
+
+def _show_startup_progress(app: QApplication, splash: QSplashScreen,
+                           message: str) -> None:
+    splash.showMessage(
+        message,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+        QColor("#e5e7eb"),
+    )
+    app.processEvents()
+
+
 def main() -> None:
+    app = QApplication(sys.argv)
+    app.setApplicationName("Segmentation Model UI")
+    splash = _create_startup_splash()
+    splash.show()
+    _show_startup_progress(app, splash, "기본 라이브러리 준비 중…")
+
+    _preload_libs(lambda message: _show_startup_progress(app, splash, message))
+    _show_startup_progress(app, splash, "사용자 환경 준비 중…")
     ensure_data_dirs()
 
     from app.core.logger import setup_logging, get_logger
@@ -351,8 +389,6 @@ def main() -> None:
     from app.core.i18n import init_language
     init_language()
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("Segmentation Model UI")
     app.setStyleSheet(STYLESHEET)
 
     from PyQt6.QtGui import QIcon
@@ -367,14 +403,21 @@ def main() -> None:
     from app.widgets.project_start_dialog import ProjectStartDialog
     from PyQt6.QtWidgets import QDialog as _QDialog
 
+    splash.close()
+    app.processEvents()
+
     while True:
         start = ProjectStartDialog()
         if start.exec() != _QDialog.DialogCode.Accepted:
             log.info("프로젝트 선택 취소 — 종료합니다.")
             return
 
+        splash.show()
+        _show_startup_progress(app, splash, "프로젝트 화면 준비 중…")
+        from app.main_window import MainWindow
         window = MainWindow()
         window.show()
+        splash.finish(window)
         app.exec()
 
         if not getattr(window, "_switch_requested", False):

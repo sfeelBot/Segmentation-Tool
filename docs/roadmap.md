@@ -1,5 +1,8 @@
 # Roadmap — Segmentation Model UI
 
+> 2026-08-28: installer 실행 직후 splash를 먼저 표시하고 핵심 라이브러리·환경·프로젝트
+> 화면 준비 단계를 안내하도록 개선. 메인 창 준비가 끝나면 자동으로 닫힌다.
+
 > 2026-08-28: GitHub #23 — 존 분석 전체 이미지 비동기 추론, resize/sliding-window 선택,
 > 진행률 표시 및 `F` 원본/오버레이 전환 완료 (`ad4e391`, `7055d13`). 오버레이 불투명도
 > 변경 시 배경(클래스 0)은 원본 밝기를 유지하도록 후속 수정 완료. threshold 입력 debounce,

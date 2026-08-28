@@ -172,7 +172,11 @@ def recent(max_count: int = 10) -> list[Path]:
     seen, out = set(), []
     for p in paths:
         pp = Path(p)
-        if str(pp) in seen or not pp.exists():
+        try:
+            exists = pp.exists()
+        except OSError:
+            exists = False
+        if str(pp) in seen or not exists:
             continue
         seen.add(str(pp))
         out.append(pp)

@@ -1,5 +1,12 @@
 # QA — 버그 및 VOC 추적
 
+## 2026-08-28 — installer 시작 대기 안내 (Closed)
+
+- QApplication과 splash를 무거운 AI/그래프 라이브러리보다 먼저 생성해 즉시 준비 상태 표시.
+- numpy/OpenCV/Pillow, PyTorch, matplotlib, 사용자 환경, 프로젝트 화면 준비 단계를 순서대로 안내.
+- 접근 권한이 사라진 최근 프로젝트 경로는 건너뛰어 시작 창 중단을 방지.
+- splash 단위 검증과 release 회귀 테스트 22개, `py_compile`, `diff --check` 통과.
+
 ## 2026-08-28 — 추론 탭 UI 병목 후속 (Closed)
 
 - 원인: opacity/threshold 값 변경마다 UI 스레드에서 전체 해상도 재필터링·오버레이 합성을 실행하고, 픽스맵 갱신마다 줌/패닝을 초기화함.

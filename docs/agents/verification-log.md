@@ -1,5 +1,11 @@
 # 검증 (Verification) 로그
 
+## 2026-08-28 — installer 시작 splash 검증
+
+- `tests/test_startup_splash.py`: splash 표시/메시지와 preload 단계 순서 검증.
+- `test_project_recent.py`: 접근 불가 최근 경로 건너뛰기 검증.
+- release 회귀 포함 23 passed, `py_compile`, `git diff --check` 통과.
+
 ## 2026-08-28 — GitHub #23 존 분석 UI 병목 후속 검증
 
 - 상태: 완료.

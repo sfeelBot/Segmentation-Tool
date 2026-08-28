@@ -7,15 +7,17 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ## [zone-v1.2.0] 2026-08-28
 
-Main 기준: v1.10.0 대상 커밋 (434b169)
+Main 기준: v1.9.0 이후 1.10.0 대상 커밋 (94a74f9)
 
 ### 추가
 - main의 GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
 - zone 전체 이미지 비동기 추론과 resize/sliding-window 선택, `F` 오버레이 전환.
+- installer 실행 직후 로딩 단계를 표시하는 시작 splash 화면.
 
 ### 수정 및 성능
 - 추론·zone 오버레이 배경 밝기 유지.
 - threshold 디바운스, 원 편집 완료 시 1회 존 계산, 줌·팬 보존과 대형 미리보기 복사 제거.
+- 접근할 수 없는 최근 프로젝트 경로가 시작 창을 막지 않도록 안전 처리.
 
 ### 빌드
 - zone installer 및 EXE 버전을 `1.2.0`으로 갱신.
@@ -65,6 +67,24 @@ Main 기준: v1.8.0 + 19 commits (09933fd)
 - `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
 - Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
 - zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
+
+---
+
+## [v1.10.0] 2026-08-28
+
+### 추가
+- GitHub #23 전체 이미지 비동기 추론과 즉시 진행률 표시.
+- 최고 IoU Best Model과 epoch별 train/val loss·IoU JSON/PNG 자동 저장.
+- 추론 결과 원본/오버레이 `F` 전환.
+- 설치판 실행 직후 준비 상태와 현재 로딩 단계를 표시하는 시작 splash 화면.
+
+### 수정 및 성능
+- 오버레이 불투명도가 배경 밝기를 바꾸지 않도록 전경에만 혼합 적용.
+- 슬라이더 입력 디바운스, 오버레이 재블렌딩, 줌·팬 보존과 대형 결과 메모리 복사 축소.
+- 접근할 수 없는 최근 프로젝트 경로 때문에 시작 창이 열리지 않는 문제 수정.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.0`으로 갱신.
 
 ---
 
