@@ -4550,3 +4550,22 @@ main 기준을 즉시 확인할 수 있음.
 - `tests/test_zone_github_13_14.py`: 통과.
 - 생성값: EXE/installer `1.1.0`, `SegmentationModelUIZone`, zone AppId 분리 확인.
 - main 기준 `v1.8.0 + 19 commits (09933fd)`의 Git 조상 관계 검증 통과.
+
+# 2026-08-28 — feature/zone-analysis-tab GitHub #23 후속 독립 검증
+
+- 상태: 통과(제약 1건)
+- HEAD: `8e1a1ee` (`perf: 존 분석 UI 재계산 병목 완화`)
+- 관련 자동검증: `test_zone_github_13_14.py`, `test_annotation_type_merge.py`,
+  `test_fill_enclosed.py`, `test_canvas_zoom_pan.py` — **21 passed**. pytest cache는
+  샌드박스 권한으로 쓰지 못했으나 테스트 결과에는 영향 없음.
+- offscreen 실제 Qt 통합 골든패스: 임시 이미지 2장을 목록에 로드해 첫 원본 선표시,
+  resize/sliding-window 선택값, 결과 수신·진행률·표시, threshold 연속 변경 후 view 유지,
+  실제 mouse event 기반 blob 삭제/undo, brush drag 중 미계산 및 release 1회 emit/undo,
+  zoom/pan 후 `F` 왕복 유지, 양 모드 worker의 2장 순차 결과·진행률을 확인 — **PASS**.
+- 원 드래그는 `QTest` 실제 press/move/release에서 이동 중 commit 0회, release 후 1회로 확인.
+- `QT_QPA_PLATFORM=offscreen python main.py`는 앱/GPU 정보 출력 후 이벤트루프에 진입한
+  상태로 유지되어 시간 제한 중단 — **smoke PASS**. offscreen 환경의 Qt font directory
+  경고 1건이 있었으나 기동을 막지 않음. 최초 sandbox 실행은 `data/logs/app.log` 쓰기 권한으로
+  실패해 승인된 실환경 재실행 결과로 판정함.
+- 제약: zone 탭은 opacity 조절 UI가 없고 내부 합성값이 0.5로 고정되어 있어 opacity 조작
+  골든패스는 수행 불가. 배경 밝기 합성 단위검증과 `F` 전환 view 보존은 통과함.
