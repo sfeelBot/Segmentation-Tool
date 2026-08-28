@@ -360,3 +360,7 @@
 - 사용자 요구: 설치 대상 PC에 Python/Anaconda/PyQt6/PyTorch가 없어도 추가 다운로드 없이 설치·실행.
 - 조치: 전체 런타임 사전검사, 단일 빌드 Python, Qt binding 충돌 제거, Torch-before-Qt DLL 순서 수정.
 - 결과: 약 1.815GB installer 생성, 실제 무인 설치 및 설치된 GUI 20초 기동 검증 통과.
+## 2026-08-28 — GitHub #27 빌드 실패 조치
+
+- 가상환경을 전제로 하지 않고 시스템 Python 3.12를 사용하는 빌드 흐름으로 수정했다.
+- WindowsApps 실행 별칭 오선택을 차단하고 버전을 `1.10.2`로 갱신했다.

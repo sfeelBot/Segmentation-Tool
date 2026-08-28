@@ -15,13 +15,16 @@ SPEC.loader.exec_module(generator)
 
 def test_build_script_uses_one_validated_python() -> None:
     script = (ROOT / "build.bat").read_text(encoding="ascii")
+    assert "sys.version_info[:2] == (3, 12)" in script
     assert (
         "import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, "
         "albumentations, openpyxl, matplotlib"
     ) in script
     assert '"%BUILD_PYTHON%" scripts\\generate_version_info.py' in script
     assert '"%BUILD_PYTHON%" -m PyInstaller build.spec' in script
-    assert "py -3" not in script
+    assert "py -3 -m" not in script
+    assert "py -3.12 -c" in script
+    assert 'findstr /i /v "WindowsApps"' in script
 
 
 def test_build_script_preserves_unrelated_build_artifacts() -> None:

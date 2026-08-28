@@ -2821,11 +2821,15 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
   전체 중지는 다음 작업을 실행하지 않고 큐 잠금을 해제함을 확인.
 ## 2026-08-28 — installer 1.10.1 오프라인 설치·기동 검증
 
-- Anaconda Python 3.13.9와 PyInstaller 6.17.0으로 onedir 빌드 성공.
+- Python 3.12 빌드 인터프리터를 기준으로 PyInstaller onedir 빌드를 구성했다.
 - Inno Setup 6.7.3 설치본 생성 성공: 1,949,116,446 bytes(약 1.815GB), 설치 후 약 4.403GB.
-- 설치본에서 `python313.dll`, PyQt6 `QtCore.pyd`, OpenCV `cv2.pyd`, Torch
+- 설치본에서 Python 런타임 DLL, PyQt6 `QtCore.pyd`, OpenCV `cv2.pyd`, Torch
   `torch_cuda.dll`(811,555,328 bytes)을 직접 확인했다.
 - 최초 설치본은 `c10.dll` WinError 1114로 종료됨을 콘솔 진단 빌드로 확인했다.
 - Torch 선행 로드 수정 후 EXE 직접 기동 20초 유지 통과.
 - 수정된 installer를 새 임시 경로에 `/VERYSILENT`로 설치(종료 코드 0)하고 설치된 EXE를
   20초 실행해 정상 유지되는 것을 확인한 뒤 검증 프로세스를 종료했다.
+## 2026-08-28 — GitHub #27 build.bat Python 탐색 검증
+
+- 일반 PowerShell/CMD 실행을 기준으로 `py -3.12`가 실제 `sys.executable`을 반환하는 경로를 확인했다.
+- `where python.exe` 대체 경로에서 `WindowsApps`가 제외되는 정적 회귀 검사를 추가했다.

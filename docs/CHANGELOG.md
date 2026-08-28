@@ -5,6 +5,20 @@
 
 ---
 
+## [v1.10.2] 2026-08-28
+
+### 수정
+- GitHub #27: 일반 PowerShell/CMD에서 `build.bat` 실행 시 Microsoft Store용
+  `WindowsApps\\python.exe` 별칭을 실제 Python으로 오인하던 문제 수정.
+- 가상환경 활성화 없이 `py -3.12`로 등록된 시스템 Python 3.12를 우선 선택하고,
+  실패 시에도 `WindowsApps` 별칭은 후보에서 제외.
+- 필수 패키지가 없으면 선택된 Python에 실행할 정확한 pip 명령을 안내.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.2`로 갱신.
+
+---
+
 ## [v1.10.1] 2026-08-28
 
 ### 수정

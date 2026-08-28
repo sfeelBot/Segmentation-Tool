@@ -2888,3 +2888,9 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
   backend를 `Agg`/`QtAgg`로 제한했다.
 - frozen Windows에서 Qt 선행 초기화 후 CUDA Torch `c10.dll`이 WinError 1114로 실패하는
   문제를 재현하고 `main.py`에서 Torch를 PyQt6보다 먼저 초기화하도록 수정했다.
+## 2026-08-28 — GitHub #27 일반 셸 Python 3.12 탐색 수정
+
+- `build.bat`이 가상환경 활성화를 요구하지 않고 Windows Python Launcher의 `py -3.12`로
+  시스템 Python을 찾도록 변경했다.
+- Microsoft Store 실행 별칭인 `WindowsApps\\python.exe`는 `where` 대체 후보에서 제외했다.
+- 선택된 Python에 의존성이 없을 때 실행할 pip 명령을 오류 메시지에 표시한다.
