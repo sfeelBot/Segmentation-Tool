@@ -119,3 +119,10 @@
   패키지 생성과 GitHub Release 업로드는 포함하지 않음.
 - 검증 완료: 메타데이터 생성 성공, build 릴리스 테스트 34 passed, zone #13/#14
   직접 테스트 통과.
+
+## 2026-08-28 — zone-v1.2.4 배포
+
+- 상태: 배포 승인 및 검증 PASS, 전용 sync PR을 통한 `feature/zone-analysis-tab` 병합과 annotated tag `zone-v1.2.4` 생성 예정.
+- 내용: main의 Python 3.12 빌드 venv 자동 준비 및 잘못된 기존 venv 자동 재생성 수정을 zone에 반영.
+- 검증: zone build/release 테스트 41 passed 및 zone 전용 검사 통과.
+- 제외: 실제 PyInstaller/Inno Setup installer 생성 및 GitHub Release 업로드는 수행하지 않음.
