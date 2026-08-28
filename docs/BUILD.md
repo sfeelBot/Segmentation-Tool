@@ -42,6 +42,10 @@ CHANGELOG의 최신 버전이 다르거나 필수 키, SemVer, GUID가 잘못되
 build.bat
 ```
 
+별도의 conda/venv 활성화는 필요 없다. 스크립트가 시스템 Python 3.12로 `build\venv`를
+최초 1회 생성하고 CUDA PyTorch와 빌드/런타임 패키지를 설치한 뒤 재사용한다. 첫 실행은
+대용량 패키지 다운로드 때문에 오래 걸릴 수 있다.
+
 스크립트는 다음 순서로 동작한다.
 
 1. 기존 `build\`, `dist\` 삭제

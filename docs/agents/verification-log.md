@@ -2833,3 +2833,9 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 
 - 일반 PowerShell/CMD 실행을 기준으로 `py -3.12`가 실제 `sys.executable`을 반환하는 경로를 확인했다.
 - `where python.exe` 대체 경로에서 `WindowsApps`가 제외되는 정적 회귀 검사를 추가했다.
+
+## 2026-08-28 — build.bat 자동 환경 준비 검증
+
+- `build\venv` 생성, cu128 PyTorch 선행 설치, requirements/PyInstaller 설치 명령을 정적 회귀 검사에 추가했다.
+- 빌드 릴리스 테스트 24개와 1.10.3 메타데이터 생성을 통과했다.
+- 실제 대용량 의존성 다운로드와 installer 생성은 빌드 PC 실행 단계에서 확인한다.

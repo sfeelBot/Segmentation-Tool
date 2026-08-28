@@ -93,3 +93,9 @@
 - 학습 탭: 최고 IoU 체크포인트(`*_best.pt`)와 모델별 지표 JSON/그래프 PNG 자동 저장.
 - 검증: `test_github_issue_23.py`, 학습 성능, sliding-window 관련 10개 테스트 통과.
 - 전체 pytest 수집은 기존 Windows QtSvg DLL 로드 순서 문제로 중단되어 관련 묶음으로 검증함.
+
+## 2026-08-28 — 일반 셸 최초 빌드 의존성 자동 설치
+
+- 재현: 새 시스템 Python 3.12에서 `build.bat` 실행 시 `ModuleNotFoundError: PyQt6`로 종료.
+- 조치: `build\venv` 자동 생성, CUDA PyTorch와 requirements/PyInstaller 최초 1회 자동 설치.
+- 회귀 기준: 사용자가 conda/venv를 활성화하지 않아도 모든 빌드 단계가 전용 Python을 사용해야 한다.

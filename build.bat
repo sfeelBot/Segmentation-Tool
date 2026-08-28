@@ -9,25 +9,37 @@ setlocal
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
-rem Use one interpreter for validation, metadata generation, and PyInstaller.
-if defined PYTHON_EXE if exist "%PYTHON_EXE%" set "BUILD_PYTHON=%PYTHON_EXE%"
-if not defined BUILD_PYTHON for /f "delims=" %%P in ('py -3.12 -c "import sys; print(sys.executable)" 2^>nul') do if exist "%%P" set "BUILD_PYTHON=%%P"
-if not defined BUILD_PYTHON if defined CONDA_PREFIX if exist "%CONDA_PREFIX%\python.exe" set "BUILD_PYTHON=%CONDA_PREFIX%\python.exe"
-if not defined BUILD_PYTHON for /f "delims=" %%P in ('where python.exe 2^>nul ^| findstr /i /v "WindowsApps"') do if not defined BUILD_PYTHON set "BUILD_PYTHON=%%P"
-if not defined BUILD_PYTHON (
+rem Find system Python 3.12, then create/reuse a private build environment.
+if defined PYTHON_EXE if exist "%PYTHON_EXE%" set "SYSTEM_PYTHON=%PYTHON_EXE%"
+if not defined SYSTEM_PYTHON for /f "delims=" %%P in ('py -3.12 -c "import sys; print(sys.executable)" 2^>nul') do if exist "%%P" set "SYSTEM_PYTHON=%%P"
+if not defined SYSTEM_PYTHON if defined CONDA_PREFIX if exist "%CONDA_PREFIX%\python.exe" set "SYSTEM_PYTHON=%CONDA_PREFIX%\python.exe"
+if not defined SYSTEM_PYTHON for /f "delims=" %%P in ('where python.exe 2^>nul ^| findstr /i /v "WindowsApps"') do if not defined SYSTEM_PYTHON set "SYSTEM_PYTHON=%%P"
+if not defined SYSTEM_PYTHON (
     echo [ERROR] Python 3.12 was not found.
     echo         Install Python 3.12 from python.org and enable the py launcher.
     goto :error
 )
+"%SYSTEM_PYTHON%" -c "import sys; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'"
+if errorlevel 1 goto :error
+
+set "BUILD_VENV=%ROOT%build\venv"
+if not exist "%BUILD_VENV%\Scripts\python.exe" (
+    echo [0/4] Creating the Python 3.12 build environment ...
+    "%SYSTEM_PYTHON%" -m venv "%BUILD_VENV%"
+    if errorlevel 1 goto :error
+)
+set "BUILD_PYTHON=%BUILD_VENV%\Scripts\python.exe"
 
 echo [0/4] Checking Python 3.12 and offline runtime packages: "%BUILD_PYTHON%"
 "%BUILD_PYTHON%" -c "import sys; assert sys.version_info[:2] == (3, 12), 'Python 3.12 is required'; import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
 if errorlevel 1 (
-    echo [ERROR] Python 3.12 with all build/runtime packages is required.
-    echo         Install them into the selected Python:
-    echo         "%BUILD_PYTHON%" -m pip install -r requirements.txt
-    echo         "%BUILD_PYTHON%" -m pip install PyInstaller
-    goto :error
+    echo [0/4] Installing CUDA and build/runtime packages. This is required once ...
+    "%BUILD_PYTHON%" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+    if errorlevel 1 goto :error
+    "%BUILD_PYTHON%" -m pip install -r requirements.txt PyInstaller
+    if errorlevel 1 goto :error
+    "%BUILD_PYTHON%" -c "import PyQt6, PyInstaller, torch, torchvision, cv2, numpy, PIL, albumentations, openpyxl, matplotlib; print('Python and offline runtime packages OK')"
+    if errorlevel 1 goto :error
 )
 
 echo [1/4] Cleaning build\ and dist\ ...

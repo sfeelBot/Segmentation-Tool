@@ -2894,3 +2894,10 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
   시스템 Python을 찾도록 변경했다.
 - Microsoft Store 실행 별칭인 `WindowsApps\\python.exe`는 `where` 대체 후보에서 제외했다.
 - 선택된 Python에 의존성이 없을 때 실행할 pip 명령을 오류 메시지에 표시한다.
+
+## 2026-08-28 — build.bat 전용 환경 자동 준비
+
+- 새 Python 3.12에서 패키지 누락으로 중단되는 경로를 `build\venv` 자동 생성·설치로 변경했다.
+- 기존 CUDA installer 구성을 유지하도록 cu128 PyTorch를 먼저 설치하고 나머지 requirements와
+  PyInstaller를 같은 빌드 환경에 설치한다.
+- installer/EXE 버전을 1.10.3으로 갱신했다.
