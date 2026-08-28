@@ -1,5 +1,8 @@
 # Roadmap — Segmentation Model UI
 
+> 2026-08-28: installer 실행 직후 splash를 먼저 표시하고 핵심 라이브러리·환경·프로젝트
+> 화면 준비 단계를 안내하도록 개선. 메인 창 준비가 끝나면 자동으로 닫힌다.
+
 살아있는 문서. 리더가 상태 변경 시마다 직접 갱신한다(체크박스 토글, 완료 항목 정리) —
 append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/CHANGELOG.md](CHANGELOG.md),
 [docs/agents/*-log.md](agents/), [QA.md](../QA.md) 참고.
