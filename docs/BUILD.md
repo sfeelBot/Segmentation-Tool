@@ -9,7 +9,16 @@ Windows 실행 파일과 설치 프로그램의 릴리스 정보는 저장소 �
 1. `release.ini`의 `version`을 `MAJOR.MINOR.PATCH` 형식으로 수정한다.
 2. `docs/CHANGELOG.md` 최상단 릴리스 제목도 `## [<tag_prefix>MAJOR.MINOR.PATCH]`로 갱신한다.
 3. 필요할 때 제품명, 실행 파일명, 배포자 등을 같은 파일에서 수정한다.
-4. `py -3 scripts\generate_version_info.py`로 설정을 검증한다.
+4. main 변경을 동기화했다면 `main_base_tag`와 `main_base_commit`을 마지막으로 반영한
+   main 릴리스 태그 및 전체 40자리 커밋 SHA로 함께 갱신한다.
+5. `py -3 scripts\generate_version_info.py`로 설정을 검증한다.
+
+### 기능·버그 수정 완료 루틴
+
+모든 기능 추가와 버그 수정은 커밋 전에 zone installer 버전을 확인한다. 아직 릴리스되지
+않은 동일 버전 작업에 포함되지 않았다면 기능 추가는 MINOR, 호환 버그 수정은 PATCH,
+호환성 파괴 변경은 MAJOR를 올리고 `release.ini`와 `docs/CHANGELOG.md`를 함께 갱신한 뒤
+`scripts/generate_version_info.py` 검증을 실행한다.
 
 ### 기능·버그 수정 완료 루틴
 
@@ -27,6 +36,8 @@ CHANGELOG의 최신 버전이 다르거나 필수 키, SemVer, GUID가 잘못되
 |---|---|
 | `version` | EXE 및 installer 버전 |
 | `tag_prefix` | CHANGELOG 및 Git 태그 접두사(main은 `v`, zone은 `zone-v`) |
+| `main_base_tag` | zone에 마지막으로 반영된 main 릴리스 태그(`vMAJOR.MINOR.PATCH`) |
+| `main_base_commit` | zone에 마지막으로 반영된 main 커밋(전체 40자리 SHA) |
 | `product_name` | Windows 제품명과 설치 프로그램 표시명 |
 | `product_slug` | 설치 폴더와 installer 파일명의 안전한 이름 |
 | `exe_name` | PyInstaller EXE 및 dist 디렉터리 이름(확장자 제외) |
@@ -59,6 +70,15 @@ build.bat
 - `build/release-defines.iss`: Inno Setup 전처리기 define
 - `dist/<exe_name>/`: 실행 파일과 라이브러리
 - `installer/output/<product_slug>-Setup-<version>.exe`: 최종 설치 프로그램
+
+현재 zone 에디션은 `SegmentationModelUIZone.exe`와
+`SegmentationModelUIZone-Setup-<version>.exe`를 생성하며, main과 다른 AppId·설치
+폴더를 사용하므로 두 제품을 동시에 설치할 수 있다. zone 릴리스 태그는
+`zone-vX.Y.Z` 형식을 사용한다.
+
+Git 메타데이터와 `git` 명령을 사용할 수 있는 개발 환경에서는 생성기가 기준 커밋의
+존재 여부, 현재 zone HEAD의 조상인지, 기준 태그가 기준 커밋의 조상인지도 확인한다.
+소스 ZIP처럼 Git 정보를 사용할 수 없는 환경에서는 두 값의 형식만 검증한다.
 
 ## 빠른 검증
 

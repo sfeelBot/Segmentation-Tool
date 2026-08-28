@@ -1,7 +1,114 @@
 # Changelog — Segmentation Model UI
 
 버전 구분 기준: 사용자 요청 단위로 묶어 릴리즈.  
-형식: `[vX.Y.Z] YYYY-MM-DD` — Major.Minor.Patch
+main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
+
+---
+
+## [zone-v1.2.3] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.3 커밋 / 1518c01
+
+### 수정
+- 일반 PowerShell/CMD에서 `build\venv`를 자동 생성하고 CUDA PyTorch, 런타임 패키지,
+  PyInstaller를 최초 1회 설치한 뒤 재사용.
+- 사용자가 conda 또는 venv를 직접 활성화하지 않아도 zone installer를 빌드하도록 변경.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.3`으로 갱신.
+
+---
+
+## [zone-v1.2.2] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.2 커밋 / ac83412
+
+### 수정
+- GitHub #27: 일반 PowerShell/CMD에서 `WindowsApps\\python.exe` 실행 별칭을
+  빌드 Python으로 오인하지 않도록 수정.
+- 가상환경 활성화 없이 Windows Python Launcher의 시스템 Python 3.12를 우선 사용.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.2`로 갱신.
+
+---
+
+## [zone-v1.2.1] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.1 커밋 / 69af9f7
+
+### 수정
+- 빌드 전 전체 오프라인 런타임 패키지를 검사하고 동일한 Python으로 PyInstaller를 실행.
+- 다른 Qt binding과 불필요한 Anaconda 개발 패키지 수집을 제외.
+- Windows 설치본에서 CUDA Torch를 PyQt6보다 먼저 초기화해 `c10.dll` WinError 1114 방지.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.1`로 갱신.
+
+---
+
+## [zone-v1.2.0] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.0 대상 커밋 (94a74f9)
+
+### 추가
+- main의 GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
+- zone 전체 이미지 비동기 추론과 resize/sliding-window 선택, `F` 오버레이 전환.
+- installer 실행 직후 로딩 단계를 표시하는 시작 splash 화면.
+
+### 수정 및 성능
+- 추론·zone 오버레이 배경 밝기 유지.
+- threshold 디바운스, 원 편집 완료 시 1회 존 계산, 줌·팬 보존과 대형 미리보기 복사 제거.
+- 접근할 수 없는 최근 프로젝트 경로가 시작 창을 막지 않도록 안전 처리.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.0`으로 갱신.
+
+---
+
+## 동기화 준비 2026-08-28
+
+Main 기준: v1.9.0 + 8 commits (434b169)
+
+- GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
+- 추론 오버레이 배경 밝기 유지와 슬라이더·줌/팬 UI 병목 개선 반영.
+- zone 전용 전체 이미지/sliding-window 추론과 원·threshold 성능 개선은 그대로 유지.
+
+---
+
+## [zone-v1.1.0] 2026-08-27
+
+Main 기준: v1.9.0 + 4 commits (450f520)
+
+### 추가
+- 라벨링 탭에서 여러 이미지를 선택해 한 번에 양품화하는 main 공통 기능.
+- 원 우클릭 지름 변경, 신규 원의 중심 공유와 좌표 스케일링 경로 통합 (GitHub #13).
+- 이미지 선택 즉시 원본 미리보기와 `픽셀 threshold` 명칭 제공 (GitHub #14).
+- 기존 라벨 경계 채우기, 도구 타입과 무관한 동일 클래스 병합, 파일명 복사와
+  내보내기 잠금 재시도 등 main 공통 개선 (GitHub #12, #15, #16, #17).
+- 오토라벨링 원본 해상도 패치 추론, 학습 데이터 변경 잠금·병목 개선, 학습 설정
+  휠 변경 차단과 학습 큐 중지 응답 개선.
+
+### 빌드
+- zone 버전을 `1.1.0`으로 갱신하고 main과 분리된 제품명·EXE·설치 폴더·AppId 및
+  `zone-vX.Y.Z` 태그 체계를 유지.
+- 동기화된 최신 main 기능 기준을 `v1.9.0 + 4 commits` / `450f520`으로 명시.
+
+---
+
+## [zone-v1.0.0] 2026-08-27
+
+Main 기준: v1.8.0 + 19 commits (09933fd)
+
+### 추가
+- 존 분석 전용 탭과 원 검출·수동 편집·존별 통계·Excel 내보내기.
+- main과 독립된 제품명, EXE, 설치 폴더, installer 파일명 및 Inno Setup AppId.
+- main의 라벨링 이미지 다중선택 일괄 양품화 기능.
+
+### 빌드
+- `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
+- Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
+- zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
 
 ---
 
