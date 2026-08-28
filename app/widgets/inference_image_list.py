@@ -2,8 +2,9 @@
 
 라벨링 탭 `app/widgets/image_browser.py` 의 `_make_tree_item`/`_make_folder_item`
 패턴을 참고했지만 그대로 재사용하지는 않는다:
-  - 추론 탭엔 라벨 상태 개념이 없으므로 상태 아이콘(●/✓/○) 없이 파일명만 표시하고,
-    Path 는 UserRole 에만 저장한다.
+  - 추론 탭엔 라벨 상태 개념이 없으므로 기본은 상태 아이콘 없이 파일명만 표시하고,
+    Path 는 UserRole 에만 저장한다(`set_item_status()`를 호출하는 화면 — 존 분석
+    탭의 일괄 처리 진행 표시 등 — 에서만 상태 아이콘/배지가 나타난다, 애디티브).
   - `load_folder()` 는 `Path.rglob()` 으로 하위 폴더를 재귀적으로 스캔하고,
     트리도 실제 디렉터리 중첩 구조를 그대로 반영한다(다단계 폴더 포함).
     image_browser.py 의 기존 폴더 그룹핑은 `reload()`가 최상위 1단계만 스캔하고
@@ -14,15 +15,23 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
+from typing import Literal
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
     QLabel, QLineEdit, QComboBox,
 )
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 from app.widgets.icons import icon as svg_icon
+
+# image_browser.py 상태 아이콘 관례(status_dot/status_ring) 재사용, 3단계로 확장
+_STATUS_ICON_STYLE: dict[str, tuple[str, str]] = {
+    "pending":    ("status_ring", "#4b5563"),
+    "processing": ("status_dot",  "#fbbf24"),
+    "done":       ("status_done", "#10b981"),
+}
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
 
@@ -82,6 +91,7 @@ class InferenceImageList(QWidget):
 
     image_selected = pyqtSignal(Path)
     display_changed = pyqtSignal()   # 필터·정렬·목록 갱신 시 매번 emit (선택 경로 불변 케이스 포함)
+    selection_changed = pyqtSignal()   # 다중 선택(Ctrl/Shift) 상태가 바뀔 때마다 (R-C 3b, 애디티브)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -91,10 +101,12 @@ class InferenceImageList(QWidget):
         self._path_to_item: dict[Path, QTreeWidgetItem] = {}
         self._sort_mode = "name_asc"
         self._filter_text = ""
+        self._status: dict[Path, tuple[str, str | None]] = {}   # 배치 처리 상태(R-C 3b, 애디티브)
         self._search_debounce = QTimer(self)
         self._search_debounce.setSingleShot(True)
         self._search_debounce.setInterval(_SEARCH_DEBOUNCE_MS)
         self._search_debounce.timeout.connect(self._apply_display)
+        self._multi_select = False               # BUG-022: 다중선택 모드에선 emit을 itemSelectionChanged로 이관
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -137,6 +149,8 @@ class InferenceImageList(QWidget):
         self._tree.setUniformRowHeights(True)
         self._tree.setStyleSheet(_TREE_STYLE)
         self._tree.currentItemChanged.connect(self._on_current_item_changed)
+        self._tree.itemSelectionChanged.connect(self.selection_changed.emit)
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed_multi)
         layout.addWidget(self._tree, stretch=1)
 
     # ── 공개 API ──────────────────────────────────────────────────────────────
@@ -184,6 +198,59 @@ class InferenceImageList(QWidget):
         except ValueError:
             return -1
 
+    def set_item_status(
+        self, path: Path, status: Literal["pending", "processing", "done"],
+        badge: str | None = None,
+    ) -> None:
+        """일괄 처리(R-C 3b) 진행 상태 아이콘 + 완료 배지 표시. 목록 재구성
+        (`_apply_display`, 검색/정렬/재로드) 후에도 유지되도록 별도 dict에 저장한다."""
+        self._status[path] = (status, badge)
+        item = self._path_to_item.get(path)
+        if item is not None:
+            self._apply_item_status(item, path)
+
+    def clear_status(self) -> None:
+        """새 폴더/파일 로드 시 상태 전부 초기화."""
+        self._status.clear()
+        for path, item in self._path_to_item.items():
+            item.setIcon(0, QIcon())
+            item.setText(0, path.name)
+
+    def set_multi_select(self, enabled: bool) -> None:
+        """기본값은 SingleSelection(기존 동작 유지) — 켜면 Ctrl/Shift 다중 선택 허용."""
+        mode = (
+            QTreeWidget.SelectionMode.ExtendedSelection if enabled
+            else QTreeWidget.SelectionMode.SingleSelection
+        )
+        self._tree.setSelectionMode(mode)
+        self._multi_select = enabled
+
+    def selected_paths(self) -> list[Path]:
+        """다중 선택 모드에서 선택된 경로들. 아무것도 선택하지 않았으면 현재 표시
+        중인 전체 목록(`paths()`)을 반환 — "빈 선택 = 전체" 관례로 별도 "전체 선택"
+        버튼 없이도 일괄 처리 대상이 항상 의미 있게 정해진다.
+
+        # ponytail: Qt는 로드/재구성 시 currentItem을 selectedItems()에도 자동
+        # 포함시켜(setCurrentItem), "선택 1개"와 "아직 아무것도 안 골랐음"을
+        # 구별할 수 없다. 별도 상태 플래그 없이 "선택 개수 <= 1"을 통째로
+        # "미선택(=전체)"으로 취급 — 배치 처리는 보통 여러 장을 고르는 용도라
+        # 실사용 영향은 적음. "정확히 1장만 배치 처리" UX가 실제로 필요해지면
+        # 사용자가 selectionChanged로 명시적으로 건드렸는지 별도 플래그로 추적.
+        """
+        items = self._tree.selectedItems()
+        if len(items) <= 1:
+            return self.paths()
+        paths = [
+            p for item in items if (p := self._get_item_path(item)) is not None
+        ]
+        return paths if paths else self.paths()
+
+    def _apply_item_status(self, item: QTreeWidgetItem, path: Path) -> None:
+        status, badge = self._status[path]
+        icon_name, color = _STATUS_ICON_STYLE.get(status, (None, None))
+        item.setIcon(0, svg_icon(icon_name, color, 14) if icon_name else QIcon())
+        item.setText(0, f"{path.name}  [{badge}]" if badge else path.name)
+
     def navigate(self, step: int) -> None:
         """현재 이미지에서 step 만큼 이동 (±1). 접힌 폴더는 자동 펼침."""
         if not self._paths:
@@ -199,7 +266,32 @@ class InferenceImageList(QWidget):
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 
     def _on_current_item_changed(self, current: QTreeWidgetItem | None, _previous) -> None:
+        # BUG-022 (2차): Qt는 마우스 클릭 시 실제 선택 커맨드(Ctrl 토글/Shift 범위)가
+        # selectionModel 에 적용되기 *전에* currentItemChanged 를 먼저 동기 발화한다
+        # (검증 에이전트가 QTest.mouseClick 으로 실측: currentItemChanged 시점엔
+        # selectedItems() 가 아직 "클릭 전" 개수를 보여줌). 그래서 1차 수정처럼 이 핸들러
+        # 안에서 selectedItems() 개수로 가드해도 항상 "정상 단일 선택"으로 오판한다.
+        # 다중선택 모드에서는 이 경로 자체를 emit 에서 완전히 제외하고,
+        # 선택 커맨드가 실제로 적용된 뒤 발화되는 itemSelectionChanged 기반
+        # _on_selection_changed_multi() 로 emit 책임을 전부 이관한다(중복 emit 방지).
+        # SingleSelection(기본값, 다른 탭)은 self._multi_select 가 False 라 완전히 무영향.
+        if self._multi_select:
+            return
         path = self._get_item_path(current)
+        if path is not None:
+            self.image_selected.emit(path)
+
+    def _on_selection_changed_multi(self) -> None:
+        """다중선택 모드 전용 emit 경로 — itemSelectionChanged 는 선택 커맨드가
+        selectionModel 에 실제로 적용된 *후* 발화되므로 이 시점의 selectedItems() 개수는
+        정확하다(BUG-022 2차 수정). 정확히 1개로 좁혀졌을 때만 "기준 이미지 전환"으로
+        간주해 emit — 0개(전체 해제)나 2개 이상(다중 선택 중)은 emit하지 않는다."""
+        if not self._multi_select:
+            return
+        selected = self._tree.selectedItems()
+        if len(selected) != 1:
+            return
+        path = self._get_item_path(selected[0])
         if path is not None:
             self.image_selected.emit(path)
 
@@ -360,6 +452,10 @@ class InferenceImageList(QWidget):
 
         if new_item is not None:
             self._tree.setCurrentItem(new_item)
+        if self._status:
+            for p, item in self._path_to_item.items():
+                if p in self._status:
+                    self._apply_item_status(item, p)
         self._tree.blockSignals(False)
 
         if new_item is not None:
