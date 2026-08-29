@@ -5,18 +5,61 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-08-29] 세션 인계 캐치업 + push 완료.** 다른 세션/도구로 진행되던 작업
-> (라운드4 #12/#15/#16/#17, GitHub #23, 일괄 양품화, main/zone 버전관리 분리, installer
-> splash, Python 3.12 빌드 안정화 등)을 리더 로그·QA.md·decisions-needed.md로 재구성해
-> 파악. **`docs/USER_MANUAL.md`에 커밋되지 않은 손상된 변경 발견** — 실제 879줄 매뉴얼이
-> 이 프로젝트와 무관한(`installer.py --install`, `.env`, `models/` 등 존재하지 않는
-> 내용) 가짜 36줄 매뉴얼로 통째 교체돼 있었음. 사용자 확인 후 `git checkout`으로 원복
-> (다른 코드 변경 없음, 작업트리 클린 확인). 이후 로컬 main이 origin보다 1커밋
-> (`c984f7e`, Python 3.12 오프라인 installer 빌드 안정화) 앞선 상태를 사용자 확인 후
-> `git push origin main` 완료 — origin/main 최신화. `decisions-needed.md` 비어있음,
-> `QA.md` Open은 BUG-004/BUG-016(둘 다 P3) 뿐. 에디션 워크트리(`feature/zone-analysis-tab`
-> origin보다 6커밋 앞섬, `fix/zone-voc-4-connectivity`)는 이번 세션에서 손대지 않음 —
-> 별도 트랙으로 진행 중인 것으로 보여 참고만 함.
+> **[최신, 2026-08-29] 세션 인계 캐치업 → 전반적 코드리뷰 → 회귀 2건 발견 → GitHub
+> 이슈 정리 → 신규 이슈 기획+구현 착수, 진행 중.** 이번 세션에서 일어난 일을 시간순으로:
+>
+> 1. **세션 인계 캐치업 완료**: 다른 세션/도구로 진행되던 작업(라운드4 #12/#15/#16/#17,
+>    GitHub #23, 일괄 양품화, main/zone 버전관리 분리, installer splash, Python 3.12
+>    빌드 안정화 등)을 리더 로그·QA.md·decisions-needed.md로 재구성해 파악.
+>    `docs/USER_MANUAL.md`에 커밋되지 않은 손상된 변경(가짜 36줄 매뉴얼로 통째 교체)을
+>    발견해 `git checkout`으로 원복. 로컬 main이 origin보다 1커밋 앞선 상태를 push
+>    (`c984f7e`까지 반영). `roadmap.md`의 "exe 패키징" 절이 실제로는 v1.9.0~v1.10.5에
+>    걸쳐 대부분 완료됐는데 문서만 "추후 착수"로 방치돼있던 것을 발견해 최신화(`14f521a`).
+> 2. **zone 세션 점검 + main 동기화**: `fix/zone-voc-4-connectivity` 브랜치가
+>    `feature/zone-analysis-tab`과 **바이트 단위로 완전히 동일한 수정을 중복 작업**한
+>    것을 발견 → 사용자 확인 후 삭제. `feature/zone-analysis-tab`의 로컬 6커밋을
+>    origin에 push, main의 신규 커밋 4개를 sync 브랜치+PR(#30, 미병합)로 zone에 전달
+>    준비 완료(CLAUDE.md 에디션 브랜치 규칙 그대로 적용).
+> 3. **전반적 코드리뷰(`/code-review high v1.8.0..HEAD`) 완료**: 8개 파인더 에이전트가
+>    정확성/재사용/효율/altitude 관점에서 main의 v1.8.0 이후 누적 변경 전체를 스캔.
+>    다수 발견 중 핵심은 아래 4의 통합 검증에서 실제 재현 확인됨.
+> 4. **main 앱 통합 회귀 검증 + zone 앱/installer 검증(둘 다 verifier, 완료)**: main은
+>    pytest 전체(77건, 개별 실행 시 전부 통과 — 단 전체를 한 프로세스로 돌리면 DLL
+>    충돌로 수집이 깨지는 테스트-인프라 이슈 발견) + 골든패스 스모크 + 기존
+>    `install-test-1.10.5` 재기동 확인, 전부 통과했으나 **회귀 2건 확정**: **BUG-026
+>    (P1)** 학습 중 Stop 시 1 epoch도 못 채우면 체크포인트/지표 파일이 전혀 저장 안
+>    됨(커밋 `450f520` 회귀), **BUG-027(P2)** 일괄 추론 워커가 GUI 스레드가 아닌
+>    백그라운드 스레드에서 `QPixmap` 생성(커밋 `ca30948` 회귀, Qt 스레딩 규칙 위반,
+>    이 환경에선 크래시 미재현이나 다른 백엔드에서 위험). **BUG-028(P3)** pytest
+>    전체 스위트 실행 순서 의존 DLL 충돌(실제 앱은 무관). 3건 모두 `QA.md` 등록,
+>    Open. zone은 **실제 `build.bat` 전체 완주로 zone installer(v1.3.1) 신규 빌드 +
+>    무인설치+2분 이상 기동+Zone 분석 탭 GUI 골든패스(스크린샷 포함)까지 전부 통과**,
+>    이전에 기록됐던 "MainWindow 40초 지연"은 자동화 환경의 Qt 이벤트루프 한계였을
+>    뿐 실제 성능 문제가 아니었음을 재확인(오기 정정). 아직 미착수: 위 회귀 2건의
+>    수정(다음 라운드 후보).
+> 5. **GitHub 이슈 전수 확인 + 정리**: Open 9건 확인 → **#12/#13/#14/#15/#16/#17 전부
+>    이미 구현+검증 완료된 상태임을 확인해 클로즈**(해결 커밋 링크와 함께 코멘트 후
+>    close). **#23**은 대부분 완료(일괄추론/원본선표시/Best model저장/zone
+>    sliding-window 기본값), "모델 탭 분리" 부분만 #5와 동일 사유로 의도적 미착수.
+>    **#5**는 기존 보류 결정 유지. **신규 발견 #22**(installer 기존버전 체크) —
+>    사용자 결정(확인 후 구버전 자동제거+재설치, BUG-016 잔존파일 문제도 같이 고치기)
+>    확보 후 planner→implementer로 착수. 코드리뷰에서 나온 **#16 후속**(retry 헬퍼가
+>    export만 적용되고 import/image_browser/annotation_store/trainer의 다른 쓰기
+>    경로엔 미적용)도 함께 기획→구현 착수. **zone 분석 탭에 라벨링 스타일 편집 도구
+>    (원 편집+브러시+지우개+블랍삭제+Undo)가 이미 구현·검증돼 있음을 확인**(사용자
+>    질의에 답변, 실제 스크린샷 4장 세션에 표시).
+> 6. **#16 후속 구현 완료(검증 대기)**: `app/core/file_io.py` 신설(`retry_on_permission_error`/
+>    `atomic_write`) + `export_dialog.py`/`import_dialog.py`/`image_browser.py`(2곳)/
+>    `annotation_store.save()`/`trainer.py`(체크포인트 2곳) 재시도·원자적쓰기 적용,
+>    `set_ok_and_clear_annotations()`도 같은 헬퍼로 리팩터링해 중복 제거. 신규 테스트
+>    `tests/test_file_io_retry.py`(8건, 실제 OS 파일락 스레드로 재시도 검증 포함).
+>    구현자가 `build/venv` 인터프리터로 `pytest tests/` 전체(85건) 실행 — **DLL 충돌
+>    없이 전부 통과**(BUG-028이 Anaconda의 잘못된 torch 버전 때문이었다는 가설을
+>    추가로 뒷받침). 미커밋, verifier 위임 대기. **#22(installer 기존버전+BUG-016)는
+>    아직 구현 진행 중**(implementer 완료 로그 전). **BUG-026/027 수정은 아직 누구에게도
+>    위임 안 함 — 다음 착수 후보 1순위**(P1/P2, 실사용 영향 있음).
+>    `decisions-needed.md` 비어있음(직전 #22 결정 완료로 삭제). 커밋 대기 중인 로컬
+>    문서 커밋 2개(`9056b14`, `14f521a`)는 사용자가 "보류" 선택해 여전히 미push.
 
 *(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다)*
 
