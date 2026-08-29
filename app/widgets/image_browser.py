@@ -11,8 +11,12 @@ from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QObject
 from app.core.i18n import t
 
 from app.core.annotation_store import get_label_status
+from app.core.file_io import retry_on_permission_error
+from app.core.logger import get_logger
 from app.core import project as _project
 from app.widgets.icons import icon as svg_icon, pixmap as svg_pixmap
+
+log = get_logger(__name__)
 
 SUPPORTED = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.tif")
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
@@ -80,9 +84,10 @@ class _FolderImportWorker(QThread):
                 skipped += 1
             else:
                 try:
-                    shutil.copy2(src, dst)
+                    retry_on_permission_error(lambda: shutil.copy2(src, dst))
                     copied += 1
-                except Exception:
+                except (PermissionError, OSError) as e:
+                    log.warning(f"이미지 복사 실패 — 건너뜀: {src} → {dst}: {e}")
                     skipped += 1
         self.finished.emit(copied, skipped)
 
@@ -345,7 +350,12 @@ class ImageBrowser(QWidget):
             dst = _project.images_dir() / src.name
             if dst.exists():
                 continue
-            shutil.copy2(src, dst)
+            try:
+                retry_on_permission_error(lambda: shutil.copy2(src, dst))
+            except (PermissionError, OSError) as e:
+                log.exception(f"이미지 추가 실패: {src} → {dst}")
+                QMessageBox.critical(self, t("ui.add_file"), str(e))
+                return
         self.reload()
 
     def _on_add_folder(self) -> None:

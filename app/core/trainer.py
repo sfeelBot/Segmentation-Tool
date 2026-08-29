@@ -13,6 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from app.core.dataset import SegmentationDataset
 from app.core.augmentations import build_pipeline
+from app.core.file_io import atomic_write
 from app.core.metrics import StreamingSegmentationMetrics
 from app.core.logger import get_logger
 from app.core.device_info import pick_device, should_use_amp, format_oom_help
@@ -379,14 +380,14 @@ class TrainerWorker(QThread):
             if mean_iou > best_iou:
                 best_iou = mean_iou
                 best_path = _project.checkpoints_dir() / f"{prefix}best.pt"
-                torch.save(checkpoint, best_path)
+                atomic_write(best_path, lambda p: torch.save(checkpoint, p))
                 log.info(f"best model saved: {best_path} (IoU={best_iou:.4f})")
                 self.checkpoint_saved.emit(str(best_path))
 
             if epoch % cfg.checkpoint_every == 0:
                 checkpoint_start = time.perf_counter()
                 path = _project.checkpoints_dir() / f"{prefix}epoch_{epoch:04d}.pt"
-                torch.save(checkpoint, path)
+                atomic_write(path, lambda p: torch.save(checkpoint, p))
                 checkpoint_time = time.perf_counter() - checkpoint_start
                 log.info(f"checkpoint saved: {path} ({checkpoint_time:.2f}s)")
                 self.checkpoint_saved.emit(str(path))
