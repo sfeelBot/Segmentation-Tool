@@ -3007,3 +3007,69 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 (3) 최초 설치(구버전 없음) 시 팝업 없이 정상 진행(회귀 없음), (4) 무인 제거 후
 `data\logs\` 완전 삭제 + 사용자 데이터(`data\images` 등) 보존, (5) `HKA` 매핑이
 비관리자 권한에서도 정상 동작하는지 확인 필요 — 기획 문서 "검증 골든 패스" 4개 항목 그대로.
+
+## 2026-08-30 — BUG-030(P1) installer 언인스톨 레지스트리 키 이스케이프 불일치 수정
+
+전제: 검증 에이전트가 `docs/agents/verification-log.md` 2026-08-29 "GitHub #22 재검증" 절에서
+`GetUninstallRegKey()`가 `{#emit SetupSetting("AppId")}`로 만든 문자열이 실제 언인스톨
+레지스트리 키와 영원히 불일치함(중괄호 2개 vs 1개)을 스크래치 `.iss` + `MsgBox` 직접 출력으로
+근본 원인까지 특정해둔 상태에서 시작. `QA.md` BUG-030 항목·제안 방향 확인 후 작업.
+
+- `installer/setup.iss` `GetUninstallRegKey()`: `SetupSetting("AppId")`(ISPP 빌트인 함수 —
+  `[Setup]` 섹션의 `AppId={{{#MyAppId}}` 표현식을 Inno가 `"{{" -> "{"`로 이스케이프
+  해제하기 *이전의* 원시 텍스트를 반환해 `"{{GUID}"`가 되어버림) 대신 `{#MyAppId}` 전처리기
+  매크로를 직접 사용하도록 변경. `{#MyAppId}` 자체는 중괄호 없는 순수 GUID 문자열이므로
+  `Result := '...\{{#MyAppId}}_is1';`로 중괄호 1쌍만 직접 감싸면 컴파일 타임에 이스케이프
+  없이 그대로 치환되어 실제 언인스톨 키(`{GUID}_is1`, 중괄호 1개)와 정확히 일치함.
+  `GetUninstallRegKey()`는 `InitializeSetup()` 내부 2곳(`DisplayVersion`/`UninstallString`
+  조회)에서만 호출되고 다른 중복 구현은 없어 이번 수정 한 곳으로 충분함을 확인.
+- **실제 컴파일·설치까지 재현 확인**(이번 지시의 핵심 — 이전 라운드는 `git diff` 정적 확인만
+  했음): `py -3.12 scripts\generate_version_info.py`로 `build\release-defines.iss` 재생성
+  후 `ISCC.exe installer\setup.iss`로 실제 컴파일(566초, 기존 `dist\SegmentationModelUI\`
+  재사용). 컴파일된 exe를 `/VERYSILENT /SUPPRESSMSGBOXES /DIR=E:\bug030test\install1`로
+  실제 설치 후 `reg query`로 `HKCU\...\Uninstall\{03C2678A-B979-4B99-A68B-842EA853D667}_is1`
+  키가 **실제로 그 정확한 문자열로 존재**함을 직접 확인(수정 전이었다면 이 키 이름 자체가
+  절대 일치할 수 없었음).
+- **같은 exe로 재실행해 재현 검증 중 신규 P1 발견·수정**: 동일 exe를 같은 `/DIR`로 다시
+  `/VERYSILENT /SUPPRESSMSGBOXES` 실행 → 레지스트리 키가 이제 일치하므로 `InitializeSetup()`의
+  `RegQueryStringValue`가 `True`를 반환하는 데까지는 성공했으나, 프로세스가 끝없이 멈춰
+  있는 것을 발견. `Get-Process`/`GetClassName`(user32 P/Invoke)으로 직접 조사한 결과 클래스
+  `#32770`(표준 Windows 메시지박스)의 실제 대화상자가 떠 있음을 확인 — Inno Setup의 일반
+  `MsgBox()`는 `/SUPPRESSMSGBOXES`를 무시하고(이 플래그를 실제로 존중하는 건
+  `SuppressibleMsgBox()`뿐) 항상 진짜 모달을 띄우므로, 무인 설치가 응답 없는 사용자 입력을
+  영원히 기다리는 상태였음. BUG-030 자체(레지스트리 키 불일치)에 가려 이전엔 감지 로직이
+  아예 발동하지 않아 드러나지 않았던 문제 — 이번에 감지가 정상 동작하자마자 노출됨.
+  `InitializeSetup()`의 확인 `MsgBox`와 실패 안내 `MsgBox` 2건을 모두 `SuppressibleMsgBox(...,
+  Default)`로 교체(확인은 `IDYES` 기본값 — 자동 업그레이드가 이 기능의 목적이므로 무인
+  모드에서는 진행이 기본이 되도록 함, 실패 안내는 `IDOK`). 이 교체 없이는 BUG-030을 고쳐도
+  GitHub #22의 "무인 자동 업그레이드" 목적 자체가 여전히 달성되지 않아 같은 계열의 근본
+  원인(root cause)으로 판단해 이번 라운드에 함께 수정.
+- **수정 후 재컴파일 + 전체 사이클 재현 확인**: 재컴파일(573초) 후 같은 시나리오
+  재실행 → **행 없이 exit 0으로 완료**, `unins000.exe` → `unins001.exe`로 언인스톨러
+  번호가 바뀌고 `InstallDate`가 당일로 갱신됨을 확인 — 구버전이 실제로 감지→자동
+  제거→새로 설치되는 전체 흐름이 무인 모드에서 끝까지 동작함을 직접 검증. 이후
+  `unins001.exe /VERYSILENT /SUPPRESSMSGBOXES`로 제거해 레지스트리 키 삭제와
+  `E:\bug030test\` 잔존 파일 없음까지 정리 확인.
+- `tests/test_build_release.py`에 `test_uninstall_reg_key_matches_actual_windows_uninstall_key_format`
+  추가: 기존 2건(`test_installer_checks_for_existing_install_before_setup`,
+  `test_installer_removes_runtime_logs_on_uninstall`)이 문자열 존재 여부만 확인해 이번
+  이스케이프 불일치를 못 잡았던 것과 달리, `setup.iss`에 `SetupSetting("AppId")`가 없는지
+  확인하고, `GetUninstallRegKey()`의 `Result` 리터럴을 정규식으로 추출해 `{#MyAppId}`를
+  실제 GUID로 치환한 뒤 최종 문자열이 `Software\Microsoft\Windows\CurrentVersion\Uninstall\
+  {GUID}_is1`(중괄호 1쌍)과 정확히 일치하는지까지 검증 — ISPP 매크로 치환을 재현해 실제
+  값 불일치를 잡을 수 있는 회귀 테스트. `py -3.12 -m pytest tests/test_build_release.py -k
+  "not test_rejects and not test_changelog_uses_configured_tag_prefix"` 10건 통과 확인
+  (`-p no:cacheprovider` — `tmp_path` 픽스처를 쓰는 나머지 테스트들은 이 환경의
+  `C:\Users\Feel\AppData\Local\Temp\pytest-of-Feel` 디렉터리 자체에 대한
+  `PermissionError`로 실패하는데, 이번 변경과 무관한 기존 환경 이슈임을 재확인 — installer
+  설치/제거 테스트 중 생성한 파일이 아니라 애초에 그 폴더 자체 권한이 막혀 있었음).
+- `SuppressibleMsgBox` 교체는 BUG-030 티켓 범위(레지스트리 키)를 벗어나지만, 같은 함수
+  (`InitializeSetup`)의 같은 목적(무인 자동 업그레이드)을 위해 실제 재현 중 직접 발견한
+  근본 원인이라 함께 수정함 — QA.md에는 검증 에이전트가 확인 후 별도 항목으로 기록할지
+  판단 필요(리더 지시에 따라 이번엔 QA.md를 직접 수정하지 않음, 검증 에이전트 영역).
+- 커밋: 하지 않음(사용자 지시 — 검증 통과 후 리더가 커밋).
+
+**검증 서브에이전트 확인 필요** — 이번엔 이미 실제 컴파일·설치·재설치·제거 전체 사이클을
+직접 재현해 확인했지만, 별도 세션에서 `build.bat` 풀빌드 기준으로 동일 결과가 재현되는지,
+그리고 `SuppressibleMsgBox` 교체가 QA.md에 별도 항목(신규 발견)으로 기록되어야 하는지
+판단이 필요함.

@@ -3038,3 +3038,250 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
 - 커밋은 하지 않음(사용자/리더 지시 — 검증 통과 보고 후 리더가 커밋).
 
 전체 상태: **통과**.
+
+## 2026-08-29 — GitHub #22 installer 기존 버전 체크 + BUG-016 검증 (블로커)
+
+기획: `docs/specs/github-issue-22-and-16-followup-2026-08-29.md` "GitHub #22" 절.
+구현: `docs/agents/implementation-log.md` 2026-08-29 "GitHub #22 installer 기존 버전 체크 +
+BUG-016 잔존 파일" 항목(`installer/setup.iss` + `tests/test_build_release.py`, 미커밋).
+구현자가 이 환경에 ISCC가 없어 실컴파일을 못 했다고 명시 — 이번 검증에서 직접 확인.
+
+### 실행한 것
+1. **Inno Setup 6 설치 확인/설치**: `winget install --id JRSoftware.InnoSetup`(이미 6.7.3
+   설치돼 있음 확인, `%LocalAppData%\Programs\Inno Setup 6\ISCC.exe` 존재).
+2. **`build.bat` 전체 실행**(`MSYS_NO_PATHCONV=1 cmd.exe /c "D:\segmentation model\build.bat"`
+   — Git Bash에서 `cmd /c`의 `/c`가 MSYS 경로 변환으로 깨지는 것을 발견해 우회): 기존
+   `build/venv` 재사용, PyInstaller onedir 빌드는 정상 완료(`Build complete! ...dist`)했으나
+   **Inno Setup 컴파일 단계에서 실패**:
+   ```
+   Error on line 85 in D:\segmentation model\installer\setup.iss: Invalid section tag.
+   Compile aborted.
+   [ERROR] Build failed - check the log above.
+   ```
+   `installer\output\`에 새 버전(1.10.5) exe가 생성되지 않음 확인.
+3. **근본 원인 격리 재현**: `installer/setup.iss` + `build/release-defines.iss`만 스크래치
+   폴더에 복사한 최소 재현으로 동일 에러 재현 성공. 85행은 `InitializeSetup()`의
+   `Format('...', [OldVersion])` 호출에서 `[OldVersion]`이 줄 맨 앞에 오도록 개행된 부분 —
+   Inno Setup 컴파일러는 `[Code]`(Pascal Script) 섹션 내부에서도 줄 시작 문자가 `[`이면
+   무조건 새 INI 섹션 헤더 시도로 파싱을 시도하는 것으로 확인(공식 문서화는 안 돼 있으나
+   실측으로 명확히 재현됨).
+4. **수정 확인**: 같은 스크래치 사본에서 84~85행을 `'계속하시겠습니까?', [OldVersion]),`처럼
+   한 줄로 합쳐 줄이 `[`로 시작하지 않게 고친 뒤 재컴파일 → 해당 Pascal Script 에러 소멸(그
+   다음엔 스크래치 사본에 `app_icon.ico` 등 지원 파일이 없어 나는 무관한 경로 에러만 남음 —
+   즉 원인이 정확히 이 한 줄임을 확인). **실제 저장소 파일은 수정하지 않음**(검증자 권한 밖,
+   리더/구현자가 반영해야 함).
+5. `tests/test_build_release.py`의 신규 테스트 2건(`test_installer_checks_for_existing_install_before_setup`,
+   `test_installer_removes_runtime_logs_on_uninstall`) 독립 재실행 — 둘 다 통과. 단, 이 테스트들은
+   `setup.iss` 텍스트에 특정 문자열이 포함돼 있는지만 정적으로 확인하므로 이번 컴파일 실패
+   자체는 전혀 잡지 못함(정확히 리더가 우려했던 지점).
+6. `QA.md`에 `BUG-029`(P0) 등록 — 컴파일 자체가 깨져 `build.bat` 전체(따라서 이 시점의 main
+   전체 릴리스 installer 빌드)가 막히는 회귀.
+
+### 실행하지 못한 것 (BUG-029에 막혀 실행 불가)
+- 시나리오 2 (기존 버전 감지 시 `MsgBox` 실동작), 시나리오 3 (BUG-016 — 무인 제거 후
+  `data\logs\` 삭제 확인), 시나리오 4 (비관리자 설치에서 `HKA` 동작 확인) — installer exe
+  자체가 만들어지지 않아 전부 실행 불가. 컴파일 오류 수정 후 재검증 필요.
+
+### 결론
+전체 상태: **블로커(BUG-029, P0)**. `installer/setup.iss`의 Pascal Script 문법 오류로
+Inno Setup 컴파일이 100% 실패 — GitHub #22/BUG-016 신규 로직뿐 아니라 이 브랜치 상태로는
+어떤 버전의 installer도 빌드 불가. 커밋하지 않음(사용자 지시).
+
+## 2026-08-29 — GitHub #22 installer 기존 버전 체크 + BUG-016 재검증 (BUG-029 수정 후, 신규 BUG-030 발견)
+
+전제: 리더가 `installer/setup.iss` 85행 `Format(...)`의 `[OldVersion]` 인수 배열을 한 줄로
+합쳐 BUG-029(Pascal Script 파싱 오류)를 1줄로 수정. `git diff HEAD -- installer/setup.iss`로
+실제 diff 확인 완료 — `InitializeSetup()`/`GetUninstallRegKey()`/`[UninstallDelete]` 전체가
+이번에 처음으로 커밋 전 상태에서 diff로 확인됨.
+
+### 1. `build.bat` 전체 실행 — BUG-029 해소 확인 (통과)
+
+- Git Bash에서 `cmd.exe /c "build.bat"`(또는 `/c "call build.bat"`)이 `/c` 인자가 MSYS 경로
+  변환으로 깨지거나(빈 인자 전달 시 대화형 cmd로 빠짐) `build.bat` 자체를 외부 명령으로 못
+  찾는(bare 파일명 실행 실패) 문제가 있어, 최종적으로 `MSYS_NO_PATHCONV=1 cmd.exe /c
+  ".\build.bat"`(상대경로 명시)로 우회.
+- 기존 `build\venv` 재사용, PyInstaller onedir 빌드 정상 완료 → Inno Setup 컴파일 단계까지
+  **에러 없이 통과**(`Invalid section tag` 재발 없음) → `Successful compile (592.765 sec)` →
+  `installer\output\SegmentationModelUI-Setup-1.10.5.exe` 신규 생성 확인(타임스탬프
+  2026-08-29 22:39, 이전 파일은 2026-08-28 14:44 — 실제로 재생성됐음을 확인). **BUG-029
+  Closed로 이동**.
+
+### 2. 기존 버전 감지 시나리오 — 신규 회귀 발견 (BUG-030, P1, Open)
+
+- `E:\segtest\install1`에 방금 만든 exe를 `/VERYSILENT /SUPPRESSMSGBOXES`로 1회 무인 설치 →
+  `reg query`로 `HKCU\...\Uninstall\{03C2678A-...}_is1`에 `DisplayVersion=1.10.5`,
+  `UninstallString`이 실제로 등록됨을 확인(HKA가 비관리자 환경에서 HKCU로 정확히 매핑됨도
+  함께 확인 — 항목 4 겸함).
+- 같은 exe를 `/SILENT`(메시지박스는 억제 안 하는 옵션)로 재실행하며 Win32 `EnumWindows` +
+  `GetClassName`으로 대화상자(class `#32770`)를 0.5초 간격 폴링 → **파일 설치 시작(로그상
+  "Starting the installation process")까지 약 1.7초 만에 도달, 대화상자가 단 한 번도
+  나타나지 않고 곧장 재설치가 완료됨**(3회 반복 재현, 매번 동일). 처음엔 launcher PID로
+  창을 찾아 "안 보인다"고 오판했으나, Inno Setup의 self-extract 후 `*.tmp` 재실행 프로세스가
+  실제 대화상자를 소유함을 별도 미니멀 테스트(`minitest.iss`)로 먼저 검증해 탐지 방식
+  자체의 오류는 배제함.
+- 근본 원인을 100% 격리하기 위해 동일한 `AppId`/`GetUninstallRegKey()`/`InitializeSetup()`
+  로직만 담은 스크래치 `.iss`를 만들어 `GetUninstallRegKey()`가 실제로 계산하는 문자열을
+  `MsgBox`로 직접 출력 → `KEY=[...Uninstall\{{03C2678A-B979-4B99-A68B-842EA853D667}_is1]`
+  (여는 중괄호 **2개**로 시작, `RegKeyLen=95`), `Found=0`. 실제 키는 중괄호 1개
+  (`Uninstall\{03C2678A-...}_is1`)이므로 영원히 불일치 — `SetupSetting("AppId")`가
+  Inno의 `{{`→`{` 이스케이프 해제 **이전의 원시 텍스트**를 반환하는 것이 원인. 상세 근거·
+  제안 수정 방향은 `QA.md` BUG-030 참고.
+- `QA.md`에 `BUG-030`(P1) 신규 등록. **GitHub #22 자체 기능은 이번 라운드에서 실동작
+  검증 실패 — Closed 처리하지 않음.**
+
+### 3. BUG-016(무인 제거 후 로그 잔존) 재검증 — 통과, Closed로 이동
+
+- 항목 2에서 쓴 `install1`을 실제로 30~40초 구동(Start Menu/바탕화면과 동일하게
+  `WorkingDir={app}`로 실행) → `data\logs\app.log`/`errors.log` 실제 생성 확인.
+- `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES` 무인 제거 후 `data\logs\` 및 그 안의 로그
+  파일 완전 삭제 확인(레지스트리 언인스톨 키도 완전 삭제됨).
+- 별도 신규 설치(`install2`)에 `data\images\sample.png`, `data\annotations\sample.json`,
+  `data\checkpoints\epoch_0001.pt`, `data\logs\{app,errors,perf}.log` 더미 파일을 만든 뒤
+  동일하게 무인 제거 → **`data\logs\`만 삭제되고 images/annotations/checkpoints 3개 파일은
+  전부 보존됨**을 직접 확인(요구사항 그대로 충족).
+- 비고: `{app}`과 빈 `data\` 폴더 자체는 삭제 후에도 남음(Inno 표준 동작 — `{app}`이 완전히
+  비어야만 자동 삭제; `[UninstallDelete]`가 `data\logs`만 특정했으므로 상위 폴더는 대상
+  밖). 원래 BUG-016이 지목한 핵심 증상(로그 "파일" 잔존)은 완전히 해소됐으므로 별도
+  티켓화하지 않음. 부수 관찰(`app/core/logger.py`의 `LOG_DIR` 상대경로가 cwd 의존적이라
+  비-바로가기 실행 경로에서는 잘못된 위치에 로그가 생길 수 있음)도 함께 `QA.md`에 기록.
+- `QA.md`에서 BUG-016을 Open → Closed로 이동.
+
+### 4. 비관리자(무권한) 설치 확인 — 통과
+
+- 모든 설치/재설치/제거를 관리자 권한 없이 수행. 설치 로그에 `User privileges: None`,
+  `Administrative install mode: No`, `Install mode root key: HKEY_CURRENT_USER` 명시,
+  실제 레지스트리 조작도 `HKCU` 하위에서 정상 동작 확인.
+
+### 5. `tests/test_build_release.py` 신규 테스트 2건 재실행 — 통과(단, 커버리지 공백 확인)
+
+- `test_installer_checks_for_existing_install_before_setup`,
+  `test_installer_removes_runtime_logs_on_uninstall` 단독 재실행 모두 PASSED.
+- 단, 두 테스트는 `setup.iss` 텍스트에 특정 문자열이 있는지만 확인하는 정적 검사라
+  `GetUninstallRegKey()`가 만드는 문자열의 실제 정확성(BUG-030)은 전혀 검증하지 못함 —
+  테스트 커버리지 공백으로 QA.md에 기록.
+
+### 정리
+
+- `E:\segtest\` 전체 삭제, 레지스트리 언인스톨 키 확인(존재하지 않음), 관련 프로세스
+  잔존 없음 확인. `data/` 등 실제 프로젝트 데이터는 건드리지 않음.
+
+### 결론
+
+- BUG-029: **Closed** — 컴파일 성공 실제 확인.
+- BUG-016: **Closed** — 로그 잔존 문제 해소 + 사용자 데이터 보존 실제 확인.
+- BUG-030(P1, 신규): **Open** — GitHub #22의 핵심 기능(기존 버전 감지+자동 제거)이 항상
+  작동하지 않음. 이 상태로는 GitHub #22 자체를 "완료"로 간주할 수 없음 — `GetUninstallRegKey()`
+  수정 후 재검증 필요.
+- 커밋하지 않음(사용자/작업 지시).
+
+## 2026-08-30 — GitHub #22 + BUG-016/029/030 최종 독립 재검증 (구현자 스크립트 미재사용)
+
+전제: 구현자가 BUG-030(레지스트리 키 이스케이프 불일치) 수정 중 파생된 신규 P1
+(`SuppressibleMsgBox` 미사용으로 인한 무인 설치 hang)까지 함께 고쳤다고 보고. 이번 라운드는
+구현자의 검증 스크립트/시나리오를 전혀 재사용하지 않고 처음부터 독립적으로 전부 재현했다.
+
+### 1. 실제 `build.bat` 전체 파이프라인 재실행
+
+- 최초 시도 2회는 이 자동화 셸(git bash)의 MSYS 경로변환 버그로 `cmd /c "build.bat"`이
+  인자를 오인해 즉시 실패(내부/외부 명령 아님) — `MSYS_NO_PATHCONV=1 cmd /c "<절대경로>\build.bat"`
+  로 우회한 뒤 정상 실행됨(다른 세션에서 이 문제를 만나면 참고).
+- `venv` 재사용, PyInstaller onedir 빌드(약 95초) + `ISCC.exe installer\setup.iss` 컴파일
+  (591.8초) 전체 성공. 컴파일 로그에서 `Parsing [Code] section`, `[UninstallDelete]`,
+  `Compiling [Code] section`까지 오류 없이 통과 — BUG-029(Pascal `[` 파싱 오류) 재발 없음.
+- `installer\output\SegmentationModelUI-Setup-1.10.5.exe`(2,146,999,632바이트)가 새
+  타임스탬프(00:24)로 생성됨 — 기존 파일 재사용이 아니라 실제 재빌드임을 확인.
+
+### 2. 실제 이전 버전 → 새 버전 무인 업그레이드 사이클 (구버전은 자기 자신이 아닌 실제 1.10.1 exe 사용)
+
+- `installer\output\SegmentationModelUI-Setup-1.10.1.exe`를 `/VERYSILENT /SUPPRESSMSGBOXES
+  /NORESTART`로 기본 per-user 경로(`%LocalAppData%\Programs\SegmentationModelUI`)에 설치.
+  `reg query` 대신 Python `winreg`로 직접 조회 — `HKCU\...\Uninstall\{03C2678A-B979-4B99-
+  A68B-842EA853D667}_is1`에 `DisplayVersion=1.10.1`, `UninstallString`, `InstallDate` 실존
+  확인(BUG-030이 고쳐진 `GetUninstallRegKey()`와 정확히 같은 형식의 실제 Windows 키임을
+  독립적으로 재확인).
+- (참고) 이 1.10.1 exe를 실제로 구동해보니 이 머신의 GPU(RTX 5060, 매우 최신)에서
+  `[WinError 1114] DLL 초기화 루틴이 실행될 수 없습니다 ... torch\lib\c10.dll`로 즉시
+  크래시함을 발견 — 같은 머신에서 방금 빌드한 1.10.5(dist 직접 실행)는 `app.log`가
+  4초 만에 정상 생성되어 크래시하지 않음을 확인. 오래된 1.10.1 빌드가 이 특정 최신 GPU와
+  안 맞는 것으로 보이는 별개의(그리고 이미 지나간 릴리스에 국한된) 문제라 이번 라운드
+  범위(설치 프로그램 로직)와 무관하다고 판단, 새 티켓화하지 않음 — 다만 리더가 참고할 수
+  있도록 기록.
+- 새 1.10.5 설치 프로그램을 `/SILENT /NORESTART`(＝`/SUPPRESSMSGBOXES` **미지정**)로 실행해
+  대화형 모드에서 실제 MsgBox가 뜨는지 확인. Inno가 설치 실행 파일을 임시 위치로 재실행하는
+  자식 프로세스에서 실제 창이 뜨는 것을 확인(최초 폴링이 부모 PID만 감시해 못 찾은 원인—
+  이후 시스템 전체 `EnumWindows`로 재탐색해 자식 프로세스의 창을 정확히 찾음). 실제 뜬
+  `#32770` 대화상자의 자식 컨트롤 텍스트: `"기존 버전 1.10.1이(가) 설치되어 있습니다.
+  계속 진행하면 기존 버전을 제거한 뒤 새 버전을 설치합니다. 계속하시겠습니까?"` — 감지된
+  구버전 번호(1.10.1)가 실제로 정확히 표시됨을 확인. `예(&Y)` 버튼 hwnd에 Win32
+  `SendMessageW(BM_CLICK)`로 실제 클릭 → 95초 후 프로세스가 스스로 정상 종료(hang 없음).
+- 업그레이드 후 재조회: `DisplayVersion=1.10.5`로 갱신, `UninstallString`이
+  `unins000.exe` → `unins001.exe`로 실제로 바뀜(구현자 관찰과 별도 재현으로 일치 —
+  구버전 제거 시 `unins000.exe`가 완전히 삭제되지 않고 남아 새 설치가 번호를 증가시킨 것으로
+  추정).
+- 업그레이드 **이전**(구버전 설치 직후) 설치 폴더에 `data\images\dummy_images.txt`,
+  `data\annotations\dummy_annotations.txt`, `data\checkpoints\dummy_checkpoints.txt`를
+  직접 심어둔 뒤 업그레이드 완료 후 재확인 — 3개 파일 모두 그대로 보존됨을 확인(구버전
+  제거 + 신버전 설치를 거치는 실제 업그레이드 경로에서도 사용자 데이터가 안전함을 확인).
+
+### 3. BUG-016 결합 재검증 — 실제 앱 구동으로 로그 생성 후 무인 제거
+
+- 업그레이드된 1.10.5 앱을 `WorkingDir={app}`와 동일하게 설치 폴더를 cwd로 지정해 실행,
+  `data\logs\app.log`가 9초 만에 실제로 생성됨을 확인(총 구동 시간 약 29초, `errors.log`도
+  0바이트로 생성 확인).
+- `unins001.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`로 무인 제거 → 레지스트리 키
+  완전 삭제 확인. `data\logs\` 디렉터리 자체가 완전히 사라짐. 반면 앞서 심어둔
+  images/annotations/checkpoints 더미 파일 3개는 제거 후에도 모두 그대로 존재(BUG-016 원래
+  요구사항 재확인 — 이번엔 구버전에서 심은 데이터가 업그레이드를 거쳐 최종 제거 시점까지
+  살아남는지까지 포함한 더 강한 시나리오로 확인).
+- 이전 라운드와 동일하게 `{app}`과 빈 `data\images`/`data\annotations`/`data\checkpoints`
+  폴더 자체는 제거 후에도 디스크에 남음(기존에 이미 "신규 버그 아님"으로 판정된 사항,
+  재확인만 함).
+
+### 4. 회귀 확인 — 구버전이 전혀 없는 상태에서 신규 설치
+
+- 위 사이클로 완전히 제거된 상태에서 1.10.5를 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`로
+  다시 설치 — MsgBox 없이 105.7초 만에 정상 완료, `DisplayVersion=1.10.5` 확인. 감지 로직이
+  존재하지 않는 구버전에 대해 오작동(과잉 트리거)하지 않음을 확인.
+- 이 설치도 동일하게 무인 제거 + 설치 폴더 전체 삭제로 정리, 최종적으로 레지스트리 키 없음/
+  설치 폴더 없음 확인.
+
+### 5. `SuppressibleMsgBox` 교체(신규 발견, BUG-031로 등록) 검증
+
+- 위 2번 사이클에서 무인 모드는 대화상자 없이 자동 `IDYES`로 진행되어 hang 없이 종료,
+  대화형 모드(`/SILENT`, `/SUPPRESSMSGBOXES` 미지정)에서는 실제 대화상자가 뜨고 `예` 클릭
+  시 정상 진행됨을 함께 확인 — 두 모드 모두 문제없음. QA.md에 `BUG-031`(P1, Closed)로 신규
+  등록(구현자 지시대로 리더 판단 필요 항목이었으나, 실제 재현 결과가 명확한 회귀+수정
+  확인이라 검증자가 직접 등록).
+
+### 6. `tests/test_build_release.py` 독립 재실행 + 테스트 유의미성 평가
+
+- `C:\Users\Feel\anaconda3\python.exe -m pytest tests/test_build_release.py`로 재실행 —
+  `tmp_path` 픽스처를 쓰는 테스트들은 이 환경의 `C:\Users\Feel\AppData\Local\Temp\pytest-of-Feel`
+  폴더 자체의 기존 권한 문제로 실패(이번 변경과 무관, 여러 라운드에서 반복 확인된 환경
+  이슈) — 그 외 10건(신규 `test_uninstall_reg_key_matches_actual_windows_uninstall_key_format`
+  포함) 전부 PASSED.
+- 코드 리딩으로 신규 테스트가 실제로 유의미한지 확인: `setup.iss`에서 `GetUninstallRegKey()`의
+  `Result` 리터럴을 정규식으로 추출한 뒤 `{#MyAppId}`를 `release.ini`의 실제 GUID로 치환해
+  ISPP 매크로 치환을 그대로 재현하고, 최종 문자열이 `...Uninstall\{GUID}_is1`(중괄호 1쌍)과
+  정확히 일치하는지까지 비교함 — 문자열 존재 여부만 보던 기존 두 테스트(BUG-030 발견 당시
+  "테스트 커버리지 공백"으로 지적됐던 바로 그 테스트들)와 달리 실제 계산값을 검증하므로
+  같은 회귀가 재발하면 이 테스트가 확실히 잡아낼 수 있음을 확인.
+
+### 정리
+
+- 설치 폴더(`%LocalAppData%\Programs\SegmentationModelUI`) 전체 삭제, 레지스트리 언인스톨
+  키 삭제 확인, 관련 프로세스 잔존 없음(`tasklist` 확인). `dist\SegmentationModelUI\data\`
+  (직접 실행 테스트로 생성된 로그)도 정리. 프로젝트 실제 `data\`(리포지토리 루트)는 건드리지
+  않음.
+
+### 결론
+
+- BUG-030(P1): **Closed** — 실제 서로 다른 두 빌드(1.10.1→1.10.5) 간 업그레이드로 감지·
+  자동 제거·재설치 전체 사이클이 무인/대화형 양쪽에서 정상 동작함을 독립 재현.
+- BUG-031(P1, 신규 등록 겸 Closed): **Closed** — `SuppressibleMsgBox` 교체로 무인 모드 hang
+  해소, 대화형 모드 정상 동작 둘 다 확인.
+- BUG-016/BUG-029: 이미 Closed 상태 재확인만 함(추가 조치 없음).
+- `tests/test_build_release.py`: 신규 테스트 포함 정상 동작, 실제 회귀 방지 능력 있음을 확인.
+- GitHub #22(기존 버전 자동 업그레이드) 기능은 이번 라운드로 실사용 시나리오 기준 "완료"로
+  판단해도 됨.
+- 커밋하지 않음(리더가 커밋 예정, 작업 지시).
