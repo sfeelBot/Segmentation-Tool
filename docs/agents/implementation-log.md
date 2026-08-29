@@ -2915,3 +2915,95 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 - 공식 Windows cu128 호환 조합인 `torch 2.7.1`/`torchvision 0.22.1`을 고정하고,
   requirements와 CUDA 인덱스를 한 pip 명령에서 해석하도록 단순화했다.
 - installer/EXE 버전을 1.10.5로 갱신했다.
+
+## 2026-08-29 — GitHub #16 후속: retry/원자적 쓰기 헬퍼를 다른 쓰기 경로로 확장
+
+기획: `docs/specs/github-issue-22-and-16-followup-2026-08-29.md`의 "GitHub #16 후속" 절.
+
+- 신규 `app/core/file_io.py` — `retry_on_permission_error()`(PermissionError만 최대 3회,
+  100ms→300ms→900ms 백오프)와 `atomic_write()`(같은 디렉터리에 임시 파일 작성 → fsync →
+  `retry_on_permission_error`로 감싼 `os.replace`, 실패 시 temp 정리 후 원래 예외 그대로
+  raise) 2개 제네릭 헬퍼 추가. Qt 의존성 없음.
+- `app/widgets/export_dialog.py` — 기존 `_copy_with_retry()`의 재시도 루프를 제거하고
+  `retry_on_permission_error()`를 호출하도록 리팩터링(호출부 3곳은 그대로, 동작 동일).
+- `app/widgets/import_dialog.py:79` — `ImportWorker.run()`의 `shutil.copy2()`에 재시도 적용.
+- `app/widgets/image_browser.py` — 드래그앤드롭/폴더추가 `shutil.copy2()` 2곳(구 83·348행)에
+  재시도 적용. 폴더 일괄 추가 경로는 `except Exception`을 `except (PermissionError, OSError)`
+  로 좁히고 `log.warning()`을 추가(스킵하고 계속 진행하는 기존 정책은 유지, 관찰성만 개선).
+  단일 파일 추가(`_on_add`)는 재시도까지 실패하면 `QMessageBox.critical()`로 표시(기존엔
+  미처리 예외였음 — 신규 방어).
+- `app/core/annotation_store.py` — `save()`의 `write_text()`를 `atomic_write()`로 교체
+  (재시도 + 원자적 쓰기 모두 적용, 가장 빈번한 쓰기 경로). 기존 `set_ok_and_clear_annotations()`
+  의 temp+fsync+`os.replace` 중복 코드도 같은 헬퍼로 리팩터링해 제거(동작 변경 없음, 관련
+  기존 테스트 `tests/test_labeling_multi_ok.py` 통과 확인).
+- `app/core/trainer.py:382, 389` — 체크포인트 저장(`torch.save`) 2곳을 `atomic_write()`로
+  교체. `training_metrics.json` 저장(~396행)은 스펙에 명시된 대로 이번 라운드 범위 밖 —
+  손대지 않음.
+- 신규 `tests/test_file_io_retry.py` — `retry_on_permission_error`/`atomic_write` 단위
+  테스트 8건. 그중 1건은 다른 스레드가 대상 파일을 짧게 열고 있다가 놓는 실제 파일 잠금을
+  재현해(Windows에서 파일이 열려있는 동안 `os.replace`가 `PermissionError`를 내는 것을 사전
+  실측 확인) `atomic_write`가 실제로 재시도·복구하는지 검증.
+- 검증: `build/venv/Scripts/python.exe -m pytest tests/` 전체 85건 통과(신규
+  `test_file_io_retry.py` 8건 포함). 앱 모듈 import 스모크(`app.core.file_io`,
+  `app.core.annotation_store`, `app.core.trainer`, `app.widgets.export_dialog`,
+  `app.widgets.import_dialog`, `app.widgets.image_browser`)도 통과.
+- 커밋: 하지 않음(사용자 지시 — 검증 통과 후 리더가 커밋).
+- `docs/roadmap.md` 갱신은 하지 않음(리더 지시 범위 밖 — 필요 시 리더가 "구현 완료, 검증
+  대기"로 표기 예정).
+
+**검증 서브에이전트 확인 필요** — 정적 검토 + `pytest` 실행 확인만 했고, 실제 앱 UI(라벨링
+편집/저장, 학습 체크포인트 저장, 이미지 추가/폴더추가, 가져오기/내보내기) 골든 패스는
+검증 에이전트가 별도로 확인해야 완료로 간주할 수 있음.
+
+---
+
+## 2026-08-29 — GitHub #22 installer 기존 버전 체크 + BUG-016 잔존 파일
+
+기획: `docs/specs/github-issue-22-and-16-followup-2026-08-29.md` "GitHub #22" 절.
+사용자 결정: 기존 버전 발견 시 확인 팝업 → 동의하면 구버전 자동 제거 후 재설치. BUG-016도
+같은 라운드에서 함께 해결.
+
+- `installer/setup.iss` — `[Code]` 섹션 신설.
+  - `InitializeSetup(): Boolean` 추가: `RegQueryStringValue(HKA, ...)`로
+    `Software\Microsoft\Windows\CurrentVersion\Uninstall\{AppId}_is1`의 `DisplayVersion`을
+    조회해 기존 설치 여부/버전 확인. `PrivilegesRequired=lowest`라 `HKLM`/`HKCU`를
+    하드코딩하지 않고 `HKA`(권한별 자동 매핑) 사용.
+  - 레지스트리 키 이름의 GUID 부분은 `{#MyAppId}`를 직접 중괄호로 재조립하지 않고
+    `{#emit SetupSetting("AppId")}`로 컴파일된 실제 `[Setup] AppId` 값(`{{{#MyAppId}}` →
+    최종 `{GUID}` 형태)을 그대로 가져오도록 함 — 직접 재조립 시 중괄호 개수가 어긋나
+    레지스트리 키가 절대 일치하지 않는 실수를 피하기 위함(구현 중 직접 발견해 수정).
+  - 발견 시 `MsgBox`로 기존 버전 안내 후 `IDYES`면 `UninstallString` 레지스트리 값(
+    `RemoveQuotes`로 따옴표 제거)을 `Exec(..., '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', ...,
+    ewWaitUntilTerminated, ...)`로 조용히 실행해 제거 완료까지 대기한 뒤 설치 계속 진행.
+    사용자가 취소하거나 구버전 제거가 실패하면 `Result := False`로 설치 자체를 중단.
+  - BUG-016(무인 제거 후 `data\logs\` 하위 런타임 로그 파일 잔존) — 원인은 `app.log`/
+    `errors.log`/`perf.log`가 설치 시점에 없던 런타임 생성 파일이라 `[Files]`로 추적되지
+    않아 Inno Setup 기본 제거 로직이 삭제 대상에서 빠지는 것으로 확인(`app/core/logger.py`
+    `LOG_DIR = Path("data/logs")`, `setup_logging()`이 런타임에 `mkdir`). `[UninstallDelete]`
+    섹션을 신설해 `Type: filesandordirs; Name: "{app}\data\logs"`로 로그 폴더만 명시적
+    삭제 대상에 포함. `data\` 전체(이미지·어노테이션·체크포인트 등 사용자 데이터)는 의도적으로
+    제외 — 이번에 만든 "구버전 자동 제거 후 재설치" 흐름이 내부적으로 매 업그레이드마다
+    같은 삭제 로직을 타므로, 로그가 아닌 사용자 데이터까지 지우면 업그레이드할 때마다 라벨/
+    체크포인트가 유실되는 훨씬 심각한 회귀가 생김.
+- 신규 회귀 테스트 `tests/test_build_release.py`에 2건 추가:
+  `test_installer_checks_for_existing_install_before_setup`(`InitializeSetup`,
+  `RegQueryStringValue(HKA,`, `HKLM`/`HKCU` 리터럴 부재, `UninstallString`,
+  `/VERYSILENT /SUPPRESSMSGBOXES`, `ewWaitUntilTerminated` 확인),
+  `test_installer_removes_runtime_logs_on_uninstall`(`[UninstallDelete]`,
+  `data\\logs` 삭제 항목 확인). `py -3.12 -m pytest tests/test_build_release.py -k
+  "installer or build_files or metadata"` 5건 통과 확인(`-p no:cacheprovider` — 이
+  환경의 `.pytest_cache` 쓰기 권한 문제는 기존 무관 이슈, `test_rejects_*` 등 다른 기존
+  테스트들도 동일 캐시 오류로 실패해 이번 변경과 무관함을 확인).
+- 실제 Inno Setup 컴파일(ISCC)은 이 환경에 설치돼 있지 않아 미실행 — 기획 문서 지시대로
+  이번 구현 라운드 범위 밖(검증 에이전트가 `build.bat` 풀빌드로 확인 예정). Pascal Script
+  문법(`Format`/`RemoveQuotes`/`Exec`/`MsgBox`/상수 `HKA`/`SW_HIDE`/`mbConfirmation`/
+  `MB_YESNO`/`IDYES`/`mbError`/`MB_OK`)은 Inno Setup 6 공식 Support Functions Reference
+  기준으로 시그니처 재확인함.
+- zone 브랜치는 이번 라운드에서 손대지 않음(기획 문서 지시대로 main만).
+- 커밋: 하지 않음(사용자 지시 — 검증 통과 후 리더가 커밋).
+
+**검증 서브에이전트 확인 필요** — 실제 ISCC 컴파일 + `build.bat` 풀빌드로 (1) 구버전 설치 →
+새 버전 installer 실행 시 안내 팝업과 버전 번호 정확성, (2) 자동 제거 후 재설치 완료,
+(3) 최초 설치(구버전 없음) 시 팝업 없이 정상 진행(회귀 없음), (4) 무인 제거 후
+`data\logs\` 완전 삭제 + 사용자 데이터(`data\images` 등) 보존, (5) `HKA` 매핑이
+비관리자 권한에서도 정상 동작하는지 확인 필요 — 기획 문서 "검증 골든 패스" 4개 항목 그대로.

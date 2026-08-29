@@ -447,10 +447,15 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 
 - [x] **Inno Setup 기반 installer + PyInstaller 계열 EXE 패키징** — `build.spec`/
       `installer/setup.iss` 존재, `release.ini`를 버전·제품정보 단일 기준으로 사용
-      (v1.9.0, 커밋 `11a5a84`). CUDA/CPU 빌드 분기, 단일 Python 전체 의존성 사전검사,
-      PyQt5/PySide 및 개발 패키지 제외, Torch 선행 로드 순서 정리(BUG-024) 등 초기
-      우려했던 "torch/CUDA 런타임 DLL 번들링" 난제를 실제로 겪고 해결함 — v1.10.1
-      완료(1.815GB 설치본 무인 설치·20초 기동 통과).
+      (v1.9.0, 커밋 `11a5a84`). 단일 Python 전체 의존성 사전검사, PyQt5/PySide 및
+      개발 패키지 제외, Torch 선행 로드 순서 정리(BUG-024) 등 초기 우려했던
+      "torch/CUDA 런타임 DLL 번들링" 난제를 실제로 겪고 해결함 — v1.10.1 완료
+      (1.815GB 설치본 무인 설치·20초 기동 통과). **정정(2026-08-29)**: 과거 이 항목이
+      "CUDA/CPU 빌드 분기"라고 적었던 것은 오기 — `build.bat`은 항상 cu128(CUDA) torch
+      단일 빌드만 만들고, 그 wheel이 GPU 없는 머신에서도 CPU로 자동 폴백하는 PyTorch
+      표준 동작 덕분에 **installer가 원래부터 하나뿐**이었음(확인:
+      [docs/specs/exe-packaging-remaining-2026-08-29.md](specs/exe-packaging-remaining-2026-08-29.md)
+      "Setup Guide" 절).
 - [x] **설치본 실행 시 시작 splash** — QApplication+준비화면을 먼저 표시하고 로딩
       단계 안내(v1.10.0).
 - [x] **Python 3.12 빌드 환경 자동화** — 일반 셸에서 `build.bat`이 잘못된 Python(예:
@@ -461,17 +466,54 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       에디션은 별도 제품 ID+`zone-vX.Y.Z`를 각자 단일 편집 지점으로 사용(커밋
       `11a5a84`/zone `0a56d01`/`019c2f5`).
 - [ ] **[GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) 요청1 —
-      전용 프로젝트 확장자 더블클릭 연결 — 아직 미착수.** installer의 Windows 파일
-      연결 레지스트리 등록 + `main.py`가 `sys.argv[1]` 프로젝트 경로를 받아 시작
-      다이얼로그를 건너뛰는 로직 필요. 상세:
-      [docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md)
-      "요청 1" 절.
-- [ ] **Setup Guide 문서 — 아직 미착수.** `docs/USER_MANUAL.md`는 여전히 "pip
-      install" 전제의 개발자용 설치 안내만 있음. exe 배포판 사용자는 pip/Python
-      환경이 없을 수 있어 별도 문서(또는 새 절)가 필요 — installer가 이미 존재하므로
-      이제는 실제로 작성 가능한 상태.
+      전용 프로젝트 확장자(`.segproj`) 더블클릭 연결 — 설계 완료, 결정 대기 없이 구현
+      가능.** 프로젝트 폴더 내부에 얇은 마커 파일(`{project_name}.segproj`, `Project.
+      ensure_dirs()`가 신규·기존 프로젝트 모두에 자동 생성)을 두고, `main.py`가
+      `sys.argv[1]`로 그 파일 경로를 받으면 부모 디렉터리를 프로젝트로 채택해
+      `ProjectStartDialog`를 건너뛰고 바로 `MainWindow`를 여는 방식. installer는
+      `[Registry]` 섹션에 `HKA`(관리자 권한 유무에 따라 HKLM/HKCU 자동 매핑 — 현재
+      `PrivilegesRequired=lowest`라 필수) 루트로 확장자 연결 등록. 상세 설계·구현
+      대상 파일 3개(`main.py`/`app/core/project.py`/`installer/setup.iss`)·검증
+      골든패스 7단계:
+      [docs/specs/exe-packaging-remaining-2026-08-29.md](specs/exe-packaging-remaining-2026-08-29.md)
+      "1. GitHub #2 요청1" 절. (과거 스펙
+      [voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md) "요청 1"
+      절은 최초 방향 판단 근거로 유지, 이번 문서가 그 설계를 구체화함.)
+- [ ] **Setup Guide 문서 — 설계 완료, 결정 대기 없이 바로 작성 가능.** 새 문서
+      신설이 아니라 `docs/USER_MANUAL.md`의 기존 "🚀 시작하기" 절을 "A. 설치
+      프로그램(exe) 사용자용" / "B. 개발자용(소스 실행 pip)" 두 갈래로 확장(신규
+      ~40~60줄). exe 배포판은 GitHub Releases에서 단일 installer(`SegmentationModelUI-
+      Setup-X.Y.Z.exe`)를 받아 관리자 권한 없이 설치하는 것뿐 — CPU/CUDA 선택 안내는
+      불필요(위 정정 참고). 데이터가 설치 폴더 하위(`{app}\projects`, `{app}\data`)에
+      저장되므로 제거 전 백업 권장 문구 필요(BUG-016 연계). 상세:
+      [docs/specs/exe-packaging-remaining-2026-08-29.md](specs/exe-packaging-remaining-2026-08-29.md)
+      "2. Setup Guide 문서" 절. 단, `.segproj` 안내 문장 1개는 위 요청1 구현·검증
+      완료 후에 추가할 것(아직 없는 기능을 먼저 문서화하지 않기).
+- 두 항목은 서로 다른 파일(코드 vs 문서)이라 **병렬 구현 가능**.
 - 알려진 잔여 이슈: **BUG-016**(P3, Open) — Inno Setup 무인 제거 후 설치 폴더와
   `data\logs\` 하위 런타임 로그가 완전히 삭제되지 않음.
+
+## GitHub #22(신규) + #16 후속 코드리뷰 발견 (2026-08-29 접수)
+
+기획 완료: [docs/specs/github-issue-22-and-16-followup-2026-08-29.md](specs/github-issue-22-and-16-followup-2026-08-29.md).
+서로 무관, 파일 겹침 없음 — 병렬 진행 가능.
+
+- [ ] [GitHub #22](https://github.com/sfeelBot/Segmentation-Tool/issues/22) "installer로
+      설치 시 기존 버전 있는지 체크 필요" — `installer/setup.iss`에 `[Code]` 섹션
+      자체가 없어 기존 설치 여부를 사용자에게 전혀 안내하지 않음(같은 `AppId`라 Inno
+      Setup 기본 덮어쓰기 업그레이드는 이미 동작). Inno Setup 표준 패턴(`InitializeSetup()`
+      + `RegQueryStringValue`+`HKA`)으로 설계 완료, 실측 불필요. **결정 대기 1건**
+      (경고만/자동제거후재설치/설치거부 3택, BUG-016과의 연계 여부 포함) —
+      `docs/decisions-needed.md` 등록됨. 구현 대상 `installer/setup.iss` 1개 파일.
+- [ ] GitHub #16 후속 — retry 헬퍼 확장 (오늘 코드리뷰 발견, 별도 이슈 번호 없음) —
+      기존 `export_dialog.py` 전용 `_copy_with_retry()`(GitHub #16, 커밋 `6ecee43`)를
+      공용 최소 모듈 `app/core/file_io.py`(신설, `retry_on_permission_error`+
+      `atomic_write` 2개 제네릭 헬퍼)로 승격해 나머지 4개 무보호 쓰기 경로에 적용:
+      `import_dialog.py:79`, `image_browser.py:83,348`(재시도 없음), `annotation_store.save()`
+      (가장 빈번한 쓰기 경로, 재시도+원자적 쓰기 둘 다 없었음), `trainer.py:382,389`
+      (체크포인트 저장). `image_browser.py:83`의 bare-ish except가 실패 원인을 조용히
+      스킵하던 것은 재시도와 별개의 관찰성 버그로 분리해 로그 추가만(동작 변경 없음).
+      결정 대기 없음, 바로 구현 가능.
 
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징 외 추가 신규 기능 요청 없음. 새 요청은

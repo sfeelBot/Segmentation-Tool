@@ -2854,3 +2854,187 @@ uncommitted 상태로 존재(`app/widgets/image_browser.py`, `app/widgets/export
   PyQt6, OpenCV, Torch CPU/CUDA/cuDNN DLL 포함을 설치 폴더에서 직접 확인했다.
 - 새 테스트 폴더에 무인 설치 성공 후 설치 EXE를 20초 실행해 조기 종료 없이 정상 유지됨을 확인했다.
 - `tests/test_build_release.py` 25건, 메타데이터 생성, `git diff --check`를 통과했다.
+
+## 2026-08-29 — main HEAD(14f521a) 통합 회귀 검증 (라운드4/#23/일괄양품화/학습데이터잠금/installer splash 병합 상태)
+
+### 배경·범위
+- 2026-08-25~08-28 사이 개별 라운드로만 검증됐던 여러 기능(GitHub 라운드4 #12/#15/#16/#17, GitHub #23
+  일괄 추론+학습 결과 저장, 라벨링 다중선택 일괄 양품화, 학습 데이터 잠금, installer splash)을
+  **전부 합친 현재 main HEAD 상태**로 처음 통합 검증. 사용자가 사전 코드리뷰에서 지목한 2가지
+  잠재 회귀 후보(`_InferenceWorker`의 QPixmap 스레드 위반, `trainer.py` stop mid-batch 체크포인트 손실)를
+  최우선으로 실제 재현/반증.
+- 실행 환경: Windows 11, Anaconda Python 3.13.9(`C:\Users\Feel\anaconda3\python.exe`),
+  PyQt6 6.7.1, PyTorch(로컬 환경) — `requirements.txt`와 별개로 이 머신에 실제 설치된 인터프리터.
+  스크립트 전부 스크래치패드(`C:\Users\Feel\AppData\Local\Temp\claude\...\scratchpad\`)에
+  두고 프로젝트 파일은 무수정 확인.
+
+### 1) pytest 전체 스위트
+- 개별 파일 단위(12개 파일, 77 tests)는 전부 100% 통과 확인.
+- **`pytest tests/`를 한 프로세스로 전체 실행하면 수집 도중 `Windows fatal exception:
+  code 0xc0000139`로 인터럽트됨** — `QA.md` BUG-028(P3)로 신규 등록. 근본 원인은
+  `test_annotation_type_merge.py`가 모듈 최상단에서 `QApplication(sys.argv)`를 먼저 생성한 뒤,
+  이후 다른 파일이 `torch`를 임포트하고, 그 다음 `from PyQt6 import QtSvg`를 임포트하는 순서일 때
+  DLL 충돌이 나는 프로세스 전역 문제(pytest 무관 — 3줄짜리 순수 파이썬 스크립트로도 100% 재현).
+  **`python main.py`는 영향 없음**(항상 torch → QApplication 순서를 지킴, main.py 순서 그대로
+  재현 스크립트를 짜면 에러 없음을 직접 확인).
+- 최초 `PermissionError`(WinError 5, `C:\Users\Feel\AppData\Local\Temp\pytest-of-Feel`)는
+  코드 문제가 아니라 이 세션의 기본 pytest 임시폴더 권한 문제 — `--basetemp`을 스크래치패드로
+  지정해 우회, 이후 전부 정상 수집/실행됨.
+- 개별 파일 실행 결과: `test_annotation_type_merge.py` 6, `test_auto_label_sliding.py` 5,
+  `test_build_release.py` 25, `test_canvas_zoom_pan.py` 1, `test_config_form_no_wheel.py` 2,
+  `test_fill_enclosed.py` 5, `test_github_issue_23.py` 7, `test_labeling_multi_ok.py` 11,
+  `test_project_recent.py` 1, `test_startup_splash.py` 2, `test_training_data_lock.py` 9,
+  `test_training_performance.py` 3 — 합계 77 passed, 0 failed.
+
+### 2) 최우선 회귀 후보 A — `trainer.py` stop mid-batch 체크포인트/메트릭 손실 (재현 성공, BUG-026 P1)
+- 합성 프로젝트(임시 디렉터리, 이미지 4장 64×64 + polygon 라벨) + `TinyModel`(Conv2d 1x1)로
+  `TrainingConfig(epochs=2, batch_size=1, checkpoint_every=1)` 구성 후 `TrainerWorker.run()`을
+  (QThread.start() 없이) 동일 스레드에서 직접 호출, `batch_done` 첫 신호에서 `request_stop()` 호출.
+- 결과: 체크포인트 0개, `training_metrics.json`/`.png` 둘 다 생성되지 않음 — 학습이 조금이라도
+  진행됐음에도 **아무 산출물도 남지 않는 것**을 확인.
+- 대조군: 동일 스크립트에서 epoch 2의 첫 배치에서 멈추도록 바꾸면 epoch 1 결과(`_best.pt` +
+  `_epoch_0001.pt` 체크포인트, `training_metrics.json`/`.png`)가 정상 보존됨 — "1 epoch도 완주
+  못 하면 전부 유실"이라는 정확한 경계를 확인.
+- 근본 원인: 커밋 `450f520`("학습 큐 중지 응답 개선")이 train/validation 루프 각각에 mid-batch
+  `if self._stop.is_set(): break`를 추가했는데, 이 break들이 `history.append()`/체크포인트 저장/
+  `epoch_done` emit보다 앞서 실행돼 epoch 루프 자체를 완전히 탈출시킴 — 파일 저장 조건인
+  `if history:` 블록(trainer.py:394)까지 도달하지 못함. 커밋 자체 주석("이전에는 중지 요청 후에도
+  validation·metric·checkpoint까지 계속 실행됐다")이 이 회귀를 스스로 예고하고 있었음.
+- `QA.md` BUG-026(P1)로 등록. **수정은 이번 라운드 범위 밖**(리더가 별도로 구현자에게 위임).
+
+### 3) 최우선 회귀 후보 B — `_InferenceWorker`의 QPixmap 백그라운드 스레드 생성 (재현 성공, BUG-027 P2)
+- 실제 `InferenceTab` 위젯을 인스턴스화하고 합성 이미지 3장 + `TinyModel` 체크포인트로 실제
+  "▶ 추론 실행" 버튼 핸들러(`_on_run()`)를 호출, `engine.run`을 몽키패치해 호출 시점의
+  `threading.current_thread()`가 메인 스레드인지 기록.
+- 결과: `engine.run()`이 호출된 3번 모두 메인(GUI) 스레드가 아닌 `_InferenceWorker` QThread에서
+  실행됨을 확인 — 이 함수 내부의 `_colorize_and_blend()`가 `QImage`+`QPixmap.fromImage()`로
+  오버레이 픽스맵을 만드는 지점 전부가 백그라운드 스레드에서 실행된다는 뜻.
+- 이번 환경(Windows 11, Qt 6.7.1, raster 렌더링 백엔드)에서는 크래시나 깨진 렌더링 없이 3개 결과
+  전부 정상 생성됨(legend 정상 갱신, `overlay_pixmap.isNull()` 전부 False) — 즉시 크래시 재현은
+  안 됐으나, Qt 공식 문서상 QPixmap은 GUI 스레드 전용이라 명시돼 있어 다른 렌더링 백엔드/환경에서는
+  잠재 위험이 남음.
+- `git show b07c1dd:app/tabs/inference_tab.py`로 대조한 결과, 커밋 `ca30948`(GitHub #23, 일괄
+  추론 도입) 이전에는 `_on_run()`이 `engine.run()`을 GUI 스레드에서 동기 호출했음(UI 블로킹) —
+  일괄 추론을 논블로킹으로 만드는 과정에서 QPixmap 생성 지점까지 함께 백그라운드로 넘어간 회귀.
+- `QA.md` BUG-027(P2)로 등록. **수정은 이번 라운드 범위 밖**(리더가 별도로 구현자에게 위임).
+
+### 4) 골든 패스 통합 스모크 (실제 위젯/워커, QApplication 실이벤트루프)
+- **라벨링**: 실제 `LabelingTab`+`AnnotationCanvas`로 폴리곤(class 1) 커밋 후 인접한 브러시(같은
+  class)를 이어 그려 `brush_mask` 1개로 병합됨을 확인(GitHub #12/#15 회귀 없음 — 이미
+  `tests/test_annotation_type_merge.py`가 이 로직을 상세히 커버하며 전부 통과, 이번엔 실제
+  `LabelingTab` 인스턴스로 end-to-end 재확인). `_do_save(sync=True)`로 저장 후 JSON 파일에
+  1개 `brush_mask` annotation 확인.
+- **다중선택 일괄 양품화**: `ImageBrowser`에서 이미지 2장 선택 → `Ctrl+C`(QKeyEvent 직접 주입)로
+  파일명 2개가 개행 구분으로 클립보드에 복사됨을 확인(GitHub #17). 이어서 `QMessageBox.question`을
+  Yes로 몽키패치하고 `LabelingTab._mark_selected_ok()`를 실제 호출 → 이미지 2장 모두
+  `store.get_ok()==True`+`store.load()`가 빈 리스트로 정리됨을 확인.
+- **내보내기/가져오기**: `ExportWorker.run()`(JSON 포맷, 이미지 포함, 상대좌표)으로 실제 파일
+  I/O를 실행해 `classes.json`+`annotations/*.json`+`images/*.png` 생성 확인(GitHub #16 재시도
+  로직이 있는 `_copy_with_retry` 경로 정상 통과), 이어서 `ImportWorker.run()`으로 별도 신규
+  프로젝트에 가져와 이미지 1장+polygon annotation 1개가 그대로 복원됨을 확인. 다이얼로그
+  UI(`QFileDialog` 클릭 등)는 건드리지 않고 각 Worker의 순수 I/O 로직만 실제 실행.
+- **학습**: 위 2)에서 이미 실제 `TrainerWorker.run()`으로 epoch 1을 정상 완주시켜 체크포인트
+  2개(`_best.pt`, `_epoch_0001.pt`)+`training_metrics.json`/`.png`가 정상 생성됨을 확인(중단
+  없는 정상 경로 골든 패스 겸함).
+- **추론**: 위 3)에서 이미 실제 `InferenceTab._on_run()`으로 배치 추론 3장을 끝까지 실행해
+  크래시 없이 3개 결과 전부 수집, 범례(legend) 테이블 정상 갱신을 확인(GitHub #23 경로).
+
+### 5) installer 재확인 (재빌드 없음)
+- 어제(2026-08-28) 만들어진 `build/install-test-1.10.5/SegmentationModelUI.exe`를 재빌드 없이
+  그대로 `Start-Process`로 실행 후 18초 대기 → 프로세스 2개(`SegmentationModelUI`) 모두
+  `Responding=True` 상태로 유지되는 것을 확인, 이후 정상 종료(`Stop-Process`)시킴. main에
+  이후 반영된 변경은 문서(`docs/*.md`)뿐이라는 전제와 일치하는 결과.
+
+### 결론
+- **통과**: pytest 개별 파일 전부(77 tests), 라벨링(폴리곤+브러시 병합/저장/다중선택 일괄
+  양품화/Ctrl+C 복사)·내보내기·가져오기·학습(정상 완주)·추론(정상 배치 실행) 골든 패스,
+  installer 재기동.
+- **블로커는 아니지만 실사용에 영향 있는 회귀 2건 신규 발견**: BUG-026(P1, 학습 1epoch 미만
+  중지 시 전체 데이터 유실), BUG-027(P2, 추론 워커 스레드 QPixmap 생성 — 이번 환경에서 크래시
+  재현은 안 됐으나 Qt 문서상 정의되지 않은 동작). 둘 다 코드 수정 없이 발견만 하고 `QA.md`에
+  등록, 수정은 리더가 별도 라운드로 위임.
+- **테스트 인프라 이슈 1건**: BUG-028(P3, pytest 전체 스위트 동시 실행 시 DLL 충돌로 수집
+  인터럽트 — 실제 앱은 영향 없음, CI 신뢰성에만 영향).
+
+전체 상태: **통과(조건부)** — 두 우선순위 회귀(BUG-026 P1, BUG-027 P2)를 리더가 인지하고 후속
+수정 라운드를 배정하기 전까지는 "완료"로 간주하지 않음.
+
+---
+
+## 2026-08-29 — GitHub #16 후속(retry/원자적 쓰기 헬퍼 확장) 검증
+
+기획: `docs/specs/github-issue-22-and-16-followup-2026-08-29.md` "GitHub #16 후속" 절.
+구현: `docs/agents/implementation-log.md` 2026-08-29 "GitHub #16 후속" 항목(미커밋 diff).
+(참고: 이전 검증 시도는 세션 API 한도로 즉시 실패 — 이번이 재시도.)
+
+### 정적 검토
+- `git diff HEAD -- app/core/file_io.py app/widgets/export_dialog.py app/widgets/import_dialog.py
+  app/widgets/image_browser.py app/core/annotation_store.py app/core/trainer.py
+  tests/test_file_io_retry.py` 전체 확인(`file_io.py`/`test_file_io_retry.py`는 신규 파일이라
+  `git status`로 별도 확인).
+- `retry_on_permission_error()`/`atomic_write()` 구현이 스펙과 일치: PermissionError만
+  재시도, 마지막 시도 실패 시 원래 예외 그대로 raise, temp 파일은 `path.parent`에 생성돼
+  `os.replace`가 항상 같은 파일시스템 내 rename이 됨, 실패 시 temp 정리 후 raise.
+- 호출부 6곳(`export_dialog.py` 3곳 위임, `import_dialog.py` 1곳, `image_browser.py` 2곳,
+  `annotation_store.save()`+`set_ok_and_clear_annotations()`, `trainer.py` 체크포인트 2곳)
+  모두 스펙대로 적용됨을 확인. `trainer.py`에 `os`/`tempfile` 미사용 잔여 import 없음(`ast.parse`
+  구문 검사 통과, 6개 파일 전부).
+- 이슈 아님으로 판단한 것: 구현 로그 주석 "100ms→300ms→900ms 백오프"는 실제 코드
+  (`_DEFAULT_DELAY = 0.3` 고정, 매 재시도 동일 0.3s sleep)와 다름 — 지수 백오프는 구현되어
+  있지 않고 스펙이 요구한 것도 "기존 `_copy_with_retry()`와 동일(`attempts=3, delay=0.3`) 그대로
+  이식"이므로 **코드는 스펙과 일치**, 로그 주석 표현만 오해 소지가 있음(기능 결함 아님, QA.md
+  등록 대상 아님).
+- `test_file_io_retry.py` 실제 테스트 함수는 6개(`grep -c "^def test_"`)인데 구현 로그는
+  "8건"이라고 기록 — 마이너한 보고 오차(기능 문제 아님, 기록만 부정확). 심각도 낮아 QA.md
+  등록 없이 이 로그에만 남김.
+
+### 독립 재실행 — pytest
+- `build/venv/Scripts/python.exe -m pytest tests/` 전체 **85건 통과**(구현자 보고와 일치,
+  독립 재실행으로 재확인). `--basetemp`을 스크래치 디렉터리로 지정해야 함 — 기본
+  `%TEMP%\pytest-of-Feel`이 이 세션 권한으로 `PermissionError`가 나는 환경 이슈가 있었음
+  (코드 결함 아님, 이 셸 환경의 임시디렉터리 ACL 문제로 판단).
+- `tests/test_file_io_retry.py` 단독 실행 시 6건 전부 통과, 그중 실제 다른 스레드가 파일을
+  잠그는(`open(target, "r+b")` 후 `os.replace` 시도) 실제 OS 잠금 재현 테스트
+  (`test_atomic_write_recovers_from_real_file_lock_held_by_another_thread`)도 포함해 통과 확인.
+
+### 골든 패스 — 실제 모듈/워커로 재현 (스크래치 스크립트, `projects/nok`을 스크래치 디렉터리로
+복사한 사본만 사용 — 실제 `projects/nok`은 `git status`/`git diff --stat`으로 무변경 확인)
+
+1. **`annotation_store.save()` 정상 회귀**: 실제 이미지 대상으로 `load()`→`save()`→재`load()`
+   왕복, 어노테이션 개수 일치, 임시파일(`.*.tmp`) 잔존 없음 확인.
+2. **`save()` 실제 파일 잠금 복구**: 다른 스레드가 대상 JSON을 0.3초간 `r+b`로 열어 잠근 상태에서
+   `save()` 호출 → `os.replace` 재시도로 성공(elapsed≈0.355s, 재시도 발생 근거), 재로드 시
+   내용 정상.
+3. **`set_ok_and_clear_annotations()` 회귀**: OK 토글 후 `load()`가 빈 리스트, `get_ok()==True`
+   확인 — 리팩터링 전후 동작 동일.
+4. **짧은 학습 2 epoch 실제 실행**: `TinyNet`(Conv2d 1개) + `TrainerWorker.run()`(QThread
+   서브클래스를 동기 직접 호출, `num_workers=0`)으로 실제 학습 루프 완주. 체크포인트
+   3개(`_best.pt`, `_epoch_0001.pt`, `_epoch_0002.pt`) 전부 생성 확인, 각 파일 `torch.load()`로
+   실제 로드 가능함을 확인, 디렉터리에 임시파일 잔존 없음.
+5. **체크포인트 저장 중 실제 파일 잠금 복구**: `checkpoints_dir()`의 기존 파일을 다른 스레드가
+   0.3초 잠근 상태에서 `atomic_write(path, lambda p: torch.save(...))` 호출 → 재시도로 성공,
+   `torch.load()`로 내용 일치 확인.
+6. **이미지 브라우저 폴더 일괄 추가**: `_FolderImportWorker`를 정상 파일 1개 + 영구 실패
+   파일 1개(shutil.copy2 몽키패치로 PermissionError 유발 — 실측 결과 Windows 기본 공유모드에서는
+   단순 스레드 파일 열기로 `copy2` 자체가 막히지 않아 몽키패치 방식 채택)로 실행 →
+   `copied=1, skipped=1`, 전체 작업 중단 없이 계속 진행, `log.warning()`에 "실패" 문구 포함
+   확인(`except (PermissionError, OSError)`로 좁힌 것도 실제 해당 예외 타입으로 재현해 확인).
+7. **`_on_add()`(단일/다중 파일 추가) 실패 시 방어**: `QFileDialog.getOpenFileNames`를
+   몽키패치해 실제 `_on_add()` 슬롯을 그대로 호출, `shutil.copy2`가 PermissionError를 내도록
+   유도 → `QMessageBox.critical()` 호출 확인(이전엔 미처리 예외로 Qt에 그대로 전파되던 경로 —
+   신규 방어 정상 동작, 앱 크래시 없음). `log.exception()`으로도 기록됨을 확인.
+8. **export/import 정상 경로**: 실제 `ExportWorker.run()`(json 포맷, 이미지 포함, 상대경로)로
+   6장 내보내기 → 별도 빈 프로젝트에 `ImportWorker.run()`으로 가져오기 → `imported=6,
+   new_images=6`, 이미지별 어노테이션 개수가 원본과 정확히 일치(라운드트립 확인). `_copy_with_retry`
+   리팩터링(`export_dialog.py`) 이후에도 동작 동일.
+9. **앱 기동 확인**: `projects/nok` 오픈 → `MainWindow()` 생성 → `show()`까지 예외 없이 통과
+   (import 그래프에 새 `app.core.file_io` 추가로 인한 순환참조/DLL 이슈 없음).
+
+### 결론
+- 버그·회귀 **없음**. 정적 검토 + pytest 독립 재실행(85건) + 실제 위젯/워커 골든 패스 9개 항목
+  전부 통과.
+- QA.md 등록 대상 없음(위 "정적 검토"에 적은 2건의 마이너 보고 오차는 기능 결함이 아니라
+  이 로그에만 기록).
+- 커밋은 하지 않음(사용자/리더 지시 — 검증 통과 보고 후 리더가 커밋).
+
+전체 상태: **통과**.

@@ -385,3 +385,121 @@ GitHub에 2026-08-20 새로 등록된 이슈 4건(#3 브러시 도구, #4 이미
 완료 — `docs/specs/voc-github-issues-round4-2026-08-27.md`의 옵션B 설계를 구현 가능한
 정확도로 정정함. 다음 단계는 #12 구현 에이전트가 해당 절의 최종 bbox·로컬 접촉 판정·
 현행 다중클래스 보존 계약을 따라 `annotation_canvas.py`와 전용 테스트를 수정하는 것.
+
+---
+
+## 2026-08-29 — "exe 패키징 + Setup Guide" 잔여 미착수 2건 스코프 산정
+
+### 배경
+`docs/roadmap.md` "exe 패키징 + Setup Guide" 절이 2026-08-29 캐치업 세션에서 v1.9.0~
+v1.10.5 완료분을 반영해 최신화됐고, 남은 미착수 항목 2건(GitHub #2 요청1 — 전용 프로젝트
+확장자 더블클릭 연결, Setup Guide 문서)의 스코프 구체화 위임.
+
+### 한 일
+- **GitHub #2 요청1**: `main.py`(argv 완전 미사용 확인), `app/widgets/project_start_dialog.py`,
+  `app/core/project.py`를 조사해 프로젝트가 폴더 구조(`images/`·`annotations/`·
+  `checkpoints/`·`user_models/`·`classes.json`·`project.json`)이며 단일 파일이 아님을
+  재확인. `open_existing()`이 이미 "메타파일 없으면 자동 생성" 패턴을 갖고 있음을 근거로,
+  **프로젝트 폴더 내부에 얇은 마커 파일**(`{project_name}.segproj`)을 두고
+  `Project.ensure_dirs()`(신규·기존 프로젝트 진입 경로 전부에서 호출됨)에서 자동 생성하는
+  설계로 확정 — 별도 마이그레이션 스크립트 없이 기존 프로젝트도 다음에 한 번 열리면 마커가
+  생김. `main.py`는 `sys.argv[1]`이 `.segproj`면 부모 디렉터리를 프로젝트로 채택해
+  `ProjectStartDialog`를 건너뛰고 바로 `MainWindow`로 진입, 실패 시 에러 다이얼로그 후
+  평소 흐름으로 폴백하도록 설계(`project_start_dialog.py`의 `_try_open()` 예외 처리 패턴
+  재사용). `installer/setup.iss`(`PrivilegesRequired=lowest` 확인)가 관리자 권한 없는
+  per-user 설치이므로 레지스트리 등록은 `HKCR`/`HKLM` 하드코딩이 아니라 Inno Setup 6의
+  `HKA`(권한에 따라 HKLM/HKCU 자동 매핑) 루트를 써야 함을 설계에 명시 — 이 부분이 실측
+  없이 결정하면 관리자 권한 없는 설치에서 조용히 실패할 위험이 있어 구체적으로 짚어둠.
+  확장자 이름(`.segproj`) 자체는 과거 기획 문서·사용자 원문에 이미 예시로 등장해 취향
+  수준의 낮은 리스크 선택으로 판단, 결정 대기 등록하지 않음(구현 시 한 줄 수정으로 변경
+  가능). 코드 영향 범위를 `main.py`/`app/core/project.py`/`installer/setup.iss` 3개
+  파일로 좁게 확정 — 다른 파일은 건드릴 필요 없음.
+- **Setup Guide 문서**: `installer/setup.iss` 재확인(표준 Inno Setup wizard, 시작메뉴
+  폴더 선택 단계 생략, 라이선스 페이지 없음, per-user 기본 설치), `build.bat`을 재확인해
+  **CPU/CUDA 빌드 분기가 exe 배포판에는 없음**을 확인 — `build.bat`이 항상
+  `--extra-index-url .../cu128`로 단일 CUDA torch만 설치해 installer를 만들고, 그 wheel이
+  GPU 없는 머신에서도 CPU로 자동 폴백하는 PyTorch 표준 동작이라 사용자가 GPU 유무에 따라
+  다른 파일을 고를 필요가 아예 없음을 확인. 이는 `docs/roadmap.md`의 기존 "CUDA/CPU 빌드
+  분기" 서술이 **부정확한 캐치업 세션 오기**였음을 발견한 것 — 이번 갱신에서 정정.
+  `main.py`/`project.py`의 frozen 경로 처리를 근거로 exe 배포판의 모든 데이터(`data/`,
+  `projects/`)가 설치 폴더 하위에 저장됨을 확인, 이는 기존 BUG-016(언인스톨 시 설치
+  폴더/로그 잔재)과 직결되므로 "제거 전 백업 권장" 문구가 필요하다고 판단. 문서 배치는
+  신규 파일(`docs/SETUP_GUIDE.md` 등) 대신 **기존 `docs/USER_MANUAL.md`의 "🚀 시작하기"
+  절을 확장**하는 쪽으로 판단(YAGNI — 이미 일반 사용자 톤의 문서고 대상 독자층·목차 위치가
+  정확히 일치, 신규 파일을 만들 실익이 적음). "🩺 트러블슈팅"의 기존 WinError 1114/
+  VC++ Redistributable 안내는 exe 사용자에게도 그대로 유효해 재사용(중복 작성 안 함).
+- 스펙 문서 신설: [docs/specs/exe-packaging-remaining-2026-08-29.md](../specs/exe-packaging-remaining-2026-08-29.md)
+  — 두 항목 각각 전제 확인(코드 근거)·설계·구현 대상 파일·검증 골든패스 정리.
+- `docs/roadmap.md` "exe 패키징 + Setup Guide" 절 갱신 — 두 미착수 항목을 "설계 완료,
+  결정 대기 없이 구현 가능"으로 구체화 + CUDA/CPU 빌드 분기 오기 정정.
+- `docs/decisions-needed.md`는 갱신하지 않음 — 두 항목 모두 결정 없이 바로 구현 가능하다고
+  판단(확장자 이름 선택은 낮은 리스크의 구현 재량으로 분류, 등록 안 함).
+- 코드는 건드리지 않음. Write/Edit는 스펙 신설 1건, `roadmap.md`, 본 로그 갱신에만 사용.
+  시작 전 `git status` 확인 — 무관한 uncommitted 변경(`docs/USER_MANUAL.md` 등) 그대로 둠.
+
+### 상태
+완료 — 다음: 리더가 판단해 두 항목을 구현 에이전트(GitHub #2 요청1)/직접 또는 구현
+에이전트(Setup Guide 문서, 코드 변경 없는 순수 문서 작업)에 위임. 서로 다른 파일이라
+병렬 진행 가능. GitHub #2 요청1은 installer 레지스트리 등록까지 포함해 "주요 기능 추가"
+수준으로 판단 — 검증 단계에서 실제 빌드된 installer로 골든패스(더블클릭 연결 동작,
+기존 프로젝트 마이그레이션, 언인스톨 시 레지스트리 정리)까지 확인 권장. Setup Guide는
+문서만 바뀌므로 사실관계 재검증 수준으로 충분.
+
+---
+
+## 2026-08-29 — GitHub #22(신규) + #16 후속(코드리뷰 발견) 스코프 산정
+
+### 배경
+GitHub 신규 이슈 #22("installer로 설치 시 기존 버전 있는지 체크 필요", 원문 매우 짧음)와,
+오늘 광범위 회귀 스캔 코드리뷰에서 발견된 GitHub #16 후속 항목(retry 헬퍼가 3곳에만
+적용되고 같은 부류의 무보호 쓰기 경로 4곳이 남아있음) 2건의 스코프 산정 위임.
+
+### 한 일
+- **GitHub #22**: `installer/setup.iss` 전체 확인 — `[Code]` 섹션 자체가 없어 기존 설치
+  여부를 사용자에게 안내하는 로직이 전혀 없음을 확인. 단, `AppId`가 고정 GUID라 Inno
+  Setup 기본 업그레이드 동작(같은 폴더 덮어쓰기)은 이미 작동 중이라 "완전 무방비"는 아님을
+  명시. Inno Setup 표준 패턴(`InitializeSetup()` + `RegQueryStringValue`로 언인스톨
+  레지스트리 키 조회 + `MsgBox` 안내)으로 설계 — 실측 근거가 필요한 기술 선택이 아니라
+  공식 문서 수준의 정석 패턴이라 스파이크 불필요로 판단. `PrivilegesRequired=lowest`
+  확인 근거로 레지스트리 루트는 `HKA`(GitHub #2 요청1 설계와 동일 원칙) 사용 명시.
+  `QA.md` BUG-016(P3, Open, 무인 제거 후 설치폴더/로그 잔존)과의 상호작용을 검토 —
+  "기존 버전 자동 제거 후 재설치" 방식을 택하면 구버전 언인스톨러 실행 과정에 BUG-016이
+  직접 끼어들어 함께 고려해야 하지만, "경고만 하고 계속" 방식이면 무관하게 독립적으로
+  처리 가능함을 확인. 원문만으로 사용자가 원하는 정확한 동작(경고만/자동제거후재설치/
+  구버전 설치거부)을 판별할 수 없어 **결정 대기 등록**, 최소 리스크안(경고만)을 권장으로
+  제시. zone 브랜치는 별도 `installer/setup.iss`(별도 AppId)를 쓰지만 설계 패턴 자체가
+  `#define` 매크로만 사용해 그대로 이식 가능함을 확인(이번 라운드는 main만 수정).
+- **GitHub #16 후속**: `app/widgets/export_dialog.py`의 `_copy_with_retry()`(모듈 레벨
+  함수, 커밋 `6ecee43`)를 확인 후 나머지 4개 지점(`import_dialog.py:79`,
+  `image_browser.py:83,348`, `annotation_store.save()`, `trainer.py:382,389`)을 전부
+  직접 읽고 현재 보호 수준을 표로 정리. `image_browser.py:83`은 `except Exception:
+  skipped += 1`로 실패 원인 구분 없이 조용히 스킵하는 게 재시도와는 별개의 관찰성 버그임을
+  식별해 분리 처리(동작 변경 없이 로그만 추가)하도록 명시 — task brief가 명시적으로 경계
+  지은 대로 재시도 범위를 억지로 넓히지 않음. `annotation_store.py`의 기존
+  `set_ok_and_clear_annotations()`(temp파일+`os.fsync`+`os.replace` 원자적 쓰기)를
+  재사용 가능한 기존 관례로 확인 — 이를 일반화해 신규 최소 모듈 `app/core/file_io.py`에
+  제네릭 헬퍼 2개(`retry_on_permission_error`, `atomic_write`)로 뽑아 5개 호출부가 재사용
+  하도록 설계. `shutil.copy2` 4곳은 원자적 쓰기까지 적용하지 않고 retry만 적용하도록
+  결정(대용량 이미지 복사에 임시파일 경유 이중 I/O를 붙일 실익이 낮음, YAGNI) —
+  `annotation_store.save()`(가장 빈번한 쓰기 경로)와 `trainer.py` 체크포인트 저장(torch.save)
+  에만 `atomic_write` 적용. `trainer.py`의 `training_metrics.json` write_text(396행
+  부근)도 같은 무보호 패턴임을 추가로 발견했으나 task brief 범위 밖이라 이번 라운드에서는
+  손대지 않기로 결정(기록만 남김). CLAUDE.md "core는 예외를 그대로 raise" 원칙을 헬퍼
+  설계에 명시 반영(재시도 소진 시 원래 예외 그대로 raise).
+- 스펙 문서 신설: [docs/specs/github-issue-22-and-16-followup-2026-08-29.md](../specs/github-issue-22-and-16-followup-2026-08-29.md)
+  — 두 항목 각각 문제정의·코드근거·설계·결정필요사항(#22만)·구현대상파일·검증골든패스
+  정리.
+- `docs/decisions-needed.md`에 1건 등록(#22 3택). #16 후속은 결정 없이 바로 구현
+  가능하다고 명시.
+- `docs/roadmap.md`에 "GitHub #22 + #16 후속" 절 신설(2개 항목 체크박스, 병렬 가능
+  명시).
+- 코드는 건드리지 않음. Write/Edit는 스펙 신설 1건, `decisions-needed.md`/`roadmap.md`/
+  본 로그 갱신에만 사용. 시작 전 `git status` 확인(`docs/USER_MANUAL.md` uncommitted
+  변경, `.worktrees/` 미추적 — 이번 작업과 무관, 건드리지 않음).
+
+### 상태
+완료 — 다음: 리더가 사용자에게 `docs/decisions-needed.md`의 #22 결정(3택) 확인 후
+`installer/setup.iss` 수정 위임. #16 후속은 결정 없이 바로 구현 에이전트에 위임
+가능(신규 `app/core/file_io.py` + 5개 파일 수정, 가장 빈번한 쓰기 경로
+`annotation_store.save()`를 건드리므로 구현 완료 후 실행 확인 필수, 주요 기능 추가는
+아니라 골든패스 수준까지는 불필요하되 회귀 확인은 꼼꼼히 요청).
