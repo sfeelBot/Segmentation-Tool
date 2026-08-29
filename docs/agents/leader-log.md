@@ -5,9 +5,18 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-08-28] installer 시작 splash 구현.** QApplication과 준비 화면을 먼저
-> 표시한 뒤 핵심 라이브러리와 프로젝트 화면 로딩 단계를 안내하고 메인 창 준비 시 자동 종료.
-> 신규 테스트와 release 회귀 22개 통과. main `1.10.0` 미릴리스 범위에 포함.
+> **[최신, 2026-08-29] 세션 인계 캐치업 + push 완료.** 다른 세션/도구로 진행되던 작업
+> (라운드4 #12/#15/#16/#17, GitHub #23, 일괄 양품화, main/zone 버전관리 분리, installer
+> splash, Python 3.12 빌드 안정화 등)을 리더 로그·QA.md·decisions-needed.md로 재구성해
+> 파악. **`docs/USER_MANUAL.md`에 커밋되지 않은 손상된 변경 발견** — 실제 879줄 매뉴얼이
+> 이 프로젝트와 무관한(`installer.py --install`, `.env`, `models/` 등 존재하지 않는
+> 내용) 가짜 36줄 매뉴얼로 통째 교체돼 있었음. 사용자 확인 후 `git checkout`으로 원복
+> (다른 코드 변경 없음, 작업트리 클린 확인). 이후 로컬 main이 origin보다 1커밋
+> (`c984f7e`, Python 3.12 오프라인 installer 빌드 안정화) 앞선 상태를 사용자 확인 후
+> `git push origin main` 완료 — origin/main 최신화. `decisions-needed.md` 비어있음,
+> `QA.md` Open은 BUG-004/BUG-016(둘 다 P3) 뿐. 에디션 워크트리(`feature/zone-analysis-tab`
+> origin보다 6커밋 앞섬, `fix/zone-voc-4-connectivity`)는 이번 세션에서 손대지 않음 —
+> 별도 트랙으로 진행 중인 것으로 보여 참고만 함.
 
 *(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다)*
 
