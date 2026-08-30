@@ -47,7 +47,6 @@ from app.core.zone_metrics import (
 )
 from app.core.logger import get_logger
 from app.widgets.zone_canvas import ZoneCanvas
-from app.widgets.circle_detect_preview_dialog import CircleDetectPreviewDialog
 from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
 from app.widgets.icons import icon as svg_icon
@@ -89,8 +88,7 @@ class _ZoneInferenceWorker(QThread):
 
 
 def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
-    """플레인 RGB numpy 배열을 QPixmap으로 변환 — 추론 전 원본 미리보기 전용
-    (circle_detect_preview_dialog._rgb_to_qpixmap()과 동일 패턴, GH#14)."""
+    """플레인 RGB numpy 배열을 QPixmap으로 변환 — 추론 전 원본 미리보기 전용 (GH#14)."""
     rgb = np.ascontiguousarray(rgb)
     h, w, _ = rgb.shape
     qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
@@ -144,8 +142,9 @@ class ZoneAnalysisTab(QWidget):
         # ── 상단 툴바 (승인된 목업 순서, Artifact 984ea900 — 이번 세션엔 Artifact
         #    도구가 없어 스펙 문서 "승인된 UI 레이아웃" 절 서술을 그대로 따름):
         #    체크포인트 상태+열기 / ▶ 추론 실행 / 타겟클래스 / AI신뢰도 / 픽셀 threshold /
-        #    (민감도 — 자동검출의 파라미터라 바로 옆에 배치) / 자동검출 / 블랍삭제모드
-        #    / (오른쪽 끝) 오프라인 원 검출 테스트. 이미지 열기는 좌측 패널로 이동(C-1). ─
+        #    (민감도 — 자동검출의 파라미터라 바로 옆에 배치) / 자동검출 / 블랍삭제모드.
+        #    (오프라인 원 검출 테스트는 2026-08-30 요청으로 삭제됨.) 이미지 열기는
+        #    좌측 패널로 이동(C-1). ─
         # 두 줄로 분리(BUG-021 수정) — 한 줄에 다 욱여넣으면 최소폭이 1588px까지
         # 벌어져 MainWindow 코딩된 기본 크기(1280x800)를 조용히 무시하고 더 넓게
         # 뜸(main_window.py의 resize() 호출과 실제 동작이 어긋나는 버그였음).
@@ -264,11 +263,6 @@ class ZoneAnalysisTab(QWidget):
         toolbar_row2.addWidget(self._edit_toolbar)
 
         toolbar_row2.addStretch()
-        self._btn_offline_test = QPushButton("오프라인 원 검출 테스트…")
-        self._btn_offline_test.setToolTip(
-            "체크포인트 없이 이미지만으로 원 검출 알고리즘을 확인·튜닝합니다"
-        )
-        toolbar_row2.addWidget(self._btn_offline_test)
         root.addLayout(toolbar_row1)
         root.addLayout(toolbar_row2)
 
@@ -331,14 +325,16 @@ class ZoneAnalysisTab(QWidget):
         self._img_list.hide()   # count<=1 이면 숨김 — 단일 이미지 워크플로우 회귀 없음
         left_layout.addWidget(self._img_list, stretch=1)
 
-        # ── 배치 컨트롤 (3b) — 좌측 패널 하단 ────────────────────────────────
-        self._chk_apply_all = QCheckBox("1번째 이미지 원을 전체에 적용")
+        # ── 배치 컨트롤 (3b) — 좌측 패널 하단, 발견성 개선을 위해 그룹박스로 묶음 ──
+        self._batch_box = QGroupBox("존 일괄 적용")
+        batch_layout = QVBoxLayout(self._batch_box)
+        self._chk_apply_all = QCheckBox("기준 이미지의 존(원)을 전체 이미지에 일괄 적용")
         self._chk_apply_all.setChecked(True)   # 기본값 — 체크 해제 시 이미지마다 개별 자동검출
         self._chk_apply_all.setToolTip(
             "체크: 기준 이미지의 원을 나머지 전체에 그대로 적용\n"
             "해제: 이미지마다 원을 개별 자동 검출(민감도 슬라이더 값 사용)"
         )
-        left_layout.addWidget(self._chk_apply_all)
+        batch_layout.addWidget(self._chk_apply_all)
         self._btn_batch = QPushButton("▶ 선택 이미지 일괄 처리 (0장)")
         self._btn_batch.setEnabled(False)
         self._btn_batch.setToolTip(
@@ -346,7 +342,12 @@ class ZoneAnalysisTab(QWidget):
             "(Ctrl/Shift로 여러 장 고르면 그 부분집합만 처리 — 정확히 1장만 골라도 목록 전체가 "
             "처리됩니다. 1장만 확인하려면 그 이미지를 클릭해 캔버스에서 직접 확인하세요.)"
         )
-        left_layout.addWidget(self._btn_batch)
+        batch_layout.addWidget(self._btn_batch)
+        self._lbl_batch_condition = QLabel("필요 조건: 추론 실행 · 원 1개 이상 · 이미지 2장 이상")
+        self._lbl_batch_condition.setStyleSheet("color:#9ca3af; font-size:11px;")
+        self._lbl_batch_condition.setWordWrap(True)
+        batch_layout.addWidget(self._lbl_batch_condition)
+        left_layout.addWidget(self._batch_box)
 
         left.setMinimumWidth(180)
         left.setMaximumWidth(260)
@@ -395,7 +396,6 @@ class ZoneAnalysisTab(QWidget):
         self._target_name_edit.editingFinished.connect(self._on_target_changed)
         self._target_combo.currentIndexChanged.connect(self._on_target_changed)
         self._btn_detect.clicked.connect(self._on_auto_detect)
-        self._btn_offline_test.clicked.connect(self._on_open_offline_test)
         self._sensitivity_slider.valueChanged.connect(
             lambda v: self._lbl_sensitivity.setText(f"{v}%")
         )
@@ -870,43 +870,6 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.set_circles(circles)
         if not circles:
             QMessageBox.information(self, "검출 결과 없음", "원을 찾지 못했습니다. 민감도를 조절하거나 수동으로 추가하세요.")
-
-    # ── 슬롯 — 오프라인 원 검출 테스트 팝업 (R-A) ────────────────────────────
-
-    def _on_open_offline_test(self) -> None:
-        """체크포인트 준비 여부와 무관하게 항상 열 수 있는 독립 팝업 — 이 탭의
-        상태(이미지/체크포인트/추론결과)를 전혀 참조·변경하지 않는다(단, "메인 탭에
-        적용" 버튼을 눌러 dialog.exec()가 accept로 끝난 경우는 예외 — R3-5)."""
-        dialog = CircleDetectPreviewDialog(self)
-        if dialog.exec():
-            circles = dialog.result_circles()
-            if circles:
-                self._apply_circles_from_popup(circles, *dialog.result_image_size())
-
-    def _apply_circles_from_popup(
-        self, circles: list[tuple[float, float, float]], pop_w: int, pop_h: int
-    ) -> None:
-        """오프라인 검출 팝업에서 확정한 원을 메인 탭 캔버스로 라운드트립(R3-5).
-
-        팝업 이미지와 메인 탭 이미지 해상도가 다를 수 있어(다른 사진일 수 있음)
-        비례 스케일로 방어한다 — 배치 처리(3b)의 해상도 방어 로직과 동일한 근거.
-        """
-        if self._image_path is None or self._image_size == (0, 0):
-            QMessageBox.warning(self, "이미지 없음", "메인 탭에 이미지를 먼저 여세요.")
-            return
-        ref_w, ref_h = self._image_size
-        note = ""
-        if pop_w > 0 and pop_h > 0 and (pop_w, pop_h) != (ref_w, ref_h):
-            circles = _scale_circles(circles, (pop_w, pop_h), (ref_w, ref_h))
-            note = f" (해상도가 달라 비례 스케일 적용됨: {pop_w}x{pop_h} → {ref_w}x{ref_h})"
-        if self._canvas.get_circles():
-            reply = QMessageBox.question(
-                self, "원 덮어쓰기",
-                f"메인 탭에 이미 정의된 원이 있습니다. 팝업에서 가져온 원으로 교체할까요?{note}",
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-        self._canvas.set_circles(circles)
 
     # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
 

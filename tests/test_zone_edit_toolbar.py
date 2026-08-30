@@ -1,10 +1,13 @@
 """Zone 편집 도구와 patch/sliding-window 기본값 회귀 테스트."""
+import importlib
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
-from PyQt6.QtWidgets import QApplication
+import pytest
+from PyQt6.QtWidgets import QApplication, QGroupBox
 
 from app.tabs.inference_tab import InferenceTab
 from app.tabs.zone_analysis_tab import ZoneAnalysisTab
@@ -53,4 +56,35 @@ def test_diagonally_touching_pixels_are_separate_blobs() -> None:
 
     assert set(labels.ravel()) == {0, 1, 2}
     assert sorted(stats[1:, 4].tolist()) == [1, 1]
+
+
+def test_offline_circle_detect_test_feature_fully_removed() -> None:
+    """2026-08-30: 오프라인 원 검출 테스트 기능 삭제(사용자 요청) 회귀 확인."""
+    _app_ref = _app()
+    zone = ZoneAnalysisTab()
+    assert not hasattr(zone, "_btn_offline_test")
+    assert not hasattr(zone, "_on_open_offline_test")
+    assert not hasattr(zone, "_apply_circles_from_popup")
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.widgets.circle_detect_preview_dialog")
+    zone.close()
+
+
+def test_batch_apply_groupbox_present_and_still_gated() -> None:
+    """존 일괄 적용 발견성 개선(그룹박스) — 로직(_update_batch_button_state)은 그대로."""
+    _app_ref = _app()
+    zone = ZoneAnalysisTab()
+    assert isinstance(zone._batch_box, QGroupBox)
+    assert "존 일괄 적용" in zone._batch_box.title()
+    assert "존" in zone._chk_apply_all.text()
+    assert not zone._btn_batch.isEnabled()   # 초기: 원 없음 + 이미지 1장 이하
+
+    zone._img_list.load_files([Path("a.png"), Path("b.png")])
+    zone._update_batch_button_state()
+    assert not zone._btn_batch.isEnabled()   # 이미지는 2장이지만 원이 아직 없음
+
+    zone._canvas.set_circles([(10.0, 10.0, 5.0)])
+    zone._update_batch_button_state()
+    assert zone._btn_batch.isEnabled()   # 원 1개 이상 + 이미지 2장 이상 → 활성화
+    zone.close()
 
