@@ -262,13 +262,16 @@ class TrainerWorker(QThread):
             # ── Train ─────────────────────────────────────────────────────────
             model.train()
             train_loss = 0.0
+            batches_processed = 0
             data_time = 0.0
             train_time = 0.0
             batch_wait_start = time.perf_counter()
             last_batch_signal = 0.0
+            stopped_early = False
             for batch_idx, (images, masks) in enumerate(train_loader):
                 data_time += time.perf_counter() - batch_wait_start
                 if self._stop.is_set():
+                    stopped_early = True
                     break
                 train_step_start = time.perf_counter()
                 images = images.to(device, non_blocking=True)
@@ -282,6 +285,7 @@ class TrainerWorker(QThread):
                 scaler.update()
                 loss_value = loss.item()
                 train_loss += loss_value
+                batches_processed += 1
                 train_time += time.perf_counter() - train_step_start
                 now = time.monotonic()
                 if (now - last_batch_signal >= _BATCH_SIGNAL_INTERVAL_SECONDS
@@ -293,16 +297,21 @@ class TrainerWorker(QThread):
                     scheduler.step()
                 batch_wait_start = time.perf_counter()
 
-            # 현재 GPU batch는 안전하게 마친 뒤 즉시 epoch를 빠져나간다. 이전에는
-            # 중지 요청 후에도 validation·metric·checkpoint까지 계속 실행됐다.
-            if self._stop.is_set():
-                log.info("학습 중지 요청 반영 — validation 이전에 현재 작업 종료")
-                break
+            # 중지 요청 시 남은 학습 배치는 즉시 건너뛰어(응답성 유지) 지금까지
+            # 처리한 배치만으로 train_loss를 낸다. 다만 이 epoch을 통째로 버리지
+            # 않고 validation·metric·checkpoint 저장까지는 이어서 완료한다 —
+            # 그래야 1 epoch도 못 채우고 멈춰도 최소 1개는 항상 보존된다
+            # (BUG-026). 다음 epoch 시작은 루프 상단의 stop 체크가 막는다.
+            if stopped_early:
+                log.info("학습 중지 요청 반영 — 남은 학습 배치를 건너뛰고 "
+                         "지금까지의 결과로 validation·저장 진행")
 
-            if len(train_loader) > 0:
-                train_loss /= len(train_loader)
+            if batches_processed > 0:
+                train_loss /= batches_processed
 
             # ── Validation ────────────────────────────────────────────────────
+            # stop 요청 중이어도 validation은 (train과 달리 순전파만 하므로
+            # 비교적 짧다) 끝까지 돌려 이 epoch의 지표를 확보한다.
             model.eval()
             val_loss = 0.0
             val_start = time.perf_counter()
@@ -310,8 +319,6 @@ class TrainerWorker(QThread):
             metric_accumulator = StreamingSegmentationMetrics(self._num_classes)
             with torch.no_grad():
                 for images, masks in val_loader:
-                    if self._stop.is_set():
-                        break
                     images = images.to(device, non_blocking=True)
                     masks  = masks.to(device,  non_blocking=True)
                     with torch.autocast(device.type, enabled=use_amp):
@@ -321,10 +328,6 @@ class TrainerWorker(QThread):
                     metric_start = time.perf_counter()
                     metric_accumulator.update(preds, masks)
                     metric_time += time.perf_counter() - metric_start
-
-            if self._stop.is_set():
-                log.info("학습 중지 요청 반영 — validation 중 현재 작업 종료")
-                break
 
             if len(val_loader) > 0:
                 val_loss /= len(val_loader)
