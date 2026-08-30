@@ -16,7 +16,12 @@
 > 통합 검증(실제 QThread 골든패스, 응답성 실측, 스레드 아이덴티티 직접 확인)
 > 전부 통과 → 커밋 `73c6f32`(BUG-026)+`1c0b8c1`(BUG-027)+`ff6b8fa`(docs).
 > **QA.md Open은 BUG-004(P3) 하나만 남음 — 이번 세션에서 발견된 회귀/블로커
-> (BUG-026~031) 전부 Closed.** 다음: push → zone sync 브랜치 갱신(PR #30) 진행.
+> (BUG-026~031) 전부 Closed.** **push 완료**(`c984f7e..fe2a017`, origin/main 최신화).
+> **zone sync도 완료** — `sync/main-into-zone-analysis-tab-20260829` 브랜치를
+> 최신 main으로 fast-forward 후 push(2커밋→14커밋), PR #30에 변경 요약 코멘트
+> 추가. PR #30은 여전히 미병합(zone 쪽 세션/사용자가 병합 시점 결정) — 병합 시
+> append-only 문서 충돌은 "양쪽 다 살리기"로 해결 필요함을 코멘트에 명시해둠.
+> **현재 로컬/원격 완전히 동기화된 상태, 블로킹 이슈 없음.**
 
 > **[최신, 2026-08-30] GitHub #22(installer 기존버전 체크)+BUG-016 라운드 완전히
 > 종료.** 구현→검증에서 **컴파일 블로커 BUG-029(P0, Pascal Script `[` 줄시작 오파싱)**
