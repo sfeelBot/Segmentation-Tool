@@ -935,3 +935,64 @@ PR #18도 병합 완료된 상태에서 사용자가 GitHub 이슈 #13("존 분�
   적용하고 기존 원/블랍 상태와 같은 Undo 스택에서 LIFO 복원하도록 결정.
 - 학습 `random_crop`은 이미 기본값이라 코드 변경 없이 테스트로 고정하고, 추론과 Zone
   분석은 `findData("sliding_window")`로 기본 선택을 명시.
+
+---
+
+## 2026-08-30 — 존 분석 탭 요청2건 기획: 오프라인 원 검출 테스트 삭제 + 존 일괄 적용 발견성
+
+### 배경
+사용자 요청 2건: ① "지정된 존을 모든 이미지에 일괄 적용할 수 있는 버튼 지정해줘"
+② "오프라인 원 검출 인식 기능 삭제"(사용자가 명확히 확인, 판단 불필요). 리더가
+①에 대해서는 코드 조사로 (a)이미 있는 기능의 발견성 문제 vs (b)추론과 무관한 신규
+원 복사 기능 중 어느 쪽인지 판단해줄 것을, ②에 대해서는 `_scale_circles()` 등 공유
+로직을 실수로 같이 지우지 않도록 정확한 삭제 범위 확정을 위임함.
+
+### 한 일
+- **요청1**: `zone_analysis_tab.py`의 `_chk_apply_all`/`_btn_batch`/
+  `_on_batch_process()`를 전수 추적한 결과, `apply_to_all` 분기(체크 시)가
+  `_scale_circles(circles_ref, (ref_w, ref_h), (w, h))`로 기준 이미지 원을 대상
+  이미지 해상도에 비례 스케일해 그대로 적용하는 동작을 이미 정확히 수행 중임을
+  확인 — 사용자 원문("지정된 존을 모든 이미지에 일괄 적용")과 체크박스 툴팁
+  ("체크: 기준 이미지의 원을 나머지 전체에 그대로 적용")이 사실상 동일 표현.
+  **(b) 해석(추론 없이 원만 복사)은 채택하지 않음** — `_on_batch_process()`가 원
+  배치 직후 반드시 `result.class_map`(추론 결과)으로 존별 퍼센티지를 계산하는
+  구조라, 추론 없는 원 복사는 이 도구의 산출물(퍼센티지 테이블)을 만들지 못하는
+  반쪽 기능이고 사용자 원문에도 "추론 없이"라는 단서가 없어 YAGNI로 기각.
+  **결론: (a) 이미 있는 기능 — 신규 로직 불필요, 발견성만 개선.** `decisions-needed.md`
+  등록하지 않고 권장안(체크박스 라벨을 사용자 원문 단어로 조정, `QGroupBox`로
+  시각적 그룹화, 버튼 비활성 사유 상시 노출)을 스펙에 직접 명시.
+- **요청2**: `app/widgets/circle_detect_preview_dialog.py`(184줄 전체, `app/` 전체에서
+  이 파일을 import하는 곳이 `zone_analysis_tab.py` 한 곳뿐임을 grep으로 확인)와
+  `zone_analysis_tab.py`의 4개 지점(L50 import, L266-271 버튼 생성, L398 시그널 연결,
+  L876-909 `_on_open_offline_test()`+`_apply_circles_from_popup()`)을 정확한 삭제
+  대상으로 확정. `_apply_circles_from_popup()`은 task brief에 명시된 삭제 대상은
+  아니었으나, 유일한 호출부(`_on_open_offline_test()`)가 삭제되면 죽은 코드가 됨을
+  grep으로 재확인해 함께 삭제 대상에 포함(brief의 "관련 슬롯 ... 등"에 해당).
+  **`_scale_circles()`(R13-B가 통합한 공용 비례스케일 헬퍼)는 배치 적용
+  (`_on_batch_process`)이 계속 사용하므로 삭제 금지**임을 명시적으로 확인 —
+  `tests/test_zone_github_13_14.py`가 이 함수를 직접 단위 테스트하고 있어 삭제 시
+  기존 테스트가 깨진다는 근거도 함께 남김. `QA.md`에는 오프라인 기능을 완료로
+  기록한 항목이 없음(grep 0건)을 확인해 QA.md 정정은 불필요로 판단.
+- 스펙 문서 신설:
+  [docs/specs/zone-remove-offline-test-and-batch-apply-2026-08-30.md](../specs/zone-remove-offline-test-and-batch-apply-2026-08-30.md)
+  — 요청1 최종 해석+근거, 요청2 파일별 정확한 삭제 라인/함수 목록, 반드시 남겨야
+  할 공유 로직, 삭제 후 죽은 코드 없음 체크리스트, 검증 골든패스.
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절 갱신 — R-A/R3-5(오프라인 관련 완료 항목)에
+  "2026-08-30 정정: 기능 전체 삭제됨" 주석 추가(이력은 보존, 삭제 사실만 반영),
+  R13-B에도 라운드트립 경로 소멸 정정 문구 추가, 신규 하위 절
+  "오프라인 원 검출 테스트 기능 삭제(2026-08-30 요청)" 신설(체크박스 착수 대기).
+- `docs/decisions-needed.md` 갱신 없음 — 두 요청 모두 코드 근거로 충분히 판단이
+  좁혀져 사용자 확인 없이 바로 구현 가능하다고 결론.
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건 + `roadmap.md`/본 로그 갱신에만
+  사용. 작업 시작 전 워크트리가 `D:\segmentation model-zone-analysis-tab`
+  (`feature/zone-analysis-tab` 브랜치)임을 확인, main(`d:\segmentation model`)은
+  전혀 건드리지 않음.
+
+### 상태
+완료 — 다음: 리더가 구현 에이전트에 바로 위임 가능(결정 대기 없음). 구현 범위는
+`app/widgets/circle_detect_preview_dialog.py` 파일 삭제 +
+`app/tabs/zone_analysis_tab.py` 삭제 4곳(요청2) + 좌측 패널 체크박스/버튼 텍스트·
+그룹박스 개선(요청1, 저리스크) — 같은 파일이지만 겹치는 줄이 없어 한 에이전트가
+한 번에 처리 가능. 검증은 오프라인 기능 완전 제거 확인 + 요청1 배치 적용
+골든패스(공유 헬퍼 `_scale_circles()` 오삭제 없음 회귀 확인) + 기존 자동 테스트
+(`test_zone_github_13_14.py`/`test_zone_edit_toolbar.py`) 통과까지 필요.

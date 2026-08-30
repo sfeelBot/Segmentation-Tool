@@ -662,6 +662,9 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       조절/Delete 삭제 전부 크래시 없이 정상 동작), 재오픈 시 매번 새 인스턴스로 깨끗한
       초기 상태(stale 상태 없음), 하단 닫기/우상단 ✕ 둘 다 정상 종료. R1~R4 회귀 없음
       (체크포인트 로드+추론, 자동검출, 존 리스트, 블랍삭제 모드 토글). 버그 발견 없음.
+      **2026-08-30 정정 — 사용자 요청으로 기능 전체 삭제됨** (아래 "오프라인 원 검출
+      테스트 기능 삭제(2026-08-30 요청)" 절 참고). `circle_detect_preview_dialog.py`
+      파일 자체가 삭제 대상이라 이 항목의 산출물은 더 이상 존재하지 않는다. 이력만 보존.
 - [x] R-B — `raw_class_map`→`class_map` root-cause 수정 + Threshold UI(AI신뢰도
       `QSlider`+값라벨, 픽셀크기 `QSpinBox`) 추가 — 구현+독립검증 통과(2026-08-26, 커밋
       `22c9e60`). `_on_target_changed()`/`_current_target_mask()`의 마스크 소스를
@@ -837,6 +840,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       R3-1~R3-4 회귀(원편집·모드배타·Undo버튼·단일Excel wide시트·`MainWindow` 5탭 부팅)를
       전부 49개 assertion으로 재현·통과 확인(0 FAIL).
       **신규 기능 라운드3(R3-1~R3-5) 전체 구현+검증 완료.**
+      **2026-08-30 정정 — 사용자 요청으로 오프라인 팝업 기능 전체 삭제됨에 따라 이
+      라운드트립(`_on_open_offline_test()`/`_apply_circles_from_popup()`)도 함께
+      삭제됨** (아래 "오프라인 원 검출 테스트 기능 삭제(2026-08-30 요청)" 절 참고).
+      이력만 보존, 산출물은 더 이상 존재하지 않는다.
 
 ### GitHub 이슈 #13·#14 (2026-08-27 접수)
 
@@ -885,6 +892,42 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       손상 이미지 선택 시 이전 픽스맵 제거. "픽셀크기:"를 "픽셀 threshold:"로 변경.
 - [x] R13-B — #13 요구사항4 — 확정된 해석 A+B 병행 완료. 팝업→메인과 고정 원 배치의
       중복 비례스케일 공식을 `_scale_circles()`로 통합하고 두 단계 연속 스케일 회귀 테스트 통과.
+      **2026-08-30 정정** — 통합 당시엔 "팝업→메인 라운드트립"과 "배치 적용
+      (`_on_batch_process`)" 두 경로가 `_scale_circles()`를 공유했으나, 오프라인 팝업
+      기능 삭제로 라운드트립 경로 자체가 없어짐 — 현재는 배치 적용 한 경로만
+      `_scale_circles()`를 사용한다. 헬퍼 자체와 그 테스트(`tests/test_zone_github_13_14.py`)는
+      계속 유효하므로 삭제하지 않음.
+
+### 오프라인 원 검출 테스트 기능 삭제(2026-08-30 요청)
+
+기획 완료: [docs/specs/zone-remove-offline-test-and-batch-apply-2026-08-30.md](specs/zone-remove-offline-test-and-batch-apply-2026-08-30.md).
+사용자 요청 2건 — ① "지정된 존을 모든 이미지에 일괄 적용할 수 있는 버튼" ② "오프라인
+원 검출 인식 기능 삭제".
+
+- **요청1 판단: 신규 기능 아님** — `_chk_apply_all`+`_btn_batch`+`_on_batch_process()`의
+  `apply_to_all` 분기가 이미 정확히 "기준 이미지의 원을 나머지 전체에 비례 스케일
+  적용"을 수행 중임을 코드로 확인. 이 도구의 존재 이유(존별 결함 % 계산)상 원 배치가
+  추론 결과 없이 단독으로 의미를 갖지 못해(퍼센티지를 낼 수 없음) "추론과 무관한 순수
+  원 복사" 해석(b)은 채택하지 않음(YAGNI) — `decisions-needed.md` 등록 없이 발견성
+  개선(체크박스/버튼 라벨을 사용자 원문 단어로 조정, `QGroupBox`로 시각적 그룹화,
+  비활성 사유 상시 노출)만 권장.
+- **요청2(오프라인 원 검출 테스트 삭제)**: `app/widgets/circle_detect_preview_dialog.py`
+  파일 전체(184줄, 다른 곳에서 import하는 곳 없음 확인) + `zone_analysis_tab.py`의
+  `self._btn_offline_test`/`_on_open_offline_test()`/`_apply_circles_from_popup()`
+  (R3-5 라운드트립 구현, 유일한 호출부가 삭제 대상 슬롯이라 함께 죽은 코드가 됨)를
+  삭제 대상으로 확정. **`_scale_circles()`(비례 스케일 공용 헬퍼, R13-B 산출물)는
+  배치 적용 기능이 계속 쓰므로 삭제 금지** — 삭제 범위를 코드 근거로 정확히 구분함
+  (스펙 문서 "삭제 범위" 절 참고).
+- [x] 완료 — 구현+독립검증 통과(2026-08-30). `circle_detect_preview_dialog.py` 삭제,
+      `_btn_offline_test`/`_on_open_offline_test()`/`_apply_circles_from_popup()` 삭제 후
+      `app/`/`tests/` 전수 grep 0건 확인. `_chk_apply_all`+`_btn_batch`를
+      `QGroupBox("존 일괄 적용")`으로 묶고 안내 라벨(`_lbl_batch_condition`) 추가.
+      합성 이미지 2장(해상도 다름) + 더미 체크포인트로 `apply_to_all` 체크/해제 두
+      분기 모두 실제 배치 처리 실행까지 재현해 `_scale_circles()` 비례 스케일과
+      `ZoneBatchResultDialog` 결과 표시를 확인, 조건 미충족(이미지 1장/원 없음) 시
+      버튼 비활성도 확인. `pytest tests/test_zone_github_13_14.py
+      tests/test_zone_edit_toolbar.py`(14건) + `tests/` 전체(105건, `--basetemp` 지정
+      환경 이슈 우회) 통과.
 
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시

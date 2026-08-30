@@ -4061,3 +4061,52 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 - 공식 Windows cu128 호환 조합인 `torch 2.7.1`/`torchvision 0.22.1`을 고정하고,
   requirements와 CUDA 인덱스를 한 pip 명령에서 해석하도록 단순화했다.
 - zone installer/EXE 버전을 1.3.1로 갱신했다.
+
+## 2026-08-30 — 존 일괄 적용 발견성 개선 + 오프라인 원 검출 테스트 기능 삭제
+
+기획 문서 `docs/specs/zone-remove-offline-test-and-batch-apply-2026-08-30.md`(파일별
+정확한 삭제 라인 포함) 기준으로 2건 구현. 워크트리 `D:\segmentation model-zone-analysis-tab`
+(`feature/zone-analysis-tab`)에서만 작업, main 미접촉.
+
+### 요청1 — 존 일괄 적용 발견성 개선 (로직 변경 없음)
+- `app/tabs/zone_analysis_tab.py` 좌측 패널의 `_chk_apply_all`+`_btn_batch`를
+  `QGroupBox("존 일괄 적용")`(`self._batch_box`)으로 묶었다.
+- 체크박스 라벨 "1번째 이미지 원을 전체에 적용" → "기준 이미지의 존(원)을 전체
+  이미지에 일괄 적용"(사용자 원문 단어 반영).
+- 버튼 아래 상시 노출 라벨 `self._lbl_batch_condition`("필요 조건: 추론 실행 · 원
+  1개 이상 · 이미지 2장 이상") 추가 — 기존엔 툴팁에만 있던 활성화 조건을 화면에
+  바로 노출.
+- `_on_batch_process()`/`_update_batch_button_state()`/`_scale_circles()` 등 로직은
+  전혀 손대지 않음(순수 레이아웃/텍스트).
+
+### 요청2 — 오프라인 원 검출 테스트 기능 완전 삭제
+- `app/widgets/circle_detect_preview_dialog.py` 파일 전체 삭제.
+- `app/tabs/zone_analysis_tab.py`: import(L50), 버튼 생성 3줄(`_btn_offline_test`
+  +tooltip+addWidget, `toolbar_row2.addStretch()`는 유지), `clicked.connect` 연결,
+  슬롯 `_on_open_offline_test()`, 메서드 `_apply_circles_from_popup()`을 스펙 그대로
+  삭제. 죽은 섹션 헤더 주석("# ── 슬롯 — 오프라인 원 검출 테스트 팝업 (R-A) ──")도
+  같이 정리. 부수적으로 `_rgb_to_qpixmap()` 독스트링의 삭제된 모듈 참조 문구도
+  정리(코드 동작과 무관, 문서 정확성).
+- `_scale_circles()`(모듈 레벨 헬퍼)는 스펙 지시대로 보존 — `_on_batch_process()`의
+  `apply_to_all` 분기와 `tests/test_zone_github_13_14.py`가 계속 사용.
+- 죽은 코드 전수 확인: `grep -r "CircleDetectPreviewDialog\|circle_detect_preview_dialog\|_on_open_offline_test\|_apply_circles_from_popup\|_btn_offline_test" app/ tests/` → 소스 코드상 매치 0건(신규 테스트의
+  의도된 참조만 남음, 캐시된 `.pyc`는 삭제 후 재확인 시 사라짐).
+
+### 검증 (자체 실행, 최종 판정은 검증 에이전트 몫)
+- `tests/test_zone_edit_toolbar.py`에 신규 테스트 2건 추가:
+  `test_offline_circle_detect_test_feature_fully_removed`(버튼/슬롯/모듈 부재 확인),
+  `test_batch_apply_groupbox_present_and_still_gated`(그룹박스 텍스트 + 기존 활성화
+  조건 로직 회귀 없음 확인).
+- `build/venv/Scripts/python.exe -m pytest tests/test_zone_github_13_14.py
+  tests/test_zone_edit_toolbar.py -v` → 14 passed (기존 DLL 충돌 이슈 없음, venv
+  인터프리터 사용).
+- `QT_QPA_PLATFORM=offscreen python main.py` 부팅 스모크 — 임포트/속성 에러 없이
+  정상 기동 로그 확인(GPU 인식까지 정상 출력, timeout으로 강제 종료).
+- 직접 인스턴스화해 그룹박스 제목/체크박스 라벨/조건 라벨 한글 텍스트, 버튼 초기
+  비활성 상태 육안 확인(UTF-8 강제 출력으로 콘솔 cp949 깨짐과 무관함을 확인).
+
+### 상태
+구현 완료, **커밋하지 않음**(사용자 지시 — 검증 통과 후 리더가 커밋). 독립 검증
+에이전트의 확인 필요(GUI 실기동 골든패스 3번: 2장 이상 이미지 로드 → 원 정의 →
+일괄 처리 클릭 → `ZoneBatchResultDialog` 결과 확인은 자동 테스트로 대체하지 못한
+수동 확인 항목으로 남아있음).

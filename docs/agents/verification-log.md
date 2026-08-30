@@ -4643,3 +4643,163 @@ main 기준을 즉시 확인할 수 있음.
   torch/PyQt 선행 import 순서에 민감한 기존 테스트 환경 제약으로 판정했다.
 - 전체 `MainWindow` 무창 생성은 프로젝트 초기화 경로에서 40초 이상 대기해 중단했고,
   관련 탭들의 실제 생성·show·event 처리 스모크로 대체했다.
+
+## 2026-08-29 — Zone 브랜치 실동작 검증: pytest DLL 이슈 원인 규명 + MainWindow 지연 원인 규명 + build.bat 실전 빌드
+
+- 대상: `feature/zone-analysis-tab` 워크트리(`D:\segmentation model-zone-analysis-tab`), HEAD `07ffb86`.
+  main→zone sync PR #30(`sync/main-into-zone-analysis-tab-20260829`)은 미병합 상태 — 이번 검증은
+  요청대로 **병합 전 현재 상태 기준**으로 수행. 코드 수정 없음(발견/재현/원인규명만).
+
+### 1. `pytest tests/` 전체 실행 — DLL 0xc0000139 원인을 "두 zone 파일 조합"보다 더 좁게 규명
+
+- **Anaconda python(`C:\Users\Feel\anaconda3\python.exe`, torch 2.11.0+cu128 — installer 1.10.5
+  검증(2026-08-28)에서 이미 `c10.dll WinError 1114`로 문제가 확인돼 배제 결정된 버전)** 로 실행 시:
+  - `test_zone_edit_toolbar.py`+`test_zone_github_13_14.py` 조합, **그리고 `pytest tests/` 전체
+    (14개 파일)** 둘 다 `Windows fatal exception: code 0xc0000139`(QtSvg/QtTest DLL) 재현.
+  - 전체 실행에서는 최초 크래시 이후 프로세스 내 Qt 상태가 오염돼 `test_github_issue_23.py`,
+    `test_labeling_multi_ok.py`, `test_training_data_lock.py`, zone 2개 파일까지 **총 5개 파일이
+    연쇄로 collection 실패**(`Interrupted: 5 errors during collection`, 0 tests executed) —
+    2026-08-28 기록의 "두 zone 파일만" 보다 실제 영향 범위가 훨씬 넓음을 확인.
+  - 근본 원인: `test_zone_github_13_14.py`의 `from PyQt6 import QtSvg  # Windows DLL load order
+    before torch imports` 가드는 "이 프로세스에서 아직 아무도 torch를 로드하지 않았을 때"만
+    유효한데, 알파벳순 pytest 수집 순서상 `test_zone_edit_toolbar.py`(→ `app.tabs.inference_tab`
+    임포트 체인이 torch를 먼저 로드)가 항상 먼저 실행돼 가드가 무력화됨. 실측:
+    `from app.tabs.inference_tab import InferenceTab` 직후 `'torch' in sys.modules == True`.
+    조합 순서를 반대로(`test_zone_github_13_14.py` 먼저) 실행하면 크래시 없이 12 passed —
+    순서 의존성 가설을 직접 재현으로 확인.
+- **프로젝트 지정 빌드 venv(`build/venv`, `requirements.txt` 그대로 `torch==2.7.1+cu128` +
+  `PyQt6==6.7.1`)로 동일 테스트를 재실행하면 위 크래시가 전혀 재발하지 않음** — 두 zone 파일
+  조합(12 passed)과 `pytest tests/` 전체(14개 파일, **103 passed**, 0 error)가 **한 프로세스에서
+  예외 없이 전부 통과**. 단, 공유 임시 디렉토리 `C:\Users\Feel\AppData\Local\Temp\pytest-of-Feel`가
+  이 자동화 셸에서 `PermissionError`/`icacls`조차 거부되는 상태였음(앱·코드와 무관한 샌드박스/
+  동시 실행 아티팩트로 판단) — `--basetemp`로 우회해 확인.
+- **결론**: 0xc0000139는 zone 코드나 테스트 자체의 결함이 아니라 **검증에 사용한 파이썬
+  인터프리터가 프로젝트가 지정한 torch 버전(2.7.1)이 아닌 다른 torch 빌드(2.11.0, 이미 DLL
+  문제로 배제 결정된 버전)를 쓸 때만 재현**된다. `requirements.txt` 그대로의 빌드 venv를 쓰면
+  "두 파일을 나눠 돌려야 하는" 제약 자체가 사라진다 — CI/실사용 환경에는 영향 없을 것으로 판단.
+  다만 로컬 개발자가 우연히 다른 torch가 깔린 인터프리터로 pytest를 돌리면 재발할 수 있으므로,
+  "pytest는 반드시 `build\venv`(또는 동등한 pinned 의존성) 인터프리터로 실행"이라는 암묵적
+  전제를 리더에게 보고(코드 수정·문서화는 이번 범위 밖, 관찰만).
+
+### 2. MainWindow 40초+ 지연 — 프로파일링 결과: 초기화는 빠름, 원인은 이 자동화 셸의 이벤트 루프 문제
+
+- `main.py`와 동일 순서(torch → QApplication → 프리로드 → `project.open_existing`(nok, 실제
+  57MB BMP 5장) → `project.set_current` → `import app.main_window` → `MainWindow()` → `show()`)로
+  단계별 `time.perf_counter()` 계측 스크립트를 작성해 anaconda python으로 실행.
+- 실측: `start`~`MainWindow() 생성 완료`까지 **2.222초**, 그중 `MainWindow()` 생성자 자체(라벨링/
+  학습/추론/모델/존분석 5개 탭 전부 구성 포함)는 **0.243초**, `show()`+`processEvents()` 1회까지
+  합쳐도 **2.244초**. **40초 이상 걸리는 구간은 어디에서도 관측되지 않음.**
+- `app.exec()` 이벤트 루프까지 포함해 재현 시도: `QTimer.singleShot(3000, app.quit)`으로 3초 뒤
+  자동 종료를 예약했음에도 **60초 넘게 `app.exec()`에서 리턴하지 않아 강제 kill 필요**했음 — 이
+  오프스크린 자동화 셸에서는 Qt 타이머 이벤트 자체가 펌프되지 않아 `app.exec()`가 영원히 대기
+  상태로 남는 것으로 확인. R1~R3 검증 로그(2026-08-19/20)에 이미 반복 기록된 동일 현상
+  ("`QTimer.singleShot`으로 예약한 자동 종료가 트리거되지 않고 계속 대기 상태로 남아 타임아웃
+  처리")과 정확히 일치.
+- **판정**: 2026-08-28 기록의 "전체 `MainWindow` 무창 생성이 프로젝트 초기화 경로에서 40초 이상
+  대기"는 **MainWindow 생성·프로젝트 초기화 자체의 성능 문제가 아니라, 검증 스크립트가
+  `app.exec()`까지 진입했고 이 환경이 이벤트 루프를 정상적으로 펌프하지 못해 자동 종료 타이머가
+  발화하지 않은 채 외부 타임아웃(약 40초로 설정돼 있었을 것으로 추정)에 걸려 강제 중단된 것**으로
+  판단됨(동일 무한 대기 패턴을 재현 스크립트로 재확인). **실제 사용자 체감 기동 속도에 영향
+  없음 — 성능 문제 아님, 심각도 없음, QA.md 미등록.** 향후 검증 시 `app.exec()` 없이
+  `MainWindow()` 생성+`show()`+필요한 `processEvents()`까지만 확인하면 이 함정을 피할 수 있음
+  (R1~R3는 이렇게 처리해왔고, 08-28 라운드만 예외적으로 이 확인 없이 "40초"를 기록한 것으로 보임).
+
+### 3. zone `build.bat` 실전 빌드 — 처음부터 끝까지 완주 확인
+
+- `build/venv` 없는 최초 상태(zone 워크트리는 main과 별도 디렉터리라 공유되지 않음)에서
+  `MSYS_NO_PATHCONV=1 ./build.bat` 직접 실행(과거 로그가 남긴 Git Bash `cmd /c` 인자 소실 함정
+  회피): 시스템 `py -3.12`로 venv 생성 → `torch==2.7.1+cu128`/`torchvision==0.22.1+cu128`/
+  `PyQt6==6.7.1` 등 `requirements.txt` 전체 설치(에러 없이 완료) → PyInstaller onedir 빌드 →
+  Inno Setup 6 컴파일(611.4초)까지 **`build.bat` 전체를 실제로 끝까지 완주**, 산출물
+  `installer\output\SegmentationModelUIZone-Setup-1.3.1.exe`(2,146,844,413 bytes) 생성 확인.
+- `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=E:\zone_install_test_1.3.1` 무인 설치 →
+  설치 로그 "Installation process succeeded" 확인, 제품명 "Segmentation Model UI - Zone
+  Analysis"(main installer와 구분됨), Start Menu 바로가기 정상 생성.
+- 설치된 `SegmentationModelUIZone.exe` 직접 실행 → 프로세스 정상 기동, 메모리 458MB→802MB(실제
+  `nok` 프로젝트 로드 반영), **2분 이상 크래시 없이 유지**(요구된 20초를 크게 상회) 확인.
+- 실제 화면 캡처(PowerShell `System.Drawing` 스크린샷 + Win32 `mouse_event` P/Invoke로 실제 마우스
+  더블클릭/클릭)로 골든패스 확인: 프로젝트 선택 다이얼로그(한글 정상 렌더링, 최근 프로젝트 `nok`
+  등 목록 정상) → `nok` 항목 더블클릭으로 프로젝트 열기 → `MainWindow`(라벨링/학습/추론/모델/
+  **존 분석** 5탭) 정상 렌더링, 라벨링 탭에 실제 이미지 5장·클래스(`background`/`object`)·
+  어노테이션 목록까지 정상 표시 → **존 분석 탭 클릭 진입**해 체크포인트 선택 버튼, 추론 실행,
+  `sliding window` 모드 콤보, AI 신뢰도/픽셀 threshold/민감도 슬라이더, 자동 검출 버튼, 브러시
+  툴바(2행 레이아웃 — BUG-021 수정 반영 확인), 검출된 원 목록 패널, 존별 타겟 클래스 비율 패널,
+  Excel 내보내기 버튼까지 전부 **크래시·시각적 깨짐 없이 정상 렌더링**됨을 스크린샷으로 확인.
+- 프로세스 강제 종료 → `unins000.exe /VERYSILENT` 무인 제거 → 설치 폴더·실행파일 전부 삭제되고
+  사용자 `data/`만 잔존(설계대로) 확인 → `E:\zone_install_test_1.3.1` 테스트 폴더 전체 정리 완료.
+
+### 4. sync PR #30 미병합 상태 확인
+
+- `git log --oneline -5` 최신 커밋이 `07ffb86`로 sync 커밋 미포함 — 이번 검증은 요청대로 병합
+  전 기준으로 수행함. 병합 후 재검증은 이번 범위 밖.
+
+### 부수 발견 (버그 아님, 참고용)
+
+- 이번 세션 중 `pytest tests/` 전체 실행 과정에서 `data/annotations/b.json`(빈 4×4 "b.png"
+  픽스처)이 zone 워크트리 루트에 생성됨 — 어떤 테스트가 프로젝트 미설정 상태의 fallback 경로
+  (`data/annotations/`)에 실제로 쓴 것으로 보임(R3 검증 로그 2026-08-19에 이미 동일 패턴 기록:
+  "검증 스크립트 자체가 만든 부산물"). 이번 세션의 샌드박스 권한 정책상 `rm`이 차단돼 직접
+  삭제하지 못함 — git에는 영향 없음(`.gitignore`가 `data/images/`, `data/logs/`,
+  `data/settings.json`만 명시하고 `data/annotations/`는 빠져 있어 `git status`에 untracked로만
+  표시되고, 커밋 규칙상 `git add -A`/`git add .` 금지라 실수로 커밋될 위험은 낮음). 리더/사용자가
+  편할 때 `D:\segmentation model-zone-analysis-tab\data\annotations\b.json` 수동 삭제 권장.
+
+### 판정
+
+**통과.** zone 브랜치는 병합 전 현재 상태로 정상 동작한다 — pytest 전체 스위트는 프로젝트가
+지정한 의존성(빌드 venv)으로 실행하면 분할 없이 한 번에 통과하고, MainWindow 초기화는 실측
+2.2초로 빠르며 이전에 보고된 "40초 지연"은 자동화 셸의 이벤트 루프 한계였을 뿐 실제 성능
+문제가 아니고, `build.bat`은 실제로 zone installer exe를 끝까지 생성해 무인 설치·20초+ 기동
+유지·존 분석 탭 실제 조작까지 크래시 없이 확인됐다. 신규 코드 버그 발견 없음(QA.md 변경 없음).
+
+## 2026-08-30 — 존 일괄 적용 발견성 개선 + 오프라인 원 검출 테스트 삭제 검증
+
+기획 `docs/specs/zone-remove-offline-test-and-batch-apply-2026-08-30.md`, 구현
+`implementation-log.md`(2026-08-30) 기준. 워크트리
+`D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab`)에서 독립 재검증.
+
+### 1. pytest 독립 재실행
+- `build/venv/Scripts/python.exe -m pytest tests/test_zone_github_13_14.py
+  tests/test_zone_edit_toolbar.py -v` → **14 passed**(구현자 보고와 동일, 독립 재현).
+- `tests/` 전체 → 최초 실행 시 50건이 `PermissionError`(`C:\Users\...\Temp\pytest-of-Feel`
+  락, 이번 변경과 무관한 환경 문제)로 ERROR — `--basetemp`을 스크래치패드로 지정해 재실행하니
+  **105 passed, 0 failed**. 회귀 없음.
+
+### 2. 오프라인 기능 완전 삭제 확인
+- `git status`로 `app/widgets/circle_detect_preview_dialog.py` 삭제(deleted) 확인, 실제
+  파일시스템에도 없음.
+- `grep -rn "circle_detect_preview_dialog\|CircleDetectPreviewDialog\|_on_open_offline_test\|_apply_circles_from_popup\|오프라인 원 검출" app/` → 코드 매치 0건. 단, L146 근처에 상단 툴바
+  레이아웃을 설명하는 **주석**(과거 순서 서술, "오프라인 원 검출 테스트" 문구 포함)이 그대로
+  남아있음 — 기능적 영향 없는 죽은 주석(버그로 등록하지 않음, 리더 판단 시 정리 권장).
+- `ZoneAnalysisTab` 실제 인스턴스화 후 `findChildren(QPushButton)`으로 전수 검색 —
+  "오프라인" 텍스트를 가진 버튼 0개, `hasattr(tab, "_btn_offline_test")` False. 화면
+  캡처(`tab.grab()`)로도 툴바 2번째 줄 우측에 버튼이 없음을 시각 확인.
+
+### 3. 일괄 적용 골든 패스 — 실제 배치 실행까지 재현
+합성 이미지 2장(200×200, 400×400 — 해상도 다르게 하여 `_scale_circles` 비례 스케일이
+실제로 필요한 상황 구성) + 더미 체크포인트 파일 + `engine.run`/`detect_circles` 몽키패치로
+end-to-end 스크립트 실행(구현자가 인스턴스화까지만 하고 실제 클릭 결과는 미확인이라고 보고한
+지점 보완):
+
+- **조건 미충족 케이스**: 추론 전(원 없음, `_last_result=None`) + 이미지 2장 → 버튼
+  비활성 확인. 이미지 1장뿐(원 있어도) → 버튼 비활성 확인.
+- **조건 충족 후 체크(기본값 True, "기준 이미지의 존(원)을 전체 이미지에 일괄 적용")**:
+  기준 이미지(img1)에 원 1개 정의 + 추론 결과·타겟 클래스 세팅 → 버튼 활성화 확인 →
+  `_on_batch_process()` 실행(다이얼로그는 스텁으로 가로채 rows 캡처) → img1(31.90%)과
+  해상도가 다른 img2(31.89%, `_scale_circles`로 반지름 100→60 등 비례 스케일된 원 적용)
+  양쪽 모두 존별 퍼센티지 행이 생성됨 확인. `ZoneBatchResultDialog(rows, ...)` 정상 호출.
+- **체크 해제 브랜치**(이미지마다 개별 자동검출): `_chk_apply_all.setChecked(False)` 후
+  동일 절차 실행 → `detect_circles()`가 이미지 수만큼(2회) 호출되고 결과 rows 생성 확인
+  (`_scale_circles` 미사용 경로도 정상).
+- `_scale_circles()`가 삭제되지 않고 정상 동작함이 위 결과로 자동 확인됨.
+
+### 4. UI 레이아웃
+- `ZoneAnalysisTab().grab()` 스크린샷으로 좌측 패널 `QGroupBox("존 일괄 적용")` 렌더링
+  확인 — 체크박스/버튼/조건 안내 라벨(`_lbl_batch_condition`, 2줄 word-wrap) 순서로
+  겹침·잘림 없이 배치됨. 버튼 비활성 시 회색조로 표시되고 그 아래 조건 라벨이 상시 노출됨
+  (툴팁 hover 불필요).
+
+### 판정
+**통과.** 두 요청 모두 스펙대로 구현됐고 회귀 없음. 이번 세션에서 신규 버그는 발견하지
+않음(오프라인 삭제 확인 중 발견한 죽은 주석 1건은 기능 영향 없어 QA.md 미등록, 위 2번 항목
+참고). `docs/roadmap.md`의 관련 항목([ ] 착수 대기 → [x] 완료)을 검증 에이전트가 갱신함.
