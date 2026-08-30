@@ -5,6 +5,19 @@
 
 ## 현재 상황 요약
 
+> **[최신, 2026-08-30] BUG-026(P1)/BUG-027(P2) 수정+검증 완료, push 대기.**
+> 사용자 지시("버그 수정 후 push 하고 zone 세션과 싱크 맞춰줘")에 따라 병렬
+> implementer 2개로 착수: **BUG-026** — `trainer.py`의 mid-batch stop이 epoch
+> 루프를 조기 탈출하던 것을 "남은 train 배치는 스킵(응답성 유지)하되 validation은
+> 항상 완주"로 수정해 부분 epoch도 체크포인트/지표가 저장되게 함. **BUG-027** —
+> `_colorize_and_blend()`가 `QPixmap` 대신 `QImage`를 반환하도록 바꾸고
+> `QPixmap.fromImage()` 변환을 GUI 스레드 전용 `_show_current_image()`로 이동,
+> `inference_engine.py`에서 `QPixmap` import 자체 제거(구조적 재발방지).
+> 통합 검증(실제 QThread 골든패스, 응답성 실측, 스레드 아이덴티티 직접 확인)
+> 전부 통과 → 커밋 `73c6f32`(BUG-026)+`1c0b8c1`(BUG-027)+`ff6b8fa`(docs).
+> **QA.md Open은 BUG-004(P3) 하나만 남음 — 이번 세션에서 발견된 회귀/블로커
+> (BUG-026~031) 전부 Closed.** 다음: push → zone sync 브랜치 갱신(PR #30) 진행.
+
 > **[최신, 2026-08-30] GitHub #22(installer 기존버전 체크)+BUG-016 라운드 완전히
 > 종료.** 구현→검증에서 **컴파일 블로커 BUG-029(P0, Pascal Script `[` 줄시작 오파싱)**
 > 발견 → 리더가 1줄로 직접 수정 → 재검증에서 **BUG-030(P1, `SetupSetting("AppId")`가
