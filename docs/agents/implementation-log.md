@@ -3073,3 +3073,127 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 직접 재현해 확인했지만, 별도 세션에서 `build.bat` 풀빌드 기준으로 동일 결과가 재현되는지,
 그리고 `SuppressibleMsgBox` 교체가 QA.md에 별도 항목(신규 발견)으로 기록되어야 하는지
 판단이 필요함.
+
+---
+
+## 2026-08-30 — BUG-026 수정: 학습 1 epoch 미완주 중지 시 전체 유실 회귀
+
+- **원인**: 커밋 `450f520`("학습 큐 중지 응답 개선")이 train 루프(개선 전 297~299행)와
+  validation 루프(개선 전 324~326행)에 각각 `if self._stop.is_set(): break`를 추가했는데,
+  두 곳 모두 `history.append()`/체크포인트 저장/`training_metrics.json`·`.png` 저장 **이전에**
+  epoch 루프 자체를 `break`시켜버려, 1 epoch도 완주하지 못하고 중지하면 아무것도 저장되지
+  않는 회귀였음(2번째 이후 epoch에서 멈추면 직전 epoch 결과는 보존 — 이건 기존에도 유지됨).
+- **수정** (`app/core/trainer.py`):
+  - train 배치 루프에서 stop 감지 시 `stopped_early = True` 플래그만 세우고 남은 배치를
+    건너뛰는 동작(응답성)은 그대로 유지.
+  - train 루프 직후에 있던 "stop이면 즉시 epoch 통째로 break" 블록을 제거 — 대신
+    `batches_processed`(실제 처리한 배치 수)로 `train_loss`를 정확히 평균 내도록 수정
+    (기존엔 `len(train_loader)`로 나눠 중지 시 평균이 왜곡됐던 부분도 함께 개선).
+  - validation 루프 내부의 mid-batch stop 체크와, validation 종료 직후의 "stop이면 break"
+    체크를 모두 제거 — validation은 순전파만 하므로 상대적으로 짧아 중지 요청 중이어도
+    끝까지 돌려 이 epoch(부분 epoch 포함)의 지표를 항상 확보하도록 함. 이렇게 하면
+    `history.append()`·체크포인트 저장·`training_metrics.json`/`.png` 저장까지 이 epoch에
+    대해 항상 실행되어 "언제 멈춰도 최소 1개는 남는다"는 기존 보장이 복원됨.
+  - 다음 epoch 시작 여부는 for 루프 최상단의 기존 `if self._stop.is_set(): break`가 그대로
+    막아준다(변경 없음) — 3중 체크였던 것을 1곳(루프 진입 시점)으로 정리.
+- **즉시 응답성은 회귀시키지 않음**: train 루프의 mid-batch stop 체크(남은 배치 스킵)는
+  그대로 유지 — `450f520`이 원래 고치려던 "중지 클릭 후 남은 배치를 계속 처리"하는 문제는
+  재발하지 않음. validation은 원래도(450f520 이전) 항상 완주했던 부분이라 변경 없음(=회귀
+  아님, 오히려 원복).
+- **테스트** (`tests/test_training_performance.py`, 합성 4장 이미지 데이터셋
+  `_TinyFourImageDataset` + `TrainerWorker._train()` 직접 호출, 기존
+  `test_stop_after_train_batch_skips_validation_and_checkpoint`는 버그를 그대로 검증하던
+  테스트였으므로 새 기대 동작으로 교체):
+  - `test_stop_mid_epoch_skips_remaining_batches_but_preserves_epoch` — 1번째 train 배치
+    직후 stop 요청 시: 남은 train 배치 2개는 건너뛰고(forward 호출 수로 확인) validation은
+    실행되며, 체크포인트(`*.pt`) 최소 1개 + `training_metrics.json`/`.png` 생성 확인
+    (BUG-026 핵심 재현 케이스).
+  - `test_training_completes_without_stop_saves_each_epoch` — 중지 없이 2 epoch 정상
+    완주 시 매 epoch 체크포인트·`training_metrics.json`(2건 history)가 그대로 저장되는지
+    확인(회귀 없음).
+  - `test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third` — 2번째
+    epoch 첫 train 배치에서 stop 요청 시: 1번째 epoch 결과는 기존대로 보존, BUG-026 수정
+    덕에 2번째(부분) epoch 결과도 추가로 저장되며, 3번째 epoch는 아예 시작되지 않음(응답성
+    +기존 보장 동시 확인, forward 호출 수로 "남은 배치 스킵" 재확인).
+  - `./build/venv/Scripts/python.exe -m pytest tests/test_training_performance.py -v
+    --basetemp=<scratchpad>` 5건 전체 통과. `tests/` 전체(`-q`, 같은 basetemp 우회) 89
+    passed / 1 unrelated flaky(`test_bug_027_worker_runs_off_gui_thread_and_returns_qimage`
+    — 단독 실행 시 통과, QThread 타이밍 이슈로 판단, 이번 변경과 무관) 확인. 기본
+    `tmp_path`(`C:\Users\Feel\AppData\Local\Temp\pytest-of-Feel`)는 이 환경에서 기존부터
+    `PermissionError`가 나는 환경 이슈(이전 세션 로그에도 동일 기록 있음) — `--basetemp`로
+    우회.
+- **범위 외 발견**: 작업 디렉토리에 이미 `app/core/inference_engine.py`,
+  `app/tabs/inference_tab.py`, `tests/test_github_issue_23.py`에 커밋되지 않은 변경이
+  있었음(BUG-027 관련으로 추정, 이번 작업 시작 전부터 존재) — 이번 BUG-026 작업에서는
+  건드리지 않았고 커밋 대상에서도 제외해야 함(리더 확인 필요).
+- 커밋: 하지 않음(사용자 지시 — 검증 통과 후 리더가 커밋). 변경 파일:
+  `app/core/trainer.py`, `tests/test_training_performance.py`.
+
+**검증 서브에이전트 확인 필요** — 코드 리뷰 + 위 3개 신규 테스트 실행 확인까지만
+수행했음. 실제 GUI(`TrainingTab`)에서 Stop 버튼을 눌러 1 epoch 미만 지점에서 중지했을 때
+체크포인트/그래프가 실제로 생성되는지 골든 패스 확인, 그리고 위에서 발견한
+`inference_engine.py`/`inference_tab.py`/`test_github_issue_23.py`의 미커밋 변경 처리 방향에
+대한 판단이 필요함.
+
+---
+
+## 2026-08-30 — BUG-027(P2) 수정: 추론 워커 스레드의 QPixmap 생성 제거
+
+- 대상: `app/core/inference_engine.py`, `app/tabs/inference_tab.py`,
+  `tests/test_github_issue_23.py`.
+- 세션 시작 시 위 세 파일을 다시 `Read`로 확인 — 직전 BUG-026 로그가 언급한 "미커밋 변경"은
+  이미 정리되어 원래 버그가 그대로 남아 있는 클린 상태였음(`overlay_pixmap: QPixmap`,
+  `_colorize_and_blend()`가 `QPixmap.fromImage()` 반환). 즉, 이번 수정은 처음부터 새로
+  적용한 것이며 이전 세션의 미확인 변경과는 무관.
+- **근본 원인**: `_InferenceWorker.run()`(백그라운드 `QThread`)이 `engine.run()` /
+  `engine.run_sliding_window()`를 호출하고, 이 함수들이 공유하는 `_colorize_and_blend()`가
+  `QPixmap.fromImage()`로 오버레이를 만들어 반환 → `QPixmap`(GUI 스레드 전용, 스레드
+  세이프하지 않음)이 워커 스레드에서 생성됨.
+- **수정**(모든 호출자가 거치는 공유 지점 하나만 고침 — 루트 코즈 픽스):
+  - `_colorize_and_blend()` 반환 타입을 `QPixmap` → `QImage`로 변경(마지막 줄
+    `return QPixmap.fromImage(qimg)` → `return qimg`). `inference_engine.py`에서
+    `QPixmap` import 자체를 제거해, 이 모듈이 구조적으로 QPixmap을 다룰 수 없게 만듦
+    (재발 방지).
+  - `InferenceResult.overlay_pixmap: QPixmap` → `overlay_image: QImage`로 필드명·타입
+    변경. `run()`/`run_sliding_window()`/`refilter()`가 이 필드를 채우는 지점 갱신.
+  - `reblend()` 반환 타입도 `QPixmap` → `QImage`로 통일(내부적으로 같은
+    `_colorize_and_blend()`를 호출하므로 자연히 따라옴).
+  - `inference_tab.py`: `_show_current_image()`에서 `result.overlay_image`
+    (QImage)를 받아 `QPixmap.fromImage()`로 변환하는 지점을 여기(GUI 스레드에서 실행되는
+    슬롯) 한 곳으로 이동. `_apply_opacity()`가 채우던 필드명도 `overlay_image`로 동기화.
+  - `_on_result_ready`는 워커의 `result_ready`(cross-thread 시그널, 자동으로 Queued
+    Connection)를 통해 이미 메인 스레드에서 실행되므로 별도 변경 불필요 — `_show_current_image()`
+    호출 시점에 QPixmap 변환이 일어나 안전.
+  - `_apply_opacity()`/`_apply_threshold()`(각각 `engine.reblend()`/`engine.refilter()`
+    호출)는 `QTimer.timeout`으로 이미 GUI 스레드에서 실행되던 경로 — 동작은 그대로 두고
+    타입만 QImage로 맞춤(회귀 없음).
+  - Excel 일괄 내보내기(`_export_all_images_to_excel()`)는 `engine.run()`을
+    "▶ Excel로 내보내기" 버튼 클릭 핸들러 안에서 `QApplication.processEvents()`로
+    직접 동기 호출 — 원래부터 GUI 스레드에서 실행되고 있었고 `result.blobs`만 사용해
+    `overlay_image`/`overlay_pixmap`을 쓰지 않으므로 영향 없음(확인만 하고 코드 변경 없음).
+- 다른 호출부 점검: `app/widgets/auto_label_dialog.py`, `app/core/auto_labeler.py`는
+  `inference_engine`에서 `InferenceResult`/`_colorize_and_blend`를 쓰지 않음(체크포인트
+  메타 함수만 사용) — 영향 없음 확인.
+- 테스트(`tests/test_github_issue_23.py`):
+  - 기존 5개 테스트를 새 `overlay_image: QImage` 계약에 맞게 갱신(`QPixmap(...)` →
+    `_blank_qimage()` 헬퍼, `.toImage()` 호출 제거 등).
+  - `test_inference_engine_never_touches_qpixmap` 신규 — `inference_engine` 모듈에
+    `QPixmap` 심볼 자체가 없음을 확인(재발 시 즉시 실패하는 구조적 가드).
+  - `test_bug_027_worker_runs_off_gui_thread_and_returns_qimage` 신규 — 실제
+    `_InferenceWorker.start()`로 백그라운드 `QThread`를 띄워 `engine.run()`이 메인
+    스레드가 아닌 스레드에서 실행됨을 `QThread.currentThreadId()`로 직접 확인하고,
+    결과 `overlay_image`가 `QImage` 인스턴스인지 검증. `result_ready`가 워커→메인
+    스레드로 Queued Connection되므로 `worker.wait()` 뒤 `QTest.qWait(50)`으로 이벤트
+    루프를 돌려 신호가 전달되도록 함(처음엔 이 부분을 빠뜨려 `results` 리스트가 비는
+    실패를 겪고 원인 파악 후 수정).
+- 검증: `build/venv/Scripts/python.exe -m pytest tests/test_github_issue_23.py -q` 9건
+  전체 통과. `pytest tests/ -q`(동일 venv, `--basetemp`로 환경 고유의
+  `pytest-of-Feel` 퍼미션 이슈 우회) 90건 전체 통과(회귀 없음).
+- 커밋하지 않음(사용자 지시 — 검증 통과 후 리더가 커밋). 세션 시작 시 이미 존재하던
+  `app/core/trainer.py`, `tests/test_training_performance.py`의 미커밋 변경(BUG-026,
+  이전 항목 참고)에는 손대지 않음 — 그대로 둠.
+
+**검증 서브에이전트 확인 필요** — 정적 검토 + 자동화 테스트(스레드 아이덴티티 직접 확인
+포함) 실행까지만 수행했음. 실제 `InferenceTab` 위젯으로 골든 패스(체크포인트 선택 → 배치
+추론 실행 → 오버레이 정상 표시 → 불투명도/threshold 슬라이더 조작 → Excel 내보내기)를
+조작해 회귀가 없는지 확인 필요.

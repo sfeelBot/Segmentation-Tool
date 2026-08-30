@@ -3285,3 +3285,97 @@ Inno Setup 컴파일이 100% 실패 — GitHub #22/BUG-016 신규 로직뿐 아�
 - GitHub #22(기존 버전 자동 업그레이드) 기능은 이번 라운드로 실사용 시나리오 기준 "완료"로
   판단해도 됨.
 - 커밋하지 않음(리더가 커밋 예정, 작업 지시).
+
+---
+
+## 2026-08-30 — BUG-026(P1)/BUG-027(P2) 독립 검증
+
+### 대상
+- `app/core/trainer.py`(BUG-026), `app/core/inference_engine.py` + `app/tabs/inference_tab.py`(BUG-027) —
+  서로 다른 파일, 병렬 구현. 구현자가 각자 pytest 자체 검증(89/90 passed)했다고 보고했으나
+  그대로 신뢰하지 않고 독립 재실행 + 통합 상태 재검증.
+
+### 1. `pytest tests/` 전체 독립 재실행
+- `build/venv/Scripts/python.exe -m pytest tests/ -q --basetemp=<scratchpad>`(구현자가 쓰던 것과
+  다른 `--basetemp`, 별도 세션) — **90 passed**. 두 수정이 합쳐진 통합 상태에서 상호작용 문제
+  없음을 확인.
+- `tests/test_github_issue_23.py`만 3회 연속 재실행(구현자가 "QThread 타이밍 이슈로 단독
+  실행 시 통과"라 언급한 플레이키 우려 확인차) — 3회 모두 **9 passed**, 이번 세션 기준 플레이키
+  재현 안 됨.
+
+### 2. BUG-026 골든 패스 — 실제 `TrainerWorker`(QThread) + 실제 프로젝트 디렉터리
+- 단위 테스트(`tests/test_training_performance.py`)는 `worker._train()`을 직접 호출하고
+  `SegmentationDataset`을 몽키패치한 것이라, **실제 QThread(`worker.start()`) + 실제 디스크
+  이미지/어노테이션 + 실제 `DataLoader`** 경로는 별도로 검증함. 스크래치패드에 임시
+  프로젝트(8장 합성 64×64 이미지 + polygon 어노테이션)를 만들고, `forward()`에 `time.sleep()`을
+  넣어 실제 배치 비용을 흉내낸 `SlowModel`로 3가지 케이스 실행:
+  - **케이스1(1 epoch 미완주 중지)**: 6 train + 2 val 배치 중 1번째 train 배치의
+    `batch_done` 신호를 받자마자 `request_stop()` 호출 → `epoch_0001.pt`/`best.pt`,
+    `training_metrics.json`(1 epoch history), `training_metrics.png` 모두 생성됨을 확인.
+  - **응답성**: 같은 환경에서 측정한 "중지 없이 완주" 베이스라인(5.51s) 대비 중지 케이스는
+    2.14s로 유의미하게 단축(베이스라인의 75% 미만) — 남은 train 배치를 실제로 스킵함을
+    시간 측정으로 확인. (참고: `batch_done`은 cross-thread queued 시그널이라 GUI 스레드가
+    이를 받아 `request_stop()`을 호출하는 시점에는 이미 다음 배치가 시작돼 있는 구조적 특성상
+    "요청 시점 이후 1개 배치는 추가로 완주"되는 지연이 있음 — 디버그 트레이스로 직접 확인.
+    이는 실제 사용자가 Stop 버튼을 아무 때나 누르는 시나리오와도 동일한 특성이며 회귀가
+    아님. 단위 테스트는 모델 `forward()` 안에서 동기적으로 `request_stop()`을 호출해 이
+    지연이 없는 이상적 케이스만 검증하므로, 이번 실측으로 실사용 지연 특성까지 별도 확인한
+    의미가 있음.)
+  - **케이스2(중지 없이 2 epoch 정상 완주)**: `epoch_0001.pt`/`epoch_0002.pt` 둘 다 저장,
+    `training_metrics.json` history가 `[1, 2]` — 회귀 없음.
+  - **케이스3(2번째 epoch 도중 중지)**: 1번째 epoch 결과 보존 + 2번째(부분) epoch 결과도
+    저장, `epoch_0003.pt`는 생성되지 않음 — 3중 체크 정리 후에도 다음 epoch 진입 차단이
+    정상 동작.
+- 결론: 정적 리뷰(단위테스트 3건, 실제 mid-batch stop 시나리오 정확히 재현)와 골든 패스
+  (실제 QThread·실제 디스크 I/O·응답성 실측) 모두 통과. 회귀 없음.
+
+### 3. BUG-027 골든 패스 — 실제 `InferenceTab` 위젯 + 실제 `_InferenceWorker` QThread
+- 스크래치패드에 임시 프로젝트(3장 합성 48×48 이미지) + 간단 `nn.Module` 체크포인트를 만들고
+  실제 `InferenceTab()` 위젯을 띄워:
+  - 체크포인트 테이블에 1건 자동 표시·자동 선택 확인, "▶ 추론 실행" 버튼 클릭(`_btn_run.click()`)
+    으로 실제 폴더 3장 일괄 추론 실행 → 3장 모두 `_results`에 채워지고 `overlay_image`가
+    `QImage` 인스턴스임을 확인. 현재 이미지 뷰어에 정상적으로 픽스맵 표시(`isNull()==False`).
+  - 불투명도 슬라이더 조작(`_slider.setValue(80)` → 75ms debounce 대기) 정상 동작, 크래시 없음.
+  - 최소 AI 점수 스핀박스 조작(`_min_conf_spin.setValue(10.0)` → 150ms debounce 대기)으로
+    `_apply_threshold()`(재필터링) 정상 동작, 크래시 없음.
+  - Excel 내보내기(`_export_current_to_excel()`, `QFileDialog.getSaveFileName` 스텁 처리) —
+    `.xlsx` 파일 실제 생성 확인.
+- **스레드 아이덴티티 직접 확인**: `engine.run`과 `engine._colorize_and_blend`를 스파이로
+  감싸 `threading.get_ident()`를 기록 — 실제 `_InferenceWorker.start()`로 백그라운드 QThread가
+  이 둘을 호출했고, 그 스레드 id가 GUI(메인) 스레드 id와 **다름**을 확인. `_colorize_and_blend`
+  반환값이 `QImage` 인스턴스임도 함께 확인(구조적 가드 `test_inference_engine_never_touches_qpixmap`
+  과 별개로, 실제 실행 경로에서 직접 재확인). `QPixmap.fromImage()` 변환은
+  `_show_current_image()`(GUI 스레드에서만 호출되는 슬롯) 안에서만 일어남을 코드상 확인 — 이
+  함수는 `_on_result_ready`(워커→메인 스레드 Queued Connection), 키 입력, opacity/threshold
+  타이머(둘 다 GUI 스레드) 경로로만 호출되므로 별도 스레드 위반 지점 없음.
+- 결론: 골든 패스(체크포인트 선택 → 배치 추론 → 오버레이 표시 → 불투명도/threshold 조작 →
+  Excel 내보내기) 전부 크래시 없이 통과. 스레드 분리도 실측으로 확인. 회귀 없음.
+
+### 4. `overlay_pixmap` → `overlay_image` 필드명 변경 영향 전수 확인
+- `grep -rn "InferenceResult|_colorize_and_blend|overlay_pixmap|overlay_image" app --include=*.py`
+  — main(`app/`) 범위에서 `InferenceResult`/`overlay_image`는 `app/core/inference_engine.py`,
+  `app/tabs/inference_tab.py` 두 곳에서만 사용됨. `app/widgets/auto_label_dialog.py`,
+  `app/core/auto_labeler.py`, 기타 어떤 모듈도 `InferenceResult`나 `overlay_pixmap`을 참조하지
+  않음 — 영향 없음 확인. (`overlay_pixmap` 문자열은 `.worktrees/`의 zone-analysis 에디션
+  브랜치 워크트리에만 남아있는데, 이는 별도 브랜치이자 이번 작업 범위 밖 — CLAUDE.md 규칙상
+  main → 에디션 동기화는 sync 브랜치+PR로 별도 처리.)
+
+### 5. 회귀 없음 확인
+- 위 pytest 전체 재실행(90 passed) + 골든 패스 양쪽에서 기존 정상 워크플로우(체크포인트 로드,
+  손실 그래프/지표 파일 저장, 추론 오버레이 표시, Excel 내보내기)에 문제 없음을 실행으로 확인.
+
+### 부수 발견 — 검증 스크립트가 실제 `data/settings.json`을 오염시킴
+- 골든 패스 스크립트가 `app.core.project.set_current()`를 호출하면서 실제 런타임
+  `data/settings.json`(gitignore 대상, git 추적 안 됨)의 `recent_projects`/`last_project`에
+  스크래치패드 임시 프로젝트 경로가 섞여 들어감을 뒤늦게 발견 — 검증 종료 후 해당 3개 임시
+  경로 항목만 제거하고 `last_project`를 검증 이전 상태(`D:\segmentation model\projects\nok`)로
+  복원함. 코드 변경이 아니라 검증 과정의 부작용이었음(이번 라운드의 BUG-026/027 자체와는 무관).
+
+### 결론
+- BUG-026(P1): **Closed** — 정적 리뷰 + 단위테스트 3건 + 실제 QThread 골든 패스(응답성 실측
+  포함) 모두 통과.
+- BUG-027(P2): **Closed** — 정적 리뷰 + 자동화 테스트(스레드 아이덴티티 포함) + 실제
+  `InferenceTab` 골든 패스(스레드 아이덴티티 실측 포함) 모두 통과. `overlay_pixmap` 잔존
+  참조 없음 확인.
+- `pytest tests/` 90 passed(독립 재실행, 통합 상태 상호작용 문제 없음).
+- 커밋하지 않음(리더가 커밋 예정, 작업 지시).
