@@ -504,7 +504,9 @@ class InferenceTab(QWidget):
         self._last_result = result
         reset_view = self._displayed_path != self._image_path
         if self._overlay_visible and result is not None:
-            self._viewer_panel.viewer.set_pixmap(result.overlay_pixmap, reset_view)
+            # overlay_image는 QImage (워커 스레드에서도 안전하게 생성됨) — QPixmap 변환은
+            # 반드시 여기, GUI 스레드에서만 수행한다.
+            self._viewer_panel.viewer.set_pixmap(QPixmap.fromImage(result.overlay_image), reset_view)
             self._update_legend(result)
         else:
             self._viewer_panel.viewer.set_pixmap(QPixmap(str(self._image_path)), reset_view)
@@ -526,7 +528,7 @@ class InferenceTab(QWidget):
         if self._last_result is None:
             return
         try:
-            self._last_result.overlay_pixmap = engine.reblend(
+            self._last_result.overlay_image = engine.reblend(
                 self._last_result, self._image_path, self._viewer_panel.opacity,
             )
             if self._image_path is not None:
