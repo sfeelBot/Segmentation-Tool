@@ -105,6 +105,9 @@ class ImageBrowser(QWidget):
         # Path → label status ("labeled"/"ok"/"unlabeled") — reload() 시 전체 재구축,
         # refresh_item() 시 단건 갱신. get_label_status() 의 JSON 재파싱 비용을 줄이기 위한 캐시.
         self._status_cache: dict[Path, str] = {}
+        # Path → 표시 순번(1부터) — _apply_display() 에서 재구축, refresh_item()/
+        # refresh_items() 의 단건 갱신 경로에서도 번호가 유지되도록 별도 보관.
+        self._path_to_number: dict[Path, int] = {}
         self._sort_mode: str = "name_asc"
         self._filter_text: str = ""
         self._import_worker: _FolderImportWorker | None = None
@@ -236,7 +239,7 @@ class ImageBrowser(QWidget):
             return
         icon_name, color = _STATUS_STYLE[status]
         item.setIcon(0, svg_icon(icon_name, color, _STATUS_ICON_SIZE))
-        item.setText(0, self._rel_name(path))
+        item.setText(0, self._numbered_label(path))
         item.setForeground(0, QColor(color))
 
     def refresh_items(self, paths: list[Path]) -> None:
@@ -250,7 +253,7 @@ class ImageBrowser(QWidget):
                     if item is not None:
                         icon_name, color = _STATUS_STYLE[status]
                         item.setIcon(0, svg_icon(icon_name, color, _STATUS_ICON_SIZE))
-                        item.setText(0, self._rel_name(path))
+                        item.setText(0, self._numbered_label(path))
                         item.setForeground(0, QColor(color))
         if self._sort_mode not in ("name_asc", "name_desc"):
             self._apply_display()
@@ -466,6 +469,12 @@ class ImageBrowser(QWidget):
         except ValueError:
             return path.name
 
+    def _numbered_label(self, path: Path) -> str:
+        """현재 표시 순서 기준 "N. 파일명" 접두 라벨. 번호 미확정 시 파일명만 반환."""
+        num = self._path_to_number.get(path)
+        name = self._rel_name(path)
+        return f"{num}. {name}" if num is not None else name
+
     def _make_tree_item(self, path: Path,
                         display_name: str | None = None) -> QTreeWidgetItem:
         """이미지 경로로 QTreeWidgetItem 생성 (상태 아이콘 + 색상 적용).
@@ -475,7 +484,7 @@ class ImageBrowser(QWidget):
         """
         status = self._status_cache.get(path) or get_label_status(path)
         icon_name, color = _STATUS_STYLE[status]
-        label = display_name if display_name is not None else self._rel_name(path)
+        label = display_name if display_name is not None else self._numbered_label(path)
         item = QTreeWidgetItem()
         item.setIcon(0, svg_icon(icon_name, color, _STATUS_ICON_SIZE))
         item.setText(0, label)
@@ -524,6 +533,7 @@ class ImageBrowser(QWidget):
             ))
 
         self._paths = filtered
+        self._path_to_number = {p: i + 1 for i, p in enumerate(filtered)}
 
         # ── 트리 재구성 (시그널 차단) ─────────────────────────────────────────
         self._tree.blockSignals(True)
