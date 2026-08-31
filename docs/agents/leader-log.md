@@ -69,6 +69,18 @@
 > 전부 프롬프트에 포함해 위임. 스펙 산출물: `docs/specs/zone-blob-select-and-export-
 > 2026-08-31.md`. 완료 시 구현+디자인 병행 착수 예정.
 >
+> **[갱신, 2026-08-31] 기획 완료 → R1/R3 구현 병렬 착수, R2는 감사만으로 종료.**
+> planner(`a8386cdf84b2d3ae5`) 산출물: `docs/specs/zone-blob-select-and-export-
+> 2026-08-31.md`. **R2 결론: 이미 라벨링 탭과 구조적으로 동등(오히려 Undo 캡 없음·
+> 저장실패 알림 더 명시적이라 일부 우위) — 구현 불필요, 감사만으로 종료.** R1(추론 탭
+> 블랍 클릭 선택, `overlay_viewer.py`/`inference_engine.py`/`inference_tab.py`)과
+> R3(Zone Excel에 blob 크기+AI점수, 수동편집은 blob 평균으로 대체 —
+> `zone_metrics.py`/`zone_analysis_tab.py`/`zone_batch_result_dialog.py`)는 파일이
+> 겹치지 않아 implementer 2개를 병렬 기동(`a3accad59a8067192`=R1,
+> `a6a66cba72d95e270`=R3, 둘 다 백그라운드, 상세 설계를 스펙에서 그대로 따르도록
+> 지시, 자체 테스트 포함, push는 보류하고 커밋까지만). 둘 다 "주요 기능 추가"로
+> 분류돼 완료 후 실GUI 골든패스 검증 필요.
+>
 > **정리 안 된 잔여물(급하지 않음)**: `D:\segmentation model-zone-work`(브랜치
 > `leader-work-zone-20260830`)는 캐논 브랜치와 완전 중복으로 판명돼 병합 보류·사실상
 > 폐기 상태 — 삭제 여부는 사용자 결정 대기 없이 방치 중(급하지 않아 먼저 묻지 않음).
