@@ -4948,3 +4948,159 @@ end-to-end 스크립트 실행(구현자가 인스턴스화까지만 하고 실�
 - 회귀: QtSvg/QtTest 선로드 후 관련 4파일 `19 passed in 2.04s`, 전체 `116 passed in 5.16s`.
 - 검증 도중 자동화 스크립트의 안내/충돌 modal을 처음 두 번 처리하지 못해 검증 PID가 대기했다. 각 PID를 확인해 종료한 뒤 실제 버튼 role 클릭을 사용하는 작은 재현으로 재실행했으며 최종 잔류 프로세스 없음. 이는 앱 결함 판정에서 제외한다.
 - 판정: **통과**. GitHub #32의 GUI 비동기화·prepare 재사용·비누적 메모리, 충돌 정책, 상태 보존 및 BUG-027 수정이 독립 실행에서 모두 확인됐다.
+
+## 2026-08-31 — 종합 회귀 검증 (커밋 11dd001..115918d, 47개 커밋 범위, GitHub #34 포함)
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(브랜치 `feature/zone-analysis-tab`), HEAD
+`115918d`. 대상 범위: 리더 지시 `git log --oneline 11dd001..HEAD`(48개 커밋 — 지시서의
+"47개"는 리더가 직접 커밋한 `115918d` 자체를 포함하기 전 카운트로 추정, 이번 검증은
+`115918d` 포함 전체를 대상으로 함). Zone VOC 편집 도구화(원편집/브러시그리기/지우기/
+블랍삭제/팬 5모드 exclusive 툴바+Undo), GitHub #23(비동기 추론/sliding-window/F 토글),
+R-ZONE 계열(브러시 스트로크 rasterize 캐시, GPU 미가용 경고, "Zone 결정 방법" 3모드+
+사이드카 자동저장), GitHub #32(배치 병목+기존 존 충돌), main→zone sync를 사전에
+`docs/roadmap.md`/`docs/agents/implementation-log.md`/`docs/agents/verification-log.md`/
+`QA.md`로 먼저 파악. R-ZONE-1/R-ZONE-2/R-ZONE-3/GitHub #32/Zone VOC 편집 툴바/이미지
+리스트 순번 표시는 이미 별도 세션에서 독립 검증·통과가 기록돼 있어(2026-08-28~08-31
+verification-log 항목들), 이번 라운드는 (a) 리더가 방금 직접 수정한 GitHub #34의 재현·
+수정 확인을 최우선으로 하고, (b) 같은 패턴의 다른 버그가 없는지 전수 점검, (c) 이미 검증된
+항목들은 회귀 여부만 짧게 재확인하는 방식으로 진행했다.
+
+### 1. GitHub #34 재현 + 수정 확인 (신규 실행, 최우선)
+
+커밋 `115918d`가 고친 `_show_overlay_state()`(`app/tabs/zone_analysis_tab.py`)의
+`InferenceResult.overlay_pixmap`(존재하지 않는 필드) → `overlay_image`(실제 필드,
+`QPixmap.fromImage()`로 변환) 수정을 독립 스크립트 3개로 재현·확인했다(스크래치
+디렉터리에서 `build/venv/Scripts/python.exe`로 실행, 저장소에는 남기지 않음).
+
+- **Part 0 (버그 재현)**: 옛 코드를 그대로 흉내낸 `overlay_pixmap` 참조 함수를 실제
+  `ZoneAnalysisTab` 인스턴스에 대해 호출 — `AttributeError: 'Result' object has no
+  attribute 'overlay_pixmap'`로 정확히 재현됨을 확인.
+- **Part 1**: 현재(수정 후) `_show_overlay_state()`를 단독 호출 — 예외 없이 성공,
+  `QPixmap.fromImage(overlay_image)`로 정확한 오버레이 픽셀이 반영됨을 확인.
+- **Part 2 (실제 골든패스)**: 타겟 클래스 2개(`id=1,2`)를 가진 합성 `InferenceResult`로
+  `_setup_target_classes()`→콤보박스 인덱스를 12회(6라운드×2클래스) 반복 전환하며
+  실제 `_on_target_changed()`를 호출 — `QMessageBox.critical` 호출 0건, 매 전환마다
+  캔버스 픽셀이 타겟 클래스에 맞는 색으로 정확히 갱신됨을 확인(수정 전이었다면 매번
+  재필터링이 실패해 오류 팝업만 뜨고 오버레이·존/블랍 재계산이 멈췄을 것). 실제
+  `currentIndexChanged` 시그널 경로로도 동일하게 크래시 없음을 재확인.
+- **Part 3 (F 토글)**: `QTest.keyClick(canvas, Key_F)`로 오버레이→원본→오버레이 왕복
+  토글이 각각 정확한 픽셀(원본 빨강 vs 오버레이 색)로 전환됨을 확인 — GitHub #23이 넣은
+  기능이 GitHub #34로 망가지지 않았음을 실증.
+
+판정: **GitHub #34 수정 확인, 통과.**
+
+### 2. 동일 패턴(잘못된 필드명 참조) 전수 점검
+
+`app/core/inference_engine.py`의 `InferenceResult` 실제 필드(`class_map`/`raw_class_map`/
+`confidence_map`/`overlay_image`/`class_stats`/`blobs`) 기준으로 `app/` 전체를 grep해
+`.raw_class_map`/`.class_map`/`.confidence_map`/`.overlay_image`/`.class_stats`/`.blobs`
+전체 호출부(`inference_tab.py`, `zone_analysis_tab.py`, `inference_engine.py` 자체)를
+대조 — 전부 정확한 필드명 사용, `overlay_pixmap` 등 동일 패턴의 다른 오타는 코드 전체에서
+0건(테스트 파일 3개는 이미 이번 커밋에서 수정 완료 확인). 신규 버그 없음.
+
+### 3. Zone VOC 편집 도구화 골든패스 (실제 QTest 재확인)
+
+실제 `ZoneAnalysisTab`/`ZoneCanvas` 인스턴스에 `QTest.mouseClick`으로 5개 툴바 버튼
+(`_edit_toolbar.widgetForAction()`으로 실제 `QToolButton` 획득)을 순서대로 클릭:
+brush_draw → brush_erase → blob_delete → pan → circle. 매 클릭마다 (1) 클릭한 액션만
+`isChecked()==True`이고 `QActionGroup`의 나머지 전부 `False`(배타 확인), (2)
+`ZoneCanvas._mode`가 기대값과 정확히 일치함을 확인 — 5모드 전부 통과.
+
+Undo: circle 모드에서 실제 `QTest.mousePress/mouseMove/mouseRelease` 드래그로 원을
+생성 → `Ctrl+Z`(`QTest.keyClick(canvas, Key_Z, ControlModifier)`)로 원이 제거됨을 확인
+→ 다시 원 생성 후 이번엔 Undo 툴바 버튼(`QTest.mouseClick`)으로 동일하게 제거됨을 확인
+→ 스택이 빈 뒤 `_act_undo.isEnabled()`가 `False`로 복귀함을 확인. 키보드(Ctrl+Z)와 버튼
+클릭 두 경로 모두 정상.
+
+판정: **통과.** (기존 2026-08-28 검증 로그의 "정적 검토+offscreen 생성 기반 확인"을
+이번엔 실제 `QToolButton` 클릭 + 실제 마우스 드래그 원 생성/Ctrl+Z/버튼 Undo로 한 단계
+더 실사용에 가깝게 재확인한 것 — 회귀 없음.)
+
+### 4. "Zone 결정 방법" 3모드 + 사이드카 자동저장 골든패스 (실제 파일 I/O)
+
+임시 디렉터리에 실제 PNG 2장(`img1.png`/`img2.png`)을 만들고, 실제
+`_on_list_image_selected()`(단축 우회 없이 그대로) 경로로 조작:
+
+1. img1 로드 → 실제 마우스 드래그로 원 1개 생성 → `_save_timer`(500ms 디바운스)가
+   활성화됨 확인.
+2. img2로 전환 → 전환 로직이 이전 이미지를 동기 flush하는 코드 경로를 타 즉시
+   `img1.zone.json` 사이드카가 실제 디스크에 생성됨을 확인(전환 전에는 파일 없음 →
+   전환 직후 존재 확인).
+3. img2는 사이드카가 없어 빈 캔버스로 시작함을 확인.
+4. img1로 복귀 → 원 1개가 정확한 좌표로 복원됨을 확인.
+5. **완전히 새로운 `ZoneAnalysisTab()` 인스턴스**(앱 재시작 상당)로 img1을 다시 열어도
+   동일하게 복원됨을 확인 — 디스크 영속화가 실제로 세션을 넘어 유지됨을 실증.
+
+판정: **통과.** (GitHub #32/R-ZONE-3 상세 3모드 분기·충돌 정책·배치 로직 자체는 이미
+2026-08-31 별도 세션에서 몽키패치 기반으로 매우 상세히(96+개 assertion, 진행률/취소/
+20MP 메모리 계측 포함) 독립 검증·통과가 기록돼 있어 이번엔 반복하지 않고, 이번 세션은
+실제 파일 I/O 기반 사이드카 왕복만 별도로 재확인함.)
+
+### 5. GitHub #32(배치 병목 + 기존 존 충돌 처리) 확인
+
+`implementation-log.md`/`verification-log.md` 2026-08-31 기록(`_ZoneBatchWorker(QThread)`
+이동, `prepare_inference()` 배치당 1회 재사용, `replace`/`missing_only`/`cancel` 3지 충돌
+다이얼로그, BUG-027 수정)을 코드로 재대조 — `class _ZoneBatchWorker(QThread)`,
+`prepare_inference` 호출, `QMessageBox`의 `replace`/`missing_only` 버튼 role 매핑,
+`_save_failed_once` 플래그가 성공 시 리셋되지 않는 구조(BUG-027 수정 유지) 전부 현재
+HEAD 코드에서 그대로 확인 — 별도 세션의 상세 독립 검증(진행률 58 tick 응답성, 5장×20MP
+메모리 회수, 3모드 sidecar 보존 등)이 이미 "통과"로 기록돼 있어 이번엔 정적 재대조로
+회귀 없음만 확인.
+
+### 6. GPU 미가용 경고
+
+`app/tabs/zone_analysis_tab.py`의 `_on_run()`(L741)과 `_on_batch_process()`(L1124)에
+`prompt_gpu_availability(self, "존 분석")` 가드가 여전히 검증 통과 직후·워커 생성 이전에
+위치함을 코드로 재확인 — 2026-08-31 별도 세션에서 이미 monkeypatch 기반 실동작 검증(단일
+추론/배치 둘 다 취소·진행 분기) 통과가 기록돼 있어 회귀 없음만 재확인.
+
+### 7. 전체 자동화 테스트 스위트
+
+`build/venv/Scripts/python.exe -m pytest tests/ -q --basetemp=<스크래치 경로>` →
+**127 passed**, 0 failed, 0 error(QtSvg/QtTest DLL 순서 문제 없이 한 번에 전체 수집·실행
+성공 — `requirements.txt`가 지정한 torch 2.7.1+cu128/PyQt6 6.7.1을 그대로 쓰는 프로젝트
+전용 `build/venv`를 사용했기 때문, 기존에 문서화된 환경 이슈 그대로).
+
+### 8. main 동기화분 회귀 없음
+
+`file_io.py`/`trainer.py`/`project.py`/`export_dialog.py`/`import_dialog.py`/
+`image_browser.py`/`inference_image_list.py`/`inference_tab.py` 등은 위 7번 전체
+pytest(127 passed, `test_image_list_numbering.py`/`test_zone_github_13_14.py` 등 포함)에
+회귀 테스트가 포함돼 있어 통과로 확인. 별도의 실 GUI 골든패스는 2026-08-31 "이미지 리스트
+순번 표시 이식 검증"(main 0d20217 → zone) 세션에서 이미 상세히 확인·통과된 상태(회귀
+없음)라 이번엔 재실행하지 않음.
+
+### 9. 실제 `python main.py` 부팅 스모크
+
+`QT_QPA_PLATFORM=offscreen build/venv/Scripts/python.exe main.py` 실행 — Python 3.12.10,
+PyTorch 2.7.1+cu128, RTX 5060 GPU 정상 인식, 예외 없이 프로젝트 선택 화면까지 정상 도달
+(콘솔 cp949 인코딩으로 인한 로깅 이모지 출력 실패는 기존부터 문서화된 무관한 환경 이슈,
+앱 크래시 아님). 확인 후 `taskkill`로 두 python.exe PID를 명시적으로 종료, `tasklist`로
+잔류 프로세스 없음을 재확인.
+
+### 부수 발견
+
+- 워크트리 루트 `data/annotations/b.json`(이전 세션 이후 잔존 추정, `.gitignore`가
+  `data/annotations/`를 명시하지 않아 untracked로 남음 — 이미 2026-08-31 이전 로그에
+  "리더/사용자가 편할 때 수동 삭제 권장"으로 기록된 항목과 동일 패턴)이 이번 세션에도
+  그대로 남아있음을 재확인. 샌드박스 권한상 `rm -rf`가 차단돼 직접 삭제하지 못함 — git에는
+  영향 없음(`git add -A` 금지 규칙상 실수 커밋 위험 낮음), 리더가 편할 때 수동 정리 권장.
+
+### 판정
+
+**통과.** 검증 범위 8개 항목 전부 확인:
+1) GitHub #34 재현→수정 확인(신규 3-파트 독립 스크립트로 실증) — 통과.
+2) 동일 패턴(`InferenceResult` 필드명 오타) 전수 grep — 추가 발견 없음.
+3) Zone VOC 편집 도구화 5모드 배타+Undo(키보드/버튼) 실 QTest 골든패스 — 통과, 회귀 없음.
+4) 3모드+사이드카 자동저장, 실제 파일 I/O 기반 왕복(전환→디스크 생성→복귀→복원→새
+   인스턴스 복원) — 통과.
+5) GitHub #32 배치 병목/충돌 정책 코드 대조 — 이전 상세 독립 검증과 일치, 회귀 없음.
+6) GPU 미가용 경고 호출부 위치 재확인 — 회귀 없음.
+7) `pytest tests/` 전체 127 passed(전 스위트 한 번에 통과, DLL 이슈 우회 불필요).
+8) main 동기화분(추론 탭 등) 회귀 테스트 통과.
+
+신규 버그 QA.md에 `BUG-028`(GitHub #34, Closed — 리더 수정을 이번 세션에서 독립
+재검증·확정)로 등록. 그 외 신규 결함 없음. `python main.py` 종료 후 좀비 프로세스 없음
+확인. `docs/roadmap.md`는 이번 라운드로 상태가 바뀐 항목이 없어 별도 갱신 없음(GitHub
+#34는 QA.md에만 신규 등록 — 이 항목 자체가 로드맵 어느 라운드에도 별도 bullet으로 없던
+리더 직접 수정 건이라 QA.md 등록만으로 충분하다고 판단).
