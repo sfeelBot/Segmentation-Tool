@@ -59,6 +59,16 @@
 > 추가. 커밋 후 `origin/feature/zone-analysis-tab`에 push 완료. **Zone 에디션 사용자
 > 매뉴얼 작업 전체 종료.**
 >
+> **[최신, 2026-08-31] 보류했던 4건 착수 확정 — 기획 착수.** 사용자가 "기록하지말고
+> 그대로 계획, 개발, 구현해줘"로 명시 확정, 보류 해제. 4건: ①추론 탭 블랍 클릭 선택
+> ②Zone 편집 도구의 라벨링탭식 수정가능 구조 감사 ③Excel 내보내기에 zone별 blob 크기+
+> AI score 추가 ④수동 편집 영역은 blob 평균값으로 대체해서 export. planner 에이전트
+> (`a8386cdf84b2d3ae5`, 백그라운드)에 기존 관련 코드 위치(`BlobStat`/`InferenceResult`,
+> `zone_metrics.compute_blob_labels`/`apply_manual_strokes`/`export_zone_percentages_
+> to_excel`, `zone_canvas.py` blob_delete 모드, `inference_engine.export_blobs_to_excel`)
+> 전부 프롬프트에 포함해 위임. 스펙 산출물: `docs/specs/zone-blob-select-and-export-
+> 2026-08-31.md`. 완료 시 구현+디자인 병행 착수 예정.
+>
 > **정리 안 된 잔여물(급하지 않음)**: `D:\segmentation model-zone-work`(브랜치
 > `leader-work-zone-20260830`)는 캐논 브랜치와 완전 중복으로 판명돼 병합 보류·사실상
 > 폐기 상태 — 삭제 여부는 사용자 결정 대기 없이 방치 중(급하지 않아 먼저 묻지 않음).
