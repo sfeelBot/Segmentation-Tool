@@ -941,15 +941,21 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   캐시된 `self._results`를 조회하지 않고 매번 재추론 + 계산 결과를 캐시에 쓰지도
   않는 비효율(요청A 구현의 필수 선행 보강으로 편입).
 - **판단(요청A 핵심)**: 신규 무거운 캐시 자료구조 없음 — `ZoneCanvas._push_undo()`가
-  이미 쓰는 경량 스냅샷 dict(원 튜플/블랍id 집합/스트로크 좌표)를 그대로 "이미지별
-  상태"로 재사용. `ZoneCanvas`에 `get_state()`/`set_state()` 신규 공개 API만 추가(undo
-  복원 로직과 통합 리팩터링 권장). `zone_metrics.py`에 `apply_manual_strokes()` 순수
-  함수 추출(현재 `ZoneCanvas` 인스턴스 메서드라 다른 이미지의 캐시 상태엔 적용 불가).
-  기존 `_chk_apply_all` 체크박스는 3-way `QComboBox`로 완전 대체(확장 아님).
-  자동 저장은 라벨링 탭과 달리 **디바운스 타이머 불필요**(디스크 I/O 아니라 dict
-  대입이라 비용 무시 가능) — 이미지 전환 시 1회 flush로 충분.
-- **결정 대기 1건 등록**: 저장 범위(세션 메모리 vs 디스크 영속화) —
-  [docs/decisions-needed.md](decisions-needed.md), 권장 기본안은 세션 메모리.
+  이미 쓰는 경량 스냅샷 dict(원 튜플/블랍id 집합/스트로크 좌표)를 그대로 JSON
+  직렬화해 **이미지 파일 옆 사이드카**(`{stem}.zone.json`, 예: `7번.bmp` →
+  `7번.zone.json`)로 영속화. `ZoneCanvas`에 `get_state()`/`set_state()` 신규 공개
+  API만 추가(undo 복원 로직과 통합 리팩터링 권장). `zone_metrics.py`에
+  `apply_manual_strokes()` 순수 함수 추출(현재 `ZoneCanvas` 인스턴스 메서드라 다른
+  이미지의 캐시 상태엔 적용 불가). 기존 `_chk_apply_all` 체크박스는 3-way
+  `QComboBox`로 완전 대체(확장 아님). 신규 파일 1개 `app/core/zone_state_store.py`
+  (`annotation_store.py`와 동일한 "core 저장소 모듈" 관례, Qt 의존성 없음).
+  자동 저장은 라벨링 탭(`annotation_canvas.py`)과 동일한 500ms 디바운스
+  `QTimer` + 이미지 전환 시 동기 flush 패턴 재사용. 저장 실패(읽기 전용 폴더 등)는
+  로그 기록 + 세션당 1회만 `QMessageBox`로 표면화(배치 처리 중 실패는 팝업 없이
+  로그만, 수십 장 처리 도중 매번 팝업이 뜨는 것을 방지).
+- **2026-08-30 사용자 결정 완료**: 저장 범위는 **디스크 영속화**(세션 메모리만으로는
+  부족, 앱 재시작 후에도 남아야 함) — 최초 기획의 "세션 메모리 기본안" 제안은
+  폐기, [docs/decisions-needed.md](decisions-needed.md)에 반영 완료.
 - 라운드 분할(작게 쪼개고 의존관계 고려, 권장 순서 1→2→3):
   - [ ] **R-ZONE-1** — 이슈1(성능): `paintEvent()`의 수동 스트로크 전체 재순회를
         rasterize-on-commit `QImage` 캐시로 교체(`annotation_canvas.py` 오버레이 캐시
@@ -957,11 +963,12 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   - [ ] **R-ZONE-2** — 이슈3(CPU 경고 누락): `prompt_gpu_availability()`를 `_on_run()`/
         `_on_batch_process()`에 추가(추론/학습/오토라벨링과 동일 패턴, 신규 로직 없음).
         `app/tabs/zone_analysis_tab.py` 단독.
-  - [ ] **R-ZONE-3** — 요청A(3모드+자동저장) + 이슈2(통합 해결, 최대 스코프): 3-way
-        모드 콤보 + `get_state`/`set_state` + `_on_batch_process()` 필수 보강(결과
-        캐시 저장 누락 수정 + `removed_blob_ids`/`manual_strokes` 반영) — R-ZONE-1
-        완료 후 착수(같은 파일, 스트로크 캐시 API가 먼저 있어야 `set_state()`가
-        재사용 가능).
+  - [ ] **R-ZONE-3** — 요청A(3모드+디스크 자동저장) + 이슈2(통합 해결, 최대 스코프):
+        신규 `app/core/zone_state_store.py`(사이드카 JSON) + 3-way 모드 콤보 +
+        `get_state`/`set_state` + `_save_timer`/`_flush_state()` + `_on_batch_process()`
+        필수 보강(결과 캐시 저장 누락 수정 + `removed_blob_ids`/`manual_strokes` 반영)
+        — R-ZONE-1 완료 후 착수(같은 파일, 스트로크 캐시 API가 먼저 있어야
+        `set_state()`가 재사용 가능).
 
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시

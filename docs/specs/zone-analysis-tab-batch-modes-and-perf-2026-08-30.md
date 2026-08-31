@@ -97,13 +97,119 @@ import 후 2곳에 추가:
 
 ## 요청 A — Zone 결정 방법 3모드 + 자동 저장
 
+> **2026-08-30 재정정 — 사용자 확정**: "자동 저장"은 세션 메모리만으로는 부족하고
+> **디스크에 저장해 앱을 재시작해도 남아야 한다**. 아래 절 전체를 이 결정에 맞게
+> 다시 설계했다(이전 버전의 "세션 메모리로 한정" 판단은 폐기, `docs/decisions-needed.md`
+> 참고).
+
 ### 핵심 설계 결정
 
-**저장 범위는 세션 메모리로 한정한다(디스크 영속화 아님)** — 아래 "결정 필요" 절 참고.
+**디스크 사이드카 파일로 영속화한다** — 이 도구는 "완전 독립 도구"(프로젝트 시스템
+미사용, 이미지·체크포인트를 임의 경로에서 직접 여는 방식) 원칙이 있어 라벨링 탭의
+`data/annotations/{stem}.json`(프로젝트 폴더 기준) 같은 고정 저장소가 없다. **이미지
+파일과 같은 폴더에, 이미지 파일명 기준으로 사이드카 JSON을 둔다**:
+`7번.bmp` → `7번.zone.json` (`image_path.with_suffix(".zone.json")` — `Path.with_suffix()`는
+마지막 확장자만 교체하므로 `7번.bmp` → `7번.zone.json`이 정확히 나온다, 파일명에 점이
+여러 개 있어도(`with_suffix`가 새 suffix 문자열을 그대로 붙이는 방식이라) 문제없음).
 
 **신규 무거운 자료구조를 만들지 않는다** — `ZoneCanvas._push_undo()`가 이미 만들어 쓰는
 경량 스냅샷 dict(`circles`/`removed_blob_ids`/`erase_strokes`/`manual_strokes`, 전부
-좌표·id 리스트일 뿐 마스크 배열은 없음)를 **그대로** "이미지별 상태" 표현으로 재사용한다.
+좌표·id 리스트일 뿐 마스크 배열은 없음)를 **그대로** JSON으로 직렬화해 사이드카 파일의
+전체 내용으로 쓴다(세션 메모리 dict 캐시(`_image_states`)는 필요 없어졌다 — 디스크가
+단일 출처가 되므로 이중 캐시를 두지 않는다, YAGNI: 메모리 dict는 "디스크를 매번
+읽지 않기 위한 최적화"일 뿐인데 사이드카 파일이 원 몇 개+정수 몇 개 수준으로 작아
+디스크 재읽기 비용 자체가 무시할 만하다 — 실측으로 문제가 확인되면 그때 메모리
+캐시를 얹는다).
+
+**신규 파일 1개** — `app/core/zone_state_store.py`(Qt 의존성 없음, `annotation_store.py`와
+동일한 "JSON 읽기·쓰기 전담 core 모듈" 관례를 따름 — `zone_metrics.py`는 "순수 numpy
+계산" 전담으로 역할을 그대로 유지하고 파일 I/O를 섞지 않는다):
+
+```python
+# app/core/zone_state_store.py
+"""Zone 분석 탭 — 이미지별 편집 상태(원/블랍삭제/브러시스트로크) 디스크 영속화.
+
+annotation_store.py와 같은 역할(JSON 읽기·쓰기 전담, Qt 의존성 없음)이지만 저장
+위치가 다르다 — 이 도구는 프로젝트 시스템이 없어 이미지 파일 옆에 사이드카로 둔다.
+저장 내용은 ZoneCanvas.get_state()가 반환하는 경량 스냅샷 그대로(마스크 배열 없음).
+"""
+import json
+import logging
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+
+def sidecar_path(image_path: Path) -> Path:
+    return image_path.with_suffix(".zone.json")
+
+
+def save_state(image_path: Path, state: dict) -> None:
+    """state를 이미지 옆 사이드카에 저장. 원/삭제이력/스트로크가 전부 비어 있으면
+    (한 번도 편집 안 한 이미지) 사이드카를 만들지 않고, 기존 파일이 있으면 정리
+    차원에서 지운다(빈 파일 난립 방지)."""
+    path = sidecar_path(image_path)
+    is_empty = not state["circles"] and not state["removed_blob_ids"] and not state["manual_strokes"]
+    if is_empty:
+        path.unlink(missing_ok=True)
+        return
+    payload = {
+        "circles": state["circles"],
+        "removed_blob_ids": sorted(state["removed_blob_ids"]),   # set -> JSON 배열
+        "erase_strokes": state["erase_strokes"],
+        "manual_strokes": state["manual_strokes"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    # ponytail: 원자적 쓰기(tmp+rename) 아님 — 쓰는 도중 크래시하면 그 1개 파일만
+    # 손상될 수 있음(다른 이미지엔 영향 없음). 손상 리포트가 실제로 들어오면
+    # tempfile.NamedTemporaryFile + os.replace로 승격.
+
+
+def load_state(image_path: Path) -> dict | None:
+    """사이드카가 없거나 읽기 실패하면 None(호출부가 빈 상태로 처리)."""
+    path = sidecar_path(image_path)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            "circles": [tuple(c) for c in payload["circles"]],
+            "removed_blob_ids": set(payload["removed_blob_ids"]),
+            "erase_strokes": [[tuple(pt) for pt in s] for s in payload["erase_strokes"]],
+            "manual_strokes": [(m[0], [tuple(pt) for pt in m[1]]) for m in payload["manual_strokes"]],
+        }
+    except (OSError, ValueError, KeyError) as exc:
+        log.warning(f"Zone 사이드카 로드 실패, 빈 상태로 시작 — {path}: {exc}")
+        return None
+
+
+if __name__ == "__main__":
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        img = Path(tmp) / "7번.bmp"
+        img.write_bytes(b"fake")
+        assert sidecar_path(img).name == "7번.zone.json"
+
+        state = {
+            "circles": [(1, 10.0, 20.0, 5.0)],
+            "removed_blob_ids": {3, 1},
+            "erase_strokes": [[(1.0, 2.0, 3.0)]],
+            "manual_strokes": [(True, [(1.0, 2.0, 3.0)])],
+        }
+        save_state(img, state)
+        loaded = load_state(img)
+        assert loaded["circles"] == [(1, 10.0, 20.0, 5.0)]
+        assert loaded["removed_blob_ids"] == {1, 3}
+        assert loaded["manual_strokes"] == [(True, [(1.0, 2.0, 3.0)])]
+
+        empty = {"circles": [], "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": []}
+        save_state(img, empty)
+        assert not sidecar_path(img).exists(), "빈 상태 저장은 기존 사이드카를 지워야 함"
+        assert load_state(img) is None
+
+        assert load_state(Path(tmp) / "없음.bmp") is None
+        print("zone_state_store self-check OK")
+
 
 **`ZoneCanvas`에 신규 공개 API 2개만 추가**(둘 다 기존 undo 스냅샷 포맷 그대로 입출력):
 
@@ -162,62 +268,87 @@ apply_to_all = mode != "per_image"   # apply_all·apply_all_edit 둘 다 스케�
 기존 원 배치 로직(`_scale_circles()` vs 개별 `detect_circles()`)은 손대지 않는다 — 이미
 정확히 이 두 갈래로 나�뉘어 있었다(로드맵 확인 완료).
 
-### 판단 1 — "자동 저장"의 정확한 의미와 트리거 지점
+### 판단 1 — "자동 저장"의 정확한 의미와 트리거 지점 (디스크 쓰기로 재설계)
 
 라벨링 탭(`annotation_canvas.py`)의 패턴을 그대로 조사했다: `_save_timer`(500ms
 디바운스 `QTimer`)가 편집마다 재시작되고, `load_image()`가 이미지 전환 시
 `_save_timer.isActive()`면 타이머를 멈추고 `_do_save(sync=True)`로 **즉시 동기 flush**한
-뒤 다음 이미지를 연다(디스크 쓰기 경쟁 방지, BUG-012 교훈).
-
-**Zone 탭엔 디바운스가 필요 없다** — 라벨링 탭의 디바운스는 "디스크 I/O 빈도를
-줄이기 위한 것"인데, Zone 탭은 디스크에 쓰지 않고 파이썬 dict에 대입만 하므로
-비용이 사실상 0에 가깝다(원 3~5개 튜플 + 정수 집합 + 스트로크 좌표 리스트).
-따라서 라벨링 탭처럼 "타이머 + 이미지 전환 시 flush" 2단계 대신, **이미지 전환
-시점에만 1회 flush**하면 충분하다(디바운스 타이머 자체를 추가하지 않음 — YAGNI,
-필요해지면 나중에 추가).
+뒤 다음 이미지를 연다(디스크 쓰기 경쟁 방지, BUG-012 교훈). **이번엔 디스크 쓰기가
+맞으므로 이 패턴을 그대로 가져온다**(이전 버전 판단 — "메모리 dict라 디바운스
+불필요" — 은 폐기).
 
 ```python
+# ZoneAnalysisTab.__init__
+self._save_timer = QTimer(self)
+self._save_timer.setSingleShot(True)
+self._save_timer.setInterval(500)
+self._save_timer.timeout.connect(self._flush_state)
+
+# 원편집/블랍삭제/브러시스트로크 3개 시그널 전부 편집마다 타이머 재시작
+# (annotation_canvas.py가 매 편집마다 _save_timer.start()를 재호출하는 것과 동일)
+self._canvas.circles_changed.connect(lambda: self._save_timer.start())
+self._canvas.blob_deleted.connect(lambda _id: self._save_timer.start())
+self._canvas.erase_changed.connect(lambda: self._save_timer.start())
+
+def _flush_state(self) -> None:
+    """현재 이미지의 편집 상태를 사이드카에 즉시 저장 — 디바운스 타이머 콜백
+    또는 이미지 전환 직전 동기 호출 둘 다 이 함수 하나로 처리(annotation_canvas.py
+    의 _do_save()와 동일 역할)."""
+    if self._image_path is None:
+        return
+    try:
+        zstate.save_state(self._image_path, self._canvas.get_state())
+        self._save_failed_once = False
+    except OSError as exc:
+        log.warning(f"Zone 상태 저장 실패 — {self._image_path}: {exc}")
+        if not self._save_failed_once:   # 세션당 1회만 표면화(판단 6)
+            self._save_failed_once = True
+            QMessageBox.warning(
+                self, "저장 실패",
+                f"{self._image_path.parent} 폴더에 편집 내용을 저장하지 못했습니다"
+                "(읽기 전용 등). 이후 실패는 조용히 로그에만 남습니다."
+            )
+
 def _on_list_image_selected(self, path: Path) -> None:
-    if self._image_path is not None and self._image_path != path:
-        self._image_states[self._image_path] = self._canvas.get_state()   # 자동 저장
+    if self._image_path is not None and self._image_path != path and self._save_timer.isActive():
+        self._save_timer.stop()
+        self._flush_state()   # 라벨링 탭 load_image()와 동일 — 전환 전 동기 flush
     self._image_path = path
     ... (기존 이미지 로드 로직 그대로) ...
     if self._last_result is not None:
         self._setup_target_classes(self._last_result)   # 이 호출이 set_blob_data()를 거쳐
                                                           # circles/undo/manual_strokes를 초기화한다
-    cached = self._image_states.get(path)
+    cached = zstate.load_state(path)                     # 사이드카 있으면 로드, 없으면 None
     if cached is not None:
         self._canvas.set_state(cached)   # 반드시 _setup_target_classes 이후에 호출
     else:
-        self._canvas.clear_circles()     # 기존 동작 그대로(캐시 없으면 빈 캔버스)
+        self._canvas.clear_circles()     # 기존 동작 그대로(사이드카 없으면 빈 캔버스)
 ```
+
+**디바운스가 다시 필요해진 이유**: 이번엔 진짜 디스크 I/O이므로, 라벨링 탭과 같은
+이유(브러시 드래그 등 짧은 시간에 반복되는 편집마다 매번 파일을 쓰면 낭비 + 크래시
+없는 정상 종료 시나리오에선 어차피 이미지 전환/앱 종료 시 flush로 충분)로 디바운스가
+정당해진다. 다만 앱이 **저장 없이 강제 종료(크래시)되는 경우** 마지막 500ms 이내의
+편집만 유실 위험이 있다 — 라벨링 탭과 동일한 수준의 보호이며 그 이상(예: 매 스탬프
+저장)은 과설계로 판단(YAGNI).
 
 **순서 주의(구현 시 반드시 지킬 것)**: `_setup_target_classes()` → 내부적으로
 `_on_target_changed()` → `set_blob_data()`를 호출하는데, `set_blob_data()`는 원/블랍삭제
 이력/수동스트로크/undo스택을 **전부 초기화**한다(타겟 클래스 전환 시 라벨 id가
-달라지므로 기존 정책). 캐시 복원(`set_state()`)은 반드시 이 초기화 **이후**에 호출해야
-`set_blob_data()`가 방금 복원한 상태를 다시 지워버리는 사고가 나지 않는다.
-
-**저장 트리거를 "이미지 전환 시점" 하나로만 좁힌 근거**: 원 편집/블랍삭제/브러시
-스트로크는 전부 `circles_changed`/`blob_deleted`/`erase_changed` 시그널로 표면화되므로,
-더 안전하게 하려면 이 3개 시그널에도 즉시 flush를 걸 수 있다(비용은 여전히 무시할
-수준). 다만 "이미지 전환 시에만 저장"으로도 데이터 유실 시나리오가 없음(같은 세션
-안에서 캔버스 상태와 캐시는 항상 이미지 전환 순간에만 동기화되면 충분 — 앱 크래시
-시 유실은 "세션 메모리"라는 저장 범위 결정 자체가 이미 내포한 리스크이지 이 트리거
-설계의 결함이 아님). **구현 자유도로 남김** — 두 방식 다 스펙 위반 아님, 구현
-에이전트가 더 단순한 쪽(전환 시 1회)을 기본으로 하되 회귀 없으면 무방.
+달라지므로 기존 정책). 사이드카 복원(`set_state()`)은 반드시 이 초기화 **이후**에
+호출해야 `set_blob_data()`가 방금 복원한 상태를 다시 지워버리는 사고가 나지 않는다.
 
 ### 판단 2 — 모드별 "새 이미지 첫 방문" 시 초기 상태
 
-`_image_states`에 캐시가 없는 이미지를 처음 열면(배치를 아직 안 돌렸거나, 배치
-대상에서 제외된 이미지) **모든 모드에서 동일하게 빈 캔버스로 시작**한다
-(`clear_circles()`, 기존 동작 그대로) — "모드 2/3choose에서 최초 방문 시 자동으로
+사이드카 파일이 없는 이미지를 처음 열면(배치를 아직 안 돌렸거나, 배치 대상에서
+제외된 이미지, 혹은 아예 처음 켜보는 이미지) **모든 모드에서 동일하게 빈 캔버스로
+시작**한다(`clear_circles()`, 기존 동작 그대로) — "모드 2/3에서 최초 방문 시 자동으로
 기준원을 즉석 스케일 적용"하는 기능은 **만들지 않는다**(YAGNI). 이유: 사용자 요청
 원문이 "일괄 적용을 **먼저 하되**, 그 후 이미지별로 수정"이므로, 배치 버튼을 먼저
 누르는 것이 모드 2/3의 전제 조건이다 — 배치 버튼이 곧 "각 이미지에 초기 원을
-채워 넣는" 단계이지, 이미지 목록 클릭이 그 역할을 대신할 필요는 없다. 이렇게 하면
-`_on_list_image_selected()`에 모드별 분기가 전혀 필요 없어져(캐시 유무만 확인) 코드가
-단순해진다.
+채워 넣고 사이드카로 저장하는" 단계이지, 이미지 목록 클릭이 그 역할을 대신할
+필요는 없다. 이렇게 하면 `_on_list_image_selected()`에 모드별 분기가 전혀 필요
+없어져(사이드카 유무만 확인) 코드가 단순해진다.
 
 ### 판단 3 — `_on_batch_process()` 필수 보강 (자동 저장이 실제로 동작하려면 선행돼야 함)
 
@@ -241,26 +372,33 @@ for i, img_path in enumerate(targets):
     ... circles 계산(기존 apply_to_all/개별 검출 분기 그대로) ...
 
     target_mask = result.class_map == target_cid
-    if mode != "apply_all":                           # ★ 신규 — 모드 2/3만 캐시에 기록
-        self._image_states[img_path] = {
-            "circles": [(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)],
-            "removed_blob_ids": set(),
-            "erase_strokes": [],
-            "manual_strokes": [],
-        }
+    if mode != "apply_all":                           # ★ 신규 — 모드 2/3만 사이드카에 기록
+        try:
+            zstate.save_state(img_path, {
+                "circles": [(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)],
+                "removed_blob_ids": set(),
+                "erase_strokes": [],
+                "manual_strokes": [],
+            })
+        except OSError as exc:
+            log.warning(f"Zone 배치 저장 실패 — {img_path}: {exc}")   # 판단 6과 동일 정책, 배치는 진행 계속(1장 실패로 전체 중단 안 함)
     ... 존 계산/rows.append(...) 기존 그대로 ...
 ```
 
 `self._results[img_path] = result`를 채워두면 이후 사용자가 목록에서 그 이미지를
 클릭했을 때 `_on_list_image_selected()`의 `self._last_result = self._results.get(path)`
 조회가 성공해 오버레이·타겟 클래스·블랍 라벨맵이 정상적으로 다시 구성된다(이게
-안 되면 캐시된 원/편집을 복원해도 화면엔 아무 오버레이도 안 뜨는 반쪽짜리 기능이
-된다) — **이 보강이 빠지면 모드 2/3 전체가 실질적으로 동작하지 않는다.**
+안 되면 사이드카에 저장된 원/편집을 복원해도 화면엔 아무 오버레이도 안 뜨는 반쪽짜리
+기능이 된다) — **이 보강이 빠지면 모드 2/3 전체가 실질적으로 동작하지 않는다.**
+배치 루프의 사이드카 쓰기 실패는 (판단 6과 달리) 팝업 없이 로그만 남기고 계속
+진행한다 — 수십~수백 장을 처리하는 도중 매번 팝업이 뜨면 사실상 무한 클릭이 되므로,
+`_flush_state()`의 "세션당 1회 팝업" 정책과 별개로 배치 루프 자체는 조용한 로그만
+쌓고 끝난 뒤 사용자가 로그를 확인하게 한다(과설계 방지, YAGNI).
 
 ### 판단 4 — 배치 리포트가 개별 수정을 반영하게 하기 (`zone_metrics.py` 순수 함수 추출)
 
 `ZoneCanvas.apply_manual_strokes()`는 현재 인스턴스 메서드로 `self._manual_strokes`에
-묶여 있어, 화면에 표시되지 않은(현재 캔버스에 없는) 다른 이미지의 캐시된 상태에는
+묶여 있어, 화면에 표시되지 않은(현재 캔버스에 없는) 다른 이미지의 사이드카 상태에는
 적용할 수 없다. `zone_metrics.py`에 순수 함수로 승격한다(신규 로직 없음, 그대로 이동):
 
 ```python
@@ -281,10 +419,10 @@ def apply_manual_strokes(mask: np.ndarray, manual_strokes: list[tuple[bool, list
 `zone_analysis_tab._current_target_mask()` 호출부 무변경).
 
 `_on_batch_process()`가 (모드 2/3에서, 재방문해 사용자가 편집을 마친 이미지에 한해)
-캐시된 `removed_blob_ids`/`manual_strokes`를 반영하려면:
+사이드카에 저장된 `removed_blob_ids`/`manual_strokes`를 반영하려면:
 
 ```python
-state = self._image_states.get(img_path)
+state = zstate.load_state(img_path)
 if state is not None:
     if state["removed_blob_ids"]:
         labels, _ = compute_blob_labels(target_mask)
@@ -292,51 +430,63 @@ if state is not None:
     target_mask = zone_metrics.apply_manual_strokes(target_mask, state["manual_strokes"])
 ```
 
-**주의**: 이 캐시 조회는 "이번 배치 실행 이전에 이미 사용자가 그 이미지를 열어 수정해둔
-경우"에만 의미가 있다 — 방금 판단 3에서 이 배치 루프 자신이 막 채워넣은 신선한(원만
-있고 편집 없는) 상태와 뒤섞이지 않도록, **원 계산(circles) 뒤 → state 갱신(판단3) 전에**
-이 반영 코드를 넣어야 한다(즉 "이전 캐시를 읽어 마스크에 반영" → "새 circles로 캐시를
-덮어쓰기"의 순서 — 판단3 코드블록에서 캐시 쓰기 줄보다 먼저 실행되도록 배치).
+**주의**: 이 사이드카 조회는 "이번 배치 실행 이전에 이미 사용자가 그 이미지를 열어
+수정해둔 경우"에만 의미가 있다 — 방금 판단 3에서 이 배치 루프 자신이 막 써넣은
+신선한(원만 있고 편집 없는) 사이드카와 뒤섞이지 않도록, **원 계산(circles) 뒤 →
+사이드카 쓰기(판단3) 전에** 이 반영 코드를 넣어야 한다(즉 "이전 사이드카를 읽어
+마스크에 반영" → "새 circles로 사이드카를 덮어쓰기"의 순서 — 판단3 코드블록에서
+사이드카 쓰기 줄보다 먼저 실행되도록 배치).
 
 ### 판단 5 — 알려진 한계(이번 라운드 범위 밖으로 명시)
 
-- **타겟 클래스를 바꾸면 캐시된 블랍삭제/브러시 편집은 stale해질 수 있다** — 블랍
+- **타겟 클래스를 바꾸면 저장된 블랍삭제/브러시 편집은 stale해질 수 있다** — 블랍
   라벨 id는 타겟 마스크에 종속적이라, 클래스 A로 편집해둔 `removed_blob_ids`를 클래스
-  B 마스크에 그대로 적용하면 엉뚱한 픽셀이 제외될 수 있다. 원(circle) 캐시는 좌표
+  B 마스크에 그대로 적용하면 엉뚱한 픽셀이 제외될 수 있다. 원(circle) 사이드카는 좌표
   기반이라 타겟 클래스와 무관해 안전하다. ponytail: 타겟 클래스를 자주 바꾸지 않는
   일반 워크플로우를 전제로 한 단순화 — 실사용에서 문제가 확인되면 타겟 클래스 변경
-  시 `_image_states`의 `removed_blob_ids`/`manual_strokes`만 선택적으로 무효화(원은
+  시 사이드카의 `removed_blob_ids`/`manual_strokes`만 선택적으로 무효화(원은
   유지)하는 후속 보강을 추가한다.
 - **모드 1("일괄 적용")에서도 사용자가 이미지를 열어 직접 원을 편집하면 그 편집은
-  캐시·복원된다** — `_on_list_image_selected()`의 "이미지 전환 시 flush" 로직은 모드와
-  무관하게 항상 동작한다(캐시 쓰기 자체를 모드로 막지 않음, 판단1 참고). 이는 스펙
-  위반이 아니라 "편집한 내용은 절대 잃지 않는다"는 더 안전한 상위 원칙을 단순한
-  코드로 구현한 결과다 — 다만 모드 1의 취지("순수 일괄 적용, 개별 수정 불필요")와는
-  다소 어긋날 수 있어 명시해둔다. 엄격하게 막고 싶다면 `_on_list_image_selected()`의
-  flush 줄에 `if mode != "apply_all"` 가드 1줄만 추가하면 되므로, 구현 시 리더/사용자
-  선호에 따라 선택(기본안은 "항상 flush", 더 단순함).
+  사이드카에 저장·복원된다** — `_on_list_image_selected()`/`_flush_state()`의 "이미지
+  전환 시 flush" 로직은 모드와 무관하게 항상 동작한다(저장 자체를 모드로 막지 않음,
+  판단1 참고). 이는 스펙 위반이 아니라 "편집한 내용은 절대 잃지 않는다"는 더 안전한
+  상위 원칙을 단순한 코드로 구현한 결과다 — 다만 모드 1의 취지("순수 일괄 적용,
+  개별 수정 불필요")와는 다소 어긋날 수 있어 명시해둔다. 엄격하게 막고 싶다면
+  `_flush_state()` 진입부에 `if mode != "apply_all": return` 가드 1줄만 추가하면
+  되므로, 구현 시 리더/사용자 선호에 따라 선택(기본안은 "항상 flush", 더 단순함).
+- **사이드카 파일이 이미지 폴더에 계속 쌓인다** — 이미지 폴더가 읽기 전용이 아닌 한
+  `{stem}.zone.json`이 이미지 옆에 남는다(빈 상태는 자동 정리되지만, 편집한 이미지는
+  의도적으로 영속화 대상이므로 남는 게 맞다). 이 도구가 "완전 독립"이라 별도 정리
+  UI(예: "모든 사이드카 삭제" 버튼)는 **만들지 않는다**(YAGNI) — 필요해지면 사용자가
+  직접 `*.zone.json`을 지우면 된다(파일 하나하나가 이미지 하나에 대응하는 평범한
+  파일이라 특별한 정리 도구 없이도 파악 가능).
 
-## 결정 필요 — `docs/decisions-needed.md` 등록 대상
+### 판단 6 — 저장 실패 시 사용자 알림 (읽기 전용 폴더 등)
 
-**저장 범위: 세션 메모리 vs 디스크 영속화.** 이 도구는 "완전 독립 도구"(프로젝트
-시스템 미사용, 이미지·체크포인트를 임의 경로에서 직접 여는 방식) 원칙이 있어,
-디스크에 저장한다면 프로젝트 디렉토리 같은 고정 위치가 없다 — 이미지 옆
-사이드카(`{image_stem}.zone.json`) 또는 사용자가 지정하는 별도 폴더 중 하나를 새로
-설계해야 하는 무거운 결정이다.
+`_flush_state()`(판단1 코드 참고)가 `OSError`를 잡아 (1) 항상 `log.warning()`으로
+조용히 기록하고, (2) **세션당 처음 1번만** `QMessageBox.warning()`으로 표면화한다.
+그 이후 같은 세션에서 반복 실패하면(예: 폴더 권한이 계속 읽기 전용) 로그만 쌓고
+팝업은 다시 띄우지 않는다 — 사용자가 이미지 목록을 죽 훑어보는 동안 매번 팝업이
+뜨면 사실상 작업 불가 상태가 되므로(과한 에러 UI 회피, 사용자 명시 요청).
 
-**기본안(권장)**: 이번 라운드는 **세션(앱 실행 중) 메모리 유지로 구현** —
-`ZoneAnalysisTab._image_states: dict[Path, dict]`, 앱을 끄면 사라진다. 근거: (1) 사용자
-원문 "다른 이미지로 넘어갈 때 자동 저장"은 "이미지 전환 중 잃지 않는다"는 워크플로우
-불편 해소가 핵심이지 "앱을 재시작해도 남아있어야 한다"는 요구가 명시되지 않았다.
-(2) 디스크 사이드카를 도입하면 "완전 독립 도구" 원칙과 파일 배치 정책을 새로 정의해야
-해 이번 라운드 스코프가 크게 불어난다(YAGNI). (3) 세션 메모리만으로도 요청 A의 3
-시나리오(모드1/2/3)와 요청B-이슈2(추론 결과 변경 후 이미지 전환 시 유실)가 전부
-해결된다 — "저장 불가" 불만의 본질은 "전환하면 사라진다"이지 "앱 재시작 후에도
-있어야 한다"가 아니라고 판단.
+한 번은 반드시 표면화하는 이유(완전한 침묵은 선택하지 않은 이유): 저장 실패를
+사용자가 전혀 모른 채 여러 이미지를 편집하고 다니면, 그 사이 방문한 이미지들의
+편집 내용이 전부 디스크에 남지 않은 상태로 세션이 끝날 수 있다(진짜 데이터 유실
+리스크) — 최소한의 1회 경고로 "지금 폴더 권한을 확인해야 한다"는 신호는 준다.
+상태바 위젯을 새로 만들지 않는 이유: 이 탭은 `QMainWindow`가 아니라 `QWidget`이라
+상태바가 없고, 이번 한 가지 알림을 위해 새 라벨/타이머(자동으로 사라지는 배너 등)를
+추가하는 것은 과설계로 판단(YAGNI) — 기존에 이미 있는 `QMessageBox`(다른 실패
+경로들이 전부 이 패턴을 씀)를 그대로 재사용.
 
-**디스크 영속화는 향후 확장 후보로 분리** — 실사용 중 "앱을 재시작했더니 그동안 한
-편집이 다 날아갔다"는 불만이 실제로 접수되면 그때 사이드카 파일 설계(어디에/어떤
-포맷으로 저장할지)를 별도 라운드로 논의한다.
+배치 처리(`_on_batch_process()`) 도중의 저장 실패는 판단 3에서 이미 언급했듯
+**팝업 없이 로그만** — 다수 이미지를 한 번에 처리하는 배치 루프에서 팝업까지
+띄우면 사실상 무한 클릭이 된다.
+
+## 결정 완료 — 저장 범위(세션 메모리 vs 디스크 영속화)
+
+**2026-08-30 사용자 확정: 디스크 영속화**(세션 메모리만으로는 부족, 앱 재시작 후에도
+남아야 함) — `docs/decisions-needed.md`에 반영 완료. 위 판단 1~6이 이 결정을 반영한
+최종 설계다(이전 "세션 메모리로 한정" 버전은 폐기).
 
 ## 라운드 분할 (의존관계 고려, 작게 쪼갬)
 
@@ -344,20 +494,23 @@ if state is not None:
 |---|---|---|---|
 | **R-ZONE-1** | 이슈1 — 브러시 스트로크 rasterize-on-commit 캐시 | `app/widgets/zone_canvas.py` | 없음, 최우선 권장(다른 라운드가 `zone_canvas.py`의 undo/manual_strokes 코드를 추가로 건드리므로 먼저 안정화) |
 | **R-ZONE-2** | 이슈3 — GPU 미가용 경고(`prompt_gpu_availability`) 2곳 추가 | `app/tabs/zone_analysis_tab.py`(`_on_run`/`_on_batch_process`) | 없음, R-ZONE-1과 파일이 달라 병렬 가능 |
-| **R-ZONE-3** | 요청A(3모드+자동저장) + 이슈2(통합 해결) — `get_state`/`set_state`(+undo 리팩터링), `zone_metrics.apply_manual_strokes()` 추출, 3-way 콤보, `_on_list_image_selected`/`_on_batch_process` 보강(캐시 필수 수정 포함) | `app/widgets/zone_canvas.py`, `app/core/zone_metrics.py`, `app/tabs/zone_analysis_tab.py` | R-ZONE-1 완료 후 착수 권장(`zone_canvas.py` 동일 파일, 스트로크 오버레이 캐시의 `_rebuild_stroke_overlay()`를 `set_state()`가 호출해야 하므로 순서상 R-ZONE-1의 API가 먼저 있어야 함) |
+| **R-ZONE-3** | 요청A(3모드+디스크 자동저장) + 이슈2(통합 해결) — 신규 `app/core/zone_state_store.py`(사이드카 JSON 읽기/쓰기), `ZoneCanvas.get_state`/`set_state`(+undo 리팩터링), `zone_metrics.apply_manual_strokes()` 추출, 3-way 콤보, `_save_timer` 디바운스 + `_flush_state()`, `_on_list_image_selected`/`_on_batch_process` 보강(결과 캐시 필수 수정 포함) | `app/core/zone_state_store.py`(신규), `app/widgets/zone_canvas.py`, `app/core/zone_metrics.py`, `app/tabs/zone_analysis_tab.py` | R-ZONE-1 완료 후 착수 권장(`zone_canvas.py` 동일 파일, 스트로크 오버레이 캐시의 `_rebuild_stroke_overlay()`를 `set_state()`가 호출해야 하므로 순서상 R-ZONE-1의 API가 먼저 있어야 함) |
 
 R-ZONE-2는 R-ZONE-1/3과 파일이 겹치지 않는 함수라 아무 때나 병렬 가능하지만, diff가
 가장 작아 먼저 처리해도 무방(권장 순서: 1 → 2 → 3, 리더가 조율).
 
 ## 신규/수정 파일 요약
 
-- 신규 파일: 없음.
+- **신규 파일 1개**: `app/core/zone_state_store.py`(사이드카 JSON 저장/로드, Qt 의존성
+  없음, `annotation_store.py`와 동일한 "core 저장소 모듈" 관례 — `zone_metrics.py`는
+  순수 numpy 계산 전담 역할을 그대로 유지하기 위해 파일 I/O를 여기 넣지 않음).
 - 수정: `app/widgets/zone_canvas.py`(R-ZONE-1: 스트로크 캐시, R-ZONE-3: `get_state`/
   `set_state`, `undo()` 리팩터링), `app/core/zone_metrics.py`(R-ZONE-3:
   `apply_manual_strokes()` 순수 함수 추가), `app/tabs/zone_analysis_tab.py`
-  (R-ZONE-2: GPU 경고 2곳, R-ZONE-3: 3-way 콤보 UI + `_image_states` 캐시 +
-  `_on_list_image_selected`/`_on_batch_process` 보강).
+  (R-ZONE-2: GPU 경고 2곳, R-ZONE-3: 3-way 콤보 UI + `_save_timer`/`_flush_state()` +
+  `_on_list_image_selected`/`_on_batch_process` 보강, `zone_state_store` import).
 - 테스트: 기존 `tests/test_zone_github_13_14.py`(`_scale_circles` 관련) 회귀 확인 필요
   (R-ZONE-3가 `_on_batch_process`를 수정하므로). 신규 테스트는 구현 라운드에서
-  `zone_metrics.py` self-check(`__main__` 블록)에 `apply_manual_strokes()` 케이스 1개
-  추가 권장(관례상 매 신규 순수 함수마다 self-check 유지).
+  `zone_metrics.py` self-check에 `apply_manual_strokes()` 케이스 1개 추가 + 신규
+  `zone_state_store.py` 자체의 `__main__` self-check(위 코드 예시에 이미 포함 — 저장/
+  로드/빈상태삭제/파일없음 4가지 케이스) 유지 권장.
