@@ -46,6 +46,7 @@ from app.core.zone_metrics import (
     export_zone_percentages_to_excel,
 )
 from app.core.logger import get_logger
+from app.core.device_info import prompt_gpu_availability
 from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
@@ -593,6 +594,9 @@ class ZoneAnalysisTab(QWidget):
             )
             return
 
+        if not prompt_gpu_availability(self, "존 분석"):
+            return
+
         paths = self._img_list.paths() or [self._image_path]
         self._results.clear()
         self._btn_run.setEnabled(False)
@@ -935,6 +939,9 @@ class ZoneAnalysisTab(QWidget):
         circles_ref = self._canvas.get_circles()   # (cx, cy, r) 반지름 오름차순, 원본 좌표
         if not circles_ref:
             QMessageBox.warning(self, "원 없음", "기준 이미지에 원을 1개 이상 정의하세요.")
+            return
+
+        if not prompt_gpu_availability(self, "존 분석"):
             return
 
         ref_w, ref_h = self._image_size

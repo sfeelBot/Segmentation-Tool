@@ -960,9 +960,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   - [ ] **R-ZONE-1** — 이슈1(성능): `paintEvent()`의 수동 스트로크 전체 재순회를
         rasterize-on-commit `QImage` 캐시로 교체(`annotation_canvas.py` 오버레이 캐시
         원칙 재사용). `app/widgets/zone_canvas.py` 단독.
-  - [ ] **R-ZONE-2** — 이슈3(CPU 경고 누락): `prompt_gpu_availability()`를 `_on_run()`/
+  - [x] **R-ZONE-2** — 이슈3(CPU 경고 누락): `prompt_gpu_availability()`를 `_on_run()`/
         `_on_batch_process()`에 추가(추론/학습/오토라벨링과 동일 패턴, 신규 로직 없음).
-        `app/tabs/zone_analysis_tab.py` 단독.
+        `app/tabs/zone_analysis_tab.py` 단독. 구현 완료(2026-08-31),
+        `docs/agents/implementation-log.md` 참고 — 검증 서브에이전트 확인 필요.
   - [ ] **R-ZONE-3** — 요청A(3모드+디스크 자동저장) + 이슈2(통합 해결, 최대 스코프):
         신규 `app/core/zone_state_store.py`(사이드카 JSON) + 3-way 모드 콤보 +
         `get_state`/`set_state` + `_save_timer`/`_flush_state()` + `_on_batch_process()`

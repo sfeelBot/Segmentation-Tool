@@ -4161,3 +4161,31 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 에이전트 확인 필요 — 특히 GUI 실기동으로 검색 디바운스/정렬 전환/폴더 그룹핑/
 존 분석 탭 배치 처리 상태 배지 갱신 시 번호가 실제로 유지되는지 육안 확인 권장
 (자동 테스트는 위젯 API 레벨 확인까지만 커버).
+
+## 2026-08-31 — R-ZONE-2: 존 분석 탭 CPU 추론 속도 경고 추가
+
+- 워크트리 `D:\segmentation model-zone-work`(브랜치 `leader-work-zone-20260830`)에서 작업,
+  스펙 `docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md`의 R-ZONE-2 절만
+  범위로 구현.
+- `app/tabs/zone_analysis_tab.py`에 `from app.core.device_info import
+  prompt_gpu_availability` import 추가(기존 미사용 확인).
+- `_on_run()` 최상단(모델/체크포인트/이미지 검증 통과 직후, 워커 시작 전)과
+  `_on_batch_process()`(원 존재 검증 통과 직후, 배치 루프 시작 전) 두 곳에
+  `if not prompt_gpu_availability(self, "존 분석"): return` 추가 — `inference_tab.py`
+  454행과 완전히 동일한 패턴, 신규 로직 없음.
+- 영향 파일은 스펙대로 `app/tabs/zone_analysis_tab.py` 단독(`zone_canvas.py` 등 다른
+  파일은 손대지 않음 — 다른 세션과의 동시 편집 충돌 방지 지시 준수).
+
+### 검증 (자체 실행)
+- `python -m py_compile app/tabs/zone_analysis_tab.py` → 통과.
+- `QApplication` + `ZoneAnalysisTab()` 실제 인스턴스에 `prompt_gpu_availability`를
+  monkeypatch해 실이벤트로 확인: `_on_run()`/`_on_batch_process()` 둘 다 정확히
+  context="존 분석"으로 호출됨을 확인. 가짜 함수가 `False`(취소) 반환 시 `_on_run()`은
+  `self._worker`를 생성하지 않고 즉시 리턴, `_on_batch_process()`도 진행 다이얼로그 없이
+  즉시 리턴(둘 다 예외 없음 — 취소 시 진행 안 됨 확인). `True`(CPU 진행 수락) 반환 시
+  `_on_run()`이 가드를 통과해 워커 생성 단계까지 진행함을 확인.
+- `python main.py` GUI 수동 조작 검증은 수행하지 않음 — 검증 서브에이전트 확인 필요.
+
+### 상태
+구현 완료. 커밋 `<커밋 후 채움>`. **검증 서브에이전트의 실제 GUI 확인 전까지 완료로
+간주하지 않는다.**
