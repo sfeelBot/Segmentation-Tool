@@ -4242,3 +4242,83 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 ### 상태
 구현 완료, 커밋 `93efb45`. **검증 서브에이전트의 실제 GUI 확인 전까지 완료로
 간주하지 않는다.**
+
+## 2026-08-31 — R-ZONE-3: Zone 결정 방법 3모드 + 이미지별 편집 상태 디스크 자동 저장
+
+워크트리 `D:\segmentation model-zone-work`(브랜치 `leader-work-zone-20260830`)에서
+작업, 스펙 `docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md`의
+"요청 A" 절(라인 98~484)을 그대로 구현(재설계 없음). R-ZONE-1/R-ZONE-2는 이미
+완료·검증된 상태 위에서 착수.
+
+### 구현 내용 (스펙 그대로)
+1. **신규 `app/core/zone_state_store.py`** — `sidecar_path()`(`image_path.with_suffix(".zone.json")`)/
+   `save_state()`(빈 상태는 사이드카 삭제)/`load_state()`(없거나 읽기 실패 시 `None`),
+   `__main__` self-check 포함(저장/로드/빈상태삭제/파일없음 4케이스) — 스펙 코드 그대로.
+2. **`ZoneCanvas.get_state()`/`set_state()` 공개 API 추가** — `_push_undo()`와 동일한
+   경량 스냅샷 포맷(원 튜플/블랍id 집합/지우기 스트로크/수동 스트로크). `undo()`를
+   `snap = self._undo_stack.pop(); self.set_state(snap)`로 리팩터링해 복원 로직 중복
+   제거(동작 동일 — 기존 undo 회귀 테스트 `test_shared_center_and_diameter_undo`,
+   `test_manual_strokes_are_last_write_wins_and_undo_is_lifo` 그대로 통과 확인).
+3. **`zone_metrics.apply_manual_strokes()` 순수 함수 추출** — `disk_mask()` 재사용,
+   `ZoneCanvas.apply_manual_strokes()`는 이 함수를 호출하는 얇은 래퍼로 변경
+   (API 이름/시그니처 불변, `zone_analysis_tab._current_target_mask()` 호출부 무변경).
+   self-check에 last-write-wins 케이스 추가.
+4. **`zone_analysis_tab.py`**:
+   - `_chk_apply_all`(체크박스)를 3-way `_mode_combo`(`apply_all`/`apply_all_edit`/
+     `per_image`)로 완전 대체, `_batch_box` 제목 "Zone 결정 방법", 툴팁 3줄.
+   - `_save_timer`(500ms 디바운스) + `_flush_state()` 추가, `circles_changed`/
+     `blob_deleted`/`erase_changed` 3개 시그널 전부 타이머 재시작에 연결.
+   - `_on_list_image_selected()` — 전환 전 이전 이미지 동기 flush → 이미지 로드 →
+     `_setup_target_classes()`(있으면, `set_blob_data()`로 undo/manual_strokes 초기화)
+     → **그 이후에** `zstate.load_state(path)` 확인해 있으면 `set_state()`, 없으면
+     `clear_circles()`(순서 스펙 그대로 — set_blob_data가 먼저 초기화한 뒤 사이드카
+     복원해야 방금 복원한 상태를 다시 지우는 사고가 안 남).
+   - `_on_batch_process()` 보강 — (a) 계산된 `InferenceResult`를 `self._results`에
+     반드시 캐시(기존 누락 버그 수정 — 이게 빠지면 배치 후 이미지 재클릭 시 오버레이가
+     복원 안 됨), (b) 모드 2/3에서만 원 정보를 사이드카에 기록, (c) 원 계산 후 →
+     사이드카 쓰기 전에 기존 사이드카(있으면)의 `removed_blob_ids`/`manual_strokes`를
+     조회해 `target_mask`에 먼저 반영, (d) 배치 루프 중 저장 실패는 팝업 없이 로그만.
+     `h, w = result.raw_class_map.shape`로 캐시 히트 시 `Image.open()` 재오픈도 제거.
+   - 모드→`apply_to_all` 매핑: `apply_to_all = mode != "per_image"`, 기존
+     `_scale_circles()`/개별 `detect_circles()` 분기 로직 자체는 무변경.
+
+### 검증 (자체 실행)
+- 이 anaconda(`C:\Users\Feel\anaconda3\python.exe`, PyQt6 6.7.1 + torch 설치됨) 환경을
+  찾아 사용 — 이 세션 초기 환경(`py -3.12`/`py -3.14`)엔 torch/PyQt6 미설치.
+- `py_compile`: `zone_analysis_tab.py`/`zone_canvas.py`/`zone_metrics.py`/
+  `zone_state_store.py` 전부 통과.
+- `zone_state_store.py`/`zone_metrics.py` `__main__` self-check 둘 다 통과.
+- `pytest tests/test_zone_github_13_14.py tests/test_zone_edit_toolbar.py
+  tests/test_zone_state_persistence.py` → **16 passed**(신규 통합 테스트
+  `test_zone_state_persistence.py` 2건 포함).
+  - `test_zone_edit_toolbar.py::test_batch_apply_groupbox_present_and_still_gated`를
+    3-way 콤보 기준으로 갱신(체크박스 API 삭제에 따른 의도된 변경).
+  - 신규 `tests/test_zone_state_persistence.py`:
+    - `test_sidecar_saved_on_switch_and_restored_on_return` — 이미지1에 원 추가 →
+      이미지2로 전환 시 이미지1 사이드카(`img1.zone.json`)가 실제 디스크에 생성됨을
+      확인, **새 `ZoneAnalysisTab` 인스턴스**(앱 재시작 시뮬레이션)로 이미지1을 다시
+      열어 원이 그대로 복원됨을 확인.
+    - `test_batch_mode_controls_scaling_vs_detection_and_sidecar_writes` — 3모드
+      각각에서 `_on_batch_process()`가 실제로 다른 분기(스케일 적용 vs
+      `detect_circles()` 호출)를 타는지, 모드 1은 사이드카를 쓰지 않고 모드 2/3만
+      쓰는지, `self._results` 캐시가 채워지는지(판단3) 확인. 모달 `ZoneBatchResultDialog.exec()`
+      는 테스트에서 블로킹되므로 no-op으로 대체(실제 다이얼로그 표시 자체는 검증
+      대상 아님 — 배치 분기 로직만 검증).
+- **환경 이슈(기존에 이미 여러 차례 문서화됨, 이번 변경과 무관)**: `pytest tests/`
+  전체를 단일 프로세스로 수집하면 이 anaconda 환경(PyQt5+PyQt6 공존)에서 알파벳
+  순서상 먼저 수집되는 다른 파일(zone과 무관한 `test_github_issue_23.py` 등 4개
+  포함)에서도 동일하게 `QtSvg` DLL 로드 순서 오류로 collection이 중단됨
+  (`docs/agents/verification-log.md`에 2026-08-29부터 반복 기록된 기존 환경 문제,
+  과거엔 `build/venv`라는 전용 venv로 우회했으나 이 워크트리엔 없음). zone 관련
+  테스트 3개 파일을 함께(정상 순서로) 수집하면 16건 전부 통과함을 확인했으므로
+  이번 구현 자체의 회귀는 아님 — 전체 스위트 실행은 검증 에이전트가 적절한
+  환경(전용 venv 등)에서 재확인 필요.
+- `python main.py` GUI 실기동/실제 UI 조작 검증은 수행하지 않음(지시 범위 밖) —
+  검증 서브에이전트가 이미지 편집→전환→사이드카 확인→복귀 복원, 3모드 배치
+  실동작을 실제 UI 조작으로 확인 필요.
+
+### 상태
+구현 완료, 커밋 `0e675b5`(zone_state_store 신설), `979c52c`(zone_metrics 순수
+함수 추출), `b9510b5`(ZoneCanvas get_state/set_state), `3d4182d`(3모드+저장배선+
+배치보강+테스트). **검증 서브에이전트의 실제 GUI 확인 전까지 완료로 간주하지
+않는다.**
