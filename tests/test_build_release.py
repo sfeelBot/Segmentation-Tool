@@ -53,6 +53,16 @@ def test_installer_build_uses_tested_cuda_torch_pair() -> None:
     assert "version('torchvision').startswith('0.22.1')" in script
 
 
+def test_requirements_txt_is_ascii_only() -> None:
+    # GitHub #22: pip's auto_decode() falls back to the OS locale codepage
+    # (e.g. cp949 on Korean Windows) when a requirements file has no BOM or
+    # encoding declaration, so any non-ASCII byte crashes the build on
+    # non-English-locale Windows.
+    data = (ROOT / "requirements.txt").read_bytes()
+    assert all(byte < 128 for byte in data)
+    data.decode("cp949")
+
+
 def test_build_spec_excludes_other_qt_bindings() -> None:
     spec = (ROOT / "build.spec").read_text(encoding="utf-8")
     for package in ("PyQt5", "PySide2", "PySide6", "IPython", "pytest", "sphinx"):
