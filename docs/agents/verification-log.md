@@ -4803,3 +4803,53 @@ end-to-end 스크립트 실행(구현자가 인스턴스화까지만 하고 실�
 **통과.** 두 요청 모두 스펙대로 구현됐고 회귀 없음. 이번 세션에서 신규 버그는 발견하지
 않음(오프라인 삭제 확인 중 발견한 죽은 주석 1건은 기능 영향 없어 QA.md 미등록, 위 2번 항목
 참고). `docs/roadmap.md`의 관련 항목([ ] 착수 대기 → [x] 완료)을 검증 에이전트가 갱신함.
+
+## 2026-08-31 — 이미지 리스트 순번 표시 이식 검증 (main 0d20217 → zone)
+
+`app/widgets/image_browser.py`, `app/widgets/inference_image_list.py`에 이식된 "N. 파일명"
+순번 표시 기능 독립 검증. 정적 리뷰 + pytest 독립 재실행 + 실제 위젯/`ZoneAnalysisTab`
+인스턴스화 골든패스 조작.
+
+### pytest 독립 재실행
+- `build/venv/Scripts/python.exe -m pytest tests/test_image_list_numbering.py -v
+  --basetemp=<별도 경로>` → 5 passed.
+- `build/venv/Scripts/python.exe -m pytest tests/ -q --basetemp=<별도 경로>` → 111 passed,
+  회귀 없음. (구현자 자체 보고와 동일 결과, 독립 재실행으로 재확인.)
+
+### image_browser.py 골든 패스 (스크립트로 실제 위젯 조작)
+- 기본 정렬(name_asc): "1. apple.png"/"2. banana.png"/"3. cherry.png" 확인.
+- 검색 필터("banana") 적용 후 디바운스 대기 → 필터링된 단일 항목이 "1. banana.png"로
+  1부터 재번호 확인.
+- 필터 해제 + 정렬 콤보를 name_desc로 전환 → "1. cherry.png"/"2. banana.png"/
+  "3. apple.png" 역순 재번호 확인.
+- `refresh_item()`(라벨 저장 후 단건 갱신 흉내) 호출 전/후 "3. apple.png" 번호 불변 확인
+  — 단건 갱신 경로가 전체 재계산 없이 캐시된 번호를 그대로 쓰는지 실측.
+
+### inference_image_list.py 핵심 검증 — 상태뱃지 갱신 후 번호 보존
+- `load_folder()`(재귀 스캔, 하위 폴더 포함) 기본 정렬에서 "1. a.png"/"2. b.png"(중첩
+  경로) 확인, `folder` 정렬 모드 전환 후에도 동일 통번호 유지(폴더 헤더는 번호 없음,
+  파일 항목만 전체 통번호) 확인.
+- `set_item_status(p2, "processing")` → 텍스트 "2. b.png" (번호 유지, 아이콘만 변경).
+- `set_item_status(p2, "done", badge="완료")` → 텍스트 "2. b.png  [완료]" — 번호가
+  텍스트 앞부분에 그대로 남고 배지만 추가됨 확인 (구현자가 주장한 핵심 포인트 실측 통과).
+- `clear_status()` → 텍스트 "2. b.png"로 배지·아이콘만 초기화되고 번호는 유지됨 확인.
+
+### zone_analysis_tab.py 실제 확인
+- `ZoneAnalysisTab()` 직접 인스턴스화 후 `self._img_list.load_folder(...)`로 이미지 3장
+  로드 → "1. img1.png"/"2. img2.png"/"3. img3.png" 실제로 번호가 붙어 보임을 확인
+  (구현자 주장 "코드 변경 없이 자동 적용" 재현 성공).
+- 이 탭이 `set_item_status()`를 실제로 쓰는 배치 처리 경로(`_on_batch_process()`, L948
+  전후 `set_item_status(img_path, "processing")` → `"done", badge=...`)를 그대로 재현:
+  대상 이미지에 processing → done+퍼센티지 배지("12.3%") → `clear_status()` 순서로 호출
+  → 매 단계 "2. img2.png" 번호가 유지되며 배지만 붙었다 사라짐 확인.
+
+### 부산물 정리
+`data/annotations/b.json`(이전 세션의 스크래치 산출물로 추정, 워크트리 실제 data 디렉터리에
+남아있던 파일) 삭제. 이번 검증 세션에서 생성한 스크립트는 스크래치 디렉터리에만 저장,
+워크트리에는 남기지 않음.
+
+### 판정
+**통과.** image_browser.py/inference_image_list.py 이식 모두 스펙대로 동작하며, 상태뱃지
+갱신 후 번호 보존이라는 zone 고유 핵심 요구사항이 실측으로 확인됨. `zone_analysis_tab.py`가
+`InferenceImageList` 재사용만으로 자동 적용된다는 구현자 주장도 실제 인스턴스화로 재현·확인.
+신규 버그 없음. 회귀 없음(111 passed).

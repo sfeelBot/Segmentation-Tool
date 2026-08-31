@@ -4110,3 +4110,54 @@ ponytail: 반복 회귀 테스트가 필요해지면 `tests/` 아래 pytest-qt �
 에이전트의 확인 필요(GUI 실기동 골든패스 3번: 2장 이상 이미지 로드 → 원 정의 →
 일괄 처리 클릭 → `ZoneBatchResultDialog` 결과 확인은 자동 테스트로 대체하지 못한
 수동 확인 항목으로 남아있음).
+
+## 2026-08-31 — 이미지 리스트 순번 표시 (main 커밋 0d20217 이식)
+
+main에서 설계·구현·검증 완료된 "라벨링/추론 탭 이미지 리스트 'N. ' 순번 접두" 기능을
+zone 에디션(`app/widgets/image_browser.py`, `app/widgets/inference_image_list.py`)에
+이식. zone 코드가 main과 구조가 갈라져 있어(zone은 폴더 그룹핑이 아예 없는 대신
+상태 배지 표시 `set_item_status()`/`clear_status()`가 추가로 존재) main의 diff를
+기계적으로 적용하지 않고 설계만 참고해 재구현.
+
+### `image_browser.py`
+main과 동일한 설계 그대로 적용 — `_path_to_number: dict[Path, int]` 캐시,
+`_numbered_label()` 헬퍼, `_apply_display()`에서 `filtered` 인덱스로 재계산,
+`refresh_item()`/`refresh_items()`/`_make_tree_item()` 3곳에서 헬퍼 사용으로 교체.
+단건 갱신 경로(`refresh_item`)는 전체 재계산 없이 기존 번호 보존.
+
+### `inference_image_list.py`
+main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 진행 표시 등에서
+호출)와 `clear_status()`가 `item.setText(0, path.name)` 형태로 텍스트를 임의
+시점에 직접 덮어쓰므로, main처럼 `QTreeWidgetItemIterator`로 텍스트에 번호를
+한 번만 접두하는 방식은 상태 갱신 시 번호가 사라지는 회귀를 만든다. 이를 막기
+위해 main 설계를 확장:
+- `_path_to_number: dict[Path, int]` 캐시 + `_numbered_text(path, base)` 헬퍼(번호를
+  텍스트에서 파싱하지 않고 항상 캐시에서 조회) 추가.
+- `_number_items()`(main과 동일하게 `QTreeWidgetItemIterator`로 화면 순서 전체
+  통번호 부여, 폴더 헤더는 UserRole에 Path 없어 자동 skip)는 번호를 캐시에 저장하고
+  캐시 기반으로 텍스트를 설정.
+- `_apply_item_status()`/`clear_status()`도 `_numbered_text()`를 거치도록 수정 —
+  이후 `set_item_status()` 호출(배치 처리 중 상태 배지 갱신)이 언제 일어나도
+  번호가 유지됨.
+- `_apply_display()`에서 트리 재구성 직후·상태 복원 루프 이전에 `_number_items()`
+  1회 호출.
+
+### 세 번째 이미지 목록 확인
+`app/tabs/zone_analysis_tab.py`의 `self._img_list`는 별도 구현이 아니라
+`InferenceImageList`를 그대로 재사용하는 인스턴스라 이번 수정으로 자동으로
+번호가 적용됨 — 추가 작업 불필요(리더 보고 사항, 별도 코드 변경 없음).
+
+### 검증 (자체 실행)
+- 신규 `tests/test_image_list_numbering.py`(5 테스트): `ImageBrowser` 기본 정렬/
+  필터 재번호, `refresh_item()` 번호 보존, `InferenceImageList` 폴더 그룹핑 전체
+  통번호, `set_item_status()` 이후 번호 유지 확인.
+- `build/venv/Scripts/python.exe -m pytest tests/test_image_list_numbering.py -q
+  --basetemp=...` → 5 passed.
+- `build/venv/Scripts/python.exe -m pytest tests/ -q --basetemp=...` → 111 passed,
+  기존 스위트 회귀 없음.
+
+### 상태
+구현 완료, **커밋하지 않음**(사용자 지시 — 검증 통과 후 리더가 커밋). 독립 검증
+에이전트 확인 필요 — 특히 GUI 실기동으로 검색 디바운스/정렬 전환/폴더 그룹핑/
+존 분석 탭 배치 처리 상태 배지 갱신 시 번호가 실제로 유지되는지 육안 확인 권장
+(자동 테스트는 위젯 API 레벨 확인까지만 커버).
