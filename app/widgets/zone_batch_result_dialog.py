@@ -15,19 +15,29 @@ from PyQt6.QtWidgets import (
 )
 
 from app.core.logger import get_logger
-from app.core.zone_metrics import export_zone_percentages_to_excel, pivot_wide_format
+from app.core.zone_metrics import export_zone_percentages_to_excel, pivot_wide_format, ZoneBlobStat
 
 log = get_logger(__name__)
 
 
 class ZoneBatchResultDialog(QDialog):
-    """일괄 처리 결과 — (이미지, 존, 타겟 비율%) long format + wide format(이미지×존 피벗) 탭."""
+    """일괄 처리 결과 — (이미지, 존, 타겟 비율%) long format + wide format(이미지×존 피벗) 탭.
 
-    def __init__(self, rows: list[tuple[str, str, float]], parent=None) -> None:
+    R3: `blob_rows`(zone별 blob 크기 + AI 점수)는 Excel 내보내기 시에만 3번째 시트로
+    쓰인다 — 화면 Long/Wide 탭 표시는 이번 라운드 범위 밖(스펙 명시).
+    """
+
+    def __init__(
+        self,
+        rows: list[tuple[str, str, float]],
+        blob_rows: list[tuple[str, ZoneBlobStat]],
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("일괄 처리 결과")
         self.resize(560, 480)
         self._rows = rows
+        self._blob_rows = blob_rows
         self._build_ui(rows)
 
     def _build_ui(self, rows: list[tuple[str, str, float]]) -> None:
@@ -95,7 +105,7 @@ class ZoneBatchResultDialog(QDialog):
         if not path:
             return
         try:
-            export_zone_percentages_to_excel(self._rows, Path(path))
+            export_zone_percentages_to_excel(self._rows, Path(path), self._blob_rows)
         except Exception as exc:
             log.exception("Excel 내보내기 실패")
             QMessageBox.critical(self, "내보내기 오류", str(exc))

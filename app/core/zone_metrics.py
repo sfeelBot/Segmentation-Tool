@@ -89,19 +89,95 @@ def zone_stats(zone_mask: np.ndarray, target_class_mask: np.ndarray) -> float:
     return hit / area * 100.0
 
 
-def compute_blob_labels(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """타겟 클래스 이진 마스크 -> (라벨맵, stats). 라운드 4 블랍 클릭 삭제 전용 헬퍼.
+def compute_blob_labels(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """타겟 클래스 이진 마스크 -> (라벨맵, stats, centroids). 블랍 클릭 삭제 +
+    R3 Excel blob 내보내기가 공유하는 헬퍼.
 
     상하좌우로 이어진 픽셀만 같은 블랍으로 보는 4-connectivity를 사용한다 —
     `inference_engine._compute_blobs_and_filter()`와 API는 비슷하지만 confidence/
     size threshold 필터링까지 가져오면 이 탭엔 불필요한 결합이 생겨(스펙 "블랍 삭제"
     절) 별도로 둔다. 라벨 0 = 배경. `stats[label] = [x, y, w, h, area]`(OpenCV 표준
-    컬럼 순서, `CC_STAT_LEFT/TOP/WIDTH/HEIGHT/AREA`).
+    컬럼 순서, `CC_STAT_LEFT/TOP/WIDTH/HEIGHT/AREA`). `centroids[label] = (cx, cy)`
+    (R3 — `zone_blob_stats()`가 zone 배정에 사용, 이미 계산되는 값이라 추가 비용 없음).
     """
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(
+    _, labels, stats, centroids = cv2.connectedComponentsWithStats(
         mask.astype(np.uint8), connectivity=4
     )
-    return labels, stats
+    return labels, stats, centroids
+
+
+@dataclass
+class ZoneBlobStat:
+    """R3 — zone별 blob 하나의 통계(Excel `zone_blobs` 시트 1행에 대응)."""
+    zone_name: str
+    blob_id: int             # final_mask 라벨 순서 기준 1부터
+    pixel_count: int
+    ai_score: float | None   # 0~1, 순수 수동 blob(ai_mask 교집합 없음)이면 None
+    centroid_x: float
+    centroid_y: float
+    bbox_x: int
+    bbox_y: int
+    bbox_w: int
+    bbox_h: int
+
+
+def zone_blob_stats(
+    zones: list[Zone],
+    ai_mask: np.ndarray,
+    final_mask: np.ndarray,
+    confidence_map: np.ndarray,
+) -> list[ZoneBlobStat]:
+    """blob(연결요소, `final_mask` 기준) 단위로 zone 배정 + AI 점수를 계산한다.
+
+    blob의 "모양"은 최종 편집 결과(`final_mask`, AI 예측 + 수동 그리기/지우기 반영)
+    기준으로 나누되, AI 점수는 원래 모델이 예측한 픽셀(`ai_mask`)에서만 confidence
+    평균을 낸다 — 사람이 브러시로 새로 그려 넣은 픽셀은 confidence 자체가 없으므로
+    자동으로 제외되고, 그 blob 전체의 AI 예측 부분 평균이 대표값으로 쓰인다(스펙
+    "R3" 판단 2). 교집합이 전혀 없으면(100% 수동 blob) `ai_score=None`.
+    zone 배정은 blob 중심점(centroid) 기준(스펙 판단 3).
+    """
+    labels, stats, centroids = compute_blob_labels(final_mask)
+    n_labels = stats.shape[0]
+
+    flat_labels = labels.ravel()
+    ai_flat = ai_mask.ravel()
+    conf_flat = confidence_map.ravel().astype(np.float64)
+    ai_labels = flat_labels[ai_flat]
+    ai_conf = conf_flat[ai_flat]
+    ai_cnt = np.bincount(ai_labels, minlength=n_labels)
+    ai_sum = np.bincount(ai_labels, weights=ai_conf, minlength=n_labels)
+
+    h, w = final_mask.shape
+    results: list[ZoneBlobStat] = []
+    for lbl in range(1, n_labels):   # 0 = 배경
+        pixel_count = int(stats[lbl, cv2.CC_STAT_AREA])
+        if pixel_count == 0:
+            continue
+        cnt = int(ai_cnt[lbl])
+        ai_score = float(ai_sum[lbl] / cnt) if cnt > 0 else None
+
+        cx, cy = centroids[lbl]
+        px = min(max(int(round(cx)), 0), w - 1)
+        py = min(max(int(round(cy)), 0), h - 1)
+        zone_name = "미분류"   # 존들이 전체 이미지를 파티션하므로 실제로는 발생하지 않음
+        for zone in zones:
+            if zone.mask[py, px]:
+                zone_name = zone.name
+                break
+
+        results.append(ZoneBlobStat(
+            zone_name=zone_name,
+            blob_id=lbl,
+            pixel_count=pixel_count,
+            ai_score=ai_score,
+            centroid_x=float(cx),
+            centroid_y=float(cy),
+            bbox_x=int(stats[lbl, cv2.CC_STAT_LEFT]),
+            bbox_y=int(stats[lbl, cv2.CC_STAT_TOP]),
+            bbox_w=int(stats[lbl, cv2.CC_STAT_WIDTH]),
+            bbox_h=int(stats[lbl, cv2.CC_STAT_HEIGHT]),
+        ))
+    return results
 
 
 def _zone_name_sort_key(name: str) -> tuple[int, int]:
@@ -139,13 +215,20 @@ def pivot_wide_format(
     return images, zone_cols, values
 
 
-def export_zone_percentages_to_excel(rows: list[tuple[str, str, float]], out_path: Path) -> None:
+def export_zone_percentages_to_excel(
+    rows: list[tuple[str, str, float]],
+    out_path: Path,
+    blob_rows: list[tuple[str, ZoneBlobStat]] | None = None,
+) -> None:
     """(이미지파일명, 존이름, 타겟비율%) long format 목록을 xlsx로 저장.
 
     `inference_engine.export_blobs_to_excel()`과 동일한 openpyxl 패턴(헤더만 볼드)을
     스키마만 바꿔 복제. R3-2부터 시트 2개 — 기존 long 시트("zones") 유지 +
     `pivot_wide_format()` 기반 wide 시트("zones_wide") 추가(애디티브, 시그니처 불변
     — 기존 호출부 전부 무변경으로 wide 시트를 자동으로 얻는다).
+
+    R3: `blob_rows`가 주어지면(선택 인자, 하위 호환) 3번째 시트 "zone_blobs" 추가 —
+    zone별 blob 크기 + AI 점수(`ZoneBlobStat.ai_score is None`이면 "N/A").
     """
     from openpyxl import Workbook
     from openpyxl.styles import Font
@@ -169,6 +252,22 @@ def export_zone_percentages_to_excel(rows: list[tuple[str, str, float]], out_pat
         ws2.append(
             [img] + [round(values[(img, z)], 2) if (img, z) in values else "" for z in zone_cols]
         )
+
+    if blob_rows:
+        ws3 = wb.create_sheet("zone_blobs")
+        ws3.append([
+            "이미지파일명", "존이름", "blob_id", "픽셀수(면적)", "AI 점수(%)",
+            "중심x", "중심y", "bbox_x", "bbox_y", "bbox_w", "bbox_h",
+        ])
+        for cell in ws3[1]:
+            cell.font = Font(bold=True)
+        for image_name, s in blob_rows:
+            ai_score = "N/A" if s.ai_score is None else round(s.ai_score * 100, 2)
+            ws3.append([
+                image_name, s.zone_name, s.blob_id, s.pixel_count, ai_score,
+                round(s.centroid_x, 1), round(s.centroid_y, 1),
+                s.bbox_x, s.bbox_y, s.bbox_w, s.bbox_h,
+            ])
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(out_path))
@@ -214,13 +313,14 @@ if __name__ == "__main__":
     blob_mask = np.zeros((6, 6), dtype=np.uint8)
     blob_mask[0:2, 0:2] = 1   # 블랍 A, 면적 4
     blob_mask[4:6, 4:6] = 1   # 블랍 B, 면적 4
-    labels, stats = compute_blob_labels(blob_mask)
+    labels, stats, centroids = compute_blob_labels(blob_mask)
     assert labels.shape == blob_mask.shape
     unique_labels = set(np.unique(labels).tolist()) - {0}
     assert len(unique_labels) == 2, f"블랍 2개 예상, 실측 {len(unique_labels)}"
     for lbl in unique_labels:
         assert stats[lbl, 4] == 4, f"블랍 면적 4 예상, 실측 {stats[lbl, 4]}"
     assert labels[0, 0] != labels[5, 5] and labels[0, 0] != 0 and labels[5, 5] != 0
+    assert centroids.shape == (3, 2), "centroids: 배경(0) 포함 3행"
 
     # ── pivot_wide_format: 이미지 3장, 존 개수 2/2/3개 섞은 케이스(R3-2) ────────
     wide_rows = [
@@ -241,5 +341,29 @@ if __name__ == "__main__":
     edited = apply_manual_strokes(base, strokes)
     assert edited[4, 2], "그리기 스트로크 반경 밖(x=2)은 True로 남아야 함"
     assert not edited[4, 4], "지우기 스트로크가 마지막이라 중심(4,4)은 False여야 함"
+
+    # ── zone_blob_stats: AI blob 1개(교집합 있음) + 순수 수동 blob 1개(교집합
+    # 없음) + zone 2개(중심부/바깥쪽)에 걸친 배정 확인(R3) ──────────────────────
+    shape2 = (10, 10)
+    zones3 = zones_from_circles([Circle(1, 2, 2, 1)], shape2)   # 중심부(2,2 부근)/바깥쪽
+    final2 = np.zeros(shape2, dtype=bool)
+    final2[2, 2] = True                      # blob A: 중심부 zone, AI 예측 픽셀
+    final2[8, 8] = True                      # blob B: 바깥쪽 zone, 순수 수동(AI 교집합 없음)
+    ai_mask2 = np.zeros(shape2, dtype=bool)
+    ai_mask2[2, 2] = True                    # blob A만 AI가 실제로 예측
+    conf_map2 = np.zeros(shape2, dtype=np.float32)
+    conf_map2[2, 2] = 0.75
+
+    blob_stats = zone_blob_stats(zones3, ai_mask2, final2, conf_map2)
+    assert len(blob_stats) == 2, f"blob 2개 예상, 실측 {len(blob_stats)}"
+    by_pos = {(s.centroid_x, s.centroid_y): s for s in blob_stats}
+    blob_a = by_pos[(2.0, 2.0)]
+    blob_b = by_pos[(8.0, 8.0)]
+    assert blob_a.zone_name == "중심부", f"blob A는 중심부 배정 예상, 실측 {blob_a.zone_name}"
+    assert blob_a.ai_score is not None and abs(blob_a.ai_score - 0.75) < 1e-6, \
+        f"blob A AI 점수 0.75 예상, 실측 {blob_a.ai_score}"
+    assert blob_b.zone_name == "바깥쪽", f"blob B는 바깥쪽 배정 예상, 실측 {blob_b.zone_name}"
+    assert blob_b.ai_score is None, f"순수 수동 blob은 AI 점수 None(N/A) 예상, 실측 {blob_b.ai_score}"
+    assert blob_a.pixel_count == 1 and blob_b.pixel_count == 1
 
     print("zone_metrics self-check OK")

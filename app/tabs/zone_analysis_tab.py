@@ -49,6 +49,7 @@ from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import (
     Circle, zones_from_circles, zone_stats, compute_blob_labels,
     export_zone_percentages_to_excel, apply_manual_strokes,
+    zone_blob_stats, ZoneBlobStat,
 )
 from app.core import zone_state_store as zstate
 from app.core.logger import get_logger
@@ -96,7 +97,7 @@ class _ZoneInferenceWorker(QThread):
 
 class _ZoneBatchWorker(QThread):
     progress = pyqtSignal(object, str, object, int, int)
-    completed = pyqtSignal(object)
+    completed = pyqtSignal(object, object)   # rows, blob_rows (R3)
 
     def __init__(self, model, paths: list[Path], checkpoint_path: Path,
                  cached_results: dict[Path, InferenceResult], mode: str,
@@ -120,13 +121,14 @@ class _ZoneBatchWorker(QThread):
 
     def run(self) -> None:
         rows: list[tuple[str, str, float]] = []
+        blob_rows: list[tuple[str, ZoneBlobStat]] = []
         prepared = None
         if any(path not in self._cached_results for path in self._paths):
             try:
                 prepared = engine.prepare_inference(self._model, self._checkpoint_path)
             except Exception as exc:
                 self.progress.emit(self._checkpoint_path, "error", str(exc), 0, len(self._paths))
-                self.completed.emit(rows)
+                self.completed.emit(rows, blob_rows)
                 return
 
         total = len(self._paths)
@@ -155,13 +157,15 @@ class _ZoneBatchWorker(QThread):
                     self.progress.emit(path, "done", "원 없음", done, total)
                     continue
 
-                target_mask = result.class_map == self._target_cid
+                ai_mask = result.class_map == self._target_cid
                 previous = zstate.load_state(path)
                 if previous is not None:
                     if previous["removed_blob_ids"]:
-                        labels, _ = compute_blob_labels(target_mask)
-                        target_mask = target_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
-                    target_mask = apply_manual_strokes(target_mask, previous["manual_strokes"])
+                        labels, _, _ = compute_blob_labels(ai_mask)
+                        ai_mask = ai_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
+                    final_mask = apply_manual_strokes(ai_mask, previous["manual_strokes"])
+                else:
+                    final_mask = ai_mask
                 state = previous or {
                     "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
                 }
@@ -173,15 +177,17 @@ class _ZoneBatchWorker(QThread):
                 zones = zones_from_circles(
                     [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)], (h, w)
                 )
-                percentages = [zone_stats(zone.mask, target_mask) for zone in zones]
+                percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
                 rows.extend((path.name, zone.name, pct) for zone, pct in zip(zones, percentages))
+                blob_stats = zone_blob_stats(zones, ai_mask, final_mask, result.confidence_map)
+                blob_rows.extend((path.name, s) for s in blob_stats)
                 badge = f"{percentages[-1]:.1f}%" if percentages else None
                 self.progress.emit(path, "done", badge, done, total)
-                del result, target_mask, zones
+                del result, ai_mask, final_mask, zones
             except Exception as exc:
                 log.exception(f"존 분석 일괄 처리 실패 — image={path}")
                 self.progress.emit(path, "error", str(exc), done, total)
-        self.completed.emit(rows)
+        self.completed.emit(rows, blob_rows)
 
 
 def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
@@ -854,7 +860,7 @@ class ZoneAnalysisTab(QWidget):
             # 쓰면 AI신뢰도/픽셀크기 threshold가 존 퍼센티지·블랍 계산에 전혀
             # 반영되지 않는 버그가 된다(오버레이 화면만 바뀌고 숫자는 그대로).
             target_mask = result.class_map == cid
-            labels, stats = compute_blob_labels(target_mask)
+            labels, stats, _ = compute_blob_labels(target_mask)
             self._canvas.set_blob_data(labels, stats)
             for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
                 action.setEnabled(True)
@@ -885,19 +891,28 @@ class ZoneAnalysisTab(QWidget):
 
     # ── 슬롯 — 존(zone) 퍼센티지 계산/표시 (라운드 3) ────────────────────────
 
-    def _current_target_mask(self) -> np.ndarray | None:
-        """타겟 클래스 마스크에서 삭제된 블랍(라운드 4)을 배경 처리해 제외한
-        "표시 마스크"(스펙 "블랍 삭제" 절). 삭제 이력·라벨맵은 `ZoneCanvas`가
-        단일 출처로 들고 있다(`removed_blob_ids()`/`blob_labels()` — 원 선택/존
-        하이라이트와 동일한 getter 패턴, BUG-018/019 재발 방지)."""
+    def _ai_and_final_masks(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """(ai_mask, final_mask) — R3 Excel blob 내보내기가 둘을 구분해서 써야 해서
+        `_current_target_mask()`를 두 단계로 분리한 리팩터링(기존 동작 100% 보존).
+
+        `ai_mask`: 타겟 클래스 마스크에서 삭제된 블랍(라운드 4)을 배경 처리해 제외한
+        "표시 마스크"(스펙 "블랍 삭제" 절) — 수동 스트로크 반영 *전*. 삭제 이력·
+        라벨맵은 `ZoneCanvas`가 단일 출처로 들고 있다(`removed_blob_ids()`/
+        `blob_labels()` — 원 선택/존 하이라이트와 동일한 getter 패턴, BUG-018/019
+        재발 방지). `final_mask`: `ai_mask`에 수동 그리기/지우기까지 반영한 최종 마스크
+        (기존 `_current_target_mask()`가 반환하던 것과 동일)."""
         if self._last_result is None or self._target_class_id is None:
-            return None
-        mask = self._last_result.class_map == self._target_class_id
+            return None, None
+        ai_mask = self._last_result.class_map == self._target_class_id
         removed = self._canvas.removed_blob_ids()
         labels = self._canvas.blob_labels()
         if removed and labels is not None:
-            mask = mask & ~np.isin(labels, list(removed))
-        return self._canvas.apply_manual_strokes(mask)
+            ai_mask = ai_mask & ~np.isin(labels, list(removed))
+        final_mask = self._canvas.apply_manual_strokes(ai_mask)
+        return ai_mask, final_mask
+
+    def _current_target_mask(self) -> np.ndarray | None:
+        return self._ai_and_final_masks()[1]
 
     def _on_blob_deleted(self, _label_id: int) -> None:
         # ZoneCanvas가 이미 removed_blob_ids에 반영·재도색까지 마친 뒤 emit한다
@@ -938,6 +953,22 @@ class ZoneAnalysisTab(QWidget):
         zones = zones_from_circles(circles, (h, w))
         target_mask = self._current_target_mask()
         return [(zone.name, zone_stats(zone.mask, target_mask)) for zone in zones]
+
+    def _compute_zone_blob_rows(self) -> list[tuple[str, ZoneBlobStat]]:
+        """R3 — 단일 이미지 Excel 내보내기용 (이미지파일명, ZoneBlobStat) 목록."""
+        if self._image_path is None:
+            return []
+        circles_raw = self._canvas.circles_with_ids()
+        if not circles_raw or self._last_result is None or self._target_class_id is None:
+            return []
+        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
+        h, w = self._last_result.raw_class_map.shape
+        zones = zones_from_circles(circles, (h, w))
+        ai_mask, final_mask = self._ai_and_final_masks()
+        if ai_mask is None:
+            return []
+        stats = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
+        return [(self._image_path.name, s) for s in stats]
 
     def _recompute_zones(self) -> None:
         # circles_changed 는 원 드래그 이동/반지름조절 중에도 mouseMoveEvent마다 emit된다
@@ -991,8 +1022,9 @@ class ZoneAnalysisTab(QWidget):
         if not path:
             return
         excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
+        blob_rows = self._compute_zone_blob_rows()
         try:
-            export_zone_percentages_to_excel(excel_rows, Path(path))
+            export_zone_percentages_to_excel(excel_rows, Path(path), blob_rows)
         except Exception as exc:
             log.exception("존 분석 단일 이미지 Excel 내보내기 실패")
             QMessageBox.critical(self, "내보내기 오류", str(exc))
@@ -1158,14 +1190,16 @@ class ZoneAnalysisTab(QWidget):
         else:
             self._img_list.set_item_status(path, "done", badge=detail)
 
-    def _on_batch_completed(self, rows: list[tuple[str, str, float]]) -> None:
+    def _on_batch_completed(
+        self, rows: list[tuple[str, str, float]], blob_rows: list[tuple[str, ZoneBlobStat]]
+    ) -> None:
         if self._batch_progress is not None:
             self._batch_progress.close()
             self._batch_progress = None
         if not rows:
             QMessageBox.information(self, "결과 없음", "처리된 결과가 없습니다.")
             return
-        ZoneBatchResultDialog(rows, self).exec()
+        ZoneBatchResultDialog(rows, blob_rows, self).exec()
 
     def _on_batch_finished(self) -> None:
         self._batch_worker = None

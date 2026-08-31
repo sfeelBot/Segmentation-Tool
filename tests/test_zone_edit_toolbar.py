@@ -52,7 +52,7 @@ def test_zone_toolbar_is_exclusive_and_defaults_are_patch_based() -> None:
 def test_diagonally_touching_pixels_are_separate_blobs() -> None:
     mask = np.array([[1, 0], [0, 1]], dtype=np.uint8)
 
-    labels, stats = compute_blob_labels(mask)
+    labels, stats, _ = compute_blob_labels(mask)
 
     assert set(labels.ravel()) == {0, 1, 2}
     assert sorted(stats[1:, 4].tolist()) == [1, 1]

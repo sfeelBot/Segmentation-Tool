@@ -45,7 +45,7 @@ def test_batch_prepares_once_persists_every_mode_and_does_not_cache_results():
                 [(5.0, 5.0, 2.0)], (20, 20), .5, _classes(), 1, 0, 0,
             )
             completed = []
-            worker.completed.connect(completed.append)
+            worker.completed.connect(lambda rows, blob_rows: completed.append(rows))
             worker.run()
             assert calls[0] == "prepare" and calls.count("prepare") == 1
             assert len({id(value) for value in calls[1:]}) == 1
