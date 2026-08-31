@@ -29,6 +29,63 @@
 
 ---
 
+## 2026-09-01 — BUG-030 존 분석 배치 처리 하드크래시 수정 (존 분석 탭 에디션 브랜치)
+
+- 상태: 구현 완료 — **검증 에이전트의 실행 확인 필요** (구현자 자체 실행 확인은 아래 참고,
+  독립 재검증은 아직 이루어지지 않음).
+- 대상 브랜치/경로: `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+- 배경: 리더가 3개 격리 실험으로 결정적으로 좁힌 근본원인(QA.md BUG-030, 이제 Closed) —
+  "①번째 실 CUDA 추론과 다른 스레드에서 2번째 실 CUDA 추론을 수행한 뒤, 같은 스레드 안에서
+  곧바로 cv2(`compute_blob_labels`=`cv2.connectedComponentsWithStats`)/numpy 무거운
+  후처리를 이어서 실행하는 조합"이 `STATUS_STACK_BUFFER_OVERRUN`(`0xC0000409`) 하드크래시의
+  유일한 트리거로 확정됨.
+- 수정 내용(`app/tabs/zone_analysis_tab.py`):
+  - `_ZoneBatchWorker`를 CUDA 추론 전용으로 축소 — 워커는 `engine.prepare_inference()`/
+    `engine.run()`만 수행하고, 이미지별 raw `InferenceResult`를 새 시그널
+    `image_inferred(path, result, done, total)`로 메인 스레드에 넘긴다. 구 `completed`
+    시그널과 워커 안에서 하던 `compute_blob_labels`/`zones_from_circles`/
+    `zone_blob_stats`/`apply_manual_strokes`/`zstate.save_state`/(per_image 모드의)
+    `detect_circles` 호출을 전부 제거했다.
+  - cv2/numpy 존·블랍 후처리는 `ZoneAnalysisTab._on_batch_image_inferred()`(메인 스레드
+    슬롯, 신규)로 그대로 옮겨 `self._batch_rows`/`self._batch_blob_rows`에 누적한다.
+    후처리에 필요한 컨텍스트(mode/circles_ref/ref_size/sensitivity/target_cid)는
+    `_on_batch_process()`가 워커 생성 직전 `self._batch_*`에 저장해둔다.
+  - 배치 완료 판정을 구 `completed` 시그널 대신 `QThread.finished`로 통합 —
+    Qt의 크로스스레드 큐드 시그널은 emit 순서를 보존하므로 `finished`가 도착할
+    때는 그 전에 posted된 모든 `image_inferred`가 메인 스레드에서 이미 처리된
+    뒤임을 활용(`_on_batch_finished`가 진행 다이얼로그를 닫고 결과 다이얼로그를 연다).
+  - 구현 중 발견한 부수 버그도 함께 수정: `QProgressDialog.setValue()`가 내부적으로
+    `processEvents()`를 호출해 이미 큐잉된 `finished` 이벤트를 재진입(reentrant)
+    처리할 수 있어, 마지막 이미지의 `_on_batch_progress()` 실행 도중
+    `self._batch_progress`가 `None`으로 바뀌는 경합이 실측으로 확인됨(재현 스크립트로
+    `AttributeError` 노출) — `_on_batch_progress()`가 함수 시작 시 `self._batch_progress`를
+    로컬 변수(`dlg`)로 스냅샷해 이후 일관되게 사용하도록 수정.
+- 테스트(`tests/test_zone_batch_worker.py`) 전면 재작성: (1) 워커는 추론만 하고 cv2/사이드카를
+  절대 건드리지 않음을 확인하는 테스트, (2) 메인 스레드 후처리 함수가 3가지 모드(일괄 적용/
+  기존 편집 보존/장별 검출)에서 정확히 동작함을 확인하는 테스트(기존 워커-레벨 테스트를
+  메인 스레드 슬롯 직접 호출로 전환), (3) 인터럽션 요청 시 워커가 즉시 멈추는 계약 테스트(신규),
+  (4) 실 `QThread.start()` + 실 버튼 클릭으로 진행률/에러 뱃지/결과 다이얼로그 오픈까지 확인하는
+  골든패스 테스트(신규) — 총 7개 전부 통과.
+- 검증(구현자 자체 실행 확인):
+  - `pytest tests/test_zone_batch_worker.py tests/test_zone_github_13_14.py
+    tests/test_zone_state_persistence.py tests/test_zone_edit_toolbar.py` 20/20 통과.
+  - 사용자가 제공한 크래시 재현 스크립트(`repro_batch_real_platform.py`, 실 체크포인트
+    `학습1_best.pt` + 실 이미지 2장, `QT_QPA_PLATFORM` 미지정 네이티브 Qt 플랫폼,
+    PowerShell `$LASTEXITCODE`로 직접 확인 — git-bash `$?`는 이 크래시 코드를 부정확하게
+    보고하므로 배제)를 수정 전/후 각각 실행 — 수정 전엔 재진입 경합으로 인한
+    `AttributeError`가 노출됐고(오탐 없이 실측), 수정 후엔 `LASTEXITCODE=0`으로
+    스크립트 마지막 줄("CLOSED OK")까지 정상 출력됨을 확인.
+  - `python -m py_compile app/tabs/zone_analysis_tab.py tests/test_zone_batch_worker.py` 통과.
+- QA.md: BUG-030을 Open Issues에서 제거하고 Closed Issues에 근본원인·수정 내용·검증 방법을
+  기재해 이동.
+- 커밋: `147ce67d938028f4e5917570bb5e123cea41edc3`
+  (`fix: BUG-030 존 분석 배치 처리 하드크래시 — cv2 후처리를 메인 스레드로 이전`).
+  **push는 하지 않음** — 리더 지시대로 검증 에이전트의 독립 재확인 이후 리더가 직접 push.
+- 남은 작업(검증 에이전트에게 명시): (1) 이 워크트리에서 독립적으로 재현 스크립트를 재실행해
+  크래시 소멸을 재확인, (2) 실제 UI로 배치 처리 골든패스(진행률 표시/취소 버튼/에러 처리 포함)를
+  한 번 더 QTest로 확인, (3) BUG-029(Open, 원 id 충돌) 등 이번 작업과 무관한 기존 이슈는
+  범위 밖임을 인지.
+
 ## 2026-08-28 — GitHub #23 학습·추론 개선
 
 - `QThread` 기반 전체 이미지 추론과 진행률·결과 캐시·원본 선표시·`F` 토글 구현.
