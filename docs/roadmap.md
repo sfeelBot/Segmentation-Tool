@@ -957,9 +957,12 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   부족, 앱 재시작 후에도 남아야 함) — 최초 기획의 "세션 메모리 기본안" 제안은
   폐기, [docs/decisions-needed.md](decisions-needed.md)에 반영 완료.
 - 라운드 분할(작게 쪼개고 의존관계 고려, 권장 순서 1→2→3):
-  - [ ] **R-ZONE-1** — 이슈1(성능): `paintEvent()`의 수동 스트로크 전체 재순회를
+  - [x] **R-ZONE-1** — 이슈1(성능): `paintEvent()`의 수동 스트로크 전체 재순회를
         rasterize-on-commit `QImage` 캐시로 교체(`annotation_canvas.py` 오버레이 캐시
-        원칙 재사용). `app/widgets/zone_canvas.py` 단독.
+        원칙 재사용). `app/widgets/zone_canvas.py` 단독. 구현 완료(2026-08-31,
+        벤치마크 500스트로크×20스탬프 기준 29.6ms/frame -> 0.175ms/frame, 168.8배,
+        픽셀 렌더링 결과 회귀 없음 확인) — `docs/agents/implementation-log.md`
+        참고, 검증 서브에이전트 확인 필요.
   - [x] **R-ZONE-2** — 이슈3(CPU 경고 누락): `prompt_gpu_availability()`를 `_on_run()`/
         `_on_batch_process()`에 추가(추론/학습/오토라벨링과 동일 패턴, 신규 로직 없음).
         `app/tabs/zone_analysis_tab.py` 단독. 구현 완료(2026-08-31),

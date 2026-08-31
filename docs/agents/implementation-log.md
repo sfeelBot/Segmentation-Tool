@@ -4189,3 +4189,56 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 ### 상태
 구현 완료. 커밋 `2e8aed3`. **검증 서브에이전트의 실제 GUI 확인 전까지 완료로
 간주하지 않는다.**
+
+## 2026-08-31 — R-ZONE-1: 존 캔버스 브러시 스트로크 렌더링 성능 개선
+
+- 워크트리 `D:\segmentation model-zone-work`(브랜치 `leader-work-zone-20260830`)에서
+  작업, 스펙 `docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md`의
+  R-ZONE-1 절만 범위로 구현. `app/widgets/zone_canvas.py` 단독 수정(스펙 지정 그대로).
+
+### 원인 재확인
+`ZoneCanvas.paintEvent()` → `_paint_erase_preview()`가 매 프레임(마우스 이동마다
+`mouseMoveEvent`가 `self.update()` 호출) `self._manual_strokes`(커밋된 그리기/지우기
+스트로크 전체 이력)를 처음부터 전부 순회해 `drawEllipse()`를 다시 호출하고 있었다.
+`_erase_mask_np`(실제 마스크 계산용 원본 해상도 bool 캐시)는 이 렌더링 경로와 무관함을
+재확인 — 마스크 계산 경로는 전혀 건드리지 않았다.
+
+### 구현
+1. 신규 필드 `self._stroke_overlay: QImage | None` — pixmap 좌표계(줌/팬 미적용,
+   `self._pixmap`과 동일 크기) ARGB32_Premultiplied 캐시.
+2. `_ensure_stroke_overlay()` — 없거나 `self._pixmap` 크기와 다르면 새로 만들고
+   투명으로 채움(이미지 전환은 항상 `set_blob_data()`를 거쳐 캐시가 먼저 `None`이
+   되므로 별도 resize 배선 불필요).
+3. `_rasterize_stroke(draw, stroke)` — 스트로크 1개만 캐시에 추가로 그림(스탬프
+   개수만큼만 비용 발생, 전체 재순회 아님). `mouseReleaseEvent()`가
+   `self._manual_strokes.append(...)` 하는 바로 그 지점에서 호출.
+4. `_rebuild_stroke_overlay()` — `self._manual_strokes`를 처음부터 재생. 저빈도
+   이벤트(`undo()`, `set_blob_data()`)에서만 호출 — `undo()`는 스냅샷 복원 직후,
+   `set_blob_data()`는 `_manual_strokes = []`와 함께 캐시를 바로 `None`으로 리셋.
+5. `_paint_erase_preview()` — 캐시가 있으면
+   `p.save(); p.translate(pan); p.scale(zoom); p.drawImage(0,0,cache); p.restore()`
+   1회로 커밋된 스트로크를 전부 그리고, 진행 중인 `self._current_stroke`(점 개수 적음)
+   만 기존 방식대로 매 프레임 직접 그린다.
+
+### 검증 (자체 실행)
+- `py_compile app/widgets/zone_canvas.py` → 통과.
+- 기존 회귀 테스트 `tests/test_zone_edit_toolbar.py` + `tests/test_zone_github_13_14.py`
+  → 14 passed(신규 python 3.14 환경 + pytest 설치 후 실행, torch 미설치 환경에서도
+  이 두 테스트는 torch를 import하지 않아 정상 수행됨을 확인).
+- 픽셀 단위 회귀 확인: `QT_QPA_PLATFORM=offscreen`에서 500스트로크×20스탬프 데이터로
+  기존 방식(전체 재순회, 리팩터 전 로직을 그대로 재현)과 신규 캐시 방식을 각각
+  `QImage`에 렌더링해 `QImage.convertToFormat(RGBA8888)` 버퍼를 직접 비교 —
+  `img_old == img_new` **완전 동일**(시각적 회귀 없음, undo/브러시 모드 전환 등 기존
+  동작은 이 캐시 추가와 무관해 별도 확인 불필요 — 캐시는 렌더링 경로만 바꿈).
+- 벤치마크(`QT_QPA_PLATFORM=offscreen`, 500 스트로크 × 스트로크당 20스탬프 =
+  총 10,000스탬프, `_paint_erase_preview()` 200프레임 평균 소요시간,
+  스크립트: 세션 스크래치패드 `bench_stroke_overlay.py`):
+  - 기존 방식(매 프레임 `_manual_strokes` 전체 재순회): **29.621 ms/frame**
+  - 신규 방식(rasterize-on-commit 캐시 + `drawImage()` 1회): **0.175 ms/frame**
+  - **168.8배 개선**
+- `python main.py` GUI 실기동 검증은 수행하지 않음(지시 범위 밖) — 검증
+  서브에이전트가 라벨링/브러시 그리기·지우기/undo 등 실제 조작으로 확인 필요.
+
+### 상태
+구현 완료, 커밋 `93efb45`. **검증 서브에이전트의 실제 GUI 확인 전까지 완료로
+간주하지 않는다.**
