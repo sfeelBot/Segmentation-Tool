@@ -1257,3 +1257,89 @@ self-check(`python -m app.core.zone_state_store` 또는 동등한 실행)까지 
 라운드에서 실제 GUI 골든패스(R1: 클릭선택/줌팬 중 클릭/이미지전환/재추론 시
 선택해제 + Zone 탭 5모드 회귀, R3: 단일·배치 Excel export 후 xlsx 재오픈 값
 대조) 확인을 명시적으로 요청할 것.
+
+---
+
+## 2026-09-01 — Zone 편집 도구 UX 개선 6건 + 브러시 버그 감사·스펙 (v1.5.0 예정)
+
+### 배경
+사용자가 Zone 분석 탭 편집 도구(`zone_canvas.py`/`zone_analysis_tab.py`)에 대해 6가지를
+요청: ① 브러시 그리기(수동 추가)를 추론 결과와 다른 파란색으로 표시 ② 브러시 지우기를
+라벨링 탭처럼 연한 회색으로 표시 + 실제로 추론 블랍을 지우는 형식으로 변경 ③ 브러시로
+칠한 것도 지울 수 있도록 변경 ④ 블랍(AI 추론+브러시 둘 다)을 클릭으로 선택 가능하게
+⑤ 도구 버튼 활성 상태에서 재클릭 시 비활성화(기본 상태로 복귀) ⑥(버그) 자동 검출 이후
+브러시를 누르면 자동검출 결과값을 조정 못함. 전부 `v1.5.0`으로 묶어 릴리스 예정. 이번
+세션에는 Bash/QTest 등 실행 도구가 지급되지 않아 순수 정적 코드 추적으로만 감사했다.
+
+### 한 일
+- `zone_canvas.py`(734줄) 전체 정독 + `zone_analysis_tab.py`의 관련 함수(툴바 구성,
+  `_on_edit_tool_changed`, `_setup_target_classes`, `_on_target_changed`,
+  `_ai_and_final_masks`/`_current_target_mask`, `_recompute_zones`, `_on_auto_detect`,
+  시그널 연결부)를 grep+전수 대조. `overlay_viewer.py`(`OverlayViewer` — 줌/팬/클릭감지
+  기반 클래스), `zone_metrics.py`(`apply_manual_strokes`/`compute_blob_labels`/
+  `zone_blob_stats`), `inference_engine.py`/`inference_tab.py`의 오늘 이미 구현된
+  블랍 클릭 선택 패턴(`blob_at`/`pixmap_clicked`/`set_highlight_rect`)까지 교차 확인.
+- **요청②③ 감사 — 이미 완전히 동작 확인**: `zone_metrics.apply_manual_strokes()`가
+  `(draw, stroke)` 시간순 리스트를 last-write-wins로 적용하는 순수 numpy 연산이고,
+  `zone_analysis_tab._ai_and_final_masks()`가 만드는 `final_mask`(AI+수동 스트로크
+  반영)가 존 퍼센티지 계산(`_compute_zone_percentages`)과 Excel blob 내보내기
+  (`_compute_zone_blob_rows`) **양쪽 실계산에 이미 쓰이고 있음**을 호출 체인을 끝까지
+  따라가 확인. 화면만 지워지고 숫자가 안 바뀌는 문제, 브러시로 그린 영역을 못 지우는
+  문제 둘 다 현재 코드에 없음 — **신규 로직 불필요, 색상 변경만으로 완료**.
+- **요청①② 색상**: 현재 그리기=초록 `QColor(0,230,140,110)`, 지우기=빨강
+  `QColor(255,60,60,110)`이 `_rasterize_stroke()`/`_paint_erase_preview()` 두 곳에
+  인라인 중복돼 있음을 확인. 신규 색을 발명하지 않고 앱 전역에서 이미 accent로 쓰이는
+  `#60a5fa`(파랑, grep으로 12개+ 파일에서 확인)와 라벨링 탭 지우개 색과 동일한
+  `#9ca3af`(`annotation_canvas.py:1740`)를 재사용하기로 판단 — 두 곳을 이름 상수
+  (`_COLOR_DRAW`/`_COLOR_ERASE`)로 승격하는 안 제시.
+- **요청④ 설계**: task brief의 기본값(클릭=하이라이트+정보표시만, 삭제는 기존
+  blob_delete 모드 유지)을 채택 — 오늘 이미 구현된 추론 탭의 동일 철학 패턴을 근거로
+  삼음. `ZoneCanvas`가 `OverlayViewer`를 상속해 `set_highlight_rect()`를 이미 쓸 수
+  있음(코드 확인 — `ZoneCanvas.paintEvent()`가 최상단에서 `super().paintEvent()` 호출).
+  blob 정체성은 추론 탭의 `blob_at()`(8-connectivity, 전체 클래스)이 아니라 2026-08-31
+  라운드가 이미 확립한 `compute_blob_labels()`(4-connectivity, 타겟 클래스 전용,
+  `final_mask` 기준) 재사용으로 판단 — 브러시로 그린 영역이 이미 `final_mask`에
+  포함되므로 별도 분기 없이 AI+브러시 블랍 둘 다 자동 포함됨. 통계도 신규 함수 없이
+  R3에서 이미 만든 `zone_blob_stats()`를 재사용(단일 blob 조회이지만 전체 계산 후
+  필터링 — 클릭당 1회라 성능 문제 안 됨, ponytail 주석으로 필요시 최적화 여지 명시).
+  `zones=[]`(원이 아직 없는 상태)에서도 예외 없이 "미분류"로 동작함을 코드로 확인해
+  원 유무와 무관하게 블랍 선택이 가능하도록 설계.
+- **요청⑤ 감사**: `QActionGroup(exclusive=True)`는 이미 체크된 액션을 다시 클릭해도
+  체크 상태는 유지되지만 `triggered`는 여전히 emit된다(Qt 표준 동작) — 재클릭 감지는
+  프레임워크가 대신해주지 않으므로 클릭된 액션을 이전 호출과 직접 비교하는 필드
+  추적이 필요함을 확인. 기본 모드=원편집(circle)은 새 판단이 아니라 기존 코드가 이미
+  3곳(초기화/새이미지로드/검출클래스없음)에서 쓰는 리셋 관례 재확인.
+- **요청⑥(버그) 감사 — 정적 추적만으로는 단일 원인 미확정**: 모드 상태머신(4가지
+  전이 전부 손으로 시뮬레이션, 결함 없음), 원 자동검출(`_on_auto_detect`가
+  `set_circles()`만 호출 — mode/blob_data/undo/브러시활성화 상태 어느 것도 안 건드림),
+  브러시 활성화 조건(`_on_target_changed()`에서만 True, 원 자동검출과 무관), 스트로크
+  →퍼센티지 반영 경로(캐시 없이 매번 신선하게 재계산, stale 데이터 없음) 4갈래를 전부
+  추적했으나 논리적 결함을 찾지 못함. 유일한 실제 발견(확신 낮음): AI가 타겟 클래스를
+  0픽셀 검출한 이미지에서는 원 자동검출 버튼은 계속 활성인데 브러시 3개 액션만
+  비활성으로 남는 표면적 불일치(`_setup_target_classes()` ids 빈 분기) — 사용자 표현과
+  형태는 일치하지만 흔한 경로가 아니라 확신도 낮음. **실행 도구 미지급으로 라이브 재현
+  불가** — 추측으로 결정하지 않고, 구현 착수 전 실제 GUI 재현을 필수 선행 단계로
+  스펙에 명시(재현되면 후보 검증 후 최소수정, 안 되면 QA.md에 "재현 불가"로 기록하고
+  종료 — 억지 수정 금지).
+- 스펙 문서 신설: [docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md](../specs/zone-edit-ux-and-brush-fix-2026-09-01.md)
+  — 요청별 감사 결과/설계 판단/정확한 변경 파일·줄번호·코드 스니펫/완료 기준, 요청6은
+  감사 결과+가설 순위+권장 재현 절차, 실행 순서(R1→R2→R3→R4, 리더의 GitHub #32 순서
+  조정 메모 포함).
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절에 신규 하위 절 추가(요청 요약, R1~R4 체크박스
+  4개 전부 착수 대기, 실행 순서·결정 대기 없음 명시).
+- `docs/decisions-needed.md` 갱신 없음 — 설계 판단(요청4 선택-vs-삭제, 요청5 기본모드)은
+  전부 기존 코드 관례 근거로 직접 결정 완료, 요청6은 "결정"이 아니라 "라이브 재현
+  필요"라 이 목록 대상이 아님(GitHub #9/#16 라운드와 동일하게 처리).
+- 코드는 건드리지 않음(Read/Grep만 사용, Write/Edit는 스펙 신설 1건 + `roadmap.md`/
+  본 로그 갱신에만 사용). 작업 워크트리 `D:\segmentation model-zone-analysis-tab`
+  (`feature/zone-analysis-tab` 브랜치) 확인, 다른 워크트리/main 미접촉.
+
+### 상태
+완료 — 다음: 리더가 R1(색상, 최저리스크)부터 구현 에이전트에 위임 가능(결정 대기
+없음). R2(토글)는 R1과 파일이 달라 병렬 가능. R3(블랍 선택)는 "주요 기능 추가"로
+분류해 검증 라운드에서 골든패스(AI블랍/브러시블랍 클릭선택, blob_delete 모드 회귀
+없음, 원 유무 무관 동작, 타겟클래스 전환 시 선택 해제) 확인을 명시적으로 요청할 것.
+R4(버그)는 구현 에이전트가 코드를 고치기 전에 반드시 `python main.py`로 라이브 재현을
+먼저 시도하도록 명시할 것 — 재현 안 되면 코드 변경 없이 QA.md 기록만으로 종료해도 됨.
+리더 메모대로 전체 구현 착수는 GitHub #32 검증·push 완료 후로 순서 조정 권장(같은
+두 파일 근처 동시 작업 충돌 방지).

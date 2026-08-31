@@ -1124,6 +1124,48 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       Long/Wide 탭에 3번째 blob 탭 추가는 범위 밖(YAGNI, "excel로 내보낼 때"까지가
       요청 범위). **주요 기능 추가로 분류 — xlsx 재오픈 오라클 대조 검증 필요.**
 
+### 편집 도구 UX 개선 6건 + 브러시 버그 조사 (2026-09-01 요청, v1.5.0 예정)
+
+기획 완료: [docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md](specs/zone-edit-ux-and-brush-fix-2026-09-01.md).
+사용자 요청 6건 — ① 브러시 그리기(수동 추가)를 추론 결과와 다른 **파란색**으로 표시
+② 브러시 지우기를 라벨링 탭처럼 **연한 회색**으로 표시 + 실제로 추론 블랍을 지움
+③ 브러시로 지우기가 브러시로 그린 영역도 지울 수 있어야 함 ④ 블랍(AI+브러시 둘 다)을
+클릭으로 선택 ⑤ 도구 버튼 재클릭 시 토글 비활성화(기본=원편집 모드 복귀) ⑥(버그) 자동
+검출 이후 브러시로 결과를 조정하지 못함. 코드 대상은 `app/widgets/zone_canvas.py`/
+`app/tabs/zone_analysis_tab.py` 둘뿐, 신규 파일 없음.
+
+- **감사 결과 — 요청②③은 이미 완전히 동작**: `zone_metrics.apply_manual_strokes()`가
+  last-write-wins로 `final_mask`를 실계산(존 퍼센티지·Excel blob)에 이미 반영 중 —
+  색상만 바꾸면 됨.
+- [ ] R1(①②③) — `zone_canvas.py` 색상 상수 `_COLOR_DRAW`(#60a5fa 파랑, 앱 표준 accent
+      재사용)/`_COLOR_ERASE`(#9ca3af 회색, 라벨링 탭 지우개 색 재사용) 신설 + 2개
+      사용처(`_rasterize_stroke`/`_paint_erase_preview`) 교체. 최저 리스크.
+- [ ] R2(⑤) — `zone_analysis_tab.py` 단독. `_on_edit_tool_changed()`에 "같은 액션
+      재클릭 감지"(`self._active_tool_action` 추적) 추가, 기본 모드 = 원편집(circle,
+      기존 리셋 관례 3곳과 동일).
+- [ ] R3(④) — `zone_canvas.py`(신규 시그널 `blob_clicked`+`highlight_blob_bbox()`) +
+      `zone_analysis_tab.py`(신규 슬롯, `zone_metrics.compute_blob_labels`/
+      `zone_blob_stats`(R3 Excel 라운드에서 이미 구현된 함수) 재사용, 신규 core 함수
+      없음). 설계 판단: "선택"과 "삭제"를 분리(클릭=하이라이트+정보표시만, 삭제는
+      기존 blob_delete 모드 그대로) — 오늘 이미 구현된 추론 탭 블랍 클릭 패턴과 동일
+      철학, blob 정체성은 4-connectivity `final_mask` 기준이라 AI+브러시 블랍이 자동
+      으로 둘 다 포함됨. **주요 기능 추가로 분류 — 골든패스 검증 필요.**
+- [ ] R4(⑥ 버그) — **정적 감사로 단일 원인 확정 실패**(실행 도구 미지급, 순수 코드
+      추적만 수행). 모드 상태머신/자동검출 부작용/브러시 활성화 조건/스트로크→퍼센티지
+      반영 경로 4갈래를 전수 추적했으나 결함 없음. 유일한 후보(확신 낮음): AI가 타겟
+      클래스를 0픽셀 검출한 이미지에서 원 자동검출 버튼(`_btn_detect`)은 계속 활성인데
+      브러시 3개 액션은 비활성 상태로 남는 표면적 불일치(`_setup_target_classes()`
+      `ids` 빈 분기). **구현 착수 전 실제 GUI 재현이 선행 조건** — 재현되면 위 후보
+      검증 후 최소 수정, 재현 안 되면 QA.md에 "재현 불가"로 기록하고 종료(억지 수정
+      금지).
+- 실행 순서: R1(최우선) → R2(R1과 파일 달라 병렬 가능) → R3(R1/R2 이후, 같은 파일들
+  손대는 diff 단순화 목적) → R4(독립적으로 아무 때나, 코드수정 필요 여부 자체가
+  불확실). **리더 메모**: 실제 구현 착수는 GitHub #32(배치 병목) 검증·push 완료 후로
+  순서 조정 예정(같은 두 파일 근처를 동시에 건드리는 작업 충돌 방지).
+- 결정 대기 없음 — 설계 판단(요청4 선택-vs-삭제 분리, 요청5 기본모드) 전부 기존 코드
+  관례 근거로 직접 결정. 요청6은 "결정"이 아니라 "라이브 재현 필요"라 결정대기 목록
+  대상 아님(GitHub #9/#16 라운드와 동일 처리).
+
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
   그리기/지우기/연결 블랍 삭제/팬/Undo), 수동 스트로크 last-write-wins와 혼합 LIFO Undo.
