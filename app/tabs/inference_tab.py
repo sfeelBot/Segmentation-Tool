@@ -8,14 +8,14 @@ from PyQt6.QtWidgets import (
     QApplication, QProgressDialog, QProgressBar,
 )
 from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtCore import Qt, QSize, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QThread, QTimer, QPointF, QRectF, pyqtSignal
 
 from app.widgets.icons import icon as svg_icon
 
 from app.core import inference_engine as engine
 from app.core.inference_engine import (
     InferenceResult, BlobStat, list_checkpoints, load_checkpoint_meta, CheckpointMeta,
-    load_model_from_ckpt, model_source_label, export_blobs_to_excel,
+    load_model_from_ckpt, model_source_label, export_blobs_to_excel, blob_at,
 )
 from app.core.logger import get_logger
 from app.core.device_info import prompt_gpu_availability
@@ -87,6 +87,7 @@ class InferenceTab(QWidget):
         self._worker: _InferenceWorker | None = None
         self._ckpt_metas: list[CheckpointMeta] = []
         self._auto_model = None   # 체크포인트 선택 시 자동으로 결정된 모델
+        self._selected_blob: BlobStat | None = None
         self._build_ui()
         self._opacity_timer = QTimer(self)
         self._opacity_timer.setSingleShot(True)
@@ -192,6 +193,13 @@ class InferenceTab(QWidget):
         self._lbl_blob_count.setStyleSheet("color:#9ca3af;")
         thresh_row.addWidget(self._lbl_blob_count)
         top_layout.addLayout(thresh_row)
+
+        selected_row = QHBoxLayout()
+        self._lbl_selected_blob = QLabel("")
+        self._lbl_selected_blob.setStyleSheet("color:#fbbf24;")
+        selected_row.addWidget(self._lbl_selected_blob)
+        selected_row.addStretch()
+        top_layout.addLayout(selected_row)
 
         # ── 체크포인트 테이블 ──────────────────────────────────────────────────
         ckpt_header = QHBoxLayout()
@@ -320,6 +328,7 @@ class InferenceTab(QWidget):
         self._img_list.image_selected.connect(self._on_image_selected)
         self._img_list.display_changed.connect(self._update_nav_label)
         self._viewer_panel.opacity_changed.connect(self._on_opacity_changed)
+        self._viewer_panel.viewer.pixmap_clicked.connect(self._on_viewer_clicked)
         self._ckpt_table.doubleClicked.connect(lambda: self._on_run())
         # 체크포인트 선택 → 즉시 모델 결정
         self._ckpt_table.selectionModel().selectionChanged.connect(
@@ -361,8 +370,47 @@ class InferenceTab(QWidget):
         self._image_path = path
         self._lbl_filename.setText(path.name)
         self._lbl_filename.setStyleSheet("color:#e5e7eb; padding:2px 4px;")
+        self._selected_blob = None
+        self._update_blob_selection_ui()
         self._show_current_image()
         self._update_nav_label()
+
+    # ── 슬롯 — blob 클릭 선택 ────────────────────────────────────────────────
+
+    def _on_viewer_clicked(self, pt: QPointF) -> None:
+        if self._last_result is None:
+            return
+        pixmap = self._viewer_panel.viewer.pixmap()
+        if pixmap is None or pixmap.width() == 0 or pixmap.height() == 0:
+            return
+        h, w = self._last_result.class_map.shape
+        sx = w / pixmap.width()
+        sy = h / pixmap.height()
+        x, y = int(pt.x() * sx), int(pt.y() * sy)
+        self._selected_blob = blob_at(self._last_result, x, y)
+        self._update_blob_selection_ui()
+
+    def _update_blob_selection_ui(self) -> None:
+        blob = self._selected_blob
+        if blob is None:
+            self._viewer_panel.viewer.set_highlight_rect(None)
+            self._lbl_selected_blob.setText("")
+            return
+        pixmap = self._viewer_panel.viewer.pixmap()
+        if pixmap is None or self._last_result is None or pixmap.width() == 0 or pixmap.height() == 0:
+            return
+        h, w = self._last_result.class_map.shape
+        sx = w / pixmap.width()
+        sy = h / pixmap.height()
+        rect = QRectF(
+            blob.bbox_x / sx, blob.bbox_y / sy,
+            blob.bbox_w / sx, blob.bbox_h / sy,
+        )
+        self._viewer_panel.viewer.set_highlight_rect(rect)
+        self._lbl_selected_blob.setText(
+            f"선택된 blob — {blob.class_name} · 면적 {blob.pixel_count}px · "
+            f"AI 점수 {blob.mean_confidence * 100:.1f}%"
+        )
 
     def _on_copy_filename(self) -> None:
         if self._image_path is None:
@@ -457,6 +505,8 @@ class InferenceTab(QWidget):
         paths = self._img_list.paths() or [self._image_path]
         self._results.clear()
         self._last_result = None
+        self._selected_blob = None
+        self._update_blob_selection_ui()
         self._show_current_image()
         self._btn_run.setEnabled(False)
         self._btn_run.setText("추론 중…")
@@ -545,6 +595,8 @@ class InferenceTab(QWidget):
     def _apply_threshold(self) -> None:
         if self._last_result is None:
             return   # 아직 추론 전이면 다음 "추론 실행" 시 현재 값이 반영됨
+        self._selected_blob = None
+        self._update_blob_selection_ui()
         try:
             result = engine.refilter(
                 self._last_result.raw_class_map,

@@ -1,14 +1,18 @@
 """추론 결과 오버레이 뷰어 — 줌/패닝 + 투명도 슬라이더."""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSlider, QLabel
-from PyQt6.QtGui import QPainter, QPixmap, QColor, QCursor
-from PyQt6.QtCore import Qt, QPointF, pyqtSignal
+from PyQt6.QtGui import QPainter, QPixmap, QColor, QCursor, QPen
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 
 MIN_ZOOM = 0.05
 MAX_ZOOM = 20.0
 
+_CLICK_TOLERANCE_PX = 4.0
+_COLOR_SELECTED = QColor(255, 200, 0)   # zone_canvas.py의 선택 색과 통일
+
 
 class OverlayViewer(QWidget):
     opacity_changed = pyqtSignal(float)   # 0.0 ~ 1.0
+    pixmap_clicked = pyqtSignal(QPointF)  # 픽스맵 좌표계 — 클릭(드래그 아님)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -19,11 +23,21 @@ class OverlayViewer(QWidget):
         self._pan_active = False
         self._pan_start_mouse  = QPointF()
         self._pan_start_offset = QPointF()
+        self._press_pos: QPointF | None = None
+        self._highlight_rect: QRectF | None = None
 
         self._opacity = 0.5
         self.setMinimumSize(300, 200)
 
     # ── 공개 ─────────────────────────────────────────────────────────────────
+
+    def pixmap(self) -> QPixmap | None:
+        return self._pixmap
+
+    def set_highlight_rect(self, rect: QRectF | None) -> None:
+        """픽스맵 좌표계의 사각형을 저장해 paintEvent에서 하이라이트로 그린다."""
+        self._highlight_rect = rect
+        self.update()
 
     def set_pixmap(self, pixmap: QPixmap, reset_view: bool = True,
                    *, preserve_view: bool | None = None) -> None:
@@ -32,11 +46,13 @@ class OverlayViewer(QWidget):
             reset_view = not preserve_view
         self._pixmap = pixmap
         if reset_view:
+            self._highlight_rect = None
             self._fit_view()
         self.update()
 
     def clear(self) -> None:
         self._pixmap = None
+        self._highlight_rect = None
         self.update()
 
     # ── paintEvent ───────────────────────────────────────────────────────────
@@ -52,6 +68,12 @@ class OverlayViewer(QWidget):
         p.translate(self._pan)
         p.scale(self._zoom, self._zoom)
         p.drawPixmap(0, 0, self._pixmap)
+        if self._highlight_rect is not None:
+            pen = QPen(_COLOR_SELECTED, 2)
+            pen.setCosmetic(True)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(self._highlight_rect)
 
     # ── 마우스 / 휠 ──────────────────────────────────────────────────────────
 
@@ -68,6 +90,8 @@ class OverlayViewer(QWidget):
         self.update()
 
     def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = QPointF(event.position())
         if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton):
             self._pan_active       = True
             self._pan_start_mouse  = QPointF(event.position())
@@ -81,6 +105,17 @@ class OverlayViewer(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:
+        if (event.button() == Qt.MouseButton.LeftButton
+                and self._press_pos is not None and self._pixmap is not None):
+            moved = QPointF(event.position()) - self._press_pos
+            if (moved.x() ** 2 + moved.y() ** 2) ** 0.5 <= _CLICK_TOLERANCE_PX:
+                click = QPointF(event.position())
+                pixmap_pt = QPointF(
+                    (click.x() - self._pan.x()) / self._zoom,
+                    (click.y() - self._pan.y()) / self._zoom,
+                )
+                self.pixmap_clicked.emit(pixmap_pt)
+        self._press_pos = None
         self._pan_active = False
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 

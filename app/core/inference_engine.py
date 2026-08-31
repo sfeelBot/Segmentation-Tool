@@ -314,6 +314,33 @@ def reblend(
     )
 
 
+def blob_at(result: InferenceResult, x: int, y: int) -> BlobStat | None:
+    """class_map(원본 해상도) 위의 정수 픽셀 좌표 (x, y)가 속한 blob을 반환한다.
+
+    result.blobs는 _compute_blobs_and_filter()가 filtered class_map(거부된 blob은
+    이미 배경 0으로 지워진 상태) 위에서 클래스별로 순서대로(래스터 스캔 순서) 담아둔
+    것이다. 여기서 같은 filtered class_map을 동일 클래스·8-connectivity로 다시
+    라벨링하면, 로컬 라벨 번호(1..n)는 거부된 blob이 이미 없으므로 result.blobs의
+    (같은 class_id로 필터링한) 순서와 1:1 대응한다 — 별도 매칭/캐시 구조 불필요.
+    """
+    h, w = result.class_map.shape
+    if not (0 <= x < w and 0 <= y < h):
+        return None
+    cid = int(result.class_map[y, x])
+    if cid == 0:
+        return None
+    mask = (result.class_map == cid).astype(np.uint8)
+    n_labels, labels = cv2.connectedComponentsWithStats(mask, connectivity=8)[:2]
+    local_label = int(labels[y, x])
+    if local_label == 0:
+        return None
+    same_class = [b for b in result.blobs if b.class_id == cid]
+    idx = local_label - 1
+    if not (0 <= idx < len(same_class)):
+        return None
+    return same_class[idx]
+
+
 def export_blobs_to_excel(rows: list[tuple[str, BlobStat]], out_path: Path) -> None:
     """(이미지파일명, BlobStat) 목록을 xlsx로 저장 — 헤더만 볼드, 시트 1개."""
     from openpyxl import Workbook
