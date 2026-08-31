@@ -54,7 +54,7 @@ def test_installer_build_uses_tested_cuda_torch_pair() -> None:
 
 
 def test_requirements_txt_is_ascii_only() -> None:
-    # GitHub #22: pip's auto_decode() falls back to the OS locale codepage
+    # GitHub #31: pip's auto_decode() falls back to the OS locale codepage
     # (e.g. cp949 on Korean Windows) when a requirements file has no BOM or
     # encoding declaration, so any non-ASCII byte crashes the build on
     # non-English-locale Windows.
