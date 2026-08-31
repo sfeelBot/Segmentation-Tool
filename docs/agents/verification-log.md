@@ -4927,7 +4927,7 @@ end-to-end 스크립트 실행(구현자가 인스턴스화까지만 하고 실�
 - 3모드 실배치: 합성 이미지 160/240/320px 3장을 실제 진행 다이얼로그/event loop 경로로 처리했다. `apply_all`은 검출 0회/사이드카 0개/캐시 3개, `apply_all_edit`은 검출 0회/사이드카 3개/캐시 3개, `per_image`는 검출 3회/사이드카 3개/캐시 3개였다. 각각 0.0056s/0.0031s/0.0116s(결정론적 추론 대역 사용).
 - 응답성/메모리: 3개 이미지를 600회 전환하며 이벤트 처리. 평균 8.684ms, p99 11.541ms, 최대 44.386ms, RSS +1.715MiB. 멈춤·예외·지속 증가 징후 없음.
 - 회귀: QtSvg/QtTest를 선로드한 뒤 zone 관련 16 passed(1.98s), 전체 113 passed(5.60s). 일반 pytest 직접 실행의 Qt DLL 수집 실패는 알려진 환경 로드 순서 문제라 선로드로 재실행했다.
-- **재현 결함**: 일반 저장 실패 팝업이 세션당 1회가 아니다. `zstate.save_state` 실패 → 정상 저장 → 다시 실패 순서로 `_flush_state()`를 호출하면 `QMessageBox.warning`이 2회 호출된다. 원인 후보는 성공할 때마다 `self._save_failed_once = False`로 되돌리는 코드다. 요구사항은 이후 실패를 로그에만 남기는 세션 단위 억제다. QA `BUG-026` 등록.
+- **재현 결함**: 일반 저장 실패 팝업이 세션당 1회가 아니다. `zstate.save_state` 실패 → 정상 저장 → 다시 실패 순서로 `_flush_state()`를 호출하면 `QMessageBox.warning`이 2회 호출된다. 원인 후보는 성공할 때마다 `self._save_failed_once = False`로 되돌리는 코드다. 요구사항은 이후 실패를 로그에만 남기는 세션 단위 억제다. QA `BUG-027` 등록.
 - 판정: **실패**. 핵심 저장/복원, 3모드, 응답성은 통과했지만 명시된 저장 실패 UX를 위반하므로 R-ZONE-3 완료 처리하지 않는다.
 
 ### 추가 확인 — 실제 오버레이와 기존 편집의 배치 후 상태
@@ -4935,3 +4935,16 @@ end-to-end 스크립트 실행(구현자가 인스턴스화까지만 하고 실�
 - 새 `ZoneAnalysisTab`에서 사이드카를 로드한 뒤 `canvas.grab()`으로 실제 렌더를 캡처하고 같은 캔버스의 원/스트로크를 비운 렌더와 바이트 비교했다. 1,014,411바이트가 달라 원·브러시 상태가 단순 객체 값뿐 아니라 재시작 상당의 새 탭 실제 오버레이에도 표시됨을 확인했다.
 - 기존 sidecar에 `removed_blob_ids={1}`과 수동 그리기 1개를 넣고 모드 2/3 배치를 실행했다. 기존 편집은 배치 통계 계산에 먼저 반영되지만, 배치가 새 원을 저장하면서 두 모드 모두 sidecar의 삭제/수동 스트로크를 `(0, 0)`으로 초기화한다. 이는 현재 스펙의 “기존 편집을 이번 결과에 반영한 뒤 새 초기 원 상태를 저장” 순서와 일치하지만, 사용자가 배치를 재실행하면 이전 편집 이력은 소비되어 복구할 수 없다는 동작임을 명시한다. 모드 1은 sidecar를 만들거나 덮어쓰지 않는다.
 - 재측정 600회 이미지 전환: 평균 9.002ms, p99 13.246ms, 최대 50.194ms, RSS +2.176MiB. 앞선 측정과 일관되며 병목/누수 징후 없음.
+
+## 2026-08-31 — GitHub #32 / R-ZONE-3 수정 후 독립 재검증
+
+- 대상 커밋 `609fb10` 및 선행 검증 기록 `709dfdd`. 구현 코드는 수정하지 않았다.
+- 실제 앱: `QT_QPA_PLATFORM=offscreen C:\Users\Feel\anaconda3\python.exe main.py`를 기동해 프로젝트 선택 GUI 이벤트 루프와 시작 로그를 확인했다. Python 3.13.9, PyTorch 2.11.0+cu128, RTX 5060 8GB가 정상 기록됐고 예외는 없었다. headless GUI는 Ctrl+C만으로 끝나지 않아 해당 실행 PID 29412를 정확히 지정해 종료했고 이후 Python 잔류가 없음을 확인했다. 별도 실제 `ZoneAnalysisTab` 표시/QTest 경로에서 배치를 검증했다.
+- GUI 비동기/취소/재실행: 실제 `QProgressDialog`와 `_ZoneBatchWorker(QThread)`를 표시·연결하고 10ms `QTimer`를 함께 구동했다. 진행 창은 worker 시작 직후 visible, 배치 중 타이머 58 tick으로 GUI 이벤트 루프가 계속 응답했다. 취소 버튼을 `QTest.mouseClick`으로 클릭하면 현재 1장 종료 후 중단됐고, 같은 경로 재실행은 5장 모두 완료했다. 진행 signal은 장당 processing/done 2회, 총 10회 수신했다.
+- 준비/메모리/캐시: 5000×4000(20MP) 이미지 5장을 열 수 있는 동등 작업 세트에서 각 run이 20MP class/confidence 작업 배열을 실제 할당하도록 계측했다. 재실행 wall 0.587s(결정론적 추론 대역), `prepare_inference` 정확히 1회, 모든 5 run의 prepared 객체 id 1개, worker에 `_results` 속성 없음 및 탭 `_results` 신규 누적 없음. RSS peak +101.1MiB, 종료·GC 후 +6.0MiB로 회수돼 과거 +2.23GiB 증가가 재현되지 않았다.
+- 충돌 팝업: 실제 modal `QMessageBox`를 띄우고 버튼 role별로 Qt 클릭. 반환은 차례로 `replace`, `missing_only`, `cancel`. 관련 worker/QTest로 전체 대체는 circles만 새 값으로 교체하면서 `removed_blob_ids`/`manual_strokes` 보존, 없는 이미지만은 기존 sidecar bytes 보존, 취소는 worker 미생성·파일 무변경을 확인했다. 중도 취소는 완료된 이미지의 원자적 sidecar만 남고 미착수 이미지는 건드리지 않는 구조와 실제 1장 후 중단으로 확인했다.
+- 3모드/복원: `apply_all`, `apply_all_edit`, `per_image` 모두 circles sidecar를 저장하고 기존 삭제/수동 스트로크를 보존했다. 앞선 독립 렌더 검증의 새 탭 `canvas.grab()` 차이 1,014,411바이트와 결합해 이미지 전환·새 탭/재시작 상당 인스턴스에서 실제 원/브러시 오버레이 유지 확인.
+- BUG-027: 같은 실제 `ZoneAnalysisTab`에 실패→성공→실패를 주입했을 때 `QMessageBox.warning` 1회. 수정 통과로 Closed 이동.
+- 회귀: QtSvg/QtTest 선로드 후 관련 4파일 `19 passed in 2.04s`, 전체 `116 passed in 5.16s`.
+- 검증 도중 자동화 스크립트의 안내/충돌 modal을 처음 두 번 처리하지 못해 검증 PID가 대기했다. 각 PID를 확인해 종료한 뒤 실제 버튼 role 클릭을 사용하는 작은 재현으로 재실행했으며 최종 잔류 프로세스 없음. 이는 앱 결함 판정에서 제외한다.
+- 판정: **통과**. GitHub #32의 GUI 비동기화·prepare 재사용·비누적 메모리, 충돌 정책, 상태 보존 및 BUG-027 수정이 독립 실행에서 모두 확인됐다.

@@ -988,9 +988,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         `pytest tests/test_zone_github_13_14.py tests/test_zone_edit_toolbar.py
         tests/test_zone_state_persistence.py`(신규, 사이드카 디스크 왕복 + 3모드 분기
         통합 검증) 16건 통과, `zone_state_store.py`/`zone_metrics.py` self-check 통과.
-        GitHub #32 및 BUG-026 구현 후 zone 관련 4파일 **19건 통과**.
-        **검증 대기** — 실제 GUI 응답성/취소/재실행, 실제 5장 RSS와 세 충돌 선택지는
-        검증 에이전트가 확인한다.
+        GitHub #32 및 BUG-027 구현 후 zone 관련 4파일 **19건 통과**.
+        **검증 통과(2026-08-31)** — 실제 GUI 이벤트 루프/진행 창/취소 후 재실행,
+        20MP 상당 5장 메모리 계측, 세 충돌 선택지, 상태 보존, BUG-027과 전체 회귀를
+        검증 에이전트가 독립 확인. `docs/agents/verification-log.md` 참고.
 
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
