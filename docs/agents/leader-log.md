@@ -5,6 +5,20 @@
 
 ## 현재 상황 요약
 
+> **[최신, 2026-08-31] GitHub #31(build error) 원인규명+수정+검증+push+클로즈
+> 완료.** 사용자 제보로 이슈 확인 → 로그의 `UnicodeDecodeError: 'cp949' codec
+> can't decode byte 0xec` 를 근본원인으로 특정(`requirements.txt`가 인코딩
+> 선언/BOM 없는 순수 UTF-8인데 한글 주석 4곳이 있어, 한국어 로케일 Windows
+> 기본 인코딩(cp949)으로 pip이 파싱하다 실패 — 로그의 `PackageNotFoundError:
+> torch` 트레이스백은 "미설치 감지"용 의도된 정상 흐름이라 버그 아님, 별도 조치
+> 안 함). `build.bat`의 기존 "ASCII-only" 관례를 `requirements.txt`에도 동일
+> 적용해 한글 주석을 영어로 번역(정보 손실 없음). 검증 에이전트가 **수정 전
+> 커밋본으로 실제 cp949 디코딩 예외를 재현**하고 수정 후 파일은 예외 없이
+> 디코딩됨을 대조 확인 + `pip install --dry-run` 실제 파싱 확인까지 완료.
+> 커밋 `5cc29b6`(fix)+`7d9ea6f`(docs) → push(`9b2ef92..7d9ea6f`) → GitHub #31
+> 원인 설명 코멘트 후 close. **QA.md Open은 여전히 BUG-004(P3) 하나뿐,
+> 로컬/원격 완전 동기화 상태.**
+
 > **[최신, 2026-08-30] BUG-026(P1)/BUG-027(P2) 수정+검증 완료, push 대기.**
 > 사용자 지시("버그 수정 후 push 하고 zone 세션과 싱크 맞춰줘")에 따라 병렬
 > implementer 2개로 착수: **BUG-026** — `trainer.py`의 mid-batch stop이 epoch
