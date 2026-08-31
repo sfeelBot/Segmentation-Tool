@@ -30,5 +30,6 @@ GPU별 CUDA 빌드 선택은 [docs/USER_MANUAL.md](docs/USER_MANUAL.md#-시작�
 ## 문서
 
 - [docs/USER_MANUAL.md](docs/USER_MANUAL.md) — 사용자 매뉴얼 (설치, 워크플로우, 단축키, 트러블슈팅)
+- [docs/USER_MANUAL_ZONE.html](docs/USER_MANUAL_ZONE.html) — Zone 분석 에디션 사용자 매뉴얼 (실제 UI 캡처, 프로젝트 시작부터 존 분석까지 전체 흐름)
 - [CLAUDE.md](CLAUDE.md) — 프로젝트 구조·개발 규칙
 - [QA.md](QA.md) — 버그·VOC 추적
