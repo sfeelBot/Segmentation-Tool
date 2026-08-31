@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import time
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +18,7 @@ from app.core import project as _project
 from app.core.annotation_store import (
     load as load_annotations, load_classes, rle_encode, has_annotations,
 )
+from app.core.file_io import retry_on_permission_error
 from app.core.i18n import t
 from app.core.logger import get_logger
 
@@ -27,17 +27,10 @@ log = get_logger(__name__)
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
 
 
-def _copy_with_retry(src: Path, dst: Path, attempts: int = 3, delay: float = 0.3) -> None:
+def _copy_with_retry(src: Path, dst: Path) -> None:
     """일시적 파일 잠금(백신/탐색기 미리보기/OneDrive 등) 대응 — 마지막 시도 실패 시
     원래 예외를 그대로 올린다 (GitHub #16)."""
-    for i in range(attempts):
-        try:
-            shutil.copy2(src, dst)
-            return
-        except PermissionError:
-            if i == attempts - 1:
-                raise
-            time.sleep(delay)
+    retry_on_permission_error(lambda: shutil.copy2(src, dst))
 
 
 class ExportWorker(QThread):

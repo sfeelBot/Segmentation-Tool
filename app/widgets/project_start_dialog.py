@@ -110,7 +110,6 @@ class ProjectStartDialog(QDialog):
                 if meta_file.exists():
                     import json
                     m = json.loads(meta_file.read_text(encoding="utf-8"))
-                    name = m.get("name", name)
                     if "updated_at" in m:
                         updated = f"   ·   {_format_date(m['updated_at'])}"
             except Exception:

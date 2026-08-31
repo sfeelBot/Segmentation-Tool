@@ -445,25 +445,109 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - 각 라운드는 이전 성능개선 R1~R6과 동일하게 구현→독립검증 통과 후 다음 라운드로 진행.
   **7단계 실행안 ①~⑦ 전체 구현+독립검증 통과로 완전히 마무리됨.**
 
-## exe 패키징 + Setup Guide (2026-08-20 요청, 추후 착수)
+## exe 패키징 + Setup Guide (2026-08-20 요청) — **착수해 대부분 완료, v1.9.0~v1.10.5**
 
-사용자 요청: "추후에는 py파일로 실행이 아닌 exe 파일로 실행하게 하고 싶어. setup guide 관련된
-문서도 필요할거야." — 지금 당장이 아니라 **추후** 착수. CLAUDE.md에 이미 이 범위 경계가
-명시돼 있음: "배포 에이전트 범위: 버전 태깅, CHANGELOG 갱신까지만 담당. PyInstaller 등
-실행파일 패키징/배포는 범위 밖 (별도 논의)." 착수 시 다음을 검토해야 함:
-- PyInstaller(또는 유사 도구)로 `main.py` → 단일 exe/설치본 패키징. torch/torchvision/CUDA
-  런타임 DLL을 exe에 어떻게 포함시킬지가 핵심 난제(용량·GPU 빌드별 분기 — [GitHub #1](https://github.com/sfeelBot/Segmentation-Tool/issues/1)
-  의 CPU-only 설치 문제와 같은 종류의 함정이 exe 배포에서도 재현될 수 있음).
-- **[GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) 요청1 편입** (2026-08-20):
-  전용 프로젝트 확장자(예: `.segproj`) 파일을 OS에서 더블클릭하면 이 앱이 그 프로젝트를 바로
-  열도록. Windows 파일 연결 레지스트리 등록(보통 설치 프로그램이 처리) + `main.py`가
-  `sys.argv[1]`로 넘어온 프로젝트 경로를 받아 시작 다이얼로그를 건너뛰는 로직 필요. 상세:
-  [docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md) "요청 1" 절.
-- Setup Guide 문서 — 현재 `docs/USER_MANUAL.md`는 "pip install"이 전제인 개발자용 설치
-  안내. exe 배포판 사용자는 pip/Python 환경 자체가 없을 수 있으므로 별도 성격의 문서(또는
-  같은 문서의 새 절)가 필요.
-- [ ] 착수 대기 — 사용자가 "추후" 착수 시점을 알려주면 스파이크(PyInstaller+torch/CUDA
-      번들링 실측)부터 시작. 지금은 기록만.
+2026-08-20 당시 "추후 착수"로 기록해뒀던 항목이 이후 세션들에서 실제로 착수·구현돼
+`docs/CHANGELOG.md` v1.9.0~v1.10.5(2026-08-27~08-28)에 걸쳐 대부분 완료됨. 이 절이
+그동안 갱신되지 않아 실제 상태와 어긋나 있던 것을 2026-08-29 캐치업 세션에서 바로잡음.
+
+- [x] **Inno Setup 기반 installer + PyInstaller 계열 EXE 패키징** — `build.spec`/
+      `installer/setup.iss` 존재, `release.ini`를 버전·제품정보 단일 기준으로 사용
+      (v1.9.0, 커밋 `11a5a84`). 단일 Python 전체 의존성 사전검사, PyQt5/PySide 및
+      개발 패키지 제외, Torch 선행 로드 순서 정리(BUG-024) 등 초기 우려했던
+      "torch/CUDA 런타임 DLL 번들링" 난제를 실제로 겪고 해결함 — v1.10.1 완료
+      (1.815GB 설치본 무인 설치·20초 기동 통과). **정정(2026-08-29)**: 과거 이 항목이
+      "CUDA/CPU 빌드 분기"라고 적었던 것은 오기 — `build.bat`은 항상 cu128(CUDA) torch
+      단일 빌드만 만들고, 그 wheel이 GPU 없는 머신에서도 CPU로 자동 폴백하는 PyTorch
+      표준 동작 덕분에 **installer가 원래부터 하나뿐**이었음(확인:
+      [docs/specs/exe-packaging-remaining-2026-08-29.md](specs/exe-packaging-remaining-2026-08-29.md)
+      "Setup Guide" 절).
+- [x] **설치본 실행 시 시작 splash** — QApplication+준비화면을 먼저 표시하고 로딩
+      단계 안내(v1.10.0).
+- [x] **Python 3.12 빌드 환경 자동화** — 일반 셸에서 `build.bat`이 잘못된 Python(예:
+      WindowsApps 스텁)을 선택하던 문제(GitHub #27, BUG-025) 수정, 최초 빌드 환경·
+      의존성 자동 준비, 잘못된 빌드 venv 자동 재생성, 오프라인 installer 빌드 안정화까지
+      v1.10.2~v1.10.5에 걸쳐 완료.
+- [x] **main/zone 빌드 버전 관리 분리** — main은 `release.ini`의 `vX.Y.Z`, zone
+      에디션은 별도 제품 ID+`zone-vX.Y.Z`를 각자 단일 편집 지점으로 사용(커밋
+      `11a5a84`/zone `0a56d01`/`019c2f5`).
+- [ ] **[GitHub #2](https://github.com/sfeelBot/Segmentation-Tool/issues/2) 요청1 —
+      전용 프로젝트 확장자(`.segproj`) 더블클릭 연결 — 설계 완료, 결정 대기 없이 구현
+      가능.** 프로젝트 폴더 내부에 얇은 마커 파일(`{project_name}.segproj`, `Project.
+      ensure_dirs()`가 신규·기존 프로젝트 모두에 자동 생성)을 두고, `main.py`가
+      `sys.argv[1]`로 그 파일 경로를 받으면 부모 디렉터리를 프로젝트로 채택해
+      `ProjectStartDialog`를 건너뛰고 바로 `MainWindow`를 여는 방식. installer는
+      `[Registry]` 섹션에 `HKA`(관리자 권한 유무에 따라 HKLM/HKCU 자동 매핑 — 현재
+      `PrivilegesRequired=lowest`라 필수) 루트로 확장자 연결 등록. 상세 설계·구현
+      대상 파일 3개(`main.py`/`app/core/project.py`/`installer/setup.iss`)·검증
+      골든패스 7단계:
+      [docs/specs/exe-packaging-remaining-2026-08-29.md](specs/exe-packaging-remaining-2026-08-29.md)
+      "1. GitHub #2 요청1" 절. (과거 스펙
+      [voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md) "요청 1"
+      절은 최초 방향 판단 근거로 유지, 이번 문서가 그 설계를 구체화함.)
+- [ ] **Setup Guide 문서 — 설계 완료, 결정 대기 없이 바로 작성 가능.** 새 문서
+      신설이 아니라 `docs/USER_MANUAL.md`의 기존 "🚀 시작하기" 절을 "A. 설치
+      프로그램(exe) 사용자용" / "B. 개발자용(소스 실행 pip)" 두 갈래로 확장(신규
+      ~40~60줄). exe 배포판은 GitHub Releases에서 단일 installer(`SegmentationModelUI-
+      Setup-X.Y.Z.exe`)를 받아 관리자 권한 없이 설치하는 것뿐 — CPU/CUDA 선택 안내는
+      불필요(위 정정 참고). 데이터가 설치 폴더 하위(`{app}\projects`, `{app}\data`)에
+      저장되므로 제거 전 백업 권장 문구 필요(BUG-016 연계). 상세:
+      [docs/specs/exe-packaging-remaining-2026-08-29.md](specs/exe-packaging-remaining-2026-08-29.md)
+      "2. Setup Guide 문서" 절. 단, `.segproj` 안내 문장 1개는 위 요청1 구현·검증
+      완료 후에 추가할 것(아직 없는 기능을 먼저 문서화하지 않기).
+- 두 항목은 서로 다른 파일(코드 vs 문서)이라 **병렬 구현 가능**.
+- 알려진 잔여 이슈: **BUG-016**(P3, Open) — Inno Setup 무인 제거 후 설치 폴더와
+  `data\logs\` 하위 런타임 로그가 완전히 삭제되지 않음.
+
+## GitHub #22(신규) + #16 후속 코드리뷰 발견 (2026-08-29 접수)
+
+기획 완료: [docs/specs/github-issue-22-and-16-followup-2026-08-29.md](specs/github-issue-22-and-16-followup-2026-08-29.md).
+서로 무관, 파일 겹침 없음 — 병렬 진행 가능.
+
+- [ ] [GitHub #22](https://github.com/sfeelBot/Segmentation-Tool/issues/22) "installer로
+      설치 시 기존 버전 있는지 체크 필요" — `installer/setup.iss`에 `[Code]` 섹션
+      자체가 없어 기존 설치 여부를 사용자에게 전혀 안내하지 않음(같은 `AppId`라 Inno
+      Setup 기본 덮어쓰기 업그레이드는 이미 동작). Inno Setup 표준 패턴(`InitializeSetup()`
+      + `RegQueryStringValue`+`HKA`)으로 설계 완료, 실측 불필요. **결정 대기 1건**
+      (경고만/자동제거후재설치/설치거부 3택, BUG-016과의 연계 여부 포함) —
+      `docs/decisions-needed.md` 등록됨. 구현 대상 `installer/setup.iss` 1개 파일.
+- [ ] GitHub #16 후속 — retry 헬퍼 확장 (오늘 코드리뷰 발견, 별도 이슈 번호 없음) —
+      기존 `export_dialog.py` 전용 `_copy_with_retry()`(GitHub #16, 커밋 `6ecee43`)를
+      공용 최소 모듈 `app/core/file_io.py`(신설, `retry_on_permission_error`+
+      `atomic_write` 2개 제네릭 헬퍼)로 승격해 나머지 4개 무보호 쓰기 경로에 적용:
+      `import_dialog.py:79`, `image_browser.py:83,348`(재시도 없음), `annotation_store.save()`
+      (가장 빈번한 쓰기 경로, 재시도+원자적 쓰기 둘 다 없었음), `trainer.py:382,389`
+      (체크포인트 저장). `image_browser.py:83`의 bare-ish except가 실패 원인을 조용히
+      스킵하던 것은 재시도와 별개의 관찰성 버그로 분리해 로그 추가만(동작 변경 없음).
+      결정 대기 없음, 바로 구현 가능.
+
+## 프로젝트 이름 자동 동기화 + 이미지 리스트 순번 표시 (2026-08-31 요청)
+
+기획 완료: [docs/specs/project-name-and-image-numbering-2026-08-31.md](specs/project-name-and-image-numbering-2026-08-31.md).
+결정 대기 없음 — 두 요청 모두 바로 구현 가능. 서로 다른 파일이라 병렬 구현 가능.
+
+- [ ] **요청1 — 프로젝트 이름을 폴더명과 항상 일치** — `Project.name`(`app/core/project.py`)이
+      `project.json`의 `name` 메타데이터를 우선하던 것을 항상 `self.path.name` 반환으로
+      변경(외부에서 폴더 리네임/이동해도 앱 표시가 즉시 따라감). `project.json`의 `name`
+      필드 자체는 zip import 시 `_infer_base_name()`(`project_export.py`)이 폴더명 추론에
+      계속 쓰므로 유지. 회귀 위험 지점으로 확인된 `project_start_dialog.py`의
+      `_populate_recent()`(최근 프로젝트 목록이 `Project`를 안 거치고 독자적으로
+      `project.json`을 재파싱해 메타데이터 이름을 우선하던 로직)도 함께 수정해 폴더명
+      우선으로 통일 — 이거 빠뜨리면 타이틀바와 최근 목록이 서로 다른 이름을 보여주는
+      새 불일치가 생김. 구현 대상 2개 파일, 결정 대기 없음.
+- [ ] **요청2 — 라벨링/추론 탭 이미지 리스트 순번 표시** — `ImageBrowser`(`image_browser.py`,
+      단일 평탄 목록)와 `InferenceImageList`(`inference_image_list.py`, 검색+정렬+폴더
+      트리)에 기존 파일명 텍스트 앞에 `"1. "` 접두어 방식으로 순번 추가(신규 컬럼 아님).
+      기준은 "현재 표시 순서(검색/정렬 반영) 1부터"로 확정 — 정렬/필터 바뀔 때마다
+      트리를 통째로 재구성하는 기존 `_apply_display()` 구조에 자연스럽게 맞음. 폴더
+      그룹핑 모드(`InferenceImageList`만 해당)의 번호는 **전체 통번호**로 확정(폴더별
+      리셋 아님). `ImageBrowser`는 `path→번호` 매핑을 저장해 `refresh_item()`류 부분
+      갱신 경로에서도 번호 유지, `InferenceImageList`는 트리 완성 후
+      `QTreeWidgetItemIterator`로 화면에 보이는 순서 그대로 번호를 매겨 폴더헤더 유무와
+      무관하게 항상 정확. 둘 다 O(n) 1회 추가 순회뿐이라 R6 검색 디바운스/상태캐시
+      최적화와 충돌 없음. 구현 대상 2개 파일, 결정 대기 없음. **zone 에디션
+      (`feature/zone-analysis-tab`)에도 두 파일이 동일 구조로 존재 — 이번 라운드는 main만,
+      완료 후 별도 이식 라운드 필요(리더가 후속 판단)**.
 
 ## 존(Zone) 분석 탭 — 배터리 캡 녹 검사 독립 도구 (2026-08-25 요청)
 

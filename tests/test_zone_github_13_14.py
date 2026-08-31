@@ -39,7 +39,7 @@ def test_overlay_opacity_preserves_background_brightness() -> None:
         1: ClassDef(1, "foreground", (200, 160, 120)),
     }
 
-    image = _colorize_and_blend(orig, class_map, classes, 0.5).toImage()
+    image = _colorize_and_blend(orig, class_map, classes, 0.5)
 
     assert image.pixelColor(0, 0).getRgb()[:3] == (120, 100, 80)
     assert image.pixelColor(1, 0).getRgb()[:3] == (150, 120, 90)

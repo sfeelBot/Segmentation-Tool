@@ -1,7 +1,5 @@
 """JSON 어노테이션 읽기·쓰기 + RLE 코덱."""
 import json
-import os
-import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from app.core import project as _project
+from app.core.file_io import atomic_write
 
 DEFAULT_PALETTE: list[tuple[int, int, int]] = [
     (  0,   0,   0),  # 0 background
@@ -155,9 +154,9 @@ def save(image_path: Path, annotations: list[AnnotationItem],
     }
     if ok_flag:
         doc["ok"] = True
-    _ann_path(image_path).write_text(
+    atomic_write(_ann_path(image_path), lambda p: p.write_text(
         json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    ))
 
 
 def new_id() -> str:
@@ -236,21 +235,9 @@ def set_ok_and_clear_annotations(image_path: Path) -> None:
     data["annotations"] = []
     data["ok"] = True
 
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{json_path.name}.", suffix=".tmp", dir=ann_dir
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
-            json.dump(data, temp_file, ensure_ascii=False, indent=2)
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-        os.replace(temp_name, json_path)
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except OSError:
-            pass
-        raise
+    atomic_write(json_path, lambda p: p.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    ))
 
 
 # ── RLE コーデック ─────────────────────────────────────────────────────────────

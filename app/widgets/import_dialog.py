@@ -19,6 +19,7 @@ from app.core.annotation_store import (
     AnnotationItem, ClassDef, load as load_annotations, load_classes,
     save as save_annotations, save_classes, rle_decode, new_id,
 )
+from app.core.file_io import retry_on_permission_error
 from app.core.i18n import t
 from app.core.logger import get_logger
 
@@ -76,7 +77,7 @@ class ImportWorker(QThread):
                         skipped_missing += 1
                         continue
                     images_dir.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_img, img_path)
+                    retry_on_permission_error(lambda: shutil.copy2(src_img, img_path))
                     new_images += 1
                 else:
                     existing = load_annotations(img_path)

@@ -5,6 +5,29 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.4.0] 2026-08-31
+
+Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
+
+### 추가
+- Zone 결정 방법을 일괄 적용, 일괄 적용 후 수정, 장별 적용의 3모드로 제공.
+- 이미지별 원·블랍 삭제·브러시 편집 상태를 `.zone.json` 사이드카에 자동 저장하고
+  이미지 재진입과 앱 재시작 후 복원.
+- 기존 Zone이 있는 배치 대상은 전체 대체, Zone 없는 이미지만 적용, 취소 중 선택.
+
+### 개선
+- Zone 일괄 처리를 백그라운드 스레드로 이동하고 준비된 추론 컨텍스트를 배치당 한 번만
+  생성해 재사용.
+- 배치 전용 대형 추론 결과를 즉시 해제해 20MP 다중 이미지 처리의 메모리 누적 제거.
+- 수동 브러시 스트로크를 rasterize-on-commit 캐시로 렌더링해 편집 응답성 개선.
+- CPU 추론 시 GPU 사용 가능 여부를 단일 추론과 배치 처리 전에 안내.
+
+### 빌드
+- Zone installer 및 EXE 버전을 `1.4.0`으로 갱신.
+- installer 출력 파일명: `SegmentationModelUIZone-Setup-1.4.0.exe`.
+
+---
+
 ## [zone-v1.3.1] 2026-08-28
 
 Main 기준: v1.9.0 이후 빌드 수정 c984f7e 선택 동기화
@@ -149,6 +172,20 @@ Main 기준: v1.8.0 + 19 commits (09933fd)
 - `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
 - Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
 - zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
+
+---
+
+## [v1.10.5] 2026-08-28
+
+### 수정
+- Python 3.12 빌드 환경에서 최신 CUDA PyTorch wheel의 `c10.dll`이 WinError 1114로
+  초기화되지 않아 installer 빌드가 중단되던 문제 수정.
+- Windows/Python 3.12/RTX 50 계열을 지원하는 검증 조합인 PyTorch 2.7.1 cu128과
+  torchvision 0.22.1로 installer 런타임을 고정.
+- 빌드 의존성 설치를 한 번의 해석 과정으로 통합해 torch/torchvision 호환 조합 유지.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.5`로 갱신.
 
 ---
 

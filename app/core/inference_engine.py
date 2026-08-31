@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QImage
 
 from app.core.dataset import IMAGENET_MEAN, IMAGENET_STD
 from app.core.annotation_store import ClassDef, load_classes
@@ -47,7 +47,7 @@ class InferenceResult:
     class_map: np.ndarray          # (H, W) int64 — 필터 적용 후 원본 해상도
     raw_class_map: np.ndarray      # (H, W) int64 — 필터 적용 전 원본 argmax 클래스맵 (재필터링용)
     confidence_map: np.ndarray     # (H, W) float32 — 픽셀별 최고 클래스 확률 (재필터링용)
-    overlay_pixmap: QPixmap        # 원본 + 컬러 마스크 블렌딩 결과
+    overlay_image: QImage          # 원본 + 컬러 마스크 블렌딩 결과 (QPixmap 변환은 GUI 스레드에서)
     class_stats: list[ClassStat]
     blobs: list[BlobStat]
 
@@ -128,7 +128,7 @@ def run(
     )
 
     # ── 컬러화 + 블렌딩 ───────────────────────────────────────────────────────
-    overlay_pix = _colorize_and_blend(
+    overlay_img = _colorize_and_blend(
         pil_img, class_map, cls_map, opacity
     )
 
@@ -144,7 +144,7 @@ def run(
         class_map=class_map,
         raw_class_map=raw_class_map,
         confidence_map=confidence_map,
-        overlay_pixmap=overlay_pix,
+        overlay_image=overlay_img,
         class_stats=stats,
         blobs=blobs,
     )
@@ -230,7 +230,7 @@ def run_sliding_window(
         raw_class_map, confidence_map, classes, min_confidence, min_pixel_size
     )
 
-    overlay_pix = _colorize_and_blend(pil_img, class_map, cls_map, opacity)
+    overlay_img = _colorize_and_blend(pil_img, class_map, cls_map, opacity)
     total = class_map.size
     stats = sorted(
         [ClassStat(c.class_id, c.name, c.color,
@@ -242,7 +242,7 @@ def run_sliding_window(
         class_map=class_map,
         raw_class_map=raw_class_map,
         confidence_map=confidence_map,
-        overlay_pixmap=overlay_pix,
+        overlay_image=overlay_img,
         class_stats=stats,
         blobs=blobs,
     )
@@ -275,7 +275,7 @@ def refilter(
     class_map, blobs = _compute_blobs_and_filter(
         raw_class_map, confidence_map, classes, min_confidence, min_pixel_size
     )
-    overlay_pix = _colorize_and_blend(pil_img, class_map, cls_map, opacity)
+    overlay_img = _colorize_and_blend(pil_img, class_map, cls_map, opacity)
 
     total = class_map.size
     stats = sorted(
@@ -288,7 +288,7 @@ def refilter(
         class_map=class_map,
         raw_class_map=raw_class_map,
         confidence_map=confidence_map,
-        overlay_pixmap=overlay_pix,
+        overlay_image=overlay_img,
         class_stats=stats,
         blobs=blobs,
     )
@@ -298,8 +298,12 @@ def reblend(
     result: InferenceResult,
     image_path_or_pil: "Path | str | Image.Image",
     opacity: float,
-) -> QPixmap:
-    """기존 필터 결과를 유지한 채 오버레이만 다시 합성한다."""
+) -> QImage:
+    """기존 필터 결과를 유지한 채 오버레이만 다시 합성한다.
+
+    QImage를 반환한다 — QPixmap 생성은 스레드 세이프하지 않으므로 호출부(GUI 스레드)에서
+    QPixmap.fromImage()로 변환해야 한다.
+    """
     pil_img = (
         image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
         else Image.open(str(image_path_or_pil)).convert("RGB")
@@ -540,7 +544,13 @@ def _colorize_and_blend(
     class_map: np.ndarray,
     cls_map: dict[int, ClassDef],
     opacity: float,
-) -> QPixmap:
+) -> QImage:
+    """원본 + 컬러 마스크를 블렌딩한 QImage를 반환한다.
+
+    QThread 워커에서도 호출되므로(run/run_sliding_window) QPixmap은 절대 만들지 않는다 —
+    QPixmap은 GUI 스레드 전용이라 백그라운드 스레드에서 생성하면 undefined behavior다.
+    QPixmap 변환이 필요한 호출부는 반드시 GUI 스레드에서 QPixmap.fromImage()를 사용한다.
+    """
     h, w = class_map.shape
 
     max_dim = max(h, w)
@@ -574,4 +584,4 @@ def _colorize_and_blend(
         w * 3,
         QImage.Format.Format_RGB888,
     )
-    return QPixmap.fromImage(qimg)
+    return qimg
