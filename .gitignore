@@ -16,6 +16,7 @@ ENV/
 data/images/
 data/logs/
 data/settings.json
+projects/manual_demo/
 projects/*/images/
 projects/*/checkpoints/
 projects/*/user_models/

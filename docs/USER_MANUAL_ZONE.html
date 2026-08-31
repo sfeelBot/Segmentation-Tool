@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>배터리 캡 녹 검사 도구 (Zone 에디션) — 사용자 매뉴얼</title>
+<style>
+  :root {
+    --line: #d9dee5;
+    --accent: #1d4ed8;
+    --accent-soft: #eef3ff;
+    --warn-bg: #fff7e6;
+    --warn-line: #f0b429;
+    --tip-bg: #eafaf1;
+    --tip-line: #2f9e6a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 0 80px;
+    background: #f6f7f9;
+    color: #1f2430;
+    font-family: "Malgun Gothic", "맑은 고딕", "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  header.hero {
+    background: #1f2937;
+    color: #fff;
+    padding: 40px 0 34px;
+    margin-bottom: 28px;
+  }
+  header.hero h1 { margin: 0 0 8px; font-size: 30px; }
+  header.hero p { margin: 4px 0 0; color: #cbd5e1; }
+  h2 {
+    margin: 52px 0 14px;
+    padding: 10px 0 8px;
+    border-bottom: 3px solid var(--accent);
+    font-size: 24px;
+  }
+  h3 { margin: 34px 0 10px; font-size: 19px; color: #16233b; }
+  h4 { margin: 22px 0 6px; font-size: 16.5px; color: #33415c; }
+  p, li { font-size: 16px; }
+  code {
+    background: #eceff3; border-radius: 4px; padding: 1px 6px;
+    font-family: Consolas, monospace; font-size: 14.5px;
+  }
+  figure {
+    margin: 18px 0 10px; padding: 10px;
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  }
+  figure img { width: 100%; display: block; border-radius: 6px; }
+  figcaption {
+    margin-top: 8px; font-size: 14px; color: #5b6472; text-align: center;
+  }
+  ol.callout { list-style: none; margin: 12px 0 0; padding: 0; }
+  ol.callout li {
+    margin: 5px 0; padding-left: 4px;
+  }
+  ol.callout li b {
+    display: inline-block; min-width: 24px; color: #c81e1e; font-size: 17px;
+  }
+  table {
+    border-collapse: collapse; width: 100%; margin: 14px 0;
+    background: #fff; font-size: 15px;
+  }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; }
+  .note, .warn, .tip {
+    margin: 16px 0; padding: 12px 16px; border-radius: 8px;
+    border-left: 5px solid var(--accent); background: var(--accent-soft);
+  }
+  .warn { border-left-color: var(--warn-line); background: var(--warn-bg); }
+  .tip { border-left-color: var(--tip-line); background: var(--tip-bg); }
+  nav.toc {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 24px;
+  }
+  nav.toc h2 { margin: 0 0 8px; border: 0; font-size: 19px; padding: 0; }
+  nav.toc ol { margin: 0; padding-left: 22px; }
+  nav.toc ol ol { padding-left: 20px; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  .flow {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; font-size: 15px; line-height: 2.1;
+  }
+  .flow b { color: var(--accent); }
+  .top { font-size: 13px; color: #7a8494; text-decoration: none; float: right; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>배터리 캡 녹 검사 도구 — 사용자 매뉴얼</h1>
+    <p>Segmentation Model UI · Zone 에디션 (모델 / 라벨링 / 학습 / 추론 / 존 분석 5개 탭)</p>
+    <p>이 문서의 모든 화면은 실제 프로그램을 실행해 찍은 화면입니다. 화면 속 빨간 번호 ①②③은 눌러야 할 위치를 가리킵니다.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc" id="toc">
+  <h2>목차</h2>
+  <ol>
+    <li><a href="#s0">이 프로그램은 무엇을 하나요</a></li>
+    <li><a href="#s1">프로그램 시작하기 (프로젝트 선택)</a></li>
+    <li><a href="#s2">화면 구성 한눈에 보기</a></li>
+    <li><a href="#s3">모델 탭 — AI 구조 고르기</a></li>
+    <li><a href="#s4">라벨링 탭 — 녹 부위 표시하기</a></li>
+    <li><a href="#s5">학습 탭 — AI 학습시키기</a></li>
+    <li><a href="#s6">추론 탭 — 학습한 AI로 검사하기</a></li>
+    <li><a href="#s7">존 분석 탭 — 이 도구의 핵심</a>
+      <ol>
+        <li><a href="#s7-1">존 분석이란</a></li>
+        <li><a href="#s7-2">1단계 · 검사할 이미지 열기</a></li>
+        <li><a href="#s7-3">2단계 · 체크포인트(학습 결과) 열기</a></li>
+        <li><a href="#s7-4">3단계 · 추론 실행</a></li>
+        <li><a href="#s7-5">4단계 · 타겟(녹) 클래스와 민감도 정하기</a></li>
+        <li><a href="#s7-6">5단계 · 원(존 경계) 만들기</a></li>
+        <li><a href="#s7-7">6단계 · 원 수동으로 고치기</a></li>
+        <li><a href="#s7-8">7단계 · 존별 비율 확인하기</a></li>
+        <li><a href="#s7-9">8단계 · 편집 도구 5종 (그리기 · 지우기 · 블랍삭제 · 이동)</a></li>
+        <li><a href="#s7-10">9단계 · 이미지별 자동 저장</a></li>
+        <li><a href="#s7-11">10단계 · Zone 결정 방법 3가지와 일괄 처리</a></li>
+        <li><a href="#s7-12">11단계 · Excel로 내보내기</a></li>
+      </ol>
+    </li>
+    <li><a href="#s8">단축키 모음</a></li>
+    <li><a href="#s9">문제가 생겼을 때</a></li>
+  </ol>
+</nav>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s0">1. 이 프로그램은 무엇을 하나요 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<p>
+배터리 캡 사진을 AI로 검사해서 <b>캡 표면의 녹(변색) 부위가 어디에, 얼마나 있는지</b>를
+숫자로 뽑아 주는 프로그램입니다.
+</p>
+<p>
+캡은 동그란 부품이라 중심에서 바깥으로 여러 겹의 원(테두리)이 있습니다.
+이 프로그램은 그 원들을 기준으로 캡을 <b>존(Zone)</b>으로 나눈 뒤,
+존마다 “녹이 몇 %인가”를 계산해 Excel로 저장합니다.
+</p>
+
+<div class="flow">
+  전체 흐름 &nbsp;→&nbsp;
+  <b>① 프로젝트 만들기</b> → <b>② 모델(AI 구조) 고르기</b> → <b>③ 녹 부위 라벨링</b> →
+  <b>④ 학습</b> → <b>⑤ 추론으로 확인</b> → <b>⑥ 존 분석으로 존별 % 뽑기</b> → <b>⑦ Excel 저장</b>
+</div>
+
+<div class="tip">
+  <b>이미 학습된 체크포인트(.pt 파일)를 받았다면</b> ②③④는 건너뛰고
+  <a href="#s7">존 분석 탭</a>부터 바로 사용하면 됩니다.
+  존 분석 탭은 프로젝트와 상관없이 이미지 파일과 체크포인트 파일을 직접 열어서 동작합니다.
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s1">2. 프로그램 시작하기 (프로젝트 선택) <a class="top" href="#toc">▲ 목차</a></h2>
+
+<p>
+프로그램을 실행하면 가장 먼저 <b>프로젝트 선택 창</b>이 뜹니다.
+프로젝트는 “이미지 + 라벨 + 학습 결과”를 한 폴더에 모아 두는 작업 단위입니다.
+</p>
+
+<figure>
+  <img src="manual_assets_zone/01_project_start.png" alt="프로젝트 선택 창">
+  <figcaption>프로그램을 켜면 처음 나오는 프로젝트 선택 창</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>새 프로젝트</b> — 이름을 입력하면 <code>projects/이름/</code> 폴더가 만들어집니다. 처음이라면 이걸 누르세요.</li>
+  <li><b>②</b> <b>프로젝트 열기</b> — 이미 만들어 둔 프로젝트 폴더를 골라서 엽니다.</li>
+  <li><b>③</b> <b>프로젝트 가져오기</b> — 다른 PC에서 백업한 zip 파일을 풀어서 가져옵니다.</li>
+  <li><b>④</b> <b>최근 프로젝트</b> — 최근에 연 프로젝트 목록입니다. <b>더블클릭</b>하면 바로 열립니다.</li>
+</ol>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s2">3. 화면 구성 한눈에 보기 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<figure>
+  <img src="manual_assets_zone/02_main_window.png" alt="메인 화면과 5개 탭">
+  <figcaption>메인 화면 — 위쪽에 탭 5개, 오른쪽 위에 프로젝트 관련 버튼</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>라벨링</b> — 사진 위에 “여기가 녹이다”라고 색칠하는 탭입니다.</li>
+  <li><b>②</b> <b>학습</b> — 라벨링한 자료로 AI를 학습시키는 탭입니다.</li>
+  <li><b>③</b> <b>추론</b> — 학습한 AI로 새 사진을 검사해 보는 탭입니다.</li>
+  <li><b>④</b> <b>모델</b> — AI 구조(설계도)를 고르거나 붙여 넣는 탭입니다.</li>
+  <li><b>⑤</b> <b>존 분석</b> — <b>이 에디션의 핵심 탭.</b> 캡을 존으로 나눠 녹 비율을 계산합니다.</li>
+  <li><b>⑥</b> 현재 열려 있는 <b>프로젝트 이름</b>입니다.</li>
+  <li><b>⑦</b> <b>프로젝트 전환</b> — 프로그램을 끄지 않고 다른 프로젝트로 바꿉니다.</li>
+  <li><b>⑧</b> <b>설정</b> — 언어, 단축키 목록, 로그 파일 위치를 볼 수 있습니다.</li>
+</ol>
+
+<p>맨 아래 상태바에는 현재 프로젝트 이름과 폴더 경로가 계속 표시됩니다.</p>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s3">4. 모델 탭 — AI 구조 고르기 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<p>
+AI의 “설계도”를 고르는 탭입니다. 직접 코드를 쓸 줄 몰라도 됩니다 —
+<b>프리셋(미리 준비된 모델)</b> 중에서 하나 고르면 됩니다.
+</p>
+
+<figure>
+  <img src="manual_assets_zone/03_model_tab.png" alt="모델 탭">
+  <figcaption>모델 탭 — 코드를 붙여 넣고 검증 → 로드하는 화면</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>AI 모델 프리셋…</b> — 준비된 모델 목록을 엽니다. (아래 그림)</li>
+  <li><b>②</b> <b>코드 편집 창</b> — 프리셋을 고르면 여기에 코드가 채워집니다.</li>
+  <li><b>③</b> <b>검증(Validate)</b> — 코드에 문제가 없는지 검사합니다.</li>
+  <li><b>④</b> <b>로드(Load Model)</b> — 검증을 통과하면 눌러서 모델을 준비합니다.</li>
+  <li><b>⑤</b> 현재 상태 표시 — 통과하면 초록색으로 모델 이름이 나옵니다.</li>
+</ol>
+
+<figure>
+  <img src="manual_assets_zone/04_model_preset.png" alt="AI 모델 프리셋 목록">
+  <figcaption>프리셋 목록 — 왼쪽에서 모델을 고르면 오른쪽에 설명·장단점이 나옵니다. 아래 <b>에디터에 불러오기</b>를 누르세요.</figcaption>
+</figure>
+
+<div class="tip">
+  처음이라면 <b>U-Net (2015)</b>을 고르면 됩니다. 자료가 적어도 잘 동작하는 기본 모델입니다.
+</div>
+
+<figure>
+  <img src="manual_assets_zone/05_model_loaded.png" alt="모델 로드 완료">
+  <figcaption>검증·로드가 끝난 화면</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> 진행 기록 — <code>검증 통과 ✓</code>, <code>로드 완료 ✓</code> 가 보이면 성공입니다.</li>
+  <li><b>②</b> 오른쪽 아래에 모델 이름과 파라미터 수가 초록색으로 표시됩니다.</li>
+</ol>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s4">5. 라벨링 탭 — 녹 부위 표시하기 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<p>
+AI에게 “이게 녹이다”라고 알려 주는 작업입니다. 사진 몇 장에만 표시해 주면 됩니다.
+</p>
+
+<figure>
+  <img src="manual_assets_zone/06_labeling_tab.png" alt="라벨링 탭 전체 화면">
+  <figcaption>라벨링 탭 — 왼쪽(이미지·클래스), 가운데(그리는 곳), 오른쪽(목록·기록)</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>이미지 목록</b> — <b>파일</b>/<b>폴더</b> 버튼으로 사진을 추가합니다. 초록 점은 라벨링이 끝난 사진입니다.</li>
+  <li><b>②</b> <b>클래스 목록</b> — 색칠할 종류입니다. 여기서는 <code>녹</code>을 고른 상태입니다. <b>+</b> 버튼으로 추가할 수 있습니다.</li>
+  <li><b>③</b> <b>캔버스</b> — 실제로 색칠하는 곳입니다. 빨간 부분이 “녹”으로 표시한 영역입니다.</li>
+  <li><b>④</b> <b>어노테이션 목록</b> — 이 사진에 표시한 영역들의 목록입니다.</li>
+  <li><b>⑤</b> <b>로그</b> — 저장 여부 등 진행 상황이 표시됩니다.</li>
+</ol>
+
+<h3>도구 모음</h3>
+
+<figure>
+  <img src="manual_assets_zone/07_labeling_toolbar.png" alt="라벨링 도구 모음">
+  <figcaption>라벨링 탭 위쪽 도구 모음</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>폴리곤</b>(단축키 <code>P</code>) — 점을 찍어 다각형을 그립니다. 더블클릭하면 닫힙니다.</li>
+  <li><b>②</b> <b>브러시</b>(<code>B</code>) — 붓처럼 끌어서 칠합니다.</li>
+  <li><b>③</b> <b>윤곽 채우기</b>(<code>F</code>) — 테두리만 그리면 안쪽이 자동으로 채워집니다.</li>
+  <li><b>④</b> <b>지우개</b>(<code>E</code>) — 끌어서 칠한 것을 지웁니다.</li>
+  <li><b>⑤</b> <b>연결 지우개</b> — 클릭 한 번으로 이어져 있는 영역을 통째로 지웁니다.</li>
+  <li><b>⑥</b> <b>선택</b>(<code>S</code>) — 이미 그린 영역을 고르고 옮기거나 클래스를 바꿉니다.</li>
+  <li><b>⑦</b> <b>화면 이동</b>(<code>H</code>) — 그림을 끌어서 옮깁니다. (마우스 휠 = 확대/축소)</li>
+  <li><b>⑧</b> <b>브러시 크기</b> — 붓 굵기입니다. <code>[</code> <code>]</code> 키로도 조절됩니다.</li>
+</ol>
+
+<div class="tip">
+  저장 버튼은 따로 없습니다. 그리면 <b>자동으로 저장</b>됩니다.
+  실수했으면 <code>Ctrl+Z</code>로 되돌리세요.
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s5">6. 학습 탭 — AI 학습시키기 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<figure>
+  <img src="manual_assets_zone/08_training_setup.png" alt="학습 탭 설정">
+  <figcaption>학습 탭 — 왼쪽에서 조건을 정하고, 오른쪽 큐에 작업을 넣은 뒤 실행합니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>설정 폼</b> — 학습 조건입니다. 잘 모르겠으면 기본값 그대로 두세요. 자주 바꾸는 항목은 아래 표를 보세요.</li>
+  <li><b>②</b> <b>작업 이름</b> — 구분하기 쉬운 이름을 적습니다(예: <code>학습1</code>).</li>
+  <li><b>③</b> <b>모델 선택</b> — 프리셋을 바로 고를 수 있습니다(모델 탭에서 로드했다면 <code>현재 로드된 모델</code>).</li>
+  <li><b>④</b> <b>큐에 추가</b> — 위 조건으로 학습 작업 하나를 대기열에 넣습니다.</li>
+  <li><b>⑤</b> <b>대기열(큐)</b> — 넣어 둔 작업 목록입니다. 조건을 바꿔 여러 개를 넣어 두면 순서대로 학습합니다.</li>
+  <li><b>⑥</b> <b>모두 실행</b> — 대기열을 위에서부터 학습합니다.</li>
+</ol>
+
+<table>
+  <tr><th>항목</th><th>설명</th><th>추천</th></tr>
+  <tr><td>샘플링 모드</td><td>큰 사진을 잘라서 학습할지, 줄여서 학습할지</td><td><code>random_crop</code> (기본)</td></tr>
+  <tr><td>Epochs</td><td>같은 자료를 몇 번 반복해 볼지</td><td>20 ~ 100</td></tr>
+  <tr><td>Batch Size</td><td>한 번에 몇 장씩 볼지. 메모리 부족하면 줄이기</td><td>4</td></tr>
+  <tr><td>Learning Rate</td><td>학습 속도</td><td>0.001 ~ 0.0001</td></tr>
+  <tr><td>손실(Loss)</td><td>녹처럼 <b>아주 작은 부위</b>를 찾을 땐 Dice가 유리</td><td><code>DiceLoss</code></td></tr>
+</table>
+
+<figure>
+  <img src="manual_assets_zone/09_training_progress.png" alt="학습 진행 창">
+  <figcaption>학습을 시작하면 자동으로 뜨는 진행 창 — 창을 닫아도 학습은 계속됩니다</figcaption>
+</figure>
+
+<figure>
+  <img src="manual_assets_zone/10_training_chart.png" alt="학습 중 화면">
+  <figcaption>학습 중인 학습 탭 화면</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>진행 막대</b> — 지금 몇 번째 Epoch인지 보여 줍니다.</li>
+  <li><b>②</b> <b>손실 그래프</b> — 선이 아래로 내려가면 잘 배우고 있는 것입니다.</li>
+  <li><b>③</b> <b>Epoch별 성적표</b> — Val(검증 손실)과 IoU(정확도 비슷한 값)입니다. IoU는 높을수록 좋습니다.</li>
+  <li><b>④</b> <b>저장된 체크포인트</b> — 학습 결과 파일(.pt)입니다. 존 분석 탭에서 이 파일을 씁니다.</li>
+</ol>
+
+<div class="note">
+  체크포인트는 <code>projects/프로젝트이름/checkpoints/</code> 폴더에 저장됩니다.
+  파일 이름은 <code>작업이름_epoch_0020.pt</code> 형태이고, 성적이 가장 좋았던 <code>작업이름_best.pt</code>도 함께 저장됩니다.
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s6">7. 추론 탭 — 학습한 AI로 검사하기 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<p>존 분석에 들어가기 전에, AI가 녹을 제대로 찾는지 눈으로 먼저 확인하는 탭입니다.</p>
+
+<figure>
+  <img src="manual_assets_zone/11_inference_tab.png" alt="추론 탭">
+  <figcaption>추론 탭 — 이미지와 체크포인트를 고르고 실행합니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>파일 선택…</b> — 사진을 한 장 또는 여러 장 고릅니다.</li>
+  <li><b>②</b> <b>폴더 선택…</b> — 폴더 안 사진을 모두 불러옵니다.</li>
+  <li><b>③</b> <b>체크포인트 목록</b> — 학습 결과 중 쓸 것을 한 줄 클릭해서 고릅니다.</li>
+  <li><b>④</b> <b>추론 방식</b> — <code>resize</code>는 사진을 줄여서 한 번에, <code>sliding window</code>는 원래 크기로 잘라가며 검사합니다.</li>
+  <li><b>⑤</b> <b>추론 실행</b> — 검사를 시작합니다.</li>
+</ol>
+
+<div class="tip">
+  학습할 때 <code>random_crop</code>(패치 학습)을 썼다면 추론도 <b>sliding window</b>를 고르는 것이 정확합니다.
+</div>
+
+<figure>
+  <img src="manual_assets_zone/12_inference_result.png" alt="추론 결과">
+  <figcaption>추론 결과 — 원본 사진 위에 AI가 찾은 부위가 색으로 덮여 나옵니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>이미지 목록</b> — 클릭해서 사진을 바꿔 봅니다.</li>
+  <li><b>②</b> <b>결과 화면</b> — 아래 슬라이더로 색이 얼마나 진하게 덮일지 조절합니다. <code>F</code> 키로 원본/결과 전환.</li>
+  <li><b>③</b> <b>클래스 범례</b> — 클래스별로 몇 %가 검출됐는지 나옵니다.</li>
+  <li><b>④</b> <b>Excel로 내보내기</b> — 검출 결과를 표로 저장합니다.</li>
+</ol>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s7">8. 존 분석 탭 — 이 도구의 핵심 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<h3 id="s7-1">8.1 존 분석이란</h3>
+
+<p>
+캡을 <b>동심원</b>으로 잘라 만든 구역이 <b>존(Zone)</b>입니다.
+원을 반지름이 작은 것부터 정렬해서 다음과 같이 이름이 붙습니다.
+</p>
+
+<table>
+  <tr><th>존 이름</th><th>어디를 말하나</th></tr>
+  <tr><td><b>중심부</b></td><td>가장 작은 원의 안쪽</td></tr>
+  <tr><td><b>링 1, 링 2, …</b></td><td>원과 원 사이의 고리 모양 구역 (안쪽부터 번호)</td></tr>
+  <tr><td><b>바깥쪽</b></td><td>가장 큰 원의 바깥 (배경 포함)</td></tr>
+</table>
+
+<p>원을 <b>N개</b> 그리면 존은 <b>N+1개</b>가 생기고, 각 존마다 “타겟(녹) 픽셀 비율 %”이 계산됩니다.</p>
+
+<div class="note">
+  존 분석 탭은 다른 4개 탭과 <b>완전히 따로</b> 동작합니다.
+  프로젝트에 이미지를 등록할 필요가 없고, 아무 폴더의 사진과 아무 위치의 체크포인트 파일을 직접 열어서 씁니다.
+</div>
+
+<h3 id="s7-2">8.2 1단계 · 검사할 이미지 열기</h3>
+
+<figure>
+  <img src="manual_assets_zone/13_zone_open_images.png" alt="존 분석 탭 이미지 열기">
+  <figcaption>존 분석 탭 — 왼쪽에서 이미지를 열면 가운데에 사진이 표시됩니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>이미지 열기…</b> — 사진 파일을 직접 고릅니다(여러 장 선택 가능).</li>
+  <li><b>②</b> <b>폴더 열기…</b> — 폴더를 통째로 엽니다. 하위 폴더까지 찾아 줍니다.</li>
+  <li><b>③</b> <b>이미지 목록</b> — 사진이 2장 이상일 때 나타납니다. 클릭하면 그 사진으로 바뀝니다.</li>
+  <li><b>④</b> <b>체크포인트 열기 (.pt)…</b> — 다음 단계에서 누릅니다.</li>
+  <li><b>⑤</b> <b>캔버스</b> — 사진이 보이는 곳. 휠로 확대/축소합니다.</li>
+</ol>
+
+<h3 id="s7-3">8.3 2단계 · 체크포인트(학습 결과) 열기</h3>
+
+<figure>
+  <img src="manual_assets_zone/14_zone_checkpoint.png" alt="체크포인트 열기">
+  <figcaption>체크포인트를 고르면 어떤 모델인지 자동으로 인식합니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>체크포인트 열기 (.pt)…</b> — 학습 결과 파일을 고릅니다.</li>
+  <li><b>②</b> 고른 파일 이름이 표시됩니다.</li>
+  <li><b>③</b> <b>모델 정보</b> — 초록색으로 <code>(자동 준비됨)</code>이 나오면 바로 쓸 수 있습니다.</li>
+  <li><b>④</b> <b>추론 방식</b> — 기본값은 <code>sliding window</code>입니다.</li>
+  <li><b>⑤</b> <b>추론 실행</b> — 다음 단계.</li>
+</ol>
+
+<div class="warn">
+  <b>노란색/빨간색 안내가 뜬 경우</b>: 프리셋이 아닌 직접 만든 모델로 학습한 체크포인트입니다.
+  화면 아래에 코드 입력 상자가 나타나므로, 그 모델의 코드를 붙여 넣고
+  <b>검증(Validate) → 로드(Load Model)</b>를 차례로 누르세요.
+</div>
+
+<h3 id="s7-4">8.4 3단계 · 추론 실행</h3>
+
+<p>
+<b>▶ 추론 실행</b>을 누르면 목록에 있는 사진 <b>전부</b>를 AI가 검사합니다.
+끝나면 사진 위에 녹으로 판단한 부위가 색으로 덮여 표시됩니다.
+</p>
+
+<figure>
+  <img src="manual_assets_zone/15_zone_inference.png" alt="존 분석 추론 결과">
+  <figcaption>추론이 끝난 화면 — 붉은 띠가 AI가 찾아낸 녹 부위입니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>추론 실행</b> 버튼.</li>
+  <li><b>②</b> 진행 상황 (<code>완료 5 / 5</code>처럼 표시).</li>
+  <li><b>③</b> <b>타겟(녹) 클래스</b> — 아래 8.5 설명 참고.</li>
+  <li><b>④</b> 검출된 클래스 개수 안내 문구.</li>
+  <li><b>⑤</b> 결과가 덮여 표시된 캔버스. <code>F</code> 키를 누르면 원본과 번갈아 볼 수 있습니다.</li>
+</ol>
+
+<h3 id="s7-5">8.5 4단계 · 타겟(녹) 클래스와 민감도 정하기</h3>
+
+<p>
+AI가 여러 종류를 찾도록 학습됐다면 그중 <b>어느 것을 “녹”으로 볼지</b> 골라야 합니다.
+</p>
+<ul>
+  <li>검출된 종류가 <b>1개</b>면 이름 입력칸이 나옵니다 — 원하는 이름(예: <code>녹</code>)으로 바꿔도 됩니다.</li>
+  <li>검출된 종류가 <b>2개 이상</b>이면 드롭다운이 나옵니다 — 녹에 해당하는 항목을 고르세요.</li>
+</ul>
+
+<figure>
+  <img src="manual_assets_zone/16_zone_threshold.png" alt="민감도와 threshold 설정">
+  <figcaption>두 번째 줄의 조절 항목들</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>AI 신뢰도</b> — 이 값보다 자신 없는 덩어리는 버립니다. 잡티가 많으면 올리세요.</li>
+  <li><b>②</b> <b>픽셀 threshold</b> — 이 크기(픽셀 수)보다 작은 덩어리는 버립니다. 작은 점 노이즈 제거용.</li>
+  <li><b>③</b> <b>민감도</b> — 아래 <b>자동 검출</b>이 원을 얼마나 적극적으로 찾을지 정합니다(원 검출 전용, AI와 무관).</li>
+  <li><b>④</b> <b>자동 검출</b> — 캡의 동심원을 자동으로 찾습니다.</li>
+</ol>
+
+<div class="tip">
+  ①②를 바꾸면 화면과 존별 % 가 <b>즉시 다시 계산</b>됩니다. 값을 조금씩 움직이며 결과를 보면 됩니다.
+</div>
+
+<h3 id="s7-6">8.6 5단계 · 원(존 경계) 만들기</h3>
+
+<p><b>자동 검출</b> 버튼을 누르면 캡의 동심원을 찾아 초록색 원으로 그려 줍니다.</p>
+
+<figure>
+  <img src="manual_assets_zone/17_zone_auto_detect.png" alt="원 자동 검출 결과">
+  <figcaption>원 자동 검출 후 — 오른쪽에 원 목록과 존별 비율이 채워집니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>민감도</b> — 원이 안 잡히면 올리고, 엉뚱한 원이 잡히면 내린 뒤 다시 누르세요.</li>
+  <li><b>②</b> <b>자동 검출</b> 버튼.</li>
+  <li><b>③</b> <b>검출된 원 목록</b> — 반지름이 작은 것부터 정렬됩니다. 클릭하면 캔버스에서 노란색으로 강조됩니다.</li>
+  <li><b>④</b> <b>존별 타겟 클래스 비율(%)</b> — 원이 정해지면 자동으로 계산됩니다.</li>
+  <li><b>⑤</b> 캔버스에 그려진 원.</li>
+</ol>
+
+<div class="warn">
+  자동 검출이 원을 하나도 못 찾으면 안내창이 뜹니다. 그럴 땐 민감도를 조절하거나 <b>직접 그리면</b> 됩니다(다음 절).
+</div>
+
+<h3 id="s7-7">8.7 6단계 · 원 수동으로 고치기</h3>
+
+<p><b>원 편집</b> 도구가 켜져 있을 때(도구 모음 첫 번째 아이콘) 다음 조작을 할 수 있습니다.</p>
+
+<figure>
+  <img src="manual_assets_zone/19_zone_circle_select.png" alt="원 선택과 편집">
+  <figcaption>원 목록에서 고른 원이 캔버스에서 노란색으로 표시됩니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>원 목록에서 클릭</b> — 캔버스의 해당 원이 선택됩니다(반대로 캔버스에서 고르면 목록이 따라옵니다).</li>
+  <li><b>②</b> <b>원의 중심점</b> — 여기를 끌면 원이 <b>이동</b>합니다.</li>
+  <li><b>③</b> <b>원의 테두리</b> — 여기를 끌면 <b>크기(반지름)</b>가 바뀝니다.</li>
+</ol>
+
+<table>
+  <tr><th>하고 싶은 것</th><th>조작</th></tr>
+  <tr><td>새 원 그리기</td><td>빈 곳에서 바깥쪽으로 <b>드래그</b>. (이미 원이 있으면 중심은 기존 원들의 평균 중심으로 자동 맞춤)</td></tr>
+  <tr><td>원 옮기기</td><td>원의 <b>중심점</b>을 드래그</td></tr>
+  <tr><td>크기 바꾸기</td><td>원의 <b>테두리</b>를 드래그</td></tr>
+  <tr><td>정확한 숫자로 크기 지정</td><td>원 위에서 <b>우클릭 → 지름 변경…</b></td></tr>
+  <tr><td>원 지우기</td><td>원 위에서 <b>우클릭 → 원 삭제</b>, 또는 선택 후 <code>Delete</code></td></tr>
+  <tr><td>되돌리기</td><td><code>Ctrl+Z</code> 또는 도구 모음의 <b>실행 취소</b></td></tr>
+</table>
+
+<figure>
+  <img src="manual_assets_zone/20_zone_circle_menu.png" alt="원 우클릭 메뉴">
+  <figcaption>원 위에서 우클릭하면 나오는 메뉴</figcaption>
+</figure>
+
+<figure>
+  <img src="manual_assets_zone/21_zone_diameter_dialog.png" alt="지름 변경 창">
+  <figcaption><b>지름 변경…</b>을 고르면 지름(px)을 숫자로 직접 입력할 수 있습니다 — 반지름이 아니라 <b>지름</b>입니다</figcaption>
+</figure>
+
+<h3 id="s7-8">8.8 7단계 · 존별 비율 확인하기</h3>
+
+<figure>
+  <img src="manual_assets_zone/22_zone_zone_list.png" alt="존 목록과 하이라이트">
+  <figcaption>존 목록에서 한 줄을 클릭하면 그 존이 캔버스에서 노랗게 칠해집니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>존 목록</b> — <code>링 1 — 16.16%</code> 처럼 존 이름과 녹 비율이 나옵니다.</li>
+  <li><b>②</b> 선택한 존이 캔버스에서 <b>노란색</b>으로 강조됩니다. 반대로 캔버스의 빈 곳을 클릭해도 그 위치의 존이 선택됩니다.</li>
+  <li><b>③</b> <b>Excel로 내보내기</b> — 지금 화면의 존 목록(사진 1장)을 xlsx로 저장합니다.</li>
+</ol>
+
+<h3 id="s7-9">8.9 8단계 · 편집 도구 5종</h3>
+
+<p>
+AI 결과가 완벽하진 않습니다. 잘못 잡힌 곳을 지우거나 빠진 곳을 채우는 도구가 있습니다.
+<b>다섯 개 중 항상 하나만</b> 켜집니다.
+</p>
+
+<figure>
+  <img src="manual_assets_zone/18_zone_tools.png" alt="존 분석 편집 도구 모음">
+  <figcaption>존 분석 탭의 편집 도구 모음</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>원 편집</b> — 원을 만들고 옮기고 크기를 바꿉니다(기본 상태).</li>
+  <li><b>②</b> <b>브러시로 타겟 영역 그리기</b> — AI가 놓친 녹을 직접 칠해서 넣습니다(초록색).</li>
+  <li><b>③</b> <b>브러시로 타겟 영역 지우기</b> — 잘못 잡힌 부분을 문질러 지웁니다(빨간색).</li>
+  <li><b>④</b> <b>클릭한 연결 블랍 삭제</b> — 이어져 있는 덩어리 하나를 클릭 한 번으로 통째로 뺍니다.</li>
+  <li><b>⑤</b> <b>화면 이동</b> — 그림을 끌어서 옮깁니다.</li>
+  <li><b>⑥</b> <b>브러시 크기</b> — ②③에서 쓰는 붓 굵기(원본 사진 픽셀 기준).</li>
+  <li><b>⑦</b> <b>실행 취소</b> — 원 편집·그리기·지우기·블랍 삭제를 <b>시간 순서대로</b> 되돌립니다(<code>Ctrl+Z</code>).</li>
+</ol>
+
+<h4>브러시로 그리기</h4>
+<figure>
+  <img src="manual_assets_zone/23_zone_brush_draw.png" alt="브러시로 타겟 영역 그리기">
+  <figcaption>브러시로 칠한 부분(초록)이 “녹”으로 추가되고 존별 % 가 다시 계산됩니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>브러시 그리기</b> 도구를 켭니다.</li>
+  <li><b>②</b> <b>브러시 크기</b>를 정합니다.</li>
+  <li><b>③</b> 캔버스에서 드래그하면 초록색으로 칠해집니다.</li>
+  <li><b>④</b> 손을 떼는 순간 존별 비율이 다시 계산됩니다.</li>
+</ol>
+
+<h4>브러시로 지우기</h4>
+<figure>
+  <img src="manual_assets_zone/24_zone_brush_erase.png" alt="브러시로 타겟 영역 지우기">
+  <figcaption>지운 부분은 붉은색으로 표시됩니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>브러시 지우기</b> 도구를 켭니다.</li>
+  <li><b>②</b> 지울 곳을 드래그합니다.</li>
+  <li><b>③</b> 잘못 지웠으면 <b>실행 취소</b>(<code>Ctrl+Z</code>).</li>
+</ol>
+
+<h4>블랍(덩어리) 삭제</h4>
+<figure>
+  <img src="manual_assets_zone/25_zone_blob_before.png" alt="블랍 삭제 전">
+  <figcaption>블랍 삭제 도구를 켜고, 없앨 덩어리를 클릭합니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>블랍 삭제</b> 도구를 켭니다.</li>
+  <li><b>②</b> 없앨 덩어리를 <b>클릭</b>합니다.</li>
+  <li><b>③</b> 현재 존별 비율.</li>
+</ol>
+
+<figure>
+  <img src="manual_assets_zone/26_zone_blob_deleted.png" alt="블랍 삭제 후">
+  <figcaption>클릭 한 번으로 이어진 덩어리 전체가 빠집니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> 삭제된 덩어리는 붉은 사각형으로 표시됩니다.</li>
+  <li><b>②</b> 존별 비율이 그만큼 줄어든 것을 확인하세요.</li>
+  <li><b>③</b> 되돌리려면 <b>실행 취소</b>.</li>
+</ol>
+
+<h3 id="s7-10">8.10 9단계 · 이미지별 자동 저장</h3>
+
+<div class="note">
+  존 분석 탭에서 한 작업(원 위치, 지운 덩어리, 브러시 자국)은 <b>사진마다 자동으로 저장</b>됩니다.
+  저장 위치는 사진 파일 바로 옆의 <code>사진이름.zone.json</code> 파일입니다.
+  다른 사진을 봤다가 돌아오면 <b>하던 작업이 그대로 복원</b>됩니다. 따로 저장 버튼을 누를 필요가 없습니다.
+</div>
+
+<p>
+단, 사진의 원본 자체는 건드리지 않습니다. 편집 내용을 완전히 지우고 싶으면
+해당 <code>.zone.json</code> 파일을 지우면 됩니다.
+</p>
+
+<h3 id="s7-11">8.11 10단계 · Zone 결정 방법 3가지와 일괄 처리</h3>
+
+<p>사진이 여러 장일 때, <b>원을 어떻게 정할지</b>를 고르는 곳입니다.</p>
+
+<figure>
+  <img src="manual_assets_zone/27_zone_modes.png" alt="Zone 결정 방법 3가지">
+  <figcaption>왼쪽 아래 <b>Zone 결정 방법</b> 드롭다운을 펼친 모습</figcaption>
+</figure>
+
+<table>
+  <tr><th>모드</th><th>어떻게 동작하나</th><th>언제 쓰나</th></tr>
+  <tr>
+    <td><b>일괄 적용</b></td>
+    <td>지금 화면(기준 사진)의 원을 나머지 사진 전부에 <b>그대로</b> 적용합니다(사진 크기가 다르면 비율에 맞춰 조정).</td>
+    <td>같은 위치·같은 카메라로 찍어 캡 위치가 일정할 때 — 가장 빠릅니다.</td>
+  </tr>
+  <tr>
+    <td><b>일괄 적용 후 수정</b></td>
+    <td>위와 같이 적용한 뒤, 사진을 하나씩 열어 원을 직접 손볼 수 있습니다(수정 내용은 자동 저장).</td>
+    <td>대체로 위치는 같지만 몇 장은 틀어져 있을 때.</td>
+  </tr>
+  <tr>
+    <td><b>장별 적용(이미지별 개별)</b></td>
+    <td>사진마다 <b>따로</b> 자동 검출을 돌립니다(민감도 슬라이더 값 사용).</td>
+    <td>사진마다 캡 위치·크기가 제각각일 때.</td>
+  </tr>
+</table>
+
+<figure>
+  <img src="manual_assets_zone/28_zone_batch_panel.png" alt="일괄 처리 패널">
+  <figcaption>일괄 처리 조작부</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>Zone 결정 방법</b> — 위 표에서 고릅니다.</li>
+  <li><b>②</b> <b>선택 이미지 일괄 처리 (N장)</b> — 누르면 처리가 시작됩니다. 괄호 안 숫자가 대상 장수입니다.</li>
+  <li><b>③</b> <b>필요 조건 안내</b> — 추론 실행 + 원 1개 이상 + 이미지 2장 이상이어야 버튼이 켜집니다.</li>
+  <li><b>④</b> <b>이미지 목록</b> — <code>Ctrl</code>/<code>Shift</code>로 일부만 골라 처리할 수도 있습니다.</li>
+</ol>
+
+<div class="warn">
+  이미지 목록에서 <b>딱 1장만</b> 고른 경우에는 목록 <b>전체</b>가 처리됩니다.
+  한 장만 확인하고 싶으면 그 사진을 클릭해 캔버스에서 직접 보세요.
+</div>
+
+<figure>
+  <img src="manual_assets_zone/29_zone_batch_confirm.png" alt="기존 존 발견 확인창">
+  <figcaption>이미 존이 저장돼 있는 사진이 있으면 이렇게 물어봅니다</figcaption>
+</figure>
+
+<ul>
+  <li><b>기존 존을 대체하고 전체 적용</b> — 저장돼 있던 원을 새 기준으로 덮어씁니다.</li>
+  <li><b>존 없는 이미지만 적용</b> — 이미 작업한 사진은 그대로 두고 나머지만 처리합니다.</li>
+  <li><b>취소</b> — 아무것도 하지 않습니다.</li>
+</ul>
+
+<figure>
+  <img src="manual_assets_zone/30_zone_batch_progress.png" alt="일괄 처리 진행창">
+  <figcaption>처리 중 진행 상황 — <b>취소</b>를 누르면 중간에 멈출 수 있습니다</figcaption>
+</figure>
+
+<h3 id="s7-12">8.12 11단계 · Excel로 내보내기</h3>
+
+<figure>
+  <img src="manual_assets_zone/31_zone_batch_result_long.png" alt="일괄 처리 결과 - 목록별">
+  <figcaption>일괄 처리가 끝나면 결과 표가 뜹니다</figcaption>
+</figure>
+
+<ol class="callout">
+  <li><b>①</b> <b>목록별(Long)</b> 탭 — 한 줄에 (이미지, 존, 비율%) 하나씩. <b>이게 원본 데이터</b>입니다.</li>
+  <li><b>②</b> <b>이미지별(Wide)</b> 탭 — 사진을 한 줄로, 존을 열로 펼친 표입니다.</li>
+  <li><b>③</b> <b>Excel로 내보내기</b> — xlsx 파일로 저장합니다.</li>
+</ol>
+
+<figure>
+  <img src="manual_assets_zone/32_zone_batch_result_wide.png" alt="일괄 처리 결과 - 이미지별">
+  <figcaption>이미지별(Wide) 보기 — 사진마다 존 개수가 다르면 같은 열이라도 다른 위치를 뜻할 수 있으니, 정확한 값은 목록별 탭을 보세요</figcaption>
+</figure>
+
+<figure>
+  <img src="manual_assets_zone/33_zone_export_done.png" alt="내보내기 완료">
+  <figcaption>저장이 끝나면 몇 줄을 저장했는지 알려 줍니다</figcaption>
+</figure>
+
+<div class="note">
+  사진 1장만 저장하고 싶으면 오른쪽 아래 <b>Excel로 내보내기</b> 버튼(8.8 ③)을 쓰세요.
+  일괄 처리 결과 창의 버튼은 처리한 <b>모든 사진</b>을 저장합니다.
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s8">9. 단축키 모음 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<table>
+  <tr><th>키</th><th>기능</th><th>어디서</th></tr>
+  <tr><td><code>Ctrl + Z</code></td><td>되돌리기</td><td>라벨링 · 존 분석</td></tr>
+  <tr><td><code>F</code></td><td>원본 / AI 결과 화면 전환</td><td>존 분석 · 추론</td></tr>
+  <tr><td><code>Delete</code></td><td>선택한 원 삭제</td><td>존 분석(원 편집 모드)</td></tr>
+  <tr><td>마우스 <b>휠</b></td><td>확대 / 축소</td><td>모든 캔버스</td></tr>
+  <tr><td>마우스 <b>우클릭 드래그</b></td><td>화면 이동</td><td>모든 캔버스</td></tr>
+  <tr><td><code>P B F E S H</code></td><td>라벨링 도구 전환</td><td>라벨링</td></tr>
+  <tr><td><code>[</code> <code>]</code></td><td>브러시 크기 조절</td><td>라벨링</td></tr>
+  <tr><td><code>↑</code> <code>↓</code></td><td>이전 / 다음 이미지</td><td>라벨링</td></tr>
+</table>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="s9">10. 문제가 생겼을 때 <a class="top" href="#toc">▲ 목차</a></h2>
+
+<h4>“배경 외 클래스가 검출되지 않았습니다”라고 나옵니다</h4>
+<p>
+AI가 녹을 하나도 못 찾았다는 뜻입니다. ① 체크포인트를 다른 것으로 바꿔 보고,
+② 추론 방식을 <code>sliding window</code>로 바꿔 보고, ③ 그래도 안 되면 라벨링을 더 해서 다시 학습하세요.
+</p>
+
+<h4>일괄 처리 버튼이 회색이라 눌리지 않습니다</h4>
+<p>
+세 가지 조건이 모두 필요합니다 — <b>추론을 실행했고</b>, <b>원이 1개 이상 있고</b>, <b>이미지가 2장 이상</b>.
+왼쪽 아래 안내 문구에 같은 내용이 적혀 있습니다.
+</p>
+
+<h4>원이 이상하게 잡힙니다</h4>
+<p>
+민감도를 낮춰서(잡음 감소) 또는 높여서(더 많이 검출) 다시 <b>자동 검출</b>을 누르세요.
+그래도 안 되면 원을 지우고 직접 드래그해서 그린 뒤, 우클릭 <b>지름 변경…</b>으로 숫자를 맞추면 정확합니다.
+</p>
+
+<h4>편집한 내용이 사라졌습니다</h4>
+<p>
+사진 옆 <code>사진이름.zone.json</code> 파일이 지워졌거나, 폴더가 읽기 전용이라 저장에 실패한 경우입니다.
+저장에 실패하면 한 번은 경고창이 뜹니다. USB나 네트워크 드라이브가 아닌 <b>PC 내부 폴더</b>에서 작업하세요.
+</p>
+
+<h4>학습 중 메모리 부족(CUDA out of memory) 오류</h4>
+<p>
+학습 탭에서 <b>Batch Size</b>를 절반으로 줄이거나, 이미지 크기(IMG SIZE)를 줄이세요.
+Mixed Precision을 꺼 보는 것도 방법입니다.
+</p>
+
+<h4>그 밖의 오류</h4>
+<p>
+오른쪽 위 <b>설정 → 로그</b>에서 로그 파일 위치를 확인할 수 있습니다.
+문제가 계속되면 <code>data/logs/errors.log</code> 파일을 담당자에게 전달하세요.
+</p>
+
+</div>
+</body>
+</html>
