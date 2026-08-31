@@ -4420,3 +4420,62 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   추론 탭 골든패스와 Zone 탭(원편집/블랍삭제/브러시그리기/브러시지우기/팬 5모드)
   회귀 없음을 확인하기 전까지는 완료로 간주하지 않는다** (스펙 145~148행,
   "주요 기능 추가" 분류).
+
+## 2026-08-31 — Zone 탭 R3: Excel 내보내기 zone별 blob 크기 + AI 점수
+
+- 브랜치: `feature/zone-analysis-tab` (워크트리 `D:\segmentation model-zone-analysis-tab`).
+- 스펙: `docs/specs/zone-blob-select-and-export-2026-08-31.md` "R3" 절(179~368행)을
+  그대로 구현.
+- `app/core/zone_metrics.py`:
+  - `compute_blob_labels()` 반환값에 centroid 추가(2-tuple -> 3-tuple:
+    labels, stats, centroids). 기존 호출부 3곳(자체 `__main__`,
+    `zone_analysis_tab.py` `_on_target_changed()`, `_ZoneBatchWorker.run()`) +
+    `tests/test_zone_edit_toolbar.py` 1곳까지 총 4곳 수정.
+  - 신규 `ZoneBlobStat` dataclass + `zone_blob_stats(zones, ai_mask, final_mask,
+    confidence_map)` 순수 함수 — `np.bincount` 벡터화로 blob별 AI 예측 픽셀
+    교집합 confidence 평균 산출(교집합 없으면 `ai_score=None`), centroid로 zone
+    배정.
+  - `export_zone_percentages_to_excel()`에 선택 인자 `blob_rows` 추가(하위 호환)
+    — 있을 때만 3번째 시트 `"zone_blobs"` 생성, `ai_score is None`이면 `"N/A"`.
+  - `__main__` self-check에 신규 케이스 추가: AI blob 1개 + 순수 수동 blob 1개
+    (교집합 없음), zone 2개(중심부/바깥쪽)에 걸친 배정 확인.
+- `app/tabs/zone_analysis_tab.py`:
+  - `_current_target_mask()`를 `_ai_and_final_masks()`로 분리(기존 동작 100%
+    보존하는 리팩터링) + `_current_target_mask()`는 `[1]`을 반환하는 얇은 래퍼로
+    유지.
+  - 신규 `_compute_zone_blob_rows()` — `_on_export_single()`에서 계산해
+    `export_zone_percentages_to_excel()`에 전달.
+  - `_ZoneBatchWorker.run()`: `ai_mask`/`final_mask` 분리 보존(removed_blob_ids
+    반영 직후를 ai_mask로, apply_manual_strokes 이후를 final_mask로),
+    `zone_blob_stats()` 호출해 `blob_rows` 누적, `completed` 시그널을
+    `pyqtSignal(object, object)`(rows, blob_rows)로 확장.
+  - `_on_batch_completed(self, rows, blob_rows)` 시그니처 변경 +
+    `ZoneBatchResultDialog(rows, blob_rows, self)`로 전달.
+- `app/widgets/zone_batch_result_dialog.py`: `__init__(self, rows, blob_rows,
+  parent=None)`로 변경, Excel 내보내기 호출에 `blob_rows` 세 번째 인자 추가.
+  화면 Long/Wide 탭 표시는 스펙 지시대로 이번 라운드에서 건드리지 않음(스코프
+  밖).
+- `tests/test_zone_batch_worker.py`: `completed` 시그널 2-인자 변경에 맞춰
+  `worker.completed.connect(...)` 콜백을 `lambda rows, blob_rows: ...`로 수정.
+- 검증:
+  - `python -m app.core.zone_metrics` self-check 통과(zone_blob_stats 신규
+    케이스 포함).
+  - `python -m pytest tests/test_zone_github_13_14.py tests/test_zone_batch_worker.py
+    tests/test_zone_state_persistence.py tests/test_zone_edit_toolbar.py` —
+    19 passed.
+  - 전체 `pytest` 실행 시 `test_build_release.py`/`test_auto_label_sliding.py` 등
+    다수가 `PermissionError`/`OSError: [WinError 6]`로 실패·에러 — 이 워크트리
+    샌드박스 환경의 subprocess/handle 제약으로 R3 변경과 무관(Zone 관련 테스트는
+    전부 통과 확인).
+  - GUI 없이 `export_zone_percentages_to_excel()`을 실제로 호출해 xlsx를
+    `openpyxl.load_workbook()`으로 재오픈하는 스크립트로 완료 기준 전항목 확인:
+    `zone_blobs` 시트 존재, AI blob은 숫자 점수(60%)/순수 수동 blob은 `"N/A"`,
+    zone별 blob 픽셀합이 `zone 면적 × 퍼센티지/100`과 일치(반올림 오차 내),
+    `zones`/`zones_wide` 시트 회귀 없음.
+  - `python main.py` 실기동 골든패스(단일/배치 Excel 내보내기 UI 조작)는
+    수행하지 않음 — **검증 에이전트가 별도로 확인 필요**.
+- 커밋: `48f844e` (feat). push는 하지 않았다(지시에 따름).
+- 상태: 구현 완료. **검증 에이전트가 `python main.py` 실구동으로 단일 이미지
+  export + 배치 export 골든패스를 실행해 저장된 xlsx의 `zone_blobs` 시트를
+  확인하기 전까지는 완료로 간주하지 않는다**(스펙 364~367행, "주요 기능 추가"
+  분류).
