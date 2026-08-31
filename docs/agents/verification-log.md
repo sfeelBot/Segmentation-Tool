@@ -5104,3 +5104,192 @@ PyTorch 2.7.1+cu128, RTX 5060 GPU 정상 인식, 예외 없이 프로젝트 선�
 확인. `docs/roadmap.md`는 이번 라운드로 상태가 바뀐 항목이 없어 별도 갱신 없음(GitHub
 #34는 QA.md에만 신규 등록 — 이 항목 자체가 로드맵 어느 라운드에도 별도 bullet으로 없던
 리더 직접 수정 건이라 QA.md 등록만으로 충분하다고 판단).
+
+## 2026-09-01 — R1(블랍 클릭 선택) + R3(Zone Excel blob 내보내기) 골든패스 검증
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(브랜치 `feature/zone-analysis-tab`),
+HEAD `ebda864`. 대상: `06dbd6a`+`5d6f9c1`(R1, 추론 탭 blob 클릭 선택) +
+`48f844e`+`d30d360`(R3, Zone Excel blob 내보내기). 스펙:
+`docs/specs/zone-blob-select-and-export-2026-08-31.md`. 둘 다 스펙에서 "주요 기능
+추가"로 지정돼 실제 `python main.py` 구동 수준(`QT_QPA_PLATFORM=offscreen` +
+`QTest` 실이벤트, 직접 메서드 호출 금지 — BUG-022 전례 준수)의 골든패스 검증을
+수행했다. 최초 시도는 `C:\Users\Feel\AppData\Local\Python\bin\python.exe`
+(PyQt6 6.11.0/torch 2.11.0)로 진행했으나, 후반부에 재현되는 크래시의 원인 후보를
+좁히던 중 이 인터프리터가 `requirements.txt`가 고정한 버전(PyQt6==6.7.1,
+torch==2.7.1)과 다르다는 걸 발견해, 이후 전 구간을 프로젝트 전용
+`build/venv/Scripts/python.exe`(Python 3.12.10, PyQt6 6.7.1, torch 2.7.1+cu128,
+RTX 5060 GPU)로 재실행해 결과를 재확인했다(두 환경에서 동일 결과).
+
+### 사전 정적 검토
+
+R1(`overlay_viewer.py`/`inference_engine.py`/`inference_tab.py`)과 R3
+(`zone_metrics.py`/`zone_analysis_tab.py`/`zone_batch_result_dialog.py`) diff를
+스펙과 대조 — 설계·구현 일치 확인. 특히 `ZoneCanvas`(`OverlayViewer` 서브클래스)가
+"circle" 모드에서 `mousePressEvent`/`mouseReleaseEvent`를 전부 오버라이드해
+`super()`를 호출하지 않으므로 R1의 신규 클릭 감지(`pixmap_clicked`)가 원 편집
+모드에서 발동하지 않음을 코드로 확인(스펙 주장과 일치). `zone_analysis_tab.py`의
+`_ZoneBatchWorker.run()` diff에서 `ai_mask`(수동 스트로크 반영 전)와
+`final_mask`(반영 후)를 분리한 리팩터링이 기존 `zone_stats(zone.mask, final_mask)`
+호출 표현식 자체는 그대로임을 확인(zones/zones_wide 시트 값 회귀 없음, 코드
+근거).
+
+### R1 골든패스 (`projects/manual_demo` 실제 학습 체크포인트 5장 중 사용)
+
+실제 `InferenceTab` 인스턴스 + `manual_demo` 프로젝트(SimpleUNet, 실제 학습
+완료 체크포인트 `학습1_best.pt`, 녹 이미지)로 QTest 실이벤트 기반 검증:
+
+1. 체크포인트 선택 → 실제 `▶ 추론 실행` 버튼 클릭 → 워커 정상 종료, blob 24개
+   검출.
+2. blob 클릭 선택 — 처음엔 bbox 중심/centroid로 클릭 좌표를 잡았다가 두 번 실패
+   (① 가장 큰 blob이 캡 전체를 두르는 sparse/annular 형태라 centroid 자체가
+   배경 픽셀이었음, ② 반지름 작은 blob은 낮은 줌(0.2×)에서 화면→원본 좌표
+   반올림으로 클릭이 빗나감) — `cv2.distanceTransform`으로 각 blob 내부에서
+   경계로부터 가장 먼 "안전한" 내부 점을 골라 재시도하니 정확히 클릭한 blob과
+   일치하는 `BlobStat`(pixel_count로 식별)이 선택되고 하이라이트/라벨
+   ("녹 · 면적 10593px · AI 점수 98.7%")이 정확히 표시됨.
+3. 배경(class 0) 클릭 → 선택/하이라이트/라벨 전부 해제.
+4. 짧은 클릭(4px 이하 이동)만 선택으로 해석 — 40px 드래그(팬)는 선택을
+   재판정하지 않고 이전 선택 유지(클릭≠드래그 판정 정상).
+5. 줌 3배 + 팬 오프셋 변경 상태에서도 같은 blob 재클릭 시 정확히 같은 blob이
+   선택됨(좌표 역변환 정확).
+6. threshold(`최소 픽셀 크기`) 슬라이더 변경 → `_threshold_timer`(150ms) 이후
+   선택 자동 해제 확인.
+7. 이미지 전환(`다음 ▶`) → 선택 자동 해제, 새 추론 실행(`▶ 추론 실행` 재클릭)
+   즉시 선택 해제 확인.
+8. `F` 키 원본/오버레이 왕복 토글 — 크래시 없음.
+
+전부 PASS(27개 assertion). Zone 탭 회귀는 아래 별도 절.
+
+### Zone 탭 5모드 회귀 (`OverlayViewer` 공유 코드 변경 영향 확인)
+
+같은 `manual_demo` 프로젝트의 `7번.png`(기존 `.zone.json` 사이드카에 원 2개
+있음)로 실제 `ZoneAnalysisTab`/`ZoneCanvas` 인스턴스 사용. 체크포인트/모델은
+`_on_select_checkpoint()`와 동일한 내부 로직(`load_checkpoint_meta`/
+`load_model_from_ckpt`)을 파일 대화상자만 우회해 직접 호출(기존 테스트 관례,
+`tests/test_zone_batch_worker.py` 등과 동일 패턴), **편집 동작 자체는 전부
+`QTest.mousePress/mouseMove/mouseRelease`/`QTest.mouseClick`/`QTest.keyClick`
+실이벤트**로 수행:
+
+- **원편집**: 동심원 UI 특성상(중심 공유) 사이드카에서 복원한 원 2개와 같은
+  중심에 새 원을 만들면 "중심 클릭=이동" 판정이 항상 반지름이 가장 작은
+  원(스펙/코드 의도)을 먼저 잡아 "새로 만든 원 이동"을 검증하기 모호해지는
+  구조적 특성을 발견 — 생성/이동/반지름조절/삭제 메커니즘 자체는
+  `clear_circles()`로 빈 캔버스를 만들어 독립적으로 검증(생성 드래그 → 이동
+  드래그 → 테두리 드래그 반지름조절 → `Delete` 키 삭제, 전부 실제 좌표 변화로
+  확인)한 뒤, 사이드카 원 지오메트리를 `set_circles()`로 복원해 이후 R3 존
+  계산에 재사용.
+- **블랍삭제**: 툴바 액션 실제 클릭(`_edit_toolbar.widgetForAction()`)으로
+  모드 전환 → `distanceTransform` 안전 지점 클릭 → `removed_blob_ids` 증가
+  확인.
+- **브러시그리기**: 모드 전환 → 타겟 마스크에서 가장 먼 배경 지점(depth
+  ≥15px)에 실제 드래그로 스트로크 → `manual_strokes`에 `draw=True` 추가,
+  최종 마스크엔 포함되지만 원래 AI 마스크엔 없음(순수 수동) 확인 — 이 blob이
+  뒤이은 R3 "N/A" 케이스로 재사용됨.
+- **브러시지우기**: 모드 전환 → 삭제하지 않은 다른 blob 내부 드래그 →
+  `manual_strokes`에 `draw=False` 추가, 지우기 마스크 픽셀 수 증가 확인.
+- **팬**: 모드 전환 → 드래그 → `_pan` 오프셋 변경, 원/블랍 데이터는 전혀
+  건드리지 않음 확인(회귀 없음).
+
+35개 assertion 전부 PASS — R1(`overlay_viewer.py` 변경)이 Zone 탭 5모드에
+회귀를 일으키지 않음을 실증.
+
+### R3 골든패스 — 단일 이미지 Excel 내보내기
+
+위 Zone 5모드 검증에서 실제로 만든 편집 이력(블랍삭제 1건, 순수 수동 blob
+1건, 브러시지우기 1건)이 그대로 남은 상태에서 `Excel로 내보내기` 버튼을 실제
+클릭(`QFileDialog.getSaveFileName`만 임시 경로 반환으로 monkeypatch, 저장
+로직 자체는 실행)해 xlsx를 생성, `openpyxl.load_workbook()`으로 재오픈해 독립
+검증:
+
+- `zones`/`zones_wide`/`zone_blobs` 3개 시트 모두 존재, `zone_blobs` 헤더가
+  스펙과 정확히 일치.
+- `zones` 시트 값을 앱 내부 로직과 무관하게 우리가 직접 호출한
+  `zone_metrics.zone_stats()`(같은 최종 마스크 기준)로 재계산한 값과 대조 —
+  완전 일치(회귀 없음).
+- zone별 blob 픽셀수 합 vs zone 면적×퍼센티지/100 대응: 실제 데이터의 최대
+  blob(78099px, 캡 전체를 두르는 고리 모양)이 zone 경계를 크게 가로지르는데
+  `zone_blob_stats()`는 centroid 하나로만 zone을 정하므로(스펙이 명시적으로
+  받아들이기로 한 근사) zone별로는 최대 6.9배까지 벌어짐 — **버그 아님**,
+  스펙 "핵심 설계 결정 3번"이 명시한 의도된 동작(합성 데이터로는 이미
+  `zone_metrics.py` self-check가 "경계를 안 가로지르는 정상 케이스"의 정확성을
+  검증해둠). 대신 더 강한 불변식 — 모든 zone에 걸친 blob 픽셀 총합이
+  퍼센티지 기반 총 픽셀수와 정확히 일치(픽셀 손실/중복 없음, 오차 ≤2px) —
+  로 재확인, PASS.
+- 방금 브러시로 그린 100% 수동 blob → `blob_id`로 정확히 대응하는 행을 찾아
+  AI 점수가 정확히 `"N/A"`임을 확인. 원본 AI 예측 blob들은 0~100 범위의 숫자
+  AI 점수를 가짐 확인 — **합성 데이터가 아니라 실제 앱 조작으로 두 케이스
+  모두 확인**(스펙이 요구한 검증 강도).
+- 블랍삭제로 지운 blob → 최종 마스크/최종 라벨맵 어디에도 없어 `zone_blobs`에
+  나타날 수 없음을 라벨맵 재조회로 직접 확인.
+
+전부 PASS(단일 export 절만 18개 assertion).
+
+### R3 배치 처리 Excel 내보내기 — 완료 못함(블로커, BUG-030 등록)
+
+실제 `Ctrl+클릭` 다중선택(BUG-022 교훈 준수 — `tree.viewport()`에 실제
+`QTest.mouseClick(..., ControlModifier)`)으로 이미지 2장을 배치 대상으로
+지정하는 것까지는 정상(`selected_paths()` 2장, 배치 버튼 라벨 "(2장)"으로
+갱신) 확인. 이어서 `▶ 선택 이미지 일괄 처리` 버튼을 실제 클릭하면
+`_ZoneBatchWorker`(실제 체크포인트로 두 번째 이미지 실추론 + cv2 zone/blob
+계산)까지는 매번 정상 완료(`completed` 시그널에 담긴 rows/blob_rows 정상,
+진행 다이얼로그도 정상 close())되지만, 그 직후 `ZoneBatchResultDialog`가 열린
+시점 부근에서 프로세스가 파이썬 예외/트레이스백 없이 그대로 종료됨(하드
+크래시 정황 — `faulthandler`로도 못 잡고 stdout 버퍼까지 통째로 유실됨,
+100% 재현). 5개 이상의 축소 재현 스크립트로 원인을 좁혀본 결과:
+
+- 다이얼로그 내용과 무관(완전 no-op 대체 다이얼로그로도 동일 재현).
+- `ZoneAnalysisTab._on_batch_completed()`를 통째로 no-op으로 바꾸면 크래시
+  사라짐 — 크래시가 이 메서드 본문(진행 다이얼로그 close + 결과 다이얼로그
+  표시) 실행 중 발생함을 확정.
+- 순수 Qt만 쓴 동일 패턴(`QThread`+`QProgressDialog`+`QDialog.exec`, torch
+  없음)은 크래시 없이 정상 종료 — torch 실추론이 필요조건으로 보임.
+- `requirements.txt`가 고정한 버전과 일치하는 `build/venv`(PyQt6 6.7.1/torch
+  2.7.1)에서도 동일 재현 — PyQt6 6.8+ DLL 이슈(BUG-001)나 버전 불일치 문제가
+  아님.
+- Windows 이벤트 로그(응용 프로그램 오류, ID 1000)에는 해당 시각 관련 항목이
+  전혀 없음(참고로 이 환경엔 8/30 설치본의 진짜 OS 레벨 크래시가 정상
+  기록돼 있어 로그 자체는 유효) — 진짜 OS 크래시가 아니라 이 검증에 쓰인
+  헤드리스 Bash 자동화 샌드박스가 강제 종료했을 가능성도 배제 못함.
+- 이 환경은 실제 CUDA GPU(RTX 5060)가 있어 추론이 CUDA로 실행됐을 가능성이
+  높고, 크래시 지점이 스레드 간 비동기 타이밍과 겹치는 정황이 있어 CUDA
+  컨텍스트/텐서 해제 타이밍 문제일 가능성도 배제 못함.
+
+결론: 원인을 하드웨어/드라이버 수준까지 확정하지 못했고, 이 세션(헤드리스
+Bash 자동화, 대화형 데스크톱 세션 아님)에서는 배치 Excel 내보내기 골든패스를
+끝까지 완주하지 못했다. `QA.md` `BUG-030`(P0 잠정)으로 등록 — 대화형 데스크톱
+세션(`python main.py` 직접 실행)에서 동일 골든패스(단일 추론→배치 처리→결과
+다이얼로그)를 재현해 (a) 진짜 앱 크래시인지, (b) 이 자동화 샌드박스만의
+한계인지 반드시 재확인 필요.
+
+### 그 외
+
+- `pytest tests/test_zone_batch_worker.py tests/test_zone_edit_toolbar.py
+  tests/test_zone_github_13_14.py tests/test_zone_state_persistence.py
+  tests/test_inference_blob_at.py`(R1/R3 관련 전체) — `build/venv`로 22
+  passed, 회귀 없음(R1+R3 같은 커밋 트리에 함께 있어도 충돌 없음).
+- `python -m app.core.zone_metrics`(self-check, `zone_blob_stats()` 신규
+  케이스 포함) — OK.
+- `BUG-029`(P2, Open) 신규 발견·등록: `ZoneCanvas.set_state()`가 사이드카
+  복원 시 `_next_id`를 갱신하지 않아 기존 원이 있는 이미지를 다시 열고 새
+  원을 만들면 id가 충돌할 수 있음(R1/R3 코드와 무관한 기존 결함, `b9510b5`부터
+  존재 — 위 원편집 회귀 테스트에서 빈 캔버스로 우회해 발견 자체와 회귀 검증을
+  분리함). 설계 관련 결함이라 직접 고치지 않고 QA.md에만 등록.
+- 프로젝트 실데이터 `projects/manual_demo/images/*.zone.json` 사이드카는
+  테스트 전 백업(`.bak`) 후 대조 — 최종적으로 값 변경 없음(diff 없음) 확인
+  후 백업 삭제. `projects/nok`은 이번 세션에서 아예 건드리지 않음. `git status
+  --porcelain`은 `QA.md` 1개만 남음(둘 다 gitignore 대상 디렉터리).
+
+### 최종 판정
+
+**R1: 통과 — push 가능.** 스펙 완료 기준 7개 항목(blob 클릭/해제/드래그 구분/
+줌팬/threshold 해제/이미지전환 해제/재추론 해제/F 토글/Zone 5모드 회귀) 전부
+실이벤트 기반으로 확인, 새 버그 없음(BUG-029는 R1과 무관한 기존 Zone 결함).
+
+**R3: 부분 통과, 단 배치 처리는 블로커로 미완주.** 단일 이미지 Excel
+내보내기(스펙 완료 기준 1/3/4/5/6)는 실제 조작으로 전부 확인·통과. 배치
+처리(완료 기준 2)는 `BUG-030`(P0 잠정, 원인 불명확 크래시)으로 이 세션에서
+끝까지 검증하지 못함 — **배치 export 골든패스가 대화형 세션에서 재확인되기
+전까지는 R3를 "완료"로 간주할 수 없음.** 단일 export 로직 자체(핵심 계산
+로직, `zone_blob_stats`/`export_zone_percentages_to_excel`)는 배치와 동일
+함수를 공유하므로 코드 신뢰도는 높으나, 배치 특유의 다이얼로그/스레드
+정리 경로는 이 세션에서 확정적으로 검증하지 못했다.
