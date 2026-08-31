@@ -1163,3 +1163,97 @@ self-check(`python -m app.core.zone_state_store` 또는 동등한 실행)까지 
   않고 이미지별 성공 시 덮어써 중도 취소·오류에서 기존 상태를 보존한다.
 - 1,000 sidecar 판정 스캔은 warm 88.2~91.5ms, cold 503.3ms로 실측했다. 별도 인덱스는
   만들지 않고 worker 준비 단계의 1회 스캔을 재사용한다.
+
+---
+
+## 2026-08-31 — 블랍 클릭 선택 + 편집 구조 감사 + Excel 확장 (4건 요청, 착수 확정)
+
+### 배경
+사용자가 이전에 "추후 방향성만 기록"으로 보류했던 4개 요구사항을 이번 세션에서
+"기록만 하지 말고 그대로 계획·개발·구현해줘"로 착수 확정. 원문: ① 추론 탭에서 선택된
+블랍을 클릭할 수 있게 ② Zone 편집 도구가 라벨링처럼 추론 annotation을 수정할 수 있는
+구조인지 확인 ③ Excel 내보내기에 zone별 %뿐 아니라 blob 크기·AI score도 포함 ④ 사람이
+수동 편집한 부분은 그 blob의 평균값으로 대체해서 내보내기.
+
+### 한 일
+- CLAUDE.md/roadmap.md/planning-log.md 선행 확인 후, `app/core/inference_engine.py`
+  (`InferenceResult`/`BlobStat`/`_compute_blobs_and_filter`), `app/widgets/
+  overlay_viewer.py`(`OverlayViewer` 줌/팬 구조, 클릭 판정 없음 확인), `app/tabs/
+  inference_tab.py`(블랍 클릭 관련 코드 0건 확인), `app/widgets/zone_canvas.py`
+  (원편집/블랍삭제/브러시그리기/브러시지우기/팬 5모드, `QActionGroup` 배타, 통합
+  `_undo_stack`, `get_state()`/`set_state()`), `app/core/zone_state_store.py`
+  (사이드카 디스크 영속화), `app/core/zone_metrics.py`(`Circle`/`Zone`/
+  `zones_from_circles`/`compute_blob_labels`/`apply_manual_strokes`/
+  `export_zone_percentages_to_excel`/`pivot_wide_format`), `app/tabs/
+  zone_analysis_tab.py`(`_current_target_mask`/`_compute_zone_percentages`/
+  `_on_export_single`/`_ZoneBatchWorker`/`_on_batch_process`), `app/widgets/
+  zone_batch_result_dialog.py`, `app/widgets/annotation_canvas.py`(Undo — 캡
+  30개, redo 없음)를 전수 대조.
+- **①(추론 탭 블랍 클릭)**: `OverlayViewer`가 좌/중클릭 드래그로 팬만 지원, 클릭
+  감지 자체가 없음을 확인. `InferenceResult.blobs`(`BlobStat`, 8-connectivity,
+  threshold 반영 완료)가 이미 있어 새 blob 계산 없이 "클릭 좌표 → filtered
+  class_map을 동일 클래스로 재라벨링 → 로컬 라벨 순서가 result.blobs(같은
+  class_id 필터) 순서와 1:1 대응"하는 순수 함수(`blob_at()`)로 매칭 가능함을
+  확인 — 별도 캐시/매핑 구조 불필요. 클릭-vs-팬 구분은 드래그 이동량(4px 이내)
+  판정으로 최소 침습 구현 가능. 스코프는 "선택"까지(삭제 비연계, 원문 그대로) —
+  하이라이트 테두리 + 통계 라벨로 최소화.
+- **②(Zone 편집 구조 감사)**: 신규 개발이 아니라 감사임을 재확인하고
+  `zone_canvas.py`/`zone_analysis_tab.py`를 `annotation_canvas.py`/
+  `labeling_tab.py`와 항목별(배타 툴바/Undo/단축키/영속화/저장실패처리) 직접
+  대조. **결론: 격차 없음** — 오히려 Zone 탭이 `QActionGroup` 명시적 배타, Undo
+  캡 없음(경량 스냅샷이라 BUG-014 계열 문제 자체가 없음), 저장 실패 알림이 더
+  명시적인 지점도 확인. Redo는 양쪽 다 없어 동등(격차 아님). 구현 라운드 불필요 —
+  감사 결과 자체가 산출물.
+- **③④(Excel 확장, blob 평균값 대체)**: `zone_analysis_tab._current_target_mask()`
+  가 이미 "AI 예측(threshold+블랍삭제 반영) 마스크"와 "수동 스트로크까지 반영한
+  최종 마스크"를 순차로 만드는 구조임을 확인 — 이 두 단계를 분리해 노출하면
+  (`_ai_and_final_masks()`) "수동편집 영역은 그 blob의 평균값으로 대체"가 픽셀별
+  임의 보간 없이 **자연스럽게** 해결됨을 발견: confidence 평균을 `ai_mask` 교집합
+  으로만 내고, blob의 "모양"은 `final_mask` 기준으로 나누면, 사람이 새로 그린
+  픽셀은 자동으로 평균 계산에서 빠지고 그 blob 전체의(원래 모델 예측 부분) 평균이
+  대표값이 된다. 100% 수동 blob은 AI 점수 `N/A`(0%로 채우면 "낮은 확신으로
+  예측"이라는 잘못된 의미가 되므로 배제, 결정 대기 등록 없이 합리적 기본값으로
+  채택 — 사용자가 이미 "그대로 진행" 확정한 상태).
+  "blob"의 정체성은 `inference_engine.BlobStat`(8-connectivity, 전 클래스)이
+  아니라 Zone 탭이 이미 화면 편집(블랍삭제/브러시)에 쓰는 `compute_blob_labels()`
+  (4-connectivity, 타겟 클래스 전용)로 통일 — 화면에서 편집하는 blob과 Excel에
+  찍히는 blob이 항상 같은 정체성을 갖도록 판단. zone 배정은 blob centroid가 속한
+  기존 `Zone.mask`로 결정(신규 기하 함수 불필요, YAGNI). `compute_blob_labels()`가
+  버리던 centroid 반환을 추가(3-tuple로 시그니처 확장, 이미 계산되는 값이라 추가
+  비용 없음) — 기존 호출부 2곳(`zone_metrics.py` self-check, `zone_analysis_tab.py`
+  `_on_target_changed`/`_ZoneBatchWorker`) grep으로 전수 확인, 3곳 모두 스펙에
+  수정 지점 명시. `export_zone_percentages_to_excel()`은 선택 인자
+  `blob_rows: list[...] | None = None`으로 확장(하위 호환, 기존 2시트 그대로 —
+  기존 두 호출부 회귀 없음), 신규 3번째 시트 `"zone_blobs"`. 단일 이미지
+  (`_on_export_single`)·배치(`_ZoneBatchWorker`→`ZoneBatchResultDialog`) 양쪽 다
+  적용 — 배치는 `completed` 시그널이 rows 하나만 나르던 것을 (rows, blob_rows)
+  튜플로 확장. 온스크린 Long/Wide 미리보기 탭에 3번째 blob 탭 추가는 범위 밖
+  (YAGNI, "excel로 내보낼 때"까지가 요청 범위) — ponytail 주석으로 스펙에 명시.
+- 라운드 분할: R1(①, `overlay_viewer.py`/`inference_engine.py`/`inference_tab.py`)
+  / R2(②, 감사만·구현 없음) / R3(③+④, `zone_metrics.py`/`zone_analysis_tab.py`/
+  `zone_batch_result_dialog.py`). R1·R3는 파일이 전혀 겹치지 않아 병렬 구현
+  가능(R1이 `overlay_viewer.py`를 건드려도 `ZoneCanvas`가 원편집 모드에서
+  `super()`를 호출하지 않아 영향 없음을 코드로 확인 완료, 커밋만 분리 권장).
+- 스펙 문서 신설:
+  [docs/specs/zone-blob-select-and-export-2026-08-31.md](../specs/zone-blob-select-and-export-2026-08-31.md)
+  — R1/R3 각각 문제정의·설계·정확한 변경 파일·함수 시그니처·완료 기준(수용 기준),
+  R2는 비교표 포함 감사 결과 전문.
+- `docs/decisions-needed.md` 갱신 없음 — 위임된 판단(100% 수동 blob의 AI 점수
+  N/A 처리, blob 정체성 4-connectivity 통일, zone 배정 centroid 기준, 온스크린
+  blob 탭 범위 제외) 전부 코드 근거와 함께 합리적 기본값으로 직접 결정. 사용자가
+  이미 "보류 없이 진행" 확정 상태라 근본적으로 되돌리기 어려운 선택지만 등록
+  대상인데, 위 판단들은 전부 Excel 스키마 애디티브 확장(선택 인자, 신규 시트)이라
+  나중에 조정 비용이 낮음.
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절에 신규 하위 절 추가(R1/R3 체크박스,
+  R2는 감사 완료로 즉시 체크 완료 표시).
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건 + `roadmap.md`/본 로그
+  갱신에만 사용. 작업 워크트리 `D:\segmentation model-zone-analysis-tab`
+  (`feature/zone-analysis-tab` 브랜치) 확인, 다른 워크트리/main 미접촉.
+
+### 상태
+완료 — 다음: 리더가 R1(추론 탭)과 R3(Zone 탭 Excel 확장) 구현 에이전트 2명을
+병렬 위임 가능(결정 대기 없음). R2는 구현 없이 이 로그와 스펙 문서의 감사 결과를
+사용자에게 그대로 전달하면 됨. R1·R3 둘 다 "주요 기능 추가"로 분류해 검증
+라운드에서 실제 GUI 골든패스(R1: 클릭선택/줌팬 중 클릭/이미지전환/재추론 시
+선택해제 + Zone 탭 5모드 회귀, R3: 단일·배치 Excel export 후 xlsx 재오픈 값
+대조) 확인을 명시적으로 요청할 것.

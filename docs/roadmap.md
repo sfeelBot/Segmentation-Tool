@@ -1077,6 +1077,53 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         20MP 상당 5장 메모리 계측, 세 충돌 선택지, 상태 보존, BUG-027과 전체 회귀를
         검증 에이전트가 독립 확인. `docs/agents/verification-log.md` 참고.
 
+### 블랍 클릭 선택 + 편집 구조 감사 + Excel 확장 (2026-08-31 요청)
+
+기획 완료: [docs/specs/zone-blob-select-and-export-2026-08-31.md](specs/zone-blob-select-and-export-2026-08-31.md).
+전제: R1~R4·R-A~R-C·R3-1~R3-5·GitHub #13/14·오프라인 팝업 삭제·배치모드 3종·GitHub #32
+전부 완료. 사용자 요청 4건 — ① 추론 탭에서 블랍 클릭 선택 ② Zone 편집 도구가 라벨링
+탭과 동등한 수정 가능 구조인지 확인 ③ Excel 내보내기에 zone별 blob 크기+AI score 추가
+④ 사람이 수동 편집한 영역은 blob 평균값으로 대체해 내보내기(③④는 같은 파일이라 한
+라운드로 묶음). 3개 라운드로 분할, R1/R3는 파일이 겹치지 않아 병렬 구현 가능.
+
+- [ ] **R1 — 추론 탭 블랍 클릭 선택**(`app/widgets/overlay_viewer.py`,
+      `app/core/inference_engine.py`, `app/tabs/inference_tab.py`). `OverlayViewer`에
+      클릭(드래그와 구분, 4px 이내 이동만 클릭 판정)-vs-팬 구분 + `pixmap_clicked`
+      시그널 + `set_highlight_rect()` 신설. `inference_engine.blob_at(result, x, y)`
+      순수 함수 신설(filtered class_map을 동일 클래스로 재라벨링 → 로컬 라벨 순서가
+      `result.blobs`(같은 class_id 필터) 순서와 1:1 대응함을 이용, 신규 매칭 구조
+      불필요). 추론 탭에 클릭→하이라이트+통계 라벨 배선, 이미지전환/재추론/threshold
+      변경 시 선택 해제. 범위는 "선택"까지(삭제 등 편집 비연계, 원문 그대로). `Zone
+      탭`(`OverlayViewer` 서브클래스인 `ZoneCanvas`)은 원편집 모드에서 `super()`를
+      호출하지 않아 회귀 없음을 코드로 확인 완료(검증 라운드에서 실측 재확인 필요).
+      **주요 기능 추가로 분류 — 골든패스 검증 필요.**
+- [x] **R2 — Zone 편집 도구 = 라벨링 탭과 동등한 구조인지 감사** — **격차 없음,
+      구현 불필요.** 배타적 `QToolBar`(Zone 탭은 명시적 `QActionGroup`까지 씀),
+      LIFO Undo(redo는 양쪽 다 없음 — 동등), `Ctrl+Z`, 디스크 자동저장(디바운스+전환
+      시 flush)까지 구조적으로 동일 패턴임을 코드 대조로 확인. Zone 탭 쪽이 Undo
+      캡 없음(경량 스냅샷 설계)·저장 실패 알림이 더 명시적이라는 점에서 사소하게
+      더 나은 지점도 있음. 상세 비교표는 스펙 문서 "R2" 절 참고.
+- [ ] **R3 — Excel 확장: zone별 blob 크기+AI score, 수동편집 영역은 blob 평균으로
+      대체**(`app/core/zone_metrics.py`, `app/tabs/zone_analysis_tab.py`,
+      `app/widgets/zone_batch_result_dialog.py`). "blob" 정의는 Zone 탭이 이미 쓰는
+      4-connectivity(`compute_blob_labels`, 화면에서 편집하는 blob과 동일 정체성)로
+      통일 — `inference_engine.BlobStat`(8-connectivity)은 재사용하지 않음. AI 점수는
+      `ai_mask`(모델 예측+threshold+블랍삭제 반영, 수동 스트로크 반영 **전**) 교집합
+      픽셀만으로 평균 내고, blob의 "모양"은 `final_mask`(수동 스트로크까지 반영) 기준 —
+      사람이 브러시로 새로 그린 픽셀은 자동으로 AI 점수 평균 계산에서 빠지고 그 blob
+      전체의 원래 모델 예측 부분 평균이 대표값이 되는 방식으로 "blob 평균값 대체"를
+      구현(픽셀별 임의 보간 없음). 100% 수동 blob(원래 모델 예측 픽셀 없음)은 AI
+      점수 `N/A`. zone 배정은 blob centroid가 속한 `Zone.mask`로 결정(신규 기하 함수
+      불필요, 기존 `Zone` 데이터 재사용). `compute_blob_labels()`가 기존에 버리던
+      centroid를 반환하도록 시그니처 확장(3-tuple) — 기존 호출부 2곳(`zone_metrics.py`
+      self-check, `zone_analysis_tab.py` `_on_target_changed`/`_ZoneBatchWorker`)
+      동시 수정 필요. `export_zone_percentages_to_excel()`에 선택 인자 `blob_rows`
+      추가(하위 호환, `None`이면 기존과 완전히 동일한 2-시트 출력) — 신규 3번째 시트
+      `"zone_blobs"`. 단일 이미지 export(`_on_export_single`)와 배치 export
+      (`_ZoneBatchWorker`→`ZoneBatchResultDialog`) 양쪽 다 적용. 온스크린 미리보기
+      Long/Wide 탭에 3번째 blob 탭 추가는 범위 밖(YAGNI, "excel로 내보낼 때"까지가
+      요청 범위). **주요 기능 추가로 분류 — xlsx 재오픈 오라클 대조 검증 필요.**
+
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
   그리기/지우기/연결 블랍 삭제/팬/Undo), 수동 스트로크 last-write-wins와 혼합 LIFO Undo.
