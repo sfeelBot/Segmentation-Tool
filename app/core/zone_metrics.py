@@ -61,6 +61,25 @@ def zones_from_circles(circles: list[Circle], img_shape: tuple[int, int]) -> lis
     return zones
 
 
+def apply_manual_strokes(
+    mask: np.ndarray,
+    manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]],
+) -> np.ndarray:
+    """수동 그리기/지우기를 시간순으로 적용(마지막 스트로크 우선). `disk_mask()` 재사용.
+
+    R-ZONE-3에서 `ZoneCanvas.apply_manual_strokes()`(인스턴스 메서드)를 순수
+    함수로 승격 — 현재 화면 캔버스가 아닌 다른 이미지의 사이드카 상태(배치
+    처리 중 재조회한 `manual_strokes`)에도 적용할 수 있어야 하기 때문이다.
+    """
+    result = mask.copy()
+    for draw, stroke in manual_strokes:
+        stroke_mask = np.zeros(mask.shape, dtype=bool)
+        for cx, cy, r in stroke:
+            stroke_mask |= disk_mask(cx, cy, r, mask.shape)
+        result[stroke_mask] = draw
+    return result
+
+
 def zone_stats(zone_mask: np.ndarray, target_class_mask: np.ndarray) -> float:
     """존 마스크 면적 대비 타겟 클래스(AND) 픽셀 비율(%)."""
     area = int(zone_mask.sum())
@@ -215,5 +234,12 @@ if __name__ == "__main__":
     assert values[("a.jpg", "중심부")] == 10.0
     assert ("a.jpg", "링 1") not in values, "없는 조합은 값 dict에 키가 없어야 함(공란 렌더링용)"
     assert values[("c.jpg", "링 1")] == 60.0
+
+    # ── apply_manual_strokes: 마지막 스트로크가 우선(last-write-wins) ──────────
+    base = np.zeros((9, 9), dtype=bool)
+    strokes = [(True, [(4.0, 4.0, 2.0)]), (False, [(4.0, 4.0, 1.0)])]
+    edited = apply_manual_strokes(base, strokes)
+    assert edited[4, 2], "그리기 스트로크 반경 밖(x=2)은 True로 남아야 함"
+    assert not edited[4, 4], "지우기 스트로크가 마지막이라 중심(4,4)은 False여야 함"
 
     print("zone_metrics self-check OK")
