@@ -43,6 +43,7 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 
 from app.widgets.overlay_viewer import OverlayViewer
 from app.core.zone_metrics import disk_mask
+from app.core import zone_metrics
 
 _CENTER_HIT_PX = 10.0   # 중심(이동) 판정 반경 — 화면 픽셀
 _BORDER_HIT_PX = 8.0    # 테두리(반지름 조절) 판정 허용 오차 — 화면 픽셀
@@ -243,14 +244,13 @@ class ZoneCanvas(OverlayViewer):
         return self._erase_mask_np
 
     def apply_manual_strokes(self, mask: np.ndarray) -> np.ndarray:
-        """수동 그리기/지우기를 시간순으로 적용한다(마지막 스트로크 우선)."""
-        result = mask.copy()
-        for draw, stroke in self._manual_strokes:
-            stroke_mask = np.zeros(mask.shape, dtype=bool)
-            for cx, cy, r in stroke:
-                stroke_mask |= disk_mask(cx, cy, r, mask.shape)
-            result[stroke_mask] = draw
-        return result
+        """수동 그리기/지우기를 시간순으로 적용한다(마지막 스트로크 우선).
+
+        R-ZONE-3: 실제 계산은 `zone_metrics.apply_manual_strokes()`(순수 함수)로
+        이동했다 — 이 메서드는 현재 화면 캔버스(`self._manual_strokes`)용 얇은
+        래퍼(API 이름/시그니처 불변, `zone_analysis_tab._current_target_mask()`
+        호출부 무변경)."""
+        return zone_metrics.apply_manual_strokes(mask, self._manual_strokes)
 
     def _erase_mask_shape(self) -> tuple[int, int]:
         if self._blob_labels is not None:
@@ -384,21 +384,26 @@ class ZoneCanvas(OverlayViewer):
     def can_undo(self) -> bool:
         return bool(self._undo_stack)
 
-    def undo(self) -> None:
-        """가장 최근 스냅샷으로 복원 — 원/블랍/지우기 중 무엇이 바뀐 undo든
-        기존 `circles_changed` 시그널을 그대로 재사용해 emit한다. 이 시그널에
-        이미 `_refresh_circle_list()`(selected_id 복원)와 `_recompute_zones()`
-        (highlighted_zone 복원, 존 퍼센티지 재계산)가 연결돼 있어 BUG-018/019
-        방지 패턴이 신규 배선 없이 undo에도 자동 적용된다(스펙 판단 1)."""
-        if not self._undo_stack:
-            return
-        snap = self._undo_stack.pop()
+    def get_state(self) -> dict:
+        """현재 편집 상태 스냅샷 — `_push_undo()`와 완전히 동일한 경량 표현.
+        호출부(탭)가 이미지 전환 시 사이드카(디스크)에 저장하는 용도(R-ZONE-3)."""
+        return {
+            "circles": [(c.id, c.cx, c.cy, c.r) for c in self._circles],
+            "removed_blob_ids": set(self._removed_blob_ids),
+            "erase_strokes": list(self._erase_strokes),
+            "manual_strokes": list(self._manual_strokes),
+        }
+
+    def set_state(self, state: dict) -> None:
+        """`get_state()`(또는 사이드카에서 로드한 동일 포맷)가 반환한 스냅샷을
+        복원한다 — `undo()`가 스택에서 꺼낸 스냅샷에 적용하던 로직 그대로이지만
+        여기서는 undo 스택 자체엔 영향을 주지 않는다(R-ZONE-3)."""
         self._circles = [
-            _CircleItem(cid, cx, cy, r) for cid, cx, cy, r in snap["circles"]
+            _CircleItem(cid, cx, cy, r) for cid, cx, cy, r in state["circles"]
         ]
-        self._removed_blob_ids = snap["removed_blob_ids"]
-        self._erase_strokes = snap["erase_strokes"]
-        self._manual_strokes = snap.get("manual_strokes", [])
+        self._removed_blob_ids = set(state["removed_blob_ids"])
+        self._erase_strokes = list(state["erase_strokes"])
+        self._manual_strokes = list(state.get("manual_strokes", []))
         self._replay_erase_strokes()   # 스트로크 좌표에서 지우기 마스크를 재생(스펙 판단 1)
         self._rebuild_stroke_overlay()  # 화면 렌더링 캐시도 스냅샷 기준으로 재구성(R-ZONE-1)
         self._selected_id = None
@@ -408,6 +413,18 @@ class ZoneCanvas(OverlayViewer):
         self.update()
         self.circles_changed.emit()
         self.circles_committed.emit()
+
+    def undo(self) -> None:
+        """가장 최근 스냅샷으로 복원 — 원/블랍/지우기 중 무엇이 바뀐 undo든
+        기존 `circles_changed` 시그널을 그대로 재사용해 emit한다. 이 시그널에
+        이미 `_refresh_circle_list()`(selected_id 복원)와 `_recompute_zones()`
+        (highlighted_zone 복원, 존 퍼센티지 재계산)가 연결돼 있어 BUG-018/019
+        방지 패턴이 신규 배선 없이 undo에도 자동 적용된다(스펙 판단 1). 복원
+        로직 자체는 `set_state()`에 위임(R-ZONE-3, 중복 제거 — 동작 동일)."""
+        if not self._undo_stack:
+            return
+        snap = self._undo_stack.pop()
+        self.set_state(snap)
 
     def _handle_blob_click(self, event) -> None:
         if (self._pixmap is None or event.button() != Qt.MouseButton.LeftButton
