@@ -5,6 +5,45 @@
 
 ## 현재 상황 요약
 
+> **[최신, 2026-08-31] push 상태 재확인 완료 + zone 사용자 매뉴얼 작업 진행 중(세션
+> 인계 메모).** 사용자가 "zone/main 변경점 전부 push 됐는지" 질의 → 재확인 결과 **main은
+> `origin/main`과 완전 동기화, zone(`feature/zone-analysis-tab`)도 `origin/feature/
+> zone-analysis-tab`과 완전 동기화**(둘 다 ahead/behind 0, `ba8bf5e` 기준 PR #33 반영분까지
+> 이미 push 완료 — 위 2026-08-31 항목 참고). 미커밋 상태인 것은 아래 매뉴얼 작업 산출물뿐.
+>
+> **진행 중인 작업 — Zone 에디션 사용자 매뉴얼**: 사용자 요청("zone 세션이라도 라벨링/학습/
+> 추론 전체 흐름 포함, 실제 UI 캡처+번호 마커, html, 검토 에이전트 피드백 최대 1회(맞춤법+
+> AI티만 확인) → 최종본 → README에 링크 → push")에 따라 implementer 서브에이전트(id
+> `a34a5f5ef24c40317`, model=opus, `run_in_background: true`)를 `D:\segmentation
+> model-zone-analysis-tab`(HEAD `8787b24` 기준)에서 백그라운드로 기동함. 지시 내용: 실제
+> `python main.py` 구동 → 5개 탭 실사용 순서(프로젝트 시작→모델→라벨링→학습→추론→존분석,
+> 존분석 최상세: 원 검출/편집(우클릭 지름변경 포함)/3단계 배치모드/5모드 배타 툴바/Undo/
+> threshold/사이드카 자동저장/배치 Excel 내보내기)로 조작하며 실캡처 → PIL로 정확한 위젯
+> 좌표 기반 번호 마커 합성(추측 좌표 금지) → `docs/USER_MANUAL_ZONE.html` +
+> `docs/manual_assets_zone/*.png`(상대경로 참조, base64 금지)로 조립. **README 수정과 push는
+> 하지 말라고 명시** — 검토 1라운드 후에 진행하는 단계이므로. 이 로그를 쓰는 시점 기준 해당
+> 에이전트는 여전히 `running`(30분+ 경과, 다른 백그라운드 에이전트 없음). **세션이 끊기고
+> 새 세션이 이어받는 경우**: `ListAgents`로 `a34a5f5ef24c40317` 상태 확인 → 완료돼 있으면
+> 산출물(`docs/USER_MANUAL_ZONE.html`, `docs/manual_assets_zone/`) 검토 → 아직 없으면
+> `SendMessage`로 같은 에이전트에 진행 상황 질의(새로 스폰 금지, 중복 방지) → 완료 시 다음
+> 순서: (1) 검토 전용 에이전트(스코프를 맞춤법/문법 + "AI가 쓴 티가 나는지"로만 한정, 그 외
+> 지적 금지) 1라운드 → (2) 피드백을 implementer에 SendMessage로 전달해 최종본 반영 → (3)
+> README.md에 매뉴얼 링크 추가 → (4) `feature/zone-analysis-tab`에 커밋+push(이 브랜치는
+> 이미 명확하므로 재확인 없이 진행 가능, 최근 패턴과 일치).
+>
+> **아직 미착수 — 사용자가 "추후 개발 방향성으로만 기록"이라 명시적으로 보류시킨 4건**
+> (`docs/roadmap.md` "향후 확장 후보" 절에 아직 기록 안 됨, 매뉴얼 작업 도중 컨텍스트
+> 정리로 미룬 상태): ①추론 도구에서 블랍 클릭 선택 ②Zone 편집 도구가 라벨링 탭과 같은
+> "annotation 수정 가능한 구조"인지 확인/정비 ③Excel 내보내기에 zone별 blob 크기+AI score
+> 추가 ④사람이 수동 편집(브러시 등)한 영역은 export 시 해당 blob 평균값으로 대체. **다음
+> 세션에서 매뉴얼 작업이 끝나면 이 4건을 roadmap.md에 기록하는 것도 마저 처리할 것.**
+>
+> **정리 안 된 잔여물(급하지 않음)**: `D:\segmentation model-zone-work`(브랜치
+> `leader-work-zone-20260830`)는 캐논 브랜치와 완전 중복으로 판명돼 병합 보류·사실상
+> 폐기 상태 — 삭제 여부는 사용자 결정 대기 없이 방치 중(급하지 않아 먼저 묻지 않음).
+> zone worktree에 `docs/manual_assets_zone/`, `projects/manual_demo/` 미커밋 상태로
+> 존재(매뉴얼 에이전트 진행 중 산출물, 정상).
+
 > **[최신, 2026-08-28] Zone VOC 편집 도구화 완료.** 라벨링 탭 방식의 배타적 툴바로
 > 원 편집·그리기·지우기·연결영역 삭제·이동·Undo를 제공하고, 학습은 patch training,
 > 추론과 Zone 분석은 sliding window를 기본값으로 검증했다. 로컬 커밋만 생성했으며
