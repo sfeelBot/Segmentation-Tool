@@ -21,7 +21,7 @@ def _result(size=20):
     data = np.ones((size, size), dtype=np.int64)
     return type("Result", (), {
         "raw_class_map": data, "class_map": data,
-        "confidence_map": data.astype(np.float32), "overlay_pixmap": None,
+        "confidence_map": data.astype(np.float32), "overlay_image": None,
     })()
 
 

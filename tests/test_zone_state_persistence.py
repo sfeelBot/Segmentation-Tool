@@ -29,7 +29,7 @@ def _fake_result(size: int = 20):
         "raw_class_map": class_map,
         "confidence_map": np.ones((size, size), dtype=np.float32),
         "class_map": class_map,
-        "overlay_pixmap": None,
+        "overlay_image": None,
     })()
 
 

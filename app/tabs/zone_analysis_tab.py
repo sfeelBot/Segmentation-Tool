@@ -870,7 +870,9 @@ class ZoneAnalysisTab(QWidget):
 
     def _show_overlay_state(self) -> None:
         if self._overlay_visible and self._last_result is not None:
-            self._canvas.set_pixmap(self._last_result.overlay_pixmap, preserve_view=True)
+            self._canvas.set_pixmap(
+                QPixmap.fromImage(self._last_result.overlay_image), preserve_view=True
+            )
         elif self._original_pixmap is not None:
             self._canvas.set_pixmap(self._original_pixmap, preserve_view=True)
 

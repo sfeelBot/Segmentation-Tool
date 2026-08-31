@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 from PyQt6 import QtSvg  # noqa: F401  # Windows DLL load order before torch imports
 from PyQt6.QtCore import QPoint, QPointF, Qt
-from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -66,7 +66,7 @@ def test_threshold_changes_are_debounced() -> None:
         "raw_class_map": np.ones((2, 2), dtype=np.int64),
         "confidence_map": np.ones((2, 2), dtype=np.float32),
         "class_map": np.ones((2, 2), dtype=np.int64),
-        "overlay_pixmap": pixmap,
+        "overlay_image": pixmap.toImage(),
     })()
     tab._last_result = result
     tab._detected_ids = [1]
@@ -174,15 +174,22 @@ def test_original_preview_and_failure_clear() -> None:
 
 
 def test_f_toggles_zone_overlay() -> None:
+    """GitHub #34 회귀 — InferenceResult의 실제 필드명은 overlay_image(QImage)이지
+    overlay_pixmap이 아니다. 이 테스트가 예전엔 존재하지 않는 필드명으로 가짜
+    객체를 만들어 통과했었고, 그래서 _show_overlay_state()의 AttributeError를
+    잡아내지 못했다 — 실제 InferenceResult 계약(overlay_image: QImage)을 그대로
+    흉내내고, 오버레이 표시 자체도 토글 전에 확인한다."""
     _app_ref = _app()
     tab = ZoneAnalysisTab()
     original = QPixmap(8, 8)
-    overlay = QPixmap(8, 8)
+    overlay = QImage(8, 8, QImage.Format.Format_RGB32)
     original.fill(QColor("red"))
     overlay.fill(QColor("blue"))
     tab._original_pixmap = original
-    tab._last_result = type("Result", (), {"overlay_pixmap": overlay})()
+    tab._last_result = type("Result", (), {"overlay_image": overlay})()
     tab._show_overlay_state()
+
+    assert tab._canvas._pixmap.toImage().pixelColor(0, 0) == QColor("blue")
 
     QTest.keyClick(tab._canvas, Qt.Key.Key_F)
 
