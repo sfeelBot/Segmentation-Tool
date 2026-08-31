@@ -971,12 +971,25 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         `docs/agents/implementation-log.md` 참고. **검증 통과(2026-08-31)** —
         단일 추론/배치처리 둘 다 취소·진행 실동작 확인,
         `docs/agents/verification-log.md` 참고.
-  - [ ] **R-ZONE-3** — 요청A(3모드+디스크 자동저장) + 이슈2(통합 해결, 최대 스코프):
-        신규 `app/core/zone_state_store.py`(사이드카 JSON) + 3-way 모드 콤보 +
-        `get_state`/`set_state` + `_save_timer`/`_flush_state()` + `_on_batch_process()`
-        필수 보강(결과 캐시 저장 누락 수정 + `removed_blob_ids`/`manual_strokes` 반영)
-        — R-ZONE-1 완료 후 착수(같은 파일, 스트로크 캐시 API가 먼저 있어야
-        `set_state()`가 재사용 가능).
+  - [x] **R-ZONE-3** — 요청A(3모드+디스크 자동저장) + 이슈2(통합 해결, 최대 스코프):
+        신규 `app/core/zone_state_store.py`(사이드카 JSON, `sidecar_path`/`save_state`/
+        `load_state`, self-check 포함) + `ZoneCanvas.get_state`/`set_state`(`undo()`를
+        `set_state()` 호출로 리팩터링해 복원 로직 중복 제거) +
+        `zone_metrics.apply_manual_strokes()` 순수 함수 추출(`ZoneCanvas.apply_manual_strokes()`는
+        얇은 래퍼로 변경) + `_chk_apply_all` 체크박스를 3-way `_mode_combo`(일괄 적용/일괄
+        적용 후 수정/장별 적용)로 완전 대체 + `_save_timer`(500ms 디바운스)/`_flush_state()`
+        (원편집/블랍삭제/브러시스트로크 3개 시그널 전부 배선) + `_on_list_image_selected()`
+        보강(전환 전 동기 flush → 이미지 로드 → 타겟클래스 구성 → 사이드카 있으면
+        `set_state()`, 없으면 `clear_circles()`) + `_on_batch_process()` 필수 보강(계산된
+        `InferenceResult`를 `self._results`에 캐시 — 기존 누락 버그 수정, 모드 2/3만
+        사이드카에 원 기록, 원 계산 후 사이드카 쓰기 전 기존 `removed_blob_ids`/
+        `manual_strokes` 반영, 배치 루프 저장 실패는 팝업 없이 로그만).
+        구현 완료(2026-08-31), `docs/agents/implementation-log.md` 참고.
+        `pytest tests/test_zone_github_13_14.py tests/test_zone_edit_toolbar.py
+        tests/test_zone_state_persistence.py`(신규, 사이드카 디스크 왕복 + 3모드 분기
+        통합 검증) 16건 통과, `zone_state_store.py`/`zone_metrics.py` self-check 통과.
+        **검증 대기** — 실제 GUI 골든 패스(이미지 편집→전환→사이드카 확인→복귀 복원,
+        3모드 배치 실동작)는 검증 에이전트 몫.
 
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
