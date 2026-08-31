@@ -6,7 +6,9 @@ annotation_store.py와 같은 역할(JSON 읽기·쓰기 전담, Qt 의존성 �
 """
 import json
 import logging
+import os
 from pathlib import Path
+import tempfile
 
 log = logging.getLogger(__name__)
 
@@ -30,10 +32,20 @@ def save_state(image_path: Path, state: dict) -> None:
         "erase_strokes": state["erase_strokes"],
         "manual_strokes": state["manual_strokes"],
     }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    # ponytail: 원자적 쓰기(tmp+rename) 아님 — 쓰는 도중 크래시하면 그 1개 파일만
-    # 손상될 수 있음(다른 이미지엔 영향 없음). 손상 리포트가 실제로 들어오면
-    # tempfile.NamedTemporaryFile + os.replace로 승격.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def load_state(image_path: Path) -> dict | None:

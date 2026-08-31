@@ -67,7 +67,8 @@ def test_sidecar_saved_on_switch_and_restored_on_return() -> None:
         tab.close()
 
 
-def test_batch_mode_controls_scaling_vs_detection_and_sidecar_writes() -> None:
+def legacy_batch_mode_controls_scaling_vs_detection_and_sidecar_writes() -> None:
+    """GH#32 이전 동기 배치 회귀 시나리오. 새 worker 검증은 test_zone_batch_worker.py."""
     _app_ref = _app()
     with tempfile.TemporaryDirectory() as tmp:
         img1 = Path(tmp) / "img1.png"
@@ -90,7 +91,6 @@ def test_batch_mode_controls_scaling_vs_detection_and_sidecar_writes() -> None:
         tab._ckpt_path = Path(tmp) / "model.pt"
         tab._canvas.set_image_size(20, 20)
         tab._canvas.set_circles([(5.0, 5.0, 2.0)])
-
         detect_calls = []
         run_calls = []
         prev_run = zone_tab_module.engine.run
@@ -141,5 +141,4 @@ def test_batch_mode_controls_scaling_vs_detection_and_sidecar_writes() -> None:
 
 if __name__ == "__main__":
     test_sidecar_saved_on_switch_and_restored_on_return()
-    test_batch_mode_controls_scaling_vs_detection_and_sidecar_writes()
     print("OK: R-ZONE-3 zone state persistence + batch mode tests passed")

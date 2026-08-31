@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
     QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem,
-    QProgressDialog, QApplication, QProgressBar, QToolBar,
+    QProgressDialog, QProgressBar, QToolBar,
 )
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize
 from PyQt6.QtGui import QImage, QPixmap, QAction, QActionGroup
@@ -94,6 +94,96 @@ class _ZoneInferenceWorker(QThread):
                 self.failed.emit(path, str(exc))
 
 
+class _ZoneBatchWorker(QThread):
+    progress = pyqtSignal(object, str, object, int, int)
+    completed = pyqtSignal(object)
+
+    def __init__(self, model, paths: list[Path], checkpoint_path: Path,
+                 cached_results: dict[Path, InferenceResult], mode: str,
+                 circles_ref: list[tuple[float, float, float]],
+                 ref_size: tuple[int, int], sensitivity: float,
+                 classes: list[ClassDef], target_cid: int,
+                 min_confidence: float, min_pixel_size: int) -> None:
+        super().__init__()
+        self._model = model
+        self._paths = paths
+        self._checkpoint_path = checkpoint_path
+        self._cached_results = cached_results
+        self._mode = mode
+        self._circles_ref = circles_ref
+        self._ref_size = ref_size
+        self._sensitivity = sensitivity
+        self._classes = classes
+        self._target_cid = target_cid
+        self._min_confidence = min_confidence
+        self._min_pixel_size = min_pixel_size
+
+    def run(self) -> None:
+        rows: list[tuple[str, str, float]] = []
+        prepared = None
+        if any(path not in self._cached_results for path in self._paths):
+            try:
+                prepared = engine.prepare_inference(self._model, self._checkpoint_path)
+            except Exception as exc:
+                self.progress.emit(self._checkpoint_path, "error", str(exc), 0, len(self._paths))
+                self.completed.emit(rows)
+                return
+
+        total = len(self._paths)
+        for done, path in enumerate(self._paths, 1):
+            if self.isInterruptionRequested():
+                break
+            self.progress.emit(path, "processing", None, done - 1, total)
+            try:
+                result = self._cached_results.get(path)
+                if result is None:
+                    result = engine.run(
+                        model=self._model, image_path=path,
+                        checkpoint_path=self._checkpoint_path, classes=self._classes,
+                        min_confidence=self._min_confidence,
+                        min_pixel_size=self._min_pixel_size, opacity=0.5,
+                        prepared=prepared,
+                    )
+                h, w = result.raw_class_map.shape
+                if self._mode == "per_image":
+                    with Image.open(str(path)) as im:
+                        rgb = np.array(im.convert("RGB"))
+                    circles = detect_circles(rgb[:, :, ::-1].copy(), sensitivity=self._sensitivity)
+                else:
+                    circles = _scale_circles(self._circles_ref, self._ref_size, (w, h))
+                if not circles:
+                    self.progress.emit(path, "done", "원 없음", done, total)
+                    continue
+
+                target_mask = result.class_map == self._target_cid
+                previous = zstate.load_state(path)
+                if previous is not None:
+                    if previous["removed_blob_ids"]:
+                        labels, _ = compute_blob_labels(target_mask)
+                        target_mask = target_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
+                    target_mask = apply_manual_strokes(target_mask, previous["manual_strokes"])
+                state = previous or {
+                    "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
+                }
+                state["circles"] = [
+                    (idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)
+                ]
+                zstate.save_state(path, state)
+
+                zones = zones_from_circles(
+                    [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)], (h, w)
+                )
+                percentages = [zone_stats(zone.mask, target_mask) for zone in zones]
+                rows.extend((path.name, zone.name, pct) for zone, pct in zip(zones, percentages))
+                badge = f"{percentages[-1]:.1f}%" if percentages else None
+                self.progress.emit(path, "done", badge, done, total)
+                del result, target_mask, zones
+            except Exception as exc:
+                log.exception(f"존 분석 일괄 처리 실패 — image={path}")
+                self.progress.emit(path, "error", str(exc), done, total)
+        self.completed.emit(rows)
+
+
 def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
     """플레인 RGB numpy 배열을 QPixmap으로 변환 — 추론 전 원본 미리보기 전용 (GH#14)."""
     rgb = np.ascontiguousarray(rgb)
@@ -129,6 +219,8 @@ class ZoneAnalysisTab(QWidget):
         self._overlay_visible = True
         self._results: dict[Path, InferenceResult] = {}
         self._worker: _ZoneInferenceWorker | None = None
+        self._batch_worker: _ZoneBatchWorker | None = None
+        self._batch_progress: QProgressDialog | None = None
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
@@ -541,7 +633,6 @@ class ZoneAnalysisTab(QWidget):
             return
         try:
             zstate.save_state(self._image_path, self._canvas.get_state())
-            self._save_failed_once = False
         except OSError as exc:
             log.warning(f"Zone 상태 저장 실패 — {self._image_path}: {exc}")
             if not self._save_failed_once:   # 세션당 1회만 표면화(판단 6)
@@ -980,6 +1071,19 @@ class ZoneAnalysisTab(QWidget):
         n = len(self._img_list.selected_paths())
         self._btn_batch.setText(f"▶ 선택 이미지 일괄 처리 ({n}장)")
 
+    def _confirm_existing_zones(self, count: int) -> str:
+        box = QMessageBox(QMessageBox.Icon.Question, "기존 존 발견",
+                          f"선택 이미지 중 {count}장에 기존 존이 있습니다.", parent=self)
+        replace = box.addButton("기존 존을 대체하고 전체 적용", QMessageBox.ButtonRole.AcceptRole)
+        missing_only = box.addButton("존 없는 이미지만 적용", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is replace:
+            return "replace"
+        if box.clickedButton() is missing_only:
+            return "missing_only"
+        return "cancel"
+
     def _on_batch_process(self) -> None:
         if (self._last_result is None or self._target_class_id is None
                 or self._target_classes is None or self._model is None
@@ -994,14 +1098,9 @@ class ZoneAnalysisTab(QWidget):
             QMessageBox.warning(self, "원 없음", "기준 이미지에 원을 1개 이상 정의하세요.")
             return
 
-        if not prompt_gpu_availability(self, "존 분석"):
-            return
-
         ref_w, ref_h = self._image_size
         mode = self._mode_combo.currentData()
-        # apply_all·apply_all_edit 둘 다 기준 원을 스케일 적용, per_image만 개별 자동검출
-        # (기존 apply_to_all 분기 로직 자체는 그대로 — 스펙 "모드별 동작 차이" 절).
-        apply_to_all = mode != "per_image"
+        # apply_all·apply_all_edit 둘 다 기준 원을 스케일 적용, per_image만 개별 자동검출.
         sensitivity = self._sensitivity_slider.value() / 100.0
         min_confidence = self._conf_slider.value() / 100.0
         min_pixel_size = self._min_px_spin.value()
@@ -1009,93 +1108,63 @@ class ZoneAnalysisTab(QWidget):
         target_cid = self._target_class_id
 
         targets = self._img_list.selected_paths()
-        progress = QProgressDialog("존 분석 일괄 처리 중…", "취소", 0, len(targets), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+            self._flush_state()
+        existing = [p for p in targets if (zstate.load_state(p) or {}).get("circles")]
+        if existing:
+            choice = self._confirm_existing_zones(len(existing))
+            if choice == "missing_only":
+                existing_set = set(existing)
+                targets = [p for p in targets if p not in existing_set]
+            elif choice != "replace":
+                return
+        if not targets or not prompt_gpu_availability(self, "존 분석"):
+            return
 
-        rows: list[tuple[str, str, float]] = []
-        for i, img_path in enumerate(targets):
-            if progress.wasCanceled():
-                break
-            progress.setLabelText(f"{i + 1} / {len(targets)}  {img_path.name}")
-            progress.setValue(i)
-            QApplication.processEvents()
-            self._img_list.set_item_status(img_path, "processing")
-            try:
-                if img_path in self._results:
-                    result = self._results[img_path]   # 이미 추론된 이미지는 재추론하지 않음
-                elif img_path == self._image_path and self._last_result is not None:
-                    result = self._last_result
-                else:
-                    result = engine.run(
-                        model=self._model, image_path=img_path,
-                        checkpoint_path=self._ckpt_path, classes=target_classes,
-                        min_confidence=min_confidence, min_pixel_size=min_pixel_size,
-                        opacity=0.5,
-                    )
-                    self._results[img_path] = result   # 캐시에 반드시 저장(이미지 재클릭 시 오버레이 복원용)
-                h, w = result.raw_class_map.shape   # Image.open() 불필요(캐시 히트 시 파일 재오픈 안 함)
+        cached = {p: self._results[p] for p in targets if p in self._results}
+        if self._image_path in targets and self._last_result is not None:
+            cached[self._image_path] = self._last_result
+        self._btn_batch.setEnabled(False)
+        self._batch_progress = QProgressDialog(
+            "존 분석 일괄 처리 중…", "취소", 0, len(targets), self
+        )
+        self._batch_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._batch_progress.setMinimumDuration(0)
+        self._batch_worker = _ZoneBatchWorker(
+            self._model, targets, self._ckpt_path, cached, mode, circles_ref,
+            (ref_w, ref_h), sensitivity, target_classes, target_cid,
+            min_confidence, min_pixel_size,
+        )
+        self._batch_progress.canceled.connect(self._batch_worker.requestInterruption)
+        self._batch_worker.progress.connect(self._on_batch_progress)
+        self._batch_worker.completed.connect(self._on_batch_completed)
+        self._batch_worker.finished.connect(self._on_batch_finished)
+        self._batch_worker.start()
 
-                if apply_to_all:
-                    # 팝업→메인 라운드트립과 같은 해상도 방어 헬퍼를 재사용한다.
-                    circles = _scale_circles(circles_ref, (ref_w, ref_h), (w, h))
-                else:
-                    # 이미지마다 개별 자동검출 — 메인 탭 "자동 검출" 버튼과 동일 호출
-                    with Image.open(str(img_path)) as im:
-                        rgb = np.array(im.convert("RGB"))
-                    bgr = rgb[:, :, ::-1].copy()
-                    circles = detect_circles(bgr, sensitivity=sensitivity)
+    def _on_batch_progress(self, path: Path, status: str, detail,
+                           done: int, total: int) -> None:
+        if self._batch_progress is not None:
+            self._batch_progress.setMaximum(total)
+            self._batch_progress.setValue(done)
+            self._batch_progress.setLabelText(f"{done} / {total}  {path.name}")
+        if status == "processing":
+            self._img_list.set_item_status(path, "processing")
+        elif status == "error":
+            log.error(f"존 분석 일괄 처리 실패 — {path}: {detail}")
+            self._img_list.set_item_status(path, "done", badge="오류")
+        else:
+            self._img_list.set_item_status(path, "done", badge=detail)
 
-                if not circles:
-                    self._img_list.set_item_status(img_path, "done", badge="원 없음")
-                    continue
-
-                # 판단 B와 동일하게 class_map 사용(raw_class_map 아님) — threshold가
-                # 배치 결과에도 일관되게 반영되게 하는 근본원인 수정을 재사용한다.
-                target_mask = result.class_map == target_cid
-
-                # R-ZONE-3 판단 4: 이번 배치가 원(circles)을 새로 계산해 사이드카를
-                # 덮어쓰기 전에, 그 이미지를 이전에 열어 직접 수정해둔 사이드카가
-                # 있으면(모드 2/3 재방문) removed_blob_ids/manual_strokes를 먼저
-                # target_mask에 반영한다 — 순서가 바뀌면 방금 계산한 원 정보로
-                # 덮어쓴 "편집 없는" 사이드카를 읽게 되어 무의미해진다.
-                prev_state = zstate.load_state(img_path)
-                if prev_state is not None:
-                    if prev_state["removed_blob_ids"]:
-                        labels, _ = compute_blob_labels(target_mask)
-                        target_mask = target_mask & ~np.isin(labels, list(prev_state["removed_blob_ids"]))
-                    target_mask = apply_manual_strokes(target_mask, prev_state["manual_strokes"])
-
-                if mode != "apply_all":   # 모드 2/3만 사이드카에 원 정보 기록(판단 3)
-                    try:
-                        zstate.save_state(img_path, {
-                            "circles": [(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)],
-                            "removed_blob_ids": set(),
-                            "erase_strokes": [],
-                            "manual_strokes": [],
-                        })
-                    except OSError as exc:
-                        # 배치 루프 도중 저장 실패는 팝업 없이 로그만(판단 6과 달리
-                        # 수십~수백 장 처리 중 매번 팝업이 뜨면 무한 클릭이 된다).
-                        log.warning(f"Zone 배치 저장 실패 — {img_path}: {exc}")
-
-                zone_circles = [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)]
-                zones = zones_from_circles(zone_circles, (h, w))
-                pct_list: list[float] = []
-                for zone in zones:
-                    pct = zone_stats(zone.mask, target_mask)
-                    rows.append((img_path.name, zone.name, pct))
-                    pct_list.append(pct)
-                # 대표 배지 = 가장 바깥쪽 존 비율(zones_from_circles가 마지막에 추가)
-                badge = f"{pct_list[-1]:.1f}%" if pct_list else None
-                self._img_list.set_item_status(img_path, "done", badge=badge)
-            except Exception:
-                log.exception(f"존 분석 일괄 처리 실패 — image={img_path}")
-                self._img_list.set_item_status(img_path, "done", badge="오류")
-        progress.setValue(len(targets))
-
+    def _on_batch_completed(self, rows: list[tuple[str, str, float]]) -> None:
+        if self._batch_progress is not None:
+            self._batch_progress.close()
+            self._batch_progress = None
         if not rows:
             QMessageBox.information(self, "결과 없음", "처리된 결과가 없습니다.")
             return
-        dialog = ZoneBatchResultDialog(rows, self)
-        dialog.exec()
+        ZoneBatchResultDialog(rows, self).exec()
+
+    def _on_batch_finished(self) -> None:
+        self._batch_worker = None
+        self._update_batch_button_state()

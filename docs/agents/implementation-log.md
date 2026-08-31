@@ -4322,3 +4322,21 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 함수 추출), `b9510b5`(ZoneCanvas get_state/set_state), `3d4182d`(3모드+저장배선+
 배치보강+테스트). **검증 서브에이전트의 실제 GUI 확인 전까지 완료로 간주하지
 않는다.**
+
+## 2026-08-31 — GitHub #32: Zone 배치 병목 제거 + 기존 Zone 충돌 정책
+
+- `_on_batch_process()`의 메인 GUI 스레드 루프를 `_ZoneBatchWorker`(QThread)로
+  이동했다. GUI 스레드는 진행/상태/최종 경량 rows만 받으며 취소는 이미지 경계에서
+  `requestInterruption()`으로 처리한다.
+- 캐시 미적중 대상이 있으면 `prepare_inference()`를 배치당 한 번 호출하고 모든
+  `engine.run(..., prepared=prepared)`에서 재사용한다. 배치가 새로 만든
+  `InferenceResult`는 `_results`에 넣지 않고 이미지 처리 직후 해제한다.
+- 세 모드 모두 성공 이미지의 circles를 원자적 사이드카로 저장한다. 기존 존이 있으면
+  전체 대체/존 없는 이미지만/취소를 표시하고 사전 삭제하지 않는다. 전체 대체도
+  circles만 갱신해 기존 블랍삭제/브러시 편집을 보존한다.
+- BUG-026: 성공 저장 뒤 `_save_failed_once`를 리셋하지 않아 저장 실패 경고가 앱
+  세션 동안 한 번만 표시된다.
+- 검증: `py_compile` 통과, zone 관련 pytest 4파일 **19 passed**. 준비 1회/동일
+  prepared 재사용/결과 비누적, 세 모드 저장, 편집 보존, 스킵 byte 불변,
+  BUG-026 회귀를 포함한다.
+- 상태: 구현 완료 / 실제 GUI 응답성·취소·재실행·실데이터 RSS 독립 검증 대기.

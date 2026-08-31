@@ -980,16 +980,17 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         적용 후 수정/장별 적용)로 완전 대체 + `_save_timer`(500ms 디바운스)/`_flush_state()`
         (원편집/블랍삭제/브러시스트로크 3개 시그널 전부 배선) + `_on_list_image_selected()`
         보강(전환 전 동기 flush → 이미지 로드 → 타겟클래스 구성 → 사이드카 있으면
-        `set_state()`, 없으면 `clear_circles()`) + `_on_batch_process()` 필수 보강(계산된
-        `InferenceResult`를 `self._results`에 캐시 — 기존 누락 버그 수정, 모드 2/3만
-        사이드카에 원 기록, 원 계산 후 사이드카 쓰기 전 기존 `removed_blob_ids`/
-        `manual_strokes` 반영, 배치 루프 저장 실패는 팝업 없이 로그만).
+        `set_state()`, 없으면 `clear_circles()`). GitHub #32에서 배치 전체를 전용 QThread로
+        이동하고 `prepare_inference()` 1회 재사용, 배치 전용 `InferenceResult` 즉시 해제,
+        세 모드 모두 원자적 circles 사이드카 저장으로 변경했다. 기존 존이 있으면
+        전체 대체/존 없는 이미지만/취소를 선택하며, 기존 수동 편집은 보존한다.
         구현 완료(2026-08-31), `docs/agents/implementation-log.md` 참고.
         `pytest tests/test_zone_github_13_14.py tests/test_zone_edit_toolbar.py
         tests/test_zone_state_persistence.py`(신규, 사이드카 디스크 왕복 + 3모드 분기
         통합 검증) 16건 통과, `zone_state_store.py`/`zone_metrics.py` self-check 통과.
-        **검증 대기** — 실제 GUI 골든 패스(이미지 편집→전환→사이드카 확인→복귀 복원,
-        3모드 배치 실동작)는 검증 에이전트 몫.
+        GitHub #32 및 BUG-026 구현 후 zone 관련 4파일 **19건 통과**.
+        **검증 대기** — 실제 GUI 응답성/취소/재실행, 실제 5장 RSS와 세 충돌 선택지는
+        검증 에이전트가 확인한다.
 
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
