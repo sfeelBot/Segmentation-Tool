@@ -71,12 +71,18 @@ def test_offline_circle_detect_test_feature_fully_removed() -> None:
 
 
 def test_batch_apply_groupbox_present_and_still_gated() -> None:
-    """존 일괄 적용 발견성 개선(그룹박스) — 로직(_update_batch_button_state)은 그대로."""
+    """존 일괄 적용 발견성 개선(그룹박스) — 로직(_update_batch_button_state)은 그대로.
+
+    R-ZONE-3: 2-way 체크박스(`_chk_apply_all`)가 3-way 콤보(`_mode_combo`)로
+    대체됐다 — 기본값은 기존 체크 상태(True)와 동일한 "apply_all"."""
     _app_ref = _app()
     zone = ZoneAnalysisTab()
     assert isinstance(zone._batch_box, QGroupBox)
-    assert "존 일괄 적용" in zone._batch_box.title()
-    assert "존" in zone._chk_apply_all.text()
+    assert "Zone 결정 방법" in zone._batch_box.title()
+    assert [zone._mode_combo.itemData(i) for i in range(zone._mode_combo.count())] == [
+        "apply_all", "apply_all_edit", "per_image",
+    ]
+    assert zone._mode_combo.currentData() == "apply_all"
     assert not zone._btn_batch.isEnabled()   # 초기: 원 없음 + 이미지 1장 이하
 
     zone._img_list.load_files([Path("a.png"), Path("b.png")])

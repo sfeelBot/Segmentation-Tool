@@ -18,6 +18,11 @@
 1회만 트리거(`erase_changed` 시그널).
 라운드 R3-4: 통합 Undo(원편집+블랍삭제+브러시지우기) 툴바 버튼("실행 취소") 추가
 — 실제 undo 스택/로직은 `ZoneCanvas`가 단일 출처로 보관(`undo()`/`can_undo()`).
+라운드 R-ZONE-3: "Zone 결정 방법" 3-way 콤보(일괄 적용/일괄 적용 후 수정/장별
+적용)로 기존 2-way 체크박스를 대체 + 이미지별 편집 상태를 이미지 옆 사이드카
+(`{stem}.zone.json`, `zone_state_store.py`)에 디바운스(500ms) 자동 저장한다.
+이미지 전환 시 사이드카가 있으면 복원, 없으면 빈 캔버스로 시작(자세한 설계는
+docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md "요청 A" 참고).
 """
 from pathlib import Path
 
@@ -26,7 +31,7 @@ from PIL import Image
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
-    QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem, QCheckBox,
+    QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem,
     QProgressDialog, QApplication, QProgressBar, QToolBar,
 )
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize
@@ -43,8 +48,9 @@ from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import (
     Circle, zones_from_circles, zone_stats, compute_blob_labels,
-    export_zone_percentages_to_excel,
+    export_zone_percentages_to_excel, apply_manual_strokes,
 )
+from app.core import zone_state_store as zstate
 from app.core.logger import get_logger
 from app.core.device_info import prompt_gpu_availability
 from app.widgets.zone_canvas import ZoneCanvas
@@ -131,6 +137,12 @@ class ZoneAnalysisTab(QWidget):
         self._threshold_timer.setSingleShot(True)
         self._threshold_timer.setInterval(150)
         self._threshold_timer.timeout.connect(self._on_target_changed)
+        # ── R-ZONE-3: 사이드카 자동 저장(디바운스) ─────────────────────────────
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(500)
+        self._save_timer.timeout.connect(self._flush_state)
+        self._save_failed_once = False   # 세션당 1회만 저장 실패 팝업(판단 6)
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -327,15 +339,18 @@ class ZoneAnalysisTab(QWidget):
         left_layout.addWidget(self._img_list, stretch=1)
 
         # ── 배치 컨트롤 (3b) — 좌측 패널 하단, 발견성 개선을 위해 그룹박스로 묶음 ──
-        self._batch_box = QGroupBox("존 일괄 적용")
+        self._batch_box = QGroupBox("Zone 결정 방법")
         batch_layout = QVBoxLayout(self._batch_box)
-        self._chk_apply_all = QCheckBox("기준 이미지의 존(원)을 전체 이미지에 일괄 적용")
-        self._chk_apply_all.setChecked(True)   # 기본값 — 체크 해제 시 이미지마다 개별 자동검출
-        self._chk_apply_all.setToolTip(
-            "체크: 기준 이미지의 원을 나머지 전체에 그대로 적용\n"
-            "해제: 이미지마다 원을 개별 자동 검출(민감도 슬라이더 값 사용)"
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItem("일괄 적용", "apply_all")
+        self._mode_combo.addItem("일괄 적용 후 수정", "apply_all_edit")
+        self._mode_combo.addItem("장별 적용(이미지별 개별)", "per_image")
+        self._mode_combo.setToolTip(
+            "일괄 적용: 기준 이미지의 원을 나머지 전체에 그대로 적용\n"
+            "일괄 적용 후 수정: 위와 동일하게 적용 후 이미지별로 열어 직접 수정(자동 저장)\n"
+            "장별 적용: 이미지마다 원을 개별 자동 검출(민감도 슬라이더 값 사용)"
         )
-        batch_layout.addWidget(self._chk_apply_all)
+        batch_layout.addWidget(self._mode_combo)
         self._btn_batch = QPushButton("▶ 선택 이미지 일괄 처리 (0장)")
         self._btn_batch.setEnabled(False)
         self._btn_batch.setToolTip(
@@ -408,6 +423,11 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.circles_changed.connect(self._refresh_circle_list)
         self._canvas.circles_committed.connect(self._recompute_zones)
         self._canvas.circles_changed.connect(self._update_batch_button_state)
+        # R-ZONE-3: 원편집/블랍삭제/브러시스트로크 3개 시그널 전부 편집마다
+        # 디바운스 타이머를 재시작(annotation_canvas.py의 자동 저장 패턴과 동일).
+        self._canvas.circles_changed.connect(lambda: self._save_timer.start())
+        self._canvas.blob_deleted.connect(lambda _id: self._save_timer.start())
+        self._canvas.erase_changed.connect(lambda: self._save_timer.start())
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
         self._canvas.blob_deleted.connect(self._on_blob_deleted)
@@ -467,7 +487,14 @@ class ZoneAnalysisTab(QWidget):
     def _on_list_image_selected(self, path: Path) -> None:
         """목록에서 이미지를 클릭(단일 선택 또는 load_folder/load_files 직후 자동
         선택)했을 때 — 기존 단일 이미지 로드 로직 그대로 재사용. 자동 추론은
-        실행하지 않는다(스펙 명시 — 수동 '▶ 추론 실행' 트리거 유지)."""
+        실행하지 않는다(스펙 명시 — 수동 '▶ 추론 실행' 트리거 유지).
+
+        R-ZONE-3: 이미지 전환 전 이전 이미지의 편집 상태를 동기 flush하고,
+        새 이미지는 타겟 클래스 구성 이후 사이드카가 있으면 복원한다."""
+        if (self._image_path is not None and self._image_path != path
+                and self._save_timer.isActive()):
+            self._save_timer.stop()
+            self._flush_state()   # 전환 전 동기 flush(annotation_canvas.load_image()와 동일 패턴)
         self._image_path = path
         self._last_result = self._results.get(path)
         try:
@@ -488,7 +515,6 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.clear()
             for action in self._tool_group.actions():
                 action.setEnabled(False)
-        self._canvas.clear_circles()
         self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 원 자동검출은 불가
         self._canvas.set_blob_data(None, None)
         self._act_circle.setChecked(True)
@@ -497,7 +523,34 @@ class ZoneAnalysisTab(QWidget):
             action.setEnabled(False)
         self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
         if self._last_result is not None:
-            self._setup_target_classes(self._last_result)
+            self._setup_target_classes(self._last_result)   # set_blob_data(labels,stats) 재호출
+        # R-ZONE-3: 사이드카 복원은 반드시 _setup_target_classes() 이후에 수행해야
+        # 한다 — set_blob_data()가 manual_strokes/undo 스택을 초기화하므로, 순서가
+        # 바뀌면 방금 복원한 상태를 다시 지워버리는 사고가 난다(스펙 "순서 주의").
+        cached = zstate.load_state(path)
+        if cached is not None:
+            self._canvas.set_state(cached)
+        else:
+            self._canvas.clear_circles()     # 사이드카 없으면 기존처럼 빈 캔버스
+
+    def _flush_state(self) -> None:
+        """현재 이미지의 편집 상태를 사이드카에 즉시 저장 — 디바운스 타이머
+        콜백 또는 이미지 전환 직전 동기 호출 둘 다 이 함수 하나로 처리
+        (`annotation_canvas.py`의 `_do_save()`와 동일 역할, R-ZONE-3 판단 1)."""
+        if self._image_path is None:
+            return
+        try:
+            zstate.save_state(self._image_path, self._canvas.get_state())
+            self._save_failed_once = False
+        except OSError as exc:
+            log.warning(f"Zone 상태 저장 실패 — {self._image_path}: {exc}")
+            if not self._save_failed_once:   # 세션당 1회만 표면화(판단 6)
+                self._save_failed_once = True
+                QMessageBox.warning(
+                    self, "저장 실패",
+                    f"{self._image_path.parent} 폴더에 편집 내용을 저장하지 못했습니다"
+                    "(읽기 전용 등). 이후 실패는 조용히 로그에만 남습니다."
+                )
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -945,7 +998,10 @@ class ZoneAnalysisTab(QWidget):
             return
 
         ref_w, ref_h = self._image_size
-        apply_to_all = self._chk_apply_all.isChecked()
+        mode = self._mode_combo.currentData()
+        # apply_all·apply_all_edit 둘 다 기준 원을 스케일 적용, per_image만 개별 자동검출
+        # (기존 apply_to_all 분기 로직 자체는 그대로 — 스펙 "모드별 동작 차이" 절).
+        apply_to_all = mode != "per_image"
         sensitivity = self._sensitivity_slider.value() / 100.0
         min_confidence = self._conf_slider.value() / 100.0
         min_pixel_size = self._min_px_spin.value()
@@ -966,10 +1022,10 @@ class ZoneAnalysisTab(QWidget):
             QApplication.processEvents()
             self._img_list.set_item_status(img_path, "processing")
             try:
-                if img_path == self._image_path and self._last_result is not None:
-                    # 현재 표시 중인 이미지는 재추론 생략(inference_tab과 동일 최적화).
+                if img_path in self._results:
+                    result = self._results[img_path]   # 이미 추론된 이미지는 재추론하지 않음
+                elif img_path == self._image_path and self._last_result is not None:
                     result = self._last_result
-                    w, h = self._image_size
                 else:
                     result = engine.run(
                         model=self._model, image_path=img_path,
@@ -977,8 +1033,8 @@ class ZoneAnalysisTab(QWidget):
                         min_confidence=min_confidence, min_pixel_size=min_pixel_size,
                         opacity=0.5,
                     )
-                    with Image.open(str(img_path)) as im:
-                        w, h = im.size
+                    self._results[img_path] = result   # 캐시에 반드시 저장(이미지 재클릭 시 오버레이 복원용)
+                h, w = result.raw_class_map.shape   # Image.open() 불필요(캐시 히트 시 파일 재오픈 안 함)
 
                 if apply_to_all:
                     # 팝업→메인 라운드트립과 같은 해상도 방어 헬퍼를 재사용한다.
@@ -994,11 +1050,37 @@ class ZoneAnalysisTab(QWidget):
                     self._img_list.set_item_status(img_path, "done", badge="원 없음")
                     continue
 
-                zone_circles = [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)]
-                zones = zones_from_circles(zone_circles, (h, w))
                 # 판단 B와 동일하게 class_map 사용(raw_class_map 아님) — threshold가
                 # 배치 결과에도 일관되게 반영되게 하는 근본원인 수정을 재사용한다.
                 target_mask = result.class_map == target_cid
+
+                # R-ZONE-3 판단 4: 이번 배치가 원(circles)을 새로 계산해 사이드카를
+                # 덮어쓰기 전에, 그 이미지를 이전에 열어 직접 수정해둔 사이드카가
+                # 있으면(모드 2/3 재방문) removed_blob_ids/manual_strokes를 먼저
+                # target_mask에 반영한다 — 순서가 바뀌면 방금 계산한 원 정보로
+                # 덮어쓴 "편집 없는" 사이드카를 읽게 되어 무의미해진다.
+                prev_state = zstate.load_state(img_path)
+                if prev_state is not None:
+                    if prev_state["removed_blob_ids"]:
+                        labels, _ = compute_blob_labels(target_mask)
+                        target_mask = target_mask & ~np.isin(labels, list(prev_state["removed_blob_ids"]))
+                    target_mask = apply_manual_strokes(target_mask, prev_state["manual_strokes"])
+
+                if mode != "apply_all":   # 모드 2/3만 사이드카에 원 정보 기록(판단 3)
+                    try:
+                        zstate.save_state(img_path, {
+                            "circles": [(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)],
+                            "removed_blob_ids": set(),
+                            "erase_strokes": [],
+                            "manual_strokes": [],
+                        })
+                    except OSError as exc:
+                        # 배치 루프 도중 저장 실패는 팝업 없이 로그만(판단 6과 달리
+                        # 수십~수백 장 처리 중 매번 팝업이 뜨면 무한 클릭이 된다).
+                        log.warning(f"Zone 배치 저장 실패 — {img_path}: {exc}")
+
+                zone_circles = [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)]
+                zones = zones_from_circles(zone_circles, (h, w))
                 pct_list: list[float] = []
                 for zone in zones:
                     pct = zone_stats(zone.mask, target_mask)
