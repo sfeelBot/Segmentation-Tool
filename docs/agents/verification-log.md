@@ -3423,3 +3423,71 @@ Inno Setup 컴파일이 100% 실패 — GitHub #22/BUG-016 신규 로직뿐 아�
 - **통과.** 정적 검토 + 원본 버그 재현/수정 대조 + 실제 pip dry-run 파싱 + 전체 테스트
   스위트(29 + 91) 독립 재실행 모두 문제 없음. 발견된 이슈 없음.
 - 커밋하지 않음(리더가 커밋 예정, 작업 지시).
+
+---
+
+## 2026-08-31 — 프로젝트 이름 자동 동기화 + 이미지 리스트 순번 표시 (독립 검증)
+
+`docs/specs/project-name-and-image-numbering-2026-08-31.md`의 요청 1(프로젝트 이름 폴더명
+동기화)·요청 2(이미지 리스트 순번 표시) 병렬 구현분을 독립 검증. 대상 파일:
+`app/core/project.py`, `app/widgets/project_start_dialog.py`,
+`app/widgets/image_browser.py`, `app/widgets/inference_image_list.py`,
+`tests/test_project_recent.py`, `tests/test_image_list_numbering.py` (전부 미커밋).
+
+### 1. pytest 전체 독립 재실행
+- `build/venv/Scripts/python.exe -m pytest tests/ -q --basetemp=<scratchpad>/pytest_verify_indep`
+  (구현자와 다른 `--basetemp`) → **97 passed** — 구현자 보고와 일치, 회귀 없음.
+
+### 2. 요청 1 골든패스 — 실제 재현
+스크립트로 실제 위젯/모듈 조작(단순 함수 호출이 아닌 `ProjectStartDialog` 인스턴스화 포함):
+1. `project.create("Foo", ...)` → `p.name == "Foo"` 확인.
+2. `os.rename()`으로 실제 폴더 리네임(`Foo` → `Bar`, 앱 밖 조작 시뮬레이션).
+3. `Project(bar_path).name == "Bar"` 확인 (메타데이터의 `name`은 여전히 `"Foo"`로 남아있음,
+   `project_export._infer_base_name()`용으로 의도된 보존).
+4. `recent_projects` 설정에 `bar_path`를 넣고 실제 `ProjectStartDialog()`를 띄워
+   `_recent_list` 항목 텍스트에 `"Bar"`만 나타나고 `"Foo"`는 없음을 확인 — **스펙이 지적한
+   "타이틀바 vs 최근목록 불일치" 회귀 지점이 실제로 일치함**을 재현·검증.
+5. `proj.current().name == "Bar"` (메인 창 타이틀 소스) 일치 확인.
+6. GitHub #2 export/import 왕복 재검증: `collect_export_entries()` + `zipfile`로 실제 zip
+   생성(`default_export_filename()` → `Bar_20260831.zip`, 폴더명 기준 정상 생성) →
+   `import_project_zip()`으로 새 폴더에 해제 → 결과 폴더명이 `"Foo"`(zip 내부
+   `project.json`의 `name` 필드 기준 — 스펙에 명시된 **의도된 기존 동작**, `Project.name`
+   변경과 무관하게 보존됨) → 동일 zip 재-import 시 `_imported` 자동 리네임 정상 동작 확인.
+- 정적 확인: `app/core/project_export.py`의 `_infer_base_name()`(zip 내부 `project.json`
+  직접 파싱, `Project.name` 미경유)과 `default_export_filename()`(`project.name` 사용,
+  이제 실제 폴더명이라 오히려 더 정확) 재확인 — 영향 없음.
+
+### 3. 요청 2 골든패스 — 실제 위젯 조작
+`ImageBrowser`(라벨링 탭)·`InferenceImageList`(추론 탭) 실제 인스턴스로:
+- 기본 정렬(name_asc)에서 `a_banana.png/b_apple.png/c_cherry.png` → `1./2./3.` 정확히 매김.
+- 검색 필터(`"c_"`) 적용 → 필터 결과 1개가 `"1. c_cherry.png"`로 재번호 확인.
+- 정렬 모드 전환(name_desc) → 새 순서(`c, b, a`)에 맞게 `1/2/3` 재계산 확인.
+- 실제 라벨링 흐름 재현: 어노테이션 JSON에 `"ok": true` 직접 기록 후 `refresh_item()`(단건
+  갱신, `labeling_tab.py:432`가 실제로 호출하는 경로와 동일) 호출 → 대상 항목과 형제 항목
+  번호가 전혀 밀리거나 사라지지 않음을 확인.
+- `InferenceImageList.load_files()`(평탄 모드) 정렬 순서대로 번호 확인 + name_desc 전환 시
+  재계산 확인.
+- `InferenceImageList` 폴더 그룹핑 모드(`load_folder()` + 정렬 "폴더"): 폴더 헤더
+  (`sub1 (1)`, `sub2 (1)`)는 숫자 접두 없음, leaf 2개(`img1.png`, `img2.png`)는 폴더별
+  재시작 없이 전체 통번호 `1, 2`를 받음을 확인 — 스펙의 "전체 통번호" 결정 그대로 구현됨.
+
+### 4. R6 성능 영향 확인
+- 합성 이미지 500장 프로젝트로 `ImageBrowser()` 최초 로드(`reload()`+`_apply_display()`
+  전체 재구성 경로): **0.034초**. 정렬 전환(재계산) 재실행: **0.019초**. 번호 매김
+  딕셔너리 컴프리헨션 추가로 인한 체감 지연 없음 — 스펙의 "무시할 수준" 판단과 일치.
+
+### 5. 앱 부팅 확인
+- `python main.py`로 실제 앱 기동(약 8초 대기) → 프로세스 메모리 473MB로 정상 기동(크래시
+  없음). 콘솔에 `UnicodeEncodeError`(cp949 로케일 셸에서 로그 메시지의 em-dash(`—`) 문자
+  인코딩 실패) 다수 출력됐으나, 이는 `main.py`/`app/core/device_info.py`의 로깅 문자열과
+  현재 검증 셸의 코드페이지 조합에서 발생하는 **기존 환경 이슈**로, 이번 두 라운드의 변경
+  파일(`project.py`/`image_browser.py`/`inference_image_list.py`/`project_start_dialog.py`)
+  과 무관하고 `logging` 모듈이 예외를 삼키고 계속 진행하므로 앱 크래시나 기능 저해로
+  이어지지 않음 — 이번 검증 범위 밖으로 판단, QA.md 미등록(회귀 아님, 재현 조건이 검증
+  셸의 로케일 특이사항).
+
+### 결론
+- **통과.** 두 요청 모두 정적 검토 + 독립 pytest 전체 재실행(97 passed) + 실제 GUI
+  위젯/다이얼로그 조작 골든패스 + GitHub #2 export/import 왕복 회귀 확인 + 대규모(500장)
+  성능 확인까지 모두 문제 없음. 발견된 버그 없음(QA.md 신규 항목 없음).
+- 커밋은 리더가 수행 예정(지시에 따라 이번 검증에서 커밋하지 않음).

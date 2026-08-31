@@ -503,3 +503,69 @@ GitHub 신규 이슈 #22("installer로 설치 시 기존 버전 있는지 체크
 가능(신규 `app/core/file_io.py` + 5개 파일 수정, 가장 빈번한 쓰기 경로
 `annotation_store.save()`를 건드리므로 구현 완료 후 실행 확인 필수, 주요 기능 추가는
 아니라 골든패스 수준까지는 불필요하되 회귀 확인은 꼼꼼히 요청).
+
+---
+
+## 2026-08-31 — 프로젝트 이름 자동 동기화 + 이미지 리스트 순번 표시 스코프 산정
+
+### 배경
+사용자 요청 2건: (1) 앱 밖에서 프로젝트 폴더를 리네임/이동하면 앱 표시 이름이
+예전 그대로 남는 문제 — 항상 폴더명과 자동으로 맞추길 원함. (2) 라벨링 탭(`ImageBrowser`)
++ 추론 탭(`InferenceImageList`) 이미지 목록 각 항목 앞에 순번("1.", "2." ...) 표시.
+둘 다 이미 사전조사가 진행된 상태로 위임됨(각 파일 라인 번호까지 특정된 상태).
+
+### 한 일
+- **요청1**: `Project.name`(`app/core/project.py:86-87`)의 전수 사용처를 grep으로
+  확인 — 표시 용도(`main_window.py` 타이틀바, `project_export_dialog.py` 헤더,
+  로그 메시지)와 기능 용도(`project_export.py`의 zip 파일명 생성, `_infer_base_name()`의
+  import 폴더명 추론)를 구분. `_infer_base_name()`은 `Project.name` 프로퍼티를 거치지
+  않고 zip 내부 `project.json`을 직접 재파싱하므로, 프로퍼티를 "항상 `path.name` 반환"
+  으로 바꿔도 **import 왕복 동작(GitHub #2 라운드 A/B)에는 영향 없음**을 확인 —
+  `project.json`의 `name` 필드/`save_metadata(name=...)` 호출 자체는 유지하기로 결정
+  (완전 제거 시 import 폴더명 추론 수단이 zip 파일명 stem 하나로 줄어드는 회귀 유발,
+  YAGNI 과잉적용 방지). **회귀 위험 1건 직접 발견**: `project_start_dialog.py`의
+  `_populate_recent()`가 `Project` 객체를 거치지 않고 자체적으로 `project.json`을
+  재파싱해 메타데이터 `name`을 폴더명보다 우선하는 중복 로직이라, `Project.name`만
+  고치면 메인 창 타이틀과 최근 프로젝트 목록이 서로 다른 이름을 보여주는 새로운
+  불일치가 생김 — 이 파일도 같이 고치도록 설계에 포함. 최종 설계: `Project.name`을
+  `self.path.name` 단순 반환으로 변경 + `_populate_recent()`의 메타데이터 이름 우선
+  로직 제거(폴더명만 사용). 구현 대상 2개 파일, 결정 대기 없음.
+- **요청2**: `image_browser.py`(단일 평탄 목록, 폴더 그룹핑은 BUG-005로 죽은 코드
+  제거 완료)와 `inference_image_list.py`(검색+정렬+실제 재귀 폴더 트리)를 대조.
+  두 위젯 다 컬럼 1개만 쓰는 `QTreeWidgetItem` 구조라 신규 컬럼 대신 기존 텍스트 앞
+  `"1. "` 문자열 접두어 방식으로 결정(과설계 방지). 번호 매김 기준은 "현재 표시 순서
+  (검색/정렬 반영 후) 1부터" — `_apply_display()`가 정렬/필터 변경마다 트리를 통째로
+  재구성하는 기존 구조에 가장 자연스럽게 들어맞고, 전체 원본 고정 순번은 검색 시
+  번호가 듬성듬성해져 직관성이 떨어진다고 판단 — 결정 대기 등록 없이 권장안으로
+  확정. 폴더 그룹핑 모드(`InferenceImageList`만 해당)의 번호는 **전체 통번호**로
+  확정(폴더별 리셋 아님, "총 몇 번째 이미지"가 폴더 내 상대 순번보다 실용적이라는
+  근거로 등록 없이 확정). `ImageBrowser`는 `refresh_item()`/`refresh_items()`가
+  트리 전체를 재구성하지 않고 개별 항목만 갱신하는 R6 성능 최적화 경로가 있어
+  `path→번호` 딕셔너리를 저장해 그 경로에서도 번호가 정확히 유지되도록 설계.
+  `InferenceImageList`는 폴더 트리 렌더링 순서와 정렬된 플랫 리스트의 순회 순서가
+  다단계 중첩 폴더에서 100% 일치를 보장하지 않을 수 있다고 판단해, 대신 트리를
+  완성한 뒤 `QTreeWidgetItemIterator`로 실제 화면 순서를 그대로 순회하며 번호를
+  매기는 방식으로 설계 — "보이는 순서 = 번호"를 항상 정확히 보장하는 더 견고한
+  해법(폴더 헤더 아이템은 UserRole에 Path가 없어 자동으로 번호 매김에서 제외됨).
+  둘 다 O(n) 1회 추가 순회뿐이라 R6가 도입한 검색 디바운스(`_SEARCH_DEBOUNCE_MS`)/
+  상태캐시(`_status_cache`) 최적화와 충돌 없음을 확인. zone 에디션
+  (`feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`)에도
+  두 파일이 함수명·구조 거의 동일하게 존재함을 확인(상세 diff는 하지 않음, 사용자
+  지시대로 이번 라운드는 zone 코드 미접촉) — 이식은 리더가 별도 라운드로 판단.
+- 스펙 문서 신설: [docs/specs/project-name-and-image-numbering-2026-08-31.md](../specs/project-name-and-image-numbering-2026-08-31.md)
+  — 요청1/2 각각 문제정의·전수 사용처·설계·코드 스니펫 수준 변경안·회귀 검토·검증
+  골든패스 정리.
+- `docs/decisions-needed.md`는 갱신하지 않음 — 두 요청 모두 결정 없이 바로 구현
+  가능한 명확한 기본값으로 판단(과거 세션 관례상 사소한 UX 디테일까지 전부 등록하진
+  않음).
+- `docs/roadmap.md`에 "프로젝트 이름 자동 동기화 + 이미지 리스트 순번 표시" 절 신설
+  (2개 항목 체크박스, 병렬 구현 가능 명시).
+- 코드는 건드리지 않음. Write/Edit는 스펙 신설 1건, `roadmap.md`, 본 로그 갱신에만
+  사용. 시작 전 `git status` 확인 — `.worktrees/` 미추적 항목만 있음, 이번 작업과 무관.
+
+### 상태
+완료 — 다음: 리더가 두 요청을 구현 에이전트에 위임(서로 다른 파일이라 병렬 가능).
+요청1은 `app/core/project.py` 프로퍼티 1줄 + `project_start_dialog.py` 1줄 삭제로
+매우 저위험, 요청2는 `image_browser.py`/`inference_image_list.py` 각각 소규모 diff로
+저위험 — 둘 다 "사소한 버그 수정/UX 디테일" 수준이라 실행 확인 수준 검증으로 충분,
+골든패스 수준 검증은 불필요하다고 판단(단, 리더 재량).

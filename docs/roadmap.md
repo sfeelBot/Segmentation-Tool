@@ -515,6 +515,34 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       스킵하던 것은 재시도와 별개의 관찰성 버그로 분리해 로그 추가만(동작 변경 없음).
       결정 대기 없음, 바로 구현 가능.
 
+## 프로젝트 이름 자동 동기화 + 이미지 리스트 순번 표시 (2026-08-31 요청)
+
+기획 완료: [docs/specs/project-name-and-image-numbering-2026-08-31.md](specs/project-name-and-image-numbering-2026-08-31.md).
+결정 대기 없음 — 두 요청 모두 바로 구현 가능. 서로 다른 파일이라 병렬 구현 가능.
+
+- [ ] **요청1 — 프로젝트 이름을 폴더명과 항상 일치** — `Project.name`(`app/core/project.py`)이
+      `project.json`의 `name` 메타데이터를 우선하던 것을 항상 `self.path.name` 반환으로
+      변경(외부에서 폴더 리네임/이동해도 앱 표시가 즉시 따라감). `project.json`의 `name`
+      필드 자체는 zip import 시 `_infer_base_name()`(`project_export.py`)이 폴더명 추론에
+      계속 쓰므로 유지. 회귀 위험 지점으로 확인된 `project_start_dialog.py`의
+      `_populate_recent()`(최근 프로젝트 목록이 `Project`를 안 거치고 독자적으로
+      `project.json`을 재파싱해 메타데이터 이름을 우선하던 로직)도 함께 수정해 폴더명
+      우선으로 통일 — 이거 빠뜨리면 타이틀바와 최근 목록이 서로 다른 이름을 보여주는
+      새 불일치가 생김. 구현 대상 2개 파일, 결정 대기 없음.
+- [ ] **요청2 — 라벨링/추론 탭 이미지 리스트 순번 표시** — `ImageBrowser`(`image_browser.py`,
+      단일 평탄 목록)와 `InferenceImageList`(`inference_image_list.py`, 검색+정렬+폴더
+      트리)에 기존 파일명 텍스트 앞에 `"1. "` 접두어 방식으로 순번 추가(신규 컬럼 아님).
+      기준은 "현재 표시 순서(검색/정렬 반영) 1부터"로 확정 — 정렬/필터 바뀔 때마다
+      트리를 통째로 재구성하는 기존 `_apply_display()` 구조에 자연스럽게 맞음. 폴더
+      그룹핑 모드(`InferenceImageList`만 해당)의 번호는 **전체 통번호**로 확정(폴더별
+      리셋 아님). `ImageBrowser`는 `path→번호` 매핑을 저장해 `refresh_item()`류 부분
+      갱신 경로에서도 번호 유지, `InferenceImageList`는 트리 완성 후
+      `QTreeWidgetItemIterator`로 화면에 보이는 순서 그대로 번호를 매겨 폴더헤더 유무와
+      무관하게 항상 정확. 둘 다 O(n) 1회 추가 순회뿐이라 R6 검색 디바운스/상태캐시
+      최적화와 충돌 없음. 구현 대상 2개 파일, 결정 대기 없음. **zone 에디션
+      (`feature/zone-analysis-tab`)에도 두 파일이 동일 구조로 존재 — 이번 라운드는 main만,
+      완료 후 별도 이식 라운드 필요(리더가 후속 판단)**.
+
 ## 다음 후보
 - 위 UI/UX 재편·GitHub 이슈 VOC·exe 패키징 외 추가 신규 기능 요청 없음. 새 요청은
   [docs/agents/leader-log.md](agents/leader-log.md)에 먼저 기록된 뒤 이 로드맵에 반영된다.

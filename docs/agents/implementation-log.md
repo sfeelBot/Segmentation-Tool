@@ -3229,3 +3229,89 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 비한국어(cp949 미사용) 환경이 아닌 실제 한국어 로케일 Windows에서 `build.bat` 전체
 실행까지 확인하면 가장 확실하나, 최소한 `pytest tests/test_build_release.py`와
 `requirements.txt` 바이트 검사 재확인을 요청.
+
+---
+
+## 2026-08-31 — 프로젝트 이름 자동 동기화 (요청 1)
+
+`docs/specs/project-name-and-image-numbering-2026-08-31.md`의 "요청 1" 설계를 그대로 구현
+(스코프: main 브랜치, 요청 1만 — 요청 2 이미지 순번 표시는 다른 라운드/에이전트 작업).
+
+### 변경
+- `app/core/project.py` — `Project.name` 프로퍼티가 `project.json`의 `name` 메타데이터를
+  더 이상 참조하지 않고 항상 `self.path.name`(실제 폴더명)을 반환하도록 단순화. 폴더를
+  앱 밖에서 리네임/이동해도 표시 이름이 자동으로 따라간다. `project.json`의 `name` 필드/
+  `save_metadata(name=...)` 호출 자체는 그대로 유지 — `app/core/project_export.py`의
+  `_infer_base_name()`(zip import 시 폴더명 추론)이 여전히 이 필드를 직접 파싱해서 읽음.
+- `app/widgets/project_start_dialog.py`의 `_populate_recent()` — `Project`를 거치지 않고
+  `project.json`을 독자 재파싱해 `m.get("name", name)`으로 메타데이터 이름을 우선하던
+  중복 로직 제거(`name = m.get(...)` 줄 삭제). 이제 항상 폴더명을 표시해 메인 창
+  타이틀바(Project.name 경유)와 최근 프로젝트 목록이 일치한다. `updated_at` 표시 로직은
+  변경 없음.
+
+### 검증
+- `tests/test_project_recent.py`에 `test_name_follows_folder_after_external_rename` 추가:
+  프로젝트 생성 후 메타데이터에 `name="Foo"` 저장 → `os.rename`으로 폴더를 `Bar`로 변경 →
+  새 `Project(renamed_path).name`이 `"Bar"`를 반환하는지, `project.json`의 `name` 필드는
+  여전히 `"Foo"`로 남아있는지(삭제하지 않았는지) 확인.
+- `build/venv/Scripts/python.exe -m pytest tests/test_project_recent.py -q` — 2 passed
+  (기존 `test_recent_skips_inaccessible_paths` 포함).
+- `app/core/project_export.py`의 `default_export_filename()`(81행, `project.name` 사용)과
+  `_infer_base_name()`(zip 내부 `project.json` 직접 파싱, `Project.name` 미경유)을 grep으로
+  재확인 — 이번 변경이 GitHub #2 export/import 왕복 동작에 영향 없음을 정적으로 확인.
+  실제 실행 왕복 재검증은 검증 에이전트에게 위임.
+
+### 참고
+작업 디렉토리에 `app/widgets/image_browser.py`, `app/widgets/inference_image_list.py`
+(요청 2 — 이미지 리스트 순번 표시)의 uncommitted 변경도 이미 존재했으나, 이번 작업
+지시 범위(요청 1)가 아니므로 건드리지 않았다. 커밋 전 리더가 두 작업을 함께 확인 필요.
+
+**커밋 미수행** — 지시에 따라 커밋하지 않음. 검증 통과 후 리더가 커밋 예정.
+**검증 서브에이전트 확인 필요** — 골든패스(폴더 생성→리네임→최근목록/타이틀바 확인,
+GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
+
+---
+
+## 2026-08-31 — 이미지 리스트 순번 표시 (요청 2)
+
+### 변경
+- `app/widgets/image_browser.py` — 단일 평탄 목록에 "N. 파일명" 순번 접두 표시.
+  `_path_to_number: dict[Path, int]` 을 신설해 `_apply_display()`가 `filtered`(현재
+  검색·정렬 반영 순서)로 재구축할 때마다 1부터 다시 채움. 신규 헬퍼 `_numbered_label()`이
+  번호+`_rel_name()`을 조합. `_make_tree_item()`의 기본 라벨, `refresh_item()`/
+  `refresh_items()`의 단건 텍스트 갱신 경로(R6 `_status_cache` 최적화, 전체 재구성 없음)
+  3곳 모두 이 헬퍼로 교체 — 단건 갱신 시에도 `_path_to_number`에 남아있는 기존 번호를
+  그대로 재사용하므로 다른 항목 번호가 밀리거나 사라지지 않는다.
+- `app/widgets/inference_image_list.py` — 검색+정렬+폴더 트리 그룹핑을 지원하는 위젯이라
+  평탄 리스트 인덱스를 그대로 쓸 수 없어(폴더 헤더가 화면 순서에 끼어듦), 신규
+  `_number_items()`가 트리 완성 후 `QTreeWidgetItemIterator`로 실제 화면 렌더링 순서를
+  순회하며 leaf 항목(UserRole에 Path가 있는 항목)에만 전체 통번호를 접두. 폴더 그룹핑
+  모드에서도 폴더별로 다시 시작하지 않고 전체 통번호(스펙 확정 사항). `_apply_display()`의
+  트리 재구성 분기 직후, 선택 복원 이전에 1줄 호출 추가. `QTreeWidgetItemIterator` import
+  1줄 추가.
+- 두 파일 모두 `docs/specs/project-name-and-image-numbering-2026-08-31.md`의 "요청 2"
+  설계를 그대로 구현 — 결정 대기 없음.
+
+### 검증
+- 신규 `tests/test_image_list_numbering.py`(5 케이스, headless `QApplication`):
+  - `ImageBrowser` 기본 정렬(name_asc)에서 a/b/c 3개 이미지가 1/2/3으로 번호 매겨짐.
+  - `refresh_item()` 단건 갱신 후에도 대상 항목과 형제 항목 번호가 그대로 유지됨.
+  - 검색 필터 적용 시 필터링된 결과가 1부터 다시 번호 매겨짐.
+  - `InferenceImageList.load_files()`(평탄 모드) 정렬 순서대로 1/2부터 번호 매겨짐.
+  - `InferenceImageList` 폴더 그룹핑 모드(정렬 "폴더")에서 서로 다른 하위 폴더의 leaf
+    2개가 폴더별로 재시작하지 않고 전체 통번호(1, 2)를 받고, 폴더 헤더 아이템 텍스트는
+    숫자로 시작하지 않음을 확인.
+- `build/venv/Scripts/python.exe -m pytest tests/ -q` — 97 passed (신규 5건 포함, 기존
+  회귀 없음). 환경 특이사항: 기본 pytest 임시 디렉터리(`%TEMP%/pytest-of-Feel`)에 대한
+  `PermissionError`가 있어 `--basetemp`를 스크래치패드 경로로 지정해 실행함(환경 문제,
+  코드와 무관).
+
+### 참고
+같은 작업 디렉토리에 "요청 1"(프로젝트 이름 자동 동기화)의 uncommitted 변경
+(`app/core/project.py`, `app/widgets/project_start_dialog.py`, `tests/test_project_recent.py`,
+`docs/roadmap.md`, `docs/agents/planning-log.md`)이 이미 존재했으나 이번 작업 범위가 아니라
+건드리지 않음.
+
+**커밋 미수행** — 지시에 따라 커밋하지 않음. 검증 통과 후 리더가 커밋 예정.
+**검증 서브에이전트 확인 필요** — 실제 GUI 조작(검색/정렬 전환, 폴더 그룹핑 모드,
+`refresh_item()` 트리거 경로인 라벨링 OK 토글/저장)으로 번호 표시를 눈으로 재확인 필요.
