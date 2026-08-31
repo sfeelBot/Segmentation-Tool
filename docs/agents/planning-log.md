@@ -1125,3 +1125,30 @@ PR #18도 병합 완료된 상태에서 사용자가 GitHub 이슈 #13("존 분�
 저장 범위 확정 완료). R-ZONE-3 구현 시 `app/core/zone_state_store.py` 신규 파일의
 self-check(`python -m app.core.zone_state_store` 또는 동등한 실행)까지 포함해
 검증할 것.
+
+---
+
+## 2026-08-31 — GitHub #32 `zone 병목현상` 실제 경로 추적·프로파일링
+
+### 한 일
+- GitHub #32 원문("영역 일괄적용 시 병목이 너무 심함")을 직접 확인하고,
+  `ZoneAnalysisTab._on_batch_process()` → `inference_engine.run()` → 원 검출 →
+  사이드카 반영 → `zones_from_circles()`/`zone_stats()`까지 실제 호출 경로를 추적했다.
+- `projects/nok` 실제 BMP 5장(각 5,472×3,648, 59.9MB)으로 wall/CPU/RSS를 실측했다.
+  원 3개 존 계산은 장당 218~235ms/RSS +208~210MiB, 장별 원 검출은 decode 포함
+  210~214ms/RSS +264MiB였다. 함수 프로파일에서 `disk_mask` 3회 103ms,
+  `zone_stats` 4회 93ms(`numpy.sum` 79ms)로 특정했다.
+- `InferenceResult` 배열+QPixmap의 원본 해상도 보관량을 실데이터 shape로 계산해
+  장당 약 456.9MiB, 5장 약 2.23GiB임을 확인했다. 현재 `_results` 무제한 누적은
+  실제 메모리/paging 위험이다.
+- 캐시 미적중마다 `prepared` 없이 `engine.run()`을 호출해 체크포인트를 반복 준비하는
+  경로를 확인했다. 95.4MiB 합성 state dict 분리 측정은 5회 준비 0.178초 대 1회 준비
+  0.040초(4.45배)였다.
+- 최소안은 기존 `QThread`/`prepare_inference` 패턴 재사용, 배치 전용 결과 비보관으로
+  정했다. `zone_metrics` 알고리즘 변경은 worker/메모리 수명 수정 후에도 기준 미달일
+  때만 하는 2차로 분리했다(추측성 최적화 방지).
+
+### 산출물·상태
+- 상세 재현 조건, 수치, 근본 원인, 수용 기준, 영향 파일:
+  `docs/specs/zone-github-32-batch-bottleneck-2026-08-31.md`.
+- 코드 수정 없음. **기획 완료 — 구현 에이전트는 1차 수정부터 착수 가능.**
