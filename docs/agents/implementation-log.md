@@ -4382,3 +4382,41 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 
 ### 상태
 초안 작성 완료. **검증 서브에이전트의 문서/캡처 검토 전까지 완료로 간주하지 않는다.**
+
+## 2026-08-31 — R1: 추론 탭 블랍 클릭 선택 (`docs/specs/zone-blob-select-and-export-2026-08-31.md` 25~148행)
+
+- 대상 파일(스펙 지정 범위만 수정, R3와 병렬 작업이라 그 외 파일은 건드리지 않음):
+  - `app/widgets/overlay_viewer.py` — `_press_pos`, `_CLICK_TOLERANCE_PX = 4.0`,
+    `pixmap_clicked = pyqtSignal(QPointF)`, 공개 `pixmap()` getter,
+    `set_highlight_rect()`/`_highlight_rect`, `paintEvent`에 노란(`_COLOR_SELECTED =
+    QColor(255, 200, 0)`, `zone_canvas.py`와 통일) 하이라이트 사각형 그리기. 기존
+    `mousePressEvent`/`mouseReleaseEvent`의 팬 로직은 손대지 않고 애디티브로만 추가.
+  - `app/core/inference_engine.py` — `blob_at(result, x, y) -> BlobStat | None` 순수
+    함수 신규. filtered `class_map`을 동일 클래스·8-connectivity로 재라벨링해
+    `result.blobs`(같은 class_id로 필터링한 순서)와 1:1 대응시킨다.
+  - `app/tabs/inference_tab.py` — `pixmap_clicked` 배선, `_selected_blob` 상태,
+    `_on_viewer_clicked`/`_update_blob_selection_ui`, 신규 `_lbl_selected_blob`
+    라벨(클래스명·면적·AI점수). 선택 해제 지점 3곳: `_on_image_selected`(이미지 전환),
+    `_on_run`(새 추론), `_apply_threshold`(재필터링).
+- 신규 테스트 `tests/test_inference_blob_at.py` — `blob_at()` 3케이스(떨어진 같은
+  클래스 blob 2개 중 정확한 것 반환/배경 클릭 None/범위 밖 좌표 None) 전부 pass.
+- 자체 검증(ponytail): `python -m pytest tests/test_inference_blob_at.py
+  tests/test_zone_github_13_14.py tests/test_zone_edit_toolbar.py
+  tests/test_canvas_zoom_pan.py tests/test_github_issue_23.py` 전부 통과(단
+  `tests/test_zone_edit_toolbar.py::test_diagonally_touching_pixels_are_separate_blobs`는
+  R3 에이전트가 동시에 수정 중인 `zone_metrics.py`의 미완성 변경 때문에 실패 —
+  `git stash`로 확인 결과 R1 diff와 무관, 내 파일이 아니므로 손대지 않음). 전체
+  `pytest tests/` 실행 시 다수 `PermissionError`(`pytest-of-Feel` tmp 디렉터리)가
+  발생했는데 이는 동시 실행 중인 다른 에이전트와의 tmp 디렉터리 경합으로 재현이
+  불안정(같은 명령 재실행 시 통과 개수가 매번 달라짐) — 내 코드 로직과 무관.
+  스크래치패드에 QTest 기반 골든패스 스모크 스크립트를 작성해 실제 클릭 이벤트로
+  확인: (1) blob 클릭 시 정확한 하이라이트+라벨, (2) 배경 클릭 시 선택 해제,
+  (3) 줌/팬 상태에서 클릭해도 정확한 blob 선택, (4) 드래그는 클릭으로 오인되지
+  않음(팬 유지), (5) 이미지 전환 시 선택 자동 해제, (6) 재추론 시 선택 자동 해제 —
+  전부 통과("ALL OK").
+- 커밋: `06dbd6a` — "feat: 추론 탭 오버레이에서 blob 클릭 선택 지원 (R1)"
+- push는 하지 않았다(지시에 따름).
+- 상태: 구현 완료. **검증 에이전트가 `python main.py` 실구동 + QTest 실이벤트로
+  추론 탭 골든패스와 Zone 탭(원편집/블랍삭제/브러시그리기/브러시지우기/팬 5모드)
+  회귀 없음을 확인하기 전까지는 완료로 간주하지 않는다** (스펙 145~148행,
+  "주요 기능 추가" 분류).
