@@ -431,6 +431,20 @@ class InferenceImageList(QWidget):
                 folder_item.addChild(child)
                 self._path_to_item[p] = child
 
+    def _number_items(self) -> None:
+        """트리에 실제로 보이는 순서(펼침 상태 무관)대로 이미지 항목에 전체 통번호를 접두.
+
+        폴더 헤더 아이템은 UserRole 에 Path 가 없어 자동으로 건너뛰어진다.
+        """
+        idx = 1
+        it = QTreeWidgetItemIterator(self._tree)
+        while it.value():
+            item = it.value()
+            if self._get_item_path(item) is not None:
+                item.setText(0, f"{idx}. {item.text(0)}")
+                idx += 1
+            it += 1
+
     def _apply_display(self) -> None:
         cur_idx = self.current_display_index()
         cur_path: Path | None = (

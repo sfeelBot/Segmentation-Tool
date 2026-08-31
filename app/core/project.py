@@ -84,7 +84,9 @@ class Project:
     # 메타데이터
     @property
     def name(self) -> str:
-        return self._meta.get("name", self.path.name)
+        # 표시용 이름은 항상 실제 폴더명을 따른다 (project.json의 name은
+        # project_export._infer_base_name() 등 import 시 폴더명 추론용으로만 유지).
+        return self.path.name
 
     @property
     def created_at(self) -> str:
