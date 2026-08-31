@@ -116,6 +116,19 @@
 > `$LASTEXITCODE` 확인법까지 정확히 전달(pytest로는 하드크래시를 못 잡으므로 실행
 > 재현이 유일한 검증 수단임을 명시). 완료 후 검증 에이전트가 다시 확인 후 push.
 >
+> **[갱신, 2026-09-01] BUG-030 구현 완료(`147ce67`+`0f0e63d`, push 안 함) → 독립 검증
+> 착수.** implementer가 리더의 원인 격리를 그대로 따라 `_ZoneBatchWorker`를 CUDA 추론
+> 전용으로 축소하고 cv2/numpy 후처리를 메인 스레드(`_on_batch_image_inferred`)로 이전,
+> 완료 판정을 `completed` 대신 `QThread.finished`로 통합. 검증 중 부수 발견한 재진입
+> 버그(`QProgressDialog.setValue()`의 내부 `processEvents()`가 큐드 `finished`를
+> 재진입 처리해 `self._batch_progress`가 중간에 `None`이 되는 경합)도 로컬 스냅샷으로
+> 함께 수정. 리더의 크래시 재현 스크립트로 자체 검증(수정 전 크래시 재현 → 수정 후
+> `LASTEXITCODE=0`) 완료했지만 CLAUDE.md 규칙상 독립 검증 필수 — verifier
+> (`a59db6bf6a73e6484`, 백그라운드)에 같은 재현 스크립트 독립 재실행 + 실GUI 골든패스
+> (배치 버튼 클릭/진행률/취소/에러배지/결과다이얼로그) + 회귀 전체 위임. **통과 시
+> 사용자 지시대로 push → 버전 재점검 → build.bat → GitHub Release(zone-v*) 순서로
+> 진행 예정.**
+>
 > **정리 안 된 잔여물(급하지 않음)**: `D:\segmentation model-zone-work`(브랜치
 > `leader-work-zone-20260830`)는 캐논 브랜치와 완전 중복으로 판명돼 병합 보류·사실상
 > 폐기 상태 — 삭제 여부는 사용자 결정 대기 없이 방치 중(급하지 않아 먼저 묻지 않음).
