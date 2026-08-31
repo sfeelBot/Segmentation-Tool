@@ -96,39 +96,34 @@ class _ZoneInferenceWorker(QThread):
 
 
 class _ZoneBatchWorker(QThread):
+    """BUG-030 수정: 워커 스레드에서는 CUDA 추론만 수행한다 — cv2/numpy 존·블랍
+    후처리(`compute_blob_labels`/`zones_from_circles`/`detect_circles` 등)는 절대
+    이 스레드 안에서 실행하면 안 된다("다른 스레드의 실 CUDA 추론 직후 같은 스레드에서
+    cv2 후처리"가 `STATUS_STACK_BUFFER_OVERRUN` 하드크래시의 결정적 트리거로 격리됨,
+    QA.md BUG-030). 후처리는 `image_inferred` 시그널을 받는 메인 스레드
+    (`ZoneAnalysisTab._on_batch_image_inferred`)에서 수행한다."""
     progress = pyqtSignal(object, str, object, int, int)
-    completed = pyqtSignal(object, object)   # rows, blob_rows (R3)
+    image_inferred = pyqtSignal(object, object, int, int)   # path, InferenceResult, done, total
 
     def __init__(self, model, paths: list[Path], checkpoint_path: Path,
-                 cached_results: dict[Path, InferenceResult], mode: str,
-                 circles_ref: list[tuple[float, float, float]],
-                 ref_size: tuple[int, int], sensitivity: float,
-                 classes: list[ClassDef], target_cid: int,
-                 min_confidence: float, min_pixel_size: int) -> None:
+                 cached_results: dict[Path, InferenceResult],
+                 classes: list[ClassDef], min_confidence: float, min_pixel_size: int) -> None:
         super().__init__()
         self._model = model
         self._paths = paths
         self._checkpoint_path = checkpoint_path
         self._cached_results = cached_results
-        self._mode = mode
-        self._circles_ref = circles_ref
-        self._ref_size = ref_size
-        self._sensitivity = sensitivity
         self._classes = classes
-        self._target_cid = target_cid
         self._min_confidence = min_confidence
         self._min_pixel_size = min_pixel_size
 
     def run(self) -> None:
-        rows: list[tuple[str, str, float]] = []
-        blob_rows: list[tuple[str, ZoneBlobStat]] = []
         prepared = None
         if any(path not in self._cached_results for path in self._paths):
             try:
                 prepared = engine.prepare_inference(self._model, self._checkpoint_path)
             except Exception as exc:
                 self.progress.emit(self._checkpoint_path, "error", str(exc), 0, len(self._paths))
-                self.completed.emit(rows, blob_rows)
                 return
 
         total = len(self._paths)
@@ -146,48 +141,10 @@ class _ZoneBatchWorker(QThread):
                         min_pixel_size=self._min_pixel_size, opacity=0.5,
                         prepared=prepared,
                     )
-                h, w = result.raw_class_map.shape
-                if self._mode == "per_image":
-                    with Image.open(str(path)) as im:
-                        rgb = np.array(im.convert("RGB"))
-                    circles = detect_circles(rgb[:, :, ::-1].copy(), sensitivity=self._sensitivity)
-                else:
-                    circles = _scale_circles(self._circles_ref, self._ref_size, (w, h))
-                if not circles:
-                    self.progress.emit(path, "done", "원 없음", done, total)
-                    continue
-
-                ai_mask = result.class_map == self._target_cid
-                previous = zstate.load_state(path)
-                if previous is not None:
-                    if previous["removed_blob_ids"]:
-                        labels, _, _ = compute_blob_labels(ai_mask)
-                        ai_mask = ai_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
-                    final_mask = apply_manual_strokes(ai_mask, previous["manual_strokes"])
-                else:
-                    final_mask = ai_mask
-                state = previous or {
-                    "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
-                }
-                state["circles"] = [
-                    (idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)
-                ]
-                zstate.save_state(path, state)
-
-                zones = zones_from_circles(
-                    [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)], (h, w)
-                )
-                percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
-                rows.extend((path.name, zone.name, pct) for zone, pct in zip(zones, percentages))
-                blob_stats = zone_blob_stats(zones, ai_mask, final_mask, result.confidence_map)
-                blob_rows.extend((path.name, s) for s in blob_stats)
-                badge = f"{percentages[-1]:.1f}%" if percentages else None
-                self.progress.emit(path, "done", badge, done, total)
-                del result, ai_mask, final_mask, zones
+                self.image_inferred.emit(path, result, done, total)
             except Exception as exc:
-                log.exception(f"존 분석 일괄 처리 실패 — image={path}")
+                log.exception(f"존 분석 일괄 처리(추론) 실패 — image={path}")
                 self.progress.emit(path, "error", str(exc), done, total)
-        self.completed.emit(rows, blob_rows)
 
 
 def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
@@ -227,6 +184,14 @@ class ZoneAnalysisTab(QWidget):
         self._worker: _ZoneInferenceWorker | None = None
         self._batch_worker: _ZoneBatchWorker | None = None
         self._batch_progress: QProgressDialog | None = None
+        # BUG-030: cv2/numpy 존·블랍 후처리 결과(메인 스레드에서 누적) + 배치 컨텍스트
+        self._batch_rows: list[tuple[str, str, float]] = []
+        self._batch_blob_rows: list[tuple[str, ZoneBlobStat]] = []
+        self._batch_mode: str = "apply_all"
+        self._batch_circles_ref: list[tuple[float, float, float]] = []
+        self._batch_ref_size: tuple[int, int] = (0, 0)
+        self._batch_sensitivity: float = 0.5
+        self._batch_target_cid: int | None = None
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
@@ -1160,28 +1125,42 @@ class ZoneAnalysisTab(QWidget):
         if self._image_path in targets and self._last_result is not None:
             cached[self._image_path] = self._last_result
         self._btn_batch.setEnabled(False)
+        # BUG-030: 존/블랍 후처리는 워커 스레드가 아니라 메인 스레드
+        # (_on_batch_image_inferred)에서 수행 — 그 계산에 필요한 컨텍스트를 여기 보관한다.
+        self._batch_rows = []
+        self._batch_blob_rows = []
+        self._batch_mode = mode
+        self._batch_circles_ref = circles_ref
+        self._batch_ref_size = (ref_w, ref_h)
+        self._batch_sensitivity = sensitivity
+        self._batch_target_cid = target_cid
         self._batch_progress = QProgressDialog(
             "존 분석 일괄 처리 중…", "취소", 0, len(targets), self
         )
         self._batch_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._batch_progress.setMinimumDuration(0)
         self._batch_worker = _ZoneBatchWorker(
-            self._model, targets, self._ckpt_path, cached, mode, circles_ref,
-            (ref_w, ref_h), sensitivity, target_classes, target_cid,
-            min_confidence, min_pixel_size,
+            self._model, targets, self._ckpt_path, cached,
+            target_classes, min_confidence, min_pixel_size,
         )
         self._batch_progress.canceled.connect(self._batch_worker.requestInterruption)
         self._batch_worker.progress.connect(self._on_batch_progress)
-        self._batch_worker.completed.connect(self._on_batch_completed)
+        self._batch_worker.image_inferred.connect(self._on_batch_image_inferred)
         self._batch_worker.finished.connect(self._on_batch_finished)
         self._batch_worker.start()
 
     def _on_batch_progress(self, path: Path, status: str, detail,
                            done: int, total: int) -> None:
-        if self._batch_progress is not None:
-            self._batch_progress.setMaximum(total)
-            self._batch_progress.setValue(done)
-            self._batch_progress.setLabelText(f"{done} / {total}  {path.name}")
+        # `QProgressDialog.setValue()`는 내부적으로 `processEvents()`를 호출해
+        # 이미 큐에 쌓인 `finished` 시그널을 재진입(reentrant)으로 먼저 처리할 수
+        # 있다 — 그 핸들러(`_on_batch_finished`)가 `self._batch_progress`를
+        # None으로 바꾸므로, 매번 `self._batch_progress`를 다시 읽지 말고 로컬
+        # 변수 하나로 스냅샷해 이후 호출 전체에 일관되게 사용한다.
+        dlg = self._batch_progress
+        if dlg is not None:
+            dlg.setMaximum(total)
+            dlg.setValue(done)
+            dlg.setLabelText(f"{done} / {total}  {path.name}")
         if status == "processing":
             self._img_list.set_item_status(path, "processing")
         elif status == "error":
@@ -1190,17 +1169,67 @@ class ZoneAnalysisTab(QWidget):
         else:
             self._img_list.set_item_status(path, "done", badge=detail)
 
-    def _on_batch_completed(
-        self, rows: list[tuple[str, str, float]], blob_rows: list[tuple[str, ZoneBlobStat]]
-    ) -> None:
+    def _on_batch_image_inferred(self, path: Path, result: InferenceResult,
+                                 done: int, total: int) -> None:
+        """BUG-030: cv2/numpy 존·블랍 후처리 — 반드시 메인 스레드에서 실행해야 한다
+        (워커 스레드 안에서 실 CUDA 추론 직후 cv2 후처리를 이어서 하면 하드크래시,
+        QA.md BUG-030). `_ZoneBatchWorker.run()`이 하던 후처리를 그대로 옮긴 것."""
+        try:
+            h, w = result.raw_class_map.shape
+            if self._batch_mode == "per_image":
+                with Image.open(str(path)) as im:
+                    rgb = np.array(im.convert("RGB"))
+                circles = detect_circles(rgb[:, :, ::-1].copy(), sensitivity=self._batch_sensitivity)
+            else:
+                circles = _scale_circles(self._batch_circles_ref, self._batch_ref_size, (w, h))
+            if not circles:
+                self._on_batch_progress(path, "done", "원 없음", done, total)
+                return
+
+            ai_mask = result.class_map == self._batch_target_cid
+            previous = zstate.load_state(path)
+            if previous is not None:
+                if previous["removed_blob_ids"]:
+                    labels, _, _ = compute_blob_labels(ai_mask)
+                    ai_mask = ai_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
+                final_mask = apply_manual_strokes(ai_mask, previous["manual_strokes"])
+            else:
+                final_mask = ai_mask
+            state = previous or {
+                "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
+            }
+            state["circles"] = [
+                (idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)
+            ]
+            zstate.save_state(path, state)
+
+            zones = zones_from_circles(
+                [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)], (h, w)
+            )
+            percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
+            self._batch_rows.extend(
+                (path.name, zone.name, pct) for zone, pct in zip(zones, percentages)
+            )
+            blob_stats = zone_blob_stats(zones, ai_mask, final_mask, result.confidence_map)
+            self._batch_blob_rows.extend((path.name, s) for s in blob_stats)
+            badge = f"{percentages[-1]:.1f}%" if percentages else None
+            self._on_batch_progress(path, "done", badge, done, total)
+        except Exception as exc:
+            log.exception(f"존 분석 일괄 처리(후처리) 실패 — image={path}")
+            self._on_batch_progress(path, "error", str(exc), done, total)
+
+    def _on_batch_finished(self) -> None:
+        # QThread.finished는 같은 스레드에서 순서대로 큐잉된 image_inferred 시그널이
+        # 모두 메인 스레드에서 처리된 뒤에 도착한다(Qt 크로스스레드 큐드 시그널은
+        # emit 순서를 보존) — 그래서 여기서 _batch_rows/_batch_blob_rows를 그대로
+        # 최종 결과로 써도 안전하다.
         if self._batch_progress is not None:
             self._batch_progress.close()
             self._batch_progress = None
+        rows, blob_rows = self._batch_rows, self._batch_blob_rows
+        self._batch_worker = None
+        self._update_batch_button_state()
         if not rows:
             QMessageBox.information(self, "결과 없음", "처리된 결과가 없습니다.")
             return
         ZoneBatchResultDialog(rows, blob_rows, self).exec()
-
-    def _on_batch_finished(self) -> None:
-        self._batch_worker = None
-        self._update_batch_button_state()
