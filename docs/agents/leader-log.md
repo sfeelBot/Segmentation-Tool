@@ -475,3 +475,10 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
   신규 3건·기존 9건 테스트와 오프스크린 탭 구동을 재검증했다.
 - 작업 중 별도 빌드 동기화 충돌이 발생해 사용자 변경에는 손대지 않고 격리 브랜치에서
   검증을 계속했으며, 원 워크트리가 정리된 뒤 검증 커밋만 이식했다. push는 수행하지 않았다.
+## 2026-08-31 — Zone 1.4.0 버전 갱신·main 동기화·push
+
+- 사용자 요청에 따라 Zone 기능 릴리스를 `1.4.0`으로 갱신하고 installer 출력명을
+  `SegmentationModelUIZone-Setup-1.4.0.exe`로 확정했다.
+- main `ba8bf5e`를 전용 sync 브랜치와 PR #33으로 `feature/zone-analysis-tab`에 반영했다.
+- 동기화 중 발견된 이미지 상태 배지 순번 회귀와 QImage 테스트 계약을 보완했다.
+- 릴리스 관련 54건, 전체 127건 테스트 통과 후 main·zone을 원격에 push했다.

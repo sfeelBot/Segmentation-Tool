@@ -126,3 +126,11 @@
 - 내용: main의 Python 3.12 빌드 venv 자동 준비 및 잘못된 기존 venv 자동 재생성 수정을 zone에 반영.
 - 검증: zone build/release 테스트 41 passed 및 zone 전용 검사 통과.
 - 제외: 실제 PyInstaller/Inno Setup installer 생성 및 GitHub Release 업로드는 수행하지 않음.
+## 2026-08-31 — Zone 1.4.0 원격 반영
+
+- `release.ini`: `version=1.4.0`, `tag_prefix=zone-v`, main 기준
+  `v1.10.4` 이후 `ba8bf5e`로 갱신.
+- 생성 메타데이터: `MyAppVersion=1.4.0`, `MyProductSlug=SegmentationModelUIZone`.
+- installer 출력명: `SegmentationModelUIZone-Setup-1.4.0.exe`.
+- sync PR #33 병합 완료. main과 `feature/zone-analysis-tab` 모두 origin과 동기화.
+- 태그와 실제 installer 빌드는 이번 요청 범위에 포함하지 않았다.
