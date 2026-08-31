@@ -961,12 +961,16 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
         rasterize-on-commit `QImage` 캐시로 교체(`annotation_canvas.py` 오버레이 캐시
         원칙 재사용). `app/widgets/zone_canvas.py` 단독. 구현 완료(2026-08-31,
         벤치마크 500스트로크×20스탬프 기준 29.6ms/frame -> 0.175ms/frame, 168.8배,
-        픽셀 렌더링 결과 회귀 없음 확인) — `docs/agents/implementation-log.md`
-        참고, 검증 서브에이전트 확인 필요.
+        픽셀 렌더링 결과 회귀 없음 확인) — `docs/agents/implementation-log.md` 참고.
+        **검증 통과(2026-08-31)** — 독립 재측정(300스트로크×15스탬프)에서도
+        224.6배 개선 재확인, undo/타겟전환/회귀 전부 정상.
+        `docs/agents/verification-log.md` 참고.
   - [x] **R-ZONE-2** — 이슈3(CPU 경고 누락): `prompt_gpu_availability()`를 `_on_run()`/
         `_on_batch_process()`에 추가(추론/학습/오토라벨링과 동일 패턴, 신규 로직 없음).
         `app/tabs/zone_analysis_tab.py` 단독. 구현 완료(2026-08-31),
-        `docs/agents/implementation-log.md` 참고 — 검증 서브에이전트 확인 필요.
+        `docs/agents/implementation-log.md` 참고. **검증 통과(2026-08-31)** —
+        단일 추론/배치처리 둘 다 취소·진행 실동작 확인,
+        `docs/agents/verification-log.md` 참고.
   - [ ] **R-ZONE-3** — 요청A(3모드+디스크 자동저장) + 이슈2(통합 해결, 최대 스코프):
         신규 `app/core/zone_state_store.py`(사이드카 JSON) + 3-way 모드 콤보 +
         `get_state`/`set_state` + `_save_timer`/`_flush_state()` + `_on_batch_process()`

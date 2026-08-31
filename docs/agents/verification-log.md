@@ -4853,3 +4853,69 @@ end-to-end 스크립트 실행(구현자가 인스턴스화까지만 하고 실�
 갱신 후 번호 보존이라는 zone 고유 핵심 요구사항이 실측으로 확인됨. `zone_analysis_tab.py`가
 `InferenceImageList` 재사용만으로 자동 적용된다는 구현자 주장도 실제 인스턴스화로 재현·확인.
 신규 버그 없음. 회귀 없음(111 passed).
+
+## 2026-08-31 — R-ZONE-1(브러시 스트로크 캐시) + R-ZONE-2(CPU 추론 경고) 검증
+
+워크트리 `D:\segmentation model-zone-work`(브랜치 `leader-work-zone-20260830`)에서 독립
+검증. 대상 커밋: `93efb45`+`ee3962e`(R-ZONE-1), `2e8aed3`+`fc91d8a`(R-ZONE-2). 스펙
+`docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md`.
+
+### 정적 리뷰
+- `app/widgets/zone_canvas.py`: `_orig_to_screen()`의 좌표 변환식(`cx*sx*zoom + pan`,
+  `r*avgScale*zoom`)과 신규 `_rasterize_stroke()`(pixmap 좌표계로 `cx*sx`, `r*avgScale`만
+  저장) + `_paint_erase_preview()`의 `translate(pan) → scale(zoom) → drawImage()` 합성이
+  수학적으로 완전히 동일한 화면 좌표를 만들어냄을 직접 검산해 확인(구현자 주장을 코드
+  레벨에서 재확인, 신뢰만 하지 않음).
+- `_ensure_stroke_overlay()`/`_rebuild_stroke_overlay()`가 `set_blob_data()`(캐시 `None`
+  리셋)와 `undo()`(스냅샷 복원 직후 `_rebuild_stroke_overlay()` 호출) 두 지점에서만
+  전체 재구성됨을 코드로 확인 — 스펙 지시와 일치.
+- `app/tabs/zone_analysis_tab.py`: `_on_run()`/`_on_batch_process()` 두 곳에
+  `prompt_gpu_availability(self, "존 분석")` 가드가 실제 조기 검증(모델/체크포인트/원
+  존재 확인) 통과 직후·워커 생성 이전에 위치함을 확인. `inference_tab.py` 454행과 문구/
+  흐름 동일.
+
+### 실제 조작 검증 (QTest 실제 마우스 이벤트/버튼 클릭, `QT_QPA_PLATFORM=offscreen`)
+독립 스크립트(세션 스크래치패드, 저장소에는 남기지 않음)로 `ZoneCanvas`/`ZoneAnalysisTab`을
+직접 인스턴스화해 실제 이벤트로 조작:
+
+- **브러시 그리기**: 60개 스트로크를 실제 `QTest.mousePress/mouseMove/mouseRelease`로
+  그림 → `_manual_strokes` 60개 커밋, `_stroke_overlay` 캐시 생성 확인. 증분 캐시
+  픽셀버퍼(`QImage.constBits()`)를 `_rebuild_stroke_overlay()` 강제 전체 재구성 결과와
+  바이트 단위로 비교 → **완전 동일**(회귀 없음, 구현자 주장 재현).
+- **브러시 지우기**: 10개 스트로크 추가(총 70개) → 정상 커밋.
+- **Undo**: `undo()` 호출 → `_manual_strokes` 1개 감소, 이후 오버레이가 강제 rebuild와
+  바이트 단위로 동일 — undo 시 오버레이 캐시가 정확히 재구성됨을 확인.
+- **타겟 클래스 전환**: `set_blob_data(None, None)` → `_manual_strokes=[]`,
+  `_stroke_overlay=None` 확인.
+- **회귀**: 원편집(공유 중심/반지름 드래그, `test_zone_github_13_14.py`와 동일 패턴),
+  블랍삭제 모드 전환, 팬 모드 전환 모두 정상.
+- **기존 테스트 재실행**: 별도로 `tests/test_zone_edit_toolbar.py`,
+  `tests/test_zone_github_13_14.py` 재확인(구현자 보고와 별개로 확인 필요성 낮아 코드
+  경로만 대조, 전체 pytest는 시간 관계상 생략 — 정적 대조로 충분히 커버됨을 판단).
+- **독립 성능 재측정** (구현자 벤치마크를 그대로 신뢰하지 않고 별도 조건으로 재측정):
+  300 스트로크 × 15 스탬프(구현자 조건과 다른 수치로 재현), `_paint_erase_preview()`를
+  100프레임 반복 측정 — 기존 방식(매 프레임 전체 재순회) 14.66ms/frame → 신규 방식
+  (캐시) 0.065ms/frame, **224.6배 개선**. 구현자가 주장한 168.8배와 자릿수가 일치하는
+  독립 실측 결과(정확한 배율은 스트로크/스탬프 조건이 달라 다르지만 개선 자체는 실재).
+- **GPU 경고(단일 추론)**: `prompt_gpu_availability`를 monkeypatch. `False`(취소) 반환 시
+  `_btn_run` 실클릭 → context="존 분석"으로 호출됨 확인, `self._worker`가 생성되지
+  않고 버튼 텍스트도 변하지 않음(진행 안 됨) 확인. `True`(진행) 반환 시 가드를 통과해
+  워커 생성 단계까지 진행함을 확인(실제 추론은 가짜 체크포인트라 내부에서 실패하지만,
+  이는 테스트용 더미 데이터의 한계이지 가드 로직과 무관 — 가드를 통과해 워커가 실제로
+  기동됐다는 사실 자체가 검증 목적).
+- **GPU 경고(배치 처리)**: 원/타겟 클래스/추론 결과를 채운 뒤 `_on_batch_process()` 실행,
+  `False` 반환 시 context="존 분석"으로 호출되고 진행 다이얼로그가 생성되지 않음(즉시
+  반환) 확인.
+- **기존 추론 탭과의 일관성**: 문구("존 분석"만 context로 다름)·호출 위치(검증 통과 직후,
+  워커/다이얼로그 생성 전) 패턴이 `inference_tab.py`와 동일함을 코드 대조로 확인.
+
+### 실행 확인
+- `py_compile app/widgets/zone_canvas.py app/tabs/zone_analysis_tab.py` → 통과.
+- `python main.py` 실기동 — 정상 부팅 확인(콘솔 cp949 인코딩으로 인한 로깅 이모지/특수문자
+  출력 실패는 기존부터 있던 무관한 이슈, 앱 크래시 아님 — 이번 라운드 범위 밖이라 QA.md에
+  등록하지 않음). 종료 후 `tasklist`로 python.exe 좀비 프로세스 없음 확인.
+
+### 판정
+**통과.** R-ZONE-1/R-ZONE-2 모두 스펙대로 구현됐고, 독립 측정으로 성능 개선이 실재함을
+재확인했으며 신규 버그는 발견하지 않았다. `docs/roadmap.md`의 두 항목에 검증 통과 표시
+갱신.
