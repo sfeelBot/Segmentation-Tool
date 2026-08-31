@@ -38,7 +38,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from PyQt6.QtWidgets import QMenu, QInputDialog
-from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QKeySequence
+from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QKeySequence, QImage
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 
 from app.widgets.overlay_viewer import OverlayViewer
@@ -89,6 +89,13 @@ class ZoneCanvas(OverlayViewer):
         self._erase_strokes: list[list[tuple[float, float, float]]] = []  # 하위 호환 지우기 합집합
         self._manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]] = []
         self._erase_mask_np: np.ndarray | None = None   # 원본 해상도 bool, 파생 캐시(undo 대상 아님)
+        # 커밋된 스트로크 rasterize 캐시(R-ZONE-1, 화면 렌더링 전용) — pixmap
+        # 좌표계 ARGB32_Premultiplied. paintEvent가 매 프레임 _manual_strokes를
+        # 전체 순회하던 O(누적 스탬프 수) 비용을 제거하기 위해, 스트로크가
+        # 커밋되는 시점(mouseReleaseEvent)에 1회만 이 이미지에 추가로 그려두고
+        # paintEvent는 drawImage() 1회로 끝낸다. _erase_mask_np(마스크 계산)와는
+        # 완전히 별개 — 이 이미지는 오직 화면 표시용이다.
+        self._stroke_overlay: QImage | None = None
         self._erase_brush_size = 30   # 원본 이미지 픽셀 단위 지름
         self._current_stroke: list[tuple[float, float, float]] = []
         self._last_erase_pos: QPointF | None = None
@@ -197,6 +204,7 @@ class ZoneCanvas(OverlayViewer):
         self._erase_strokes = []
         self._manual_strokes = []
         self._erase_mask_np = None
+        self._stroke_overlay = None
         self._current_stroke = []
         self._last_erase_pos = None
         self._erasing = False
@@ -294,6 +302,45 @@ class ZoneCanvas(OverlayViewer):
                 self._erase_paint_at(QPointF(x0 + dx * t, y0 + dy * t))
         self._last_erase_pos = img_pt
 
+    def _ensure_stroke_overlay(self) -> None:
+        """`self._stroke_overlay`가 없거나 `self._pixmap` 크기와 안 맞으면 새로
+        만든다(이미지 전환 시 크기가 바뀔 수 있음 — 별도 resize 이벤트 배선
+        불필요, 이미지 전환은 항상 `set_blob_data()`를 거쳐 캐시가 먼저 `None`이
+        되므로 자연히 재생성된다)."""
+        if self._pixmap is None:
+            return
+        size = self._pixmap.size()
+        if self._stroke_overlay is None or self._stroke_overlay.size() != size:
+            self._stroke_overlay = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+            self._stroke_overlay.fill(Qt.GlobalColor.transparent)
+
+    def _rasterize_stroke(self, draw: bool, stroke: list[tuple[float, float, float]]) -> None:
+        """스트로크 1개(스탬프 몇 개)만 캐시 이미지에 추가로 그린다 — 전체
+        재순회가 아니라 이번에 커밋된 스트로크만 그리므로 스트로크가 몇 개
+        쌓여 있든 O(1)에 가깝다(스탬프 개수에만 비례)."""
+        self._ensure_stroke_overlay()
+        if self._stroke_overlay is None:
+            return
+        sx, sy = self._orig_scale()
+        s = (sx + sy) / 2
+        p = QPainter(self._stroke_overlay)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 230, 140, 110) if draw else QColor(255, 60, 60, 110))
+        for cx, cy, r in stroke:
+            p.drawEllipse(QPointF(cx * sx, cy * sy), r * s, r * s)
+        p.end()
+
+    def _rebuild_stroke_overlay(self) -> None:
+        """`self._manual_strokes`를 처음부터 다시 그려 캐시를 재구성한다 — 저빈도
+        이벤트(undo, 타겟 클래스 전환)에서만 호출되므로 매 프레임 문제였던
+        비용과는 무관하다(스펙 R-ZONE-1)."""
+        self._stroke_overlay = None
+        if self._pixmap is None:
+            return
+        for draw, stroke in self._manual_strokes:
+            self._rasterize_stroke(draw, stroke)
+
     def _replay_erase_strokes(self) -> None:
         """스트로크 좌표 목록으로부터 지우기 마스크를 처음부터 다시 그린다
         (`disk_mask()` 재사용). 이번 라운드(R3-3)엔 호출부가 없지만, 스트로크가
@@ -353,6 +400,7 @@ class ZoneCanvas(OverlayViewer):
         self._erase_strokes = snap["erase_strokes"]
         self._manual_strokes = snap.get("manual_strokes", [])
         self._replay_erase_strokes()   # 스트로크 좌표에서 지우기 마스크를 재생(스펙 판단 1)
+        self._rebuild_stroke_overlay()  # 화면 렌더링 캐시도 스냅샷 기준으로 재구성(R-ZONE-1)
         self._selected_id = None
         self._current_stroke = []
         self._last_erase_pos = None
@@ -518,16 +566,17 @@ class ZoneCanvas(OverlayViewer):
             p.drawRect(rect)
 
     def _paint_erase_preview(self, p: QPainter) -> None:
-        """지운 스트로크를 반투명 원으로 겹쳐 그린다 — `_paint_removed_blobs()`와
-        같은 원칙(bbox/벡터 근사)으로, 매 프레임 원본 해상도 마스크를 QImage로
-        합성하지 않고 스탬프 좌표를 그대로 화면에 투영해 그리므로 드래그 중에도
-        이미지 크기와 무관하게 가볍다."""
+        """커밋된 스트로크는 rasterize-on-commit 캐시(`self._stroke_overlay`)를
+        `drawImage()` 1회로 그리고(R-ZONE-1 — 매 프레임 `_manual_strokes` 전체
+        순회를 제거), 진행 중인 현재 스트로크(`self._current_stroke`, 스탬프
+        개수가 적어 저렴)만 기존 방식대로 매 프레임 직접 그린다."""
+        if self._stroke_overlay is not None:
+            p.save()
+            p.translate(self._pan)
+            p.scale(self._zoom, self._zoom)
+            p.drawImage(0, 0, self._stroke_overlay)
+            p.restore()
         p.setPen(Qt.PenStyle.NoPen)
-        for draw, stroke in self._manual_strokes:
-            p.setBrush(QColor(0, 230, 140, 110) if draw else QColor(255, 60, 60, 110))
-            for cx, cy, r in stroke:
-                center, radius = self._orig_to_screen(cx, cy, r)
-                p.drawEllipse(center, radius, radius)
         p.setBrush(
             QColor(0, 230, 140, 110)
             if self._mode == "brush_draw" else QColor(255, 60, 60, 110)
@@ -633,9 +682,9 @@ class ZoneCanvas(OverlayViewer):
         if self._mode in ("brush_draw", "brush_erase"):
             if self._erasing:
                 if self._current_stroke:
-                    self._manual_strokes.append(
-                        (self._mode == "brush_draw", self._current_stroke)
-                    )
+                    stroke_entry = (self._mode == "brush_draw", self._current_stroke)
+                    self._manual_strokes.append(stroke_entry)
+                    self._rasterize_stroke(*stroke_entry)   # 커밋 시점 1회만 캐시에 추가(R-ZONE-1)
                     if self._mode == "brush_erase":
                         self._erase_strokes.append(self._current_stroke)
                 self._current_stroke = []
