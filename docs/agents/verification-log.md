@@ -3379,3 +3379,47 @@ Inno Setup 컴파일이 100% 실패 — GitHub #22/BUG-016 신규 로직뿐 아�
   참조 없음 확인.
 - `pytest tests/` 90 passed(독립 재실행, 통합 상태 상호작용 문제 없음).
 - 커밋하지 않음(리더가 커밋 예정, 작업 지시).
+
+---
+
+## 2026-08-31 — GitHub #31 build error (requirements.txt 인코딩) 독립 검증
+
+### 검증 대상
+- `requirements.txt` 한글 주석 4곳 영어 번역(ASCII화), `tests/test_build_release.py`의
+  `test_requirements_txt_is_ascii_only` 신규 테스트.
+
+### 1. requirements.txt 바이트 직접 스캔(구현자와 다른 방법)
+- `open(rb).read()` 후 모든 바이트를 순회해 `>=128`인 바이트를 직접 카운트하는 스크립트로
+  재확인(구현자의 `assert all(byte < 128 ...)`와 별개로 독립 작성) — 비-ASCII 바이트 0개,
+  총 598바이트. 결과 일치.
+
+### 2. 원본 버그 재현 + 수정 대조 확인
+- `git show HEAD:requirements.txt`(커밋된 수정 전 버전)를 `bytes.decode("cp949")` 시도 →
+  `'cp949' codec can't decode byte 0xec in position 26: illegal multibyte sequence` 예외로
+  **실패 재현 확인**(원래 버그가 실재했음을 증명).
+- 현재 작업 트리의 `requirements.txt`를 동일하게 `decode("cp949")` 시도 → 예외 없이 성공
+  (수정 확인).
+
+### 3. pip 실제 파싱 동작 확인
+- 스크래치 venv(`py -3.12 -m venv`) 생성 후 `pip install --dry-run -r requirements.txt`
+  실행 → 파싱 에러 없이 torch/torchvision 포함 전체 의존성 정상 해석·"Would install" 목록
+  출력까지 성공. (cp949 로케일 자체는 강제 불가하나 pip이 파일을 실제로 정상 파싱함을 확인.)
+
+### 4. `pytest tests/test_build_release.py` 전체 재실행
+- `--basetemp`(쓰기 가능 경로) 지정 시 29 passed(신규 테스트 포함) — 회귀 없음.
+- `--basetemp` 미지정 시 18건이 기존에도 알려진 환경 고유
+  `C:\Users\Feel\AppData\Local\Temp\pytest-of-Feel` 권한 오류로 ERROR 처리되는 것을
+  독립적으로도 재현(비-tmp_path 11건은 정상 통과) — 구현자 보고와 일치, 이번 변경과 무관한
+  환경 이슈로 확인.
+- `build/venv/Scripts/python.exe -m pytest tests/ -q`(project venv, `--basetemp` 사용,
+  91건 전체) 전체 통과 — 회귀 없음.
+
+### 5. 번역 정보 손실 여부 대조
+- `git show HEAD:requirements.txt` vs 현재 파일 4개 주석을 1:1 대조: "6.8+는 Windows
+  Anaconda 환경에서 DLL 로드 실패", "CPU 전용 빌드가 깔림/먼저 GPU에 맞는 CUDA 빌드 설치"
+  등 실질 내용(CUDA 빌드 안내 URL 포함)이 모두 영어로 정확히 보존됨. 정보 유실 없음.
+
+### 결론
+- **통과.** 정적 검토 + 원본 버그 재현/수정 대조 + 실제 pip dry-run 파싱 + 전체 테스트
+  스위트(29 + 91) 독립 재실행 모두 문제 없음. 발견된 이슈 없음.
+- 커밋하지 않음(리더가 커밋 예정, 작업 지시).

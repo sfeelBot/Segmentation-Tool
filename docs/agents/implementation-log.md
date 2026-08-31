@@ -3197,3 +3197,35 @@ refilter()로 재필터링)를 확정해 구현 지시서로 전달.
 포함) 실행까지만 수행했음. 실제 `InferenceTab` 위젯으로 골든 패스(체크포인트 선택 → 배치
 추론 실행 → 오버레이 정상 표시 → 불투명도/threshold 슬라이더 조작 → Excel 내보내기)를
 조작해 회귀가 없는지 확인 필요.
+
+---
+
+## 2026-08-31 — GitHub #31 build error (requirements.txt 인코딩)
+
+- 원인(리더 확정): `requirements.txt`가 BOM/인코딩 선언 없는 순수 UTF-8 텍스트인데 한글
+  주석 4곳이 포함돼, 한국어 로케일 Windows에서 pip의 `auto_decode()`가 시스템 기본
+  인코딩(cp949)으로 폴백하며 `UnicodeDecodeError`로 `build.bat`의
+  `pip install -r requirements.txt ...` 단계가 죽는 문제(`[0/4] Installing CUDA and
+  build/runtime packages`).
+- `build.bat` 상단 주석에 이미 있는 "ASCII-only" 관례를 `requirements.txt`에도 적용 —
+  한글 주석 4곳을 영어로 번역(삭제하지 않음, GPU별 CUDA 빌드 안내 등 정보 보존; 동일
+  내용이 `docs/USER_MANUAL.md`에도 있어 중복이지만 파일 자체의 안전성을 위해 유지).
+  - `d:\segmentation model\requirements.txt`
+- `PackageNotFoundError: No package metadata was found for torch` 트레이스백은 버그
+  아님(의도된 미설치 감지 흐름) — 리더 지시대로 손대지 않음.
+- 회귀 테스트 추가: `test_requirements_txt_is_ascii_only`
+  (`d:\segmentation model\tests\test_build_release.py`) — `requirements.txt`의 모든
+  바이트가 `< 128`인지 assert(어떤 레거시 코드페이지로도 항상 안전함을 보장) +
+  `bytes.decode("cp949")`로 실제 재현 검증(예외 없이 성공해야 통과).
+- 검증: `py -3.12 -m pytest tests/test_build_release.py -k
+  "requirements_txt_is_ascii or test_build_script_uses_one_validated_python or
+  test_installer_build_uses_tested_cuda_torch_pair"` 3건 통과. 전체 스위트 실행 시
+  tmp_path 픽스처를 쓰는 18건이 `C:\Users\Feel\AppData\Local\Temp\pytest-of-Feel`
+  권한 오류로 에러 처리됐으나, 이는 환경 고유의 기존 이슈(내 변경과 무관 — 같은 파일의
+  다른 tmp_path 테스트에서도 동일하게 재현됨)이고 tmp_path를 쓰지 않는 11건은 모두 통과.
+- 커밋하지 않음(사용자 지시 — 검증 통과 후 리더가 커밋).
+
+**검증 서브에이전트 확인 필요** — 정적 검토 + 새 회귀 테스트 실행까지만 수행했음. 가능하면
+비한국어(cp949 미사용) 환경이 아닌 실제 한국어 로케일 Windows에서 `build.bat` 전체
+실행까지 확인하면 가장 확실하나, 최소한 `pytest tests/test_build_release.py`와
+`requirements.txt` 바이트 검사 재확인을 요청.
