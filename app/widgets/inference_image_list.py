@@ -19,7 +19,7 @@ from typing import Literal
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QLabel, QLineEdit, QComboBox,
+    QTreeWidgetItemIterator, QLabel, QLineEdit, QComboBox,
 )
 from PyQt6.QtGui import QColor, QFont, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
@@ -99,6 +99,9 @@ class InferenceImageList(QWidget):
         self._all_paths: list[Path] = []         # 필터·정렬 전 전체 이미지
         self._paths: list[Path] = []             # 현재 표시 중인 이미지 (필터+정렬 후)
         self._path_to_item: dict[Path, QTreeWidgetItem] = {}
+        # Path → 표시 순번(1부터, 전체 통번호) — _number_items() 에서 재구축,
+        # set_item_status()/clear_status() 의 텍스트 갱신에서도 번호가 유지되도록 별도 보관.
+        self._path_to_number: dict[Path, int] = {}
         self._sort_mode = "name_asc"
         self._filter_text = ""
         self._status: dict[Path, tuple[str, str | None]] = {}   # 배치 처리 상태(R-C 3b, 애디티브)
@@ -214,7 +217,7 @@ class InferenceImageList(QWidget):
         self._status.clear()
         for path, item in self._path_to_item.items():
             item.setIcon(0, QIcon())
-            item.setText(0, path.name)
+            item.setText(0, self._numbered_text(path, path.name))
 
     def set_multi_select(self, enabled: bool) -> None:
         """기본값은 SingleSelection(기존 동작 유지) — 켜면 Ctrl/Shift 다중 선택 허용."""
@@ -249,7 +252,8 @@ class InferenceImageList(QWidget):
         status, badge = self._status[path]
         icon_name, color = _STATUS_ICON_STYLE.get(status, (None, None))
         item.setIcon(0, svg_icon(icon_name, color, 14) if icon_name else QIcon())
-        item.setText(0, f"{path.name}  [{badge}]" if badge else path.name)
+        base = f"{path.name}  [{badge}]" if badge else path.name
+        item.setText(0, self._numbered_text(path, base))
 
     def navigate(self, step: int) -> None:
         """현재 이미지에서 step 만큼 이동 (±1). 접힌 폴더는 자동 펼침."""
@@ -310,6 +314,30 @@ class InferenceImageList(QWidget):
             return None
         data = item.data(0, _PATH_ROLE)
         return data if isinstance(data, Path) else None
+
+    def _numbered_text(self, path: Path, base: str) -> str:
+        """현재 화면 순번(전체 통번호) 접두 텍스트. 번호 미확정 시 base 그대로 반환."""
+        num = self._path_to_number.get(path)
+        return f"{num}. {base}" if num is not None else base
+
+    def _number_items(self) -> None:
+        """트리에 실제로 보이는 순서(펼침 상태 무관)대로 이미지 항목에 전체 통번호를 부여.
+
+        폴더 헤더 아이템은 UserRole 에 Path 가 없어 자동으로 건너뛰어진다. 번호는
+        `_path_to_number` 에 저장해 이후 set_item_status()/clear_status() 의 텍스트
+        갱신에서도 유지되도록 한다(텍스트에서 번호를 파싱하지 않음).
+        """
+        self._path_to_number.clear()
+        idx = 1
+        it = QTreeWidgetItemIterator(self._tree)
+        while it.value():
+            item = it.value()
+            path = self._get_item_path(item)
+            if path is not None:
+                self._path_to_number[path] = idx
+                item.setText(0, self._numbered_text(path, path.name))
+                idx += 1
+            it += 1
 
     def _select_by_index(self, idx: int) -> None:
         if not (0 <= idx < len(self._paths)):
@@ -442,6 +470,8 @@ class InferenceImageList(QWidget):
                 item = self._make_leaf_item(p, p.name)
                 self._tree.addTopLevelItem(item)
                 self._path_to_item[p] = item
+
+        self._number_items()
 
         # ── 선택 복원 ─────────────────────────────────────────────────────────
         new_item: QTreeWidgetItem | None = None
