@@ -996,3 +996,71 @@ PR #18도 병합 완료된 상태에서 사용자가 GitHub 이슈 #13("존 분�
 한 번에 처리 가능. 검증은 오프라인 기능 완전 제거 확인 + 요청1 배치 적용
 골든패스(공유 헬퍼 `_scale_circles()` 오삭제 없음 회귀 확인) + 기존 자동 테스트
 (`test_zone_github_13_14.py`/`test_zone_edit_toolbar.py`) 통과까지 필요.
+
+---
+
+## 2026-08-30 — Zone 분석 탭 배치 모드 3종(요청A) + 세션 이슈 3건(요청B) 기획
+
+### 배경
+사용자가 (A) "Zone 결정 방법" 3모드(일괄 적용/일괄 적용 후 수정/장별 적용, 이미지
+전환 시 자동 저장) 재설계와 (B) 세션 이슈 3건(①브러시 그리기 성능 병목 — 리더가
+원인 특정 완료 ②추론 결과 변경 후 이미지 전환 시 저장 불가 — 요청A로 통합 ③CPU
+빌드 추론 시 GPU 경고 누락)을 요청. 작업 전 워크트리가
+`D:\segmentation model-zone-work`(`leader-work-zone-20260830` 브랜치,
+`feature/zone-analysis-tab` tip `0902466`에서 분기)임을 `cd`로 확인.
+
+### 한 일
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절 전체(R1~R4·신규기능 3건·라운드3(R3-1~5)·
+  GitHub #13/14·오프라인 팝업 삭제) + `app/tabs/zone_analysis_tab.py`(1013줄)·
+  `app/widgets/zone_canvas.py`(734줄)·`app/core/zone_metrics.py`를 실제로 읽고
+  로드맵 서술과 코드가 일치함을 확인(`_chk_apply_all`/`_on_batch_process`의
+  `apply_to_all` 분기/`_scale_circles()` 전부 존재, 요청A 모드1은 이미 구현돼 있음).
+- **이슈1(성능) 원인 코드 재확인**: `ZoneCanvas.paintEvent()` →
+  `_paint_erase_preview()`가 `self._manual_strokes`(커밋된 스트로크 이력 전체)를
+  매 프레임 전체 순회 — `_erase_mask_np`(마스크 계산용 파생 캐시)는 렌더링 경로에
+  전혀 관여하지 않음을 확인. 리더 진단과 일치. 해결 설계: 커밋 시점(`mouseReleaseEvent`)
+  1회만 스트로크를 `QImage` 캐시에 rasterize하고 `paintEvent`는 그 캐시를
+  `drawImage()` 1회 + 진행 중인 현재 스트로크만 직접 그리는 방식(`annotation_canvas.py`
+  오버레이 캐시 원칙 재사용, 신규 파일 없음).
+- **이슈3(GPU 경고) 확인**: `zone_analysis_tab.py`가 `prompt_gpu_availability()`를
+  전혀 호출하지 않음(추론/학습/오토라벨링 3곳과 다름)을 grep으로 확인. `_on_run()`/
+  `_on_batch_process()` 2곳에 기존 함수 그대로 재사용해 추가하는 것으로 설계, 신규
+  UX("다시 묻지 않기" 등)는 과설계로 판단해 추가하지 않음.
+- **요청A 핵심 설계**: 신규 무거운 캐시 자료구조 없음 —
+  `ZoneCanvas._push_undo()`가 이미 쓰는 경량 스냅샷 dict(원 튜플/블랍id 집합/
+  스트로크 좌표, 마스크 배열 없음)를 그대로 "이미지별 상태" 표현으로 재사용해
+  `get_state()`/`set_state()` 신규 공개 API 2개만 추가(`undo()`를 `set_state()`
+  호출로 리팩터링해 중복 제거 권장). `ZoneCanvas.apply_manual_strokes()`(인스턴스
+  메서드라 다른 이미지 캐시엔 적용 불가)를 `zone_metrics.py` 순수 함수로 추출.
+  라벨링 탭(`annotation_canvas.py`)의 디바운스 `_save_timer`+전환 시 동기 flush
+  패턴을 실제로 조사했으나, Zone 탭은 디스크 I/O가 아니라 dict 대입이라 **디바운스는
+  불필요**(YAGNI)하다고 판단 — 이미지 전환 시 1회 flush로 충분.
+  기존 `_chk_apply_all` 체크박스는 3-way `QComboBox`로 **완전 대체**(확장 아님,
+  좁은 좌측 패널 폭 제약 근거).
+- **신규 발견(요청A 필수 선행 보강)**: `_on_batch_process()`가 대상 이미지가 현재
+  표시 이미지와 다르면 `self._results` 캐시를 조회하지 않고 매번 `engine.run()`을
+  재실행하며, 계산 결과도 캐시에 다시 쓰지 않아 휘발됨 — 이 갭을 고치지 않으면
+  배치 처리 후 이미지 목록을 클릭해도 오버레이/타겟클래스가 복원되지 않아 모드2/3가
+  실질적으로 동작하지 않음. 캐시 조회+저장 보강을 R-ZONE-3에 필수 항목으로 편입
+  (부수 효과로 불필요한 재추론도 제거).
+- 결정 대기 1건 등록: 저장 범위(세션 메모리 vs 디스크 영속화) —
+  `docs/decisions-needed.md`, 권장 기본안은 세션 메모리(이 도구의 "완전 독립 도구"
+  원칙상 디스크 저장 위치를 새로 설계해야 하는 무거운 결정이라 이번 라운드 스코프
+  밖으로 분리, 실제 불만 접수 시 후속 논의 제안).
+- 라운드 분할: R-ZONE-1(이슈1, `zone_canvas.py` 단독) → R-ZONE-2(이슈3,
+  `zone_analysis_tab.py` 단독, R-ZONE-1과 파일 달라 병렬 가능) → R-ZONE-3(요청A+
+  이슈2 통합, 최대 스코프, `zone_canvas.py`/`zone_metrics.py`/`zone_analysis_tab.py`
+  3파일, R-ZONE-1 완료 후 착수 — 스트로크 캐시 재구성 API를 `set_state()`가
+  재사용해야 하므로).
+- 산출물: [docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md](../specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md)
+  신설, `docs/roadmap.md` "존(Zone) 분석 탭" 절에 하위 절 추가, `docs/decisions-needed.md`
+  1건 등록. 코드는 건드리지 않음(기획 단계) — 작업 워크트리
+  `D:\segmentation model-zone-work` 재확인, 다른 워크트리(`-zone-analysis-tab`,
+  main `D:\segmentation model`) 미접촉.
+
+### 상태
+완료 — 다음: 리더가 구현 에이전트에 R-ZONE-1부터 순차 위임 가능(결정 대기 1건은
+착수를 막지 않음, 권장 기본안대로 세션 메모리로 구현 진행 가능). 검증은 라운드별
+`python main.py` 실행 확인 + R-ZONE-3는 "주요 기능 추가"에 해당해 실제 GUI 골든패스
+(모드1/2/3 각각 이미지 전환+편집+복원, 배치 처리 후 목록 클릭 시 오버레이 복원)까지
+필요.

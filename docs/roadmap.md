@@ -929,6 +929,40 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       tests/test_zone_edit_toolbar.py`(14건) + `tests/` 전체(105건, `--basetemp` 지정
       환경 이슈 우회) 통과.
 
+### 배치 모드 재설계(3모드) + 성능/CPU경고 개선 (2026-08-30 세션 요청)
+
+기획 완료: [docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md](specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md).
+전제: R1~R4·R-A~R-C·R3-1~R3-5·GitHub #13/#14·오프라인 원 검출 삭제까지 전부 완료.
+사용자 요청 2건 — 요청A: "Zone 결정 방법" 3모드(①일괄 적용 — 기존 구현 확인만 ②일괄
+적용 후 수정 — 신규, 이미지 전환 시 자동 저장 ③장별 적용 — 신규, 이미지별 개별 편집
++ 자동 저장), 요청B: 세션 이슈 3건(①브러시 그리기 성능 병목 ②추론 결과 변경 후
+이미지 전환 시 저장 불가 — 요청A로 통합 해결 ③CPU 빌드 추론 시 GPU 경고 누락).
+- 코드 대조 결과 로드맵 서술과 실제 코드 일치 확인. 신규 발견: `_on_batch_process()`가
+  캐시된 `self._results`를 조회하지 않고 매번 재추론 + 계산 결과를 캐시에 쓰지도
+  않는 비효율(요청A 구현의 필수 선행 보강으로 편입).
+- **판단(요청A 핵심)**: 신규 무거운 캐시 자료구조 없음 — `ZoneCanvas._push_undo()`가
+  이미 쓰는 경량 스냅샷 dict(원 튜플/블랍id 집합/스트로크 좌표)를 그대로 "이미지별
+  상태"로 재사용. `ZoneCanvas`에 `get_state()`/`set_state()` 신규 공개 API만 추가(undo
+  복원 로직과 통합 리팩터링 권장). `zone_metrics.py`에 `apply_manual_strokes()` 순수
+  함수 추출(현재 `ZoneCanvas` 인스턴스 메서드라 다른 이미지의 캐시 상태엔 적용 불가).
+  기존 `_chk_apply_all` 체크박스는 3-way `QComboBox`로 완전 대체(확장 아님).
+  자동 저장은 라벨링 탭과 달리 **디바운스 타이머 불필요**(디스크 I/O 아니라 dict
+  대입이라 비용 무시 가능) — 이미지 전환 시 1회 flush로 충분.
+- **결정 대기 1건 등록**: 저장 범위(세션 메모리 vs 디스크 영속화) —
+  [docs/decisions-needed.md](decisions-needed.md), 권장 기본안은 세션 메모리.
+- 라운드 분할(작게 쪼개고 의존관계 고려, 권장 순서 1→2→3):
+  - [ ] **R-ZONE-1** — 이슈1(성능): `paintEvent()`의 수동 스트로크 전체 재순회를
+        rasterize-on-commit `QImage` 캐시로 교체(`annotation_canvas.py` 오버레이 캐시
+        원칙 재사용). `app/widgets/zone_canvas.py` 단독.
+  - [ ] **R-ZONE-2** — 이슈3(CPU 경고 누락): `prompt_gpu_availability()`를 `_on_run()`/
+        `_on_batch_process()`에 추가(추론/학습/오토라벨링과 동일 패턴, 신규 로직 없음).
+        `app/tabs/zone_analysis_tab.py` 단독.
+  - [ ] **R-ZONE-3** — 요청A(3모드+자동저장) + 이슈2(통합 해결, 최대 스코프): 3-way
+        모드 콤보 + `get_state`/`set_state` + `_on_batch_process()` 필수 보강(결과
+        캐시 저장 누락 수정 + `removed_blob_ids`/`manual_strokes` 반영) — R-ZONE-1
+        완료 후 착수(같은 파일, 스트로크 캐시 API가 먼저 있어야 `set_state()`가
+        재사용 가능).
+
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
   그리기/지우기/연결 블랍 삭제/팬/Undo), 수동 스트로크 last-write-wins와 혼합 LIFO Undo.
