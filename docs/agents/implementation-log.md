@@ -4694,3 +4694,26 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   상태에서도 정상 동작("미분류"), (4) 배경 클릭 시 하이라이트/텍스트 비워짐,
   (5) 타겟 클래스 전환/새 이미지 로드 시 선택 자동 해제까지 실제 UI 조작으로 재확인
   하기 전까지는 완료로 간주하지 않는다.**
+
+## 2026-09-01 — BUG-032 Zone 캔버스 클릭 좌표 오염 수정
+
+- 증상: `ZoneCanvas`에서 원이 1개 이상 존재할 때 원편집 모드로 빈 곳을(드래그 없이) 클릭하면
+  `zone_clicked`/`blob_clicked`가 실제 클릭 위치가 아니라 항상 기존 원들의 평균 중심을 emit함.
+- 원인: `mousePressEvent()`가 신규 원 생성 시 GitHub #13 동심원 강제 규칙에 따라
+  `item.cx/cy`를 기존 원들의 평균 중심으로 치환하는데, `mouseReleaseEvent()`의 "드래그
+  없는 단순 클릭" 판정 분기(`click_x, click_y = item.cx, item.cy`)가 이 임시좌표를
+  그대로 재사용하고 있었음.
+- 수정: `mousePressEvent()`가 press 시점의 실제 원본 이미지 좌표를 `self._press_orig_pt`에
+  별도 저장하고, `mouseReleaseEvent()`가 클릭 판정 시 `item.cx/cy` 대신 이 필드를 사용하도록
+  변경(`app/widgets/zone_canvas.py`). 원 생성/동심원 강제 로직 자체는 무변경.
+- 검증(구현자, 재작업 아님 — verifier의 재확인 필요):
+  - verifier가 남긴 재현 스크립트(`verify_r3_blob_click.py`)를 그대로 재실행 — 원 1개 존재
+    상태에서 서로 다른 3개 화면 위치 클릭 시 emit 좌표가 각각 다르게 나옴(수정 전엔 항상
+    동일한 평균중심)을 확인, 54개 assertion 전부 통과.
+  - `zone_clicked`도 별도 스크립트(`verify_zone_clicked.py`)로 원 2개(반경50/150) 상태에서
+    중심부/링/바깥쪽 3개 지점 클릭 시 각각 zone_index 0/1/2가 정확히 emit됨을 확인, 동심원
+    강제 규칙(신규 원 중심이 기존 평균중심으로 고정) 회귀 없음도 같은 스크립트로 재확인.
+  - `pytest tests/test_zone_edit_toolbar.py tests/test_zone_github_13_14.py
+    tests/test_zone_state_persistence.py tests/test_zone_batch_worker.py` 23건 전부 통과.
+- QA.md BUG-032를 Closed로 이동(원인/수정/검증 기록). 커밋 `a33343c` (push 안 함).
+- **검증 서브에이전트의 독립 재확인 필요** — 구현자 본인 확인만으로 완료로 보지 않는다.
