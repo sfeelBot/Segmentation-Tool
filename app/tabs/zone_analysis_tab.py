@@ -319,6 +319,7 @@ class ZoneAnalysisTab(QWidget):
         self._act_blob_delete = tool_action("tool_eraser_flood", "클릭한 연결 블랍 삭제", "blob_delete")
         self._act_pan = tool_action("tool_pan", "화면 이동", "pan")
         self._act_circle.setChecked(True)
+        self._active_tool_action: QAction = self._act_circle
         for action in self._tool_group.actions():
             action.setEnabled(False)
         self._edit_toolbar.addSeparator()
@@ -889,6 +890,11 @@ class ZoneAnalysisTab(QWidget):
     # 충분하다(스펙 판단 2, "원편집"은 둘 다 꺼진 기본 상태로 암묵적으로 표현).
 
     def _on_edit_tool_changed(self, action: QAction) -> None:
+        if action is self._active_tool_action and action is not self._act_circle:
+            # 요청5 — 활성 도구를 다시 클릭하면 토글 비활성화, 기본(원편집)으로 복귀.
+            self._act_circle.setChecked(True)   # QActionGroup이 이전 액션을 자동으로 unchecked 처리
+            action = self._act_circle
+        self._active_tool_action = action
         mode = action.data()
         self._canvas.set_blob_delete_mode(mode == "blob_delete")
         if mode != "blob_delete":
