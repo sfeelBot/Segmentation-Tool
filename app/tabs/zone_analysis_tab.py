@@ -764,6 +764,7 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_blob_data(None, None)
             self._act_circle.setChecked(True)
             self._on_edit_tool_changed(self._act_circle)
+            self._btn_detect.setEnabled(False)   # BUG-031: 타겟 클래스가 없으면 브러시와 동일하게 편집 대상 자체가 없음
             for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
                 action.setEnabled(False)
             self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
