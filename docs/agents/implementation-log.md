@@ -4536,3 +4536,28 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   export + 배치 export 골든패스를 실행해 저장된 xlsx의 `zone_blobs` 시트를
   확인하기 전까지는 완료로 간주하지 않는다**(스펙 364~367행, "주요 기능 추가"
   분류).
+
+## 2026-09-01 — Zone 브러시 그리기/지우기 미리보기 색상 교체 (요청 1·2·3)
+
+- 스펙: `docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md` "요청 1·2·3" 절
+  (22~88행) — 지우기가 AI 블랍/브러시로 그린 영역을 실제로 지우는 로직은 이미
+  정상 동작 확인됨(코드 감사 완료, 재해석 불필요)이라 색상 상수 교체만 수행.
+- `app/widgets/zone_canvas.py`에 `_COLOR_DRAW = QColor(96, 165, 250, 110)`(파랑,
+  accent blue 재사용), `_COLOR_ERASE = QColor(156, 163, 175, 110)`(회색,
+  라벨링 탭 지우개 색 재사용) 상수 2개를 `_COLOR_NORMAL` 등 옆에 추가.
+- `_rasterize_stroke()`(구 329행)와 `_paint_erase_preview()`(구 596~600행)의
+  인라인 `QColor(0, 230, 140, 110)`(초록, 그리기) /
+  `QColor(255, 60, 60, 110)`(빨강, 지우기) 리터럴을 각각
+  `_COLOR_DRAW`/`_COLOR_ERASE`로 교체. 로직 변경 없음(색상 인자만 치환).
+- `_paint_removed_blobs()`(572행)의 `QColor(255, 60, 60, 110)`은 삭제 블랍
+  바운딩 박스 표시용으로 스펙 범위 밖이라 손대지 않음.
+- `zone_analysis_tab.py`는 다른 에이전트가 동시 작업 중이라 지시대로
+  미접촉. `tests/` 전체에서 `230, 140`/`255, 60, 60` 리터럴을 검증하는 테스트
+  없음(grep 확인) — 갱신 대상 테스트 없음.
+- 검증: `ast.parse()`로 구문 확인. 실제 QApplication 구동(`python main.py`)은
+  이 세션에서 수행하지 않음.
+- 커밋: `1da6afb` (fix, `feature/zone-analysis-tab` 브랜치). push는 하지 않았다.
+- 상태: 구현 완료. **검증 에이전트가 `python main.py` 실구동으로 Zone 탭 →
+  추론 → 브러시 그리기(파란색 확인) → 브러시 지우기로 AI 영역 + 방금 그린
+  파란 영역 둘 다 지워지는지(회색 표시 + 우측 존별 % 갱신) 확인하기 전까지는
+  완료로 간주하지 않는다.**
