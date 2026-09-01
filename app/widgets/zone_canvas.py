@@ -52,6 +52,8 @@ _MIN_CREATE_R_PX = 6.0  # 이보다 작게 드래그하고 놓으면 생성 취�
 _COLOR_NORMAL = QColor(0, 230, 140)
 _COLOR_SELECTED = QColor(255, 200, 0)
 _COLOR_ZONE_HIGHLIGHT = QColor(255, 255, 0, 90)
+_COLOR_DRAW = QColor(96, 165, 250, 110)   # 브러시 그리기(수동 추가), 앱 표준 accent blue(#60a5fa) 재사용
+_COLOR_ERASE = QColor(156, 163, 175, 110)  # 브러시 지우기, annotation_canvas.py 지우개 색(#9ca3af) 재사용
 
 
 @dataclass
@@ -326,7 +328,7 @@ class ZoneCanvas(OverlayViewer):
         p = QPainter(self._stroke_overlay)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(0, 230, 140, 110) if draw else QColor(255, 60, 60, 110))
+        p.setBrush(_COLOR_DRAW if draw else _COLOR_ERASE)
         for cx, cy, r in stroke:
             p.drawEllipse(QPointF(cx * sx, cy * sy), r * s, r * s)
         p.end()
@@ -594,10 +596,7 @@ class ZoneCanvas(OverlayViewer):
             p.drawImage(0, 0, self._stroke_overlay)
             p.restore()
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(
-            QColor(0, 230, 140, 110)
-            if self._mode == "brush_draw" else QColor(255, 60, 60, 110)
-        )
+        p.setBrush(_COLOR_DRAW if self._mode == "brush_draw" else _COLOR_ERASE)
         for cx, cy, r in self._current_stroke:
             center, radius = self._orig_to_screen(cx, cy, r)
             p.drawEllipse(center, radius, radius)
