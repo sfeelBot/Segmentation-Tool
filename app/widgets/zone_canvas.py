@@ -74,6 +74,7 @@ class ZoneCanvas(OverlayViewer):
     zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스
     blob_deleted = pyqtSignal(int)          # 블랍 삭제 모드에서 클릭으로 삭제된 블랍 라벨 id
     erase_changed = pyqtSignal()            # 브러시 지우기 스트로크가 끝났을 때 1회(R3-3)
+    blob_clicked = pyqtSignal(int, int)     # 원본 이미지 좌표 (x, y) — 요청4, circle 모드에서만 emit
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -180,6 +181,14 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
         self.circles_committed.emit()
         self.circle_selected.emit(None)
+
+    def highlight_blob_bbox(self, x: int, y: int, w: int, h: int) -> None:
+        """블랍 클릭 선택(요청4) — 원본 이미지 좌표계 bbox를 픽스맵 좌표계로 변환해
+        상속받은 `set_highlight_rect()`(OverlayViewer)에 위임한다. 인자가 None 개념이
+        필요하면 호출부가 `set_highlight_rect(None)`을 직접 부르면 된다(getter 대칭
+        메서드 신설 불필요)."""
+        sx, sy = self._orig_scale()
+        self.set_highlight_rect(QRectF(x * sx, y * sy, w * sx, h * sy))
 
     # ── 블랍 삭제 모드 (라운드 4) ────────────────────────────────────────────
 
@@ -725,6 +734,7 @@ class ZoneCanvas(OverlayViewer):
                     self._circles.remove(item)
                     self._selected_id = None
                     self.circle_selected.emit(None)
+                    self.blob_clicked.emit(int(click_x), int(click_y))   # 요청4 — 원 유무와 무관하게 항상 emit
                     # 드래그 없는 단순 클릭이었던 것으로 간주 -- 원 생성 대신
                     # 클릭 위치가 속한 존을 선택한다(원이 하나도 없으면 존 개념이
                     # 성립하지 않으므로 발생시키지 않음).

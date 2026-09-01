@@ -7,6 +7,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication, QGroupBox
 
 from app.tabs.inference_tab import InferenceTab
@@ -93,4 +96,57 @@ def test_batch_apply_groupbox_present_and_still_gated() -> None:
     zone._update_batch_button_state()
     assert zone._btn_batch.isEnabled()   # 원 1개 이상 + 이미지 2장 이상 → 활성화
     zone.close()
+
+
+def test_blob_clicked_only_in_circle_mode_and_blob_delete_unaffected() -> None:
+    """요청4 회귀 확인 — blob_clicked는 circle 모드에서만 emit되고, 다른 모드
+    (특히 blob_delete의 클릭=즉시삭제)는 전혀 영향받지 않는다."""
+    app = _app()
+    canvas = ZoneCanvas()
+    canvas.resize(200, 200)
+    canvas.set_image_size(100, 100)
+    canvas.set_pixmap(QPixmap(100, 100))
+    labels = np.zeros((100, 100), dtype=np.int32)
+    labels[40:60, 40:60] = 1
+    stats = np.array([[0, 0, 0, 0, 0], [40, 40, 20, 20, 400]])
+    canvas.set_blob_data(labels, stats)
+    canvas.show()
+    app.processEvents()
+
+    center, _ = canvas._orig_to_screen(50.0, 50.0, 0.0)
+    click_pt = QPoint(round(center.x()), round(center.y()))
+
+    # circle 모드(기본) — 클릭 시 blob_clicked가 원본 이미지 좌표로 1회 emit.
+    spy = QSignalSpy(canvas.blob_clicked)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    assert len(spy) == 1
+    x, y = spy[0]
+    assert abs(x - 50) <= 1 and abs(y - 50) <= 1
+
+    # blob_delete 모드 — blob_clicked는 emit되지 않고, 기존 클릭=즉시삭제 동작은 그대로.
+    canvas.set_blob_delete_mode(True)
+    spy_click = QSignalSpy(canvas.blob_clicked)
+    spy_delete = QSignalSpy(canvas.blob_deleted)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    assert len(spy_click) == 0
+    assert len(spy_delete) == 1
+    assert canvas._removed_blob_ids == {1}
+    canvas.set_blob_delete_mode(False)
+
+    # brush_draw/brush_erase/pan 모드 — blob_clicked 미emit(모드별 조기 return 경로).
+    for setter in (canvas.set_brush_draw_mode, canvas.set_brush_erase_mode):
+        setter(True)
+        spy_mode = QSignalSpy(canvas.blob_clicked)
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+        assert len(spy_mode) == 0
+        setter(False)
+    canvas.set_pan_mode(True)
+    spy_pan = QSignalSpy(canvas.blob_clicked)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    assert len(spy_pan) == 0
+    canvas.close()
 

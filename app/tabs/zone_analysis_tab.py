@@ -448,6 +448,10 @@ class ZoneAnalysisTab(QWidget):
         self._zone_list = QListWidget()
         self._zone_list.setToolTip("클릭하면 캔버스에서 해당 존이 하이라이트됩니다")
         side_layout.addWidget(self._zone_list, stretch=1)
+        self._lbl_selected_blob = QLabel("")
+        self._lbl_selected_blob.setWordWrap(True)
+        self._lbl_selected_blob.setStyleSheet("color:#fbbf24; font-size:11px;")
+        side_layout.addWidget(self._lbl_selected_blob)
         self._btn_export_single = QPushButton("Excel로 내보내기")
         self._btn_export_single.setToolTip("현재 화면에 표시된 존 목록(이미지 1장)을 xlsx로 저장합니다")
         side_layout.addWidget(self._btn_export_single)
@@ -495,6 +499,7 @@ class ZoneAnalysisTab(QWidget):
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
         self._canvas.blob_deleted.connect(self._on_blob_deleted)
+        self._canvas.blob_clicked.connect(self._on_canvas_blob_clicked)
         self._tool_group.triggered.connect(self._on_edit_tool_changed)
         self._erase_brush_spin.valueChanged.connect(self._canvas.set_erase_brush_size)
         self._canvas.erase_changed.connect(self._recompute_zones)
@@ -581,6 +586,8 @@ class ZoneAnalysisTab(QWidget):
                 action.setEnabled(False)
         self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 원 자동검출은 불가
         self._canvas.set_blob_data(None, None)
+        self._canvas.set_highlight_rect(None)
+        self._lbl_selected_blob.setText("")
         self._act_circle.setChecked(True)
         self._on_edit_tool_changed(self._act_circle)
         for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
@@ -762,6 +769,8 @@ class ZoneAnalysisTab(QWidget):
             self._show_overlay_state()
             self._target_class_id = None
             self._canvas.set_blob_data(None, None)
+            self._canvas.set_highlight_rect(None)
+            self._lbl_selected_blob.setText("")
             self._act_circle.setChecked(True)
             self._on_edit_tool_changed(self._act_circle)
             self._btn_detect.setEnabled(False)   # BUG-031: 타겟 클래스가 없으면 브러시와 동일하게 편집 대상 자체가 없음
@@ -829,6 +838,8 @@ class ZoneAnalysisTab(QWidget):
             target_mask = result.class_map == cid
             labels, stats, _ = compute_blob_labels(target_mask)
             self._canvas.set_blob_data(labels, stats)
+            self._canvas.set_highlight_rect(None)
+            self._lbl_selected_blob.setText("")
             for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
                 action.setEnabled(True)
             self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
@@ -973,6 +984,35 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_zone_row_selected(self, row: int) -> None:
         self._canvas.set_highlighted_zone(row if row >= 0 else None)
+
+    def _on_canvas_blob_clicked(self, x: int, y: int) -> None:
+        ai_mask, final_mask = self._ai_and_final_masks()
+        if final_mask is None or self._last_result is None:
+            return
+        h, w = final_mask.shape
+        if not (0 <= y < h and 0 <= x < w) or not final_mask[y, x]:
+            self._canvas.set_highlight_rect(None)
+            self._lbl_selected_blob.setText("")
+            return
+        labels, _, _ = compute_blob_labels(final_mask)
+        label_id = int(labels[y, x])
+        if label_id == 0:
+            self._canvas.set_highlight_rect(None)
+            self._lbl_selected_blob.setText("")
+            return
+        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in self._canvas.circles_with_ids()]
+        zones = zones_from_circles(circles, (h, w))
+        blob_rows = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
+        blob = next((b for b in blob_rows if b.blob_id == label_id), None)
+        if blob is None:
+            self._canvas.set_highlight_rect(None)
+            self._lbl_selected_blob.setText("")
+            return
+        self._canvas.highlight_blob_bbox(blob.bbox_x, blob.bbox_y, blob.bbox_w, blob.bbox_h)
+        score_txt = f"{blob.ai_score * 100:.1f}%" if blob.ai_score is not None else "N/A(수동 편집)"
+        self._lbl_selected_blob.setText(
+            f"선택된 블랍 — 존: {blob.zone_name} · 면적 {blob.pixel_count}px · AI 점수 {score_txt}"
+        )
 
     # ── 슬롯 — 단일 이미지 Excel 내보내기 (R3-1) ─────────────────────────────
 
