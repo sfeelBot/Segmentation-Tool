@@ -82,6 +82,7 @@ class ZoneCanvas(OverlayViewer):
         self._next_id = 1
         self._selected_id: int | None = None
         self._drag_mode: str | None = None   # None | "move" | "resize" | "create"
+        self._press_orig_pt: QPointF | None = None  # BUG-032: press 시점 실제 원본 좌표(클릭 판정용)
         self._img_orig_w = 0
         self._img_orig_h = 0
         self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링, N=바깥쪽
@@ -647,6 +648,11 @@ class ZoneCanvas(OverlayViewer):
             self._drag_mode = mode
             self.circle_selected.emit(circle_id)
         else:
+            # BUG-032: 드래그 없는 단순 클릭 판정(mouseReleaseEvent)이 쓸 실제
+            # 클릭 원본 좌표를 별도로 저장해둔다 — 아래 동심원 강제 규칙으로
+            # item.cx/cy가 클릭 위치와 달라지므로, release 시 item.cx/cy를
+            # 재사용하면 항상 평균 중심을 가리키는 오류가 생긴다.
+            self._press_orig_pt = self._screen_to_orig(pt)
             # 이슈#13 요구사항2: 원이 이미 1개 이상 있으면 신규 원의 중심을
             # 클릭 위치가 아니라 "기존 원들의 평균 중심"으로 강제한다(판단2,
             # 배터리 캡 동심원 전제 — 대표 중심 공유). 원이 없으면 기준점이
@@ -655,8 +661,7 @@ class ZoneCanvas(OverlayViewer):
                 cx = sum(c.cx for c in self._circles) / len(self._circles)
                 cy = sum(c.cy for c in self._circles) / len(self._circles)
             else:
-                center = self._screen_to_orig(pt)
-                cx, cy = center.x(), center.y()
+                cx, cy = self._press_orig_pt.x(), self._press_orig_pt.y()
             new_id = self._next_id
             self._next_id += 1
             self._circles.append(_CircleItem(new_id, cx, cy, 0.0))
@@ -730,7 +735,13 @@ class ZoneCanvas(OverlayViewer):
                     # no-op로 판명되면 되무른다(스펙 판단 1 "주의" 절).
                     if self._undo_stack:
                         self._undo_stack.pop()
-                    click_x, click_y = item.cx, item.cy
+                    # BUG-032: item.cx/cy는 동심원 강제 규칙으로 실제 클릭 위치가
+                    # 아닐 수 있다(기존 원들의 평균 중심) — press 시점에 저장해둔
+                    # 실제 원본 좌표를 클릭 판정에 사용한다.
+                    if self._press_orig_pt is not None:
+                        click_x, click_y = self._press_orig_pt.x(), self._press_orig_pt.y()
+                    else:
+                        click_x, click_y = item.cx, item.cy
                     self._circles.remove(item)
                     self._selected_id = None
                     self.circle_selected.emit(None)
