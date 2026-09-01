@@ -5378,3 +5378,83 @@ image_inferred()`의 분기가 `self._batch_mode == "per_image"` 하나만으로
 정상 완주 결과 다이얼로그) 전부 실이벤트 기반 확인, 회귀 테스트 25건 전부
 통과, 3배치모드·단일 export 경로 코드 리뷰로 회귀 없음 확인. 신규 버그
 없음.
+
+## 2026-09-01 — R1(브러시 색상)/R2(도구 재클릭 토글)/R4=BUG-031(자동검출 후 브러시 비활성) 독립 재검증
+
+세션 리밋으로 중단됐던 검증을 이어서 진행. 대상 스펙:
+`docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md`. 검증 시작 시점에 다른
+구현 에이전트가 같은 두 파일(`zone_canvas.py`/`zone_analysis_tab.py`) 위에서
+R3(블랍 클릭 선택)를 동시에 작업 중이었다(작업지시에서 미리 경고받음) — 실제로
+검증 도중 `git status`가 두 파일의 uncommitted 변경을 보여줬다 확인, 이후
+`0589058`/`e68fff7`로 커밋되는 것도 관찰됨. 이 간섭을 피하기 위해 R1/R2/R4의
+정확한 대상 커밋(`1da6afb e082d64 121ce85 3de5aa0 0841e06 873d95d`)을
+`git worktree add`로 별도 detached 워크트리(scratchpad 하위)에 분리 체크아웃해
+그 안에서만 pytest/QTest를 실행 — 라이브 워크트리는 읽기만 하고 건드리지 않음
+(동시 작업 방해 없음, 내 검증도 R3 코드에 오염되지 않음). 검증 종료 후
+`git worktree remove --force`로 정리.
+
+### 1. 회귀 테스트 (pinned 873d95d 워크트리 + 라이브 HEAD e68fff7 워크트리 둘 다)
+
+`build/venv/Scripts/python.exe -m pytest tests/ -q -k zone` — pinned 873d95d에서
+**23 passed**, 라이브 HEAD(e68fff7, R3 포함)에서 **24 passed**(R3가 테스트 1개
+추가) — 회귀 없음. `test_zone_edit_toolbar.py`/`test_zone_github_13_14.py`/
+`test_zone_state_persistence.py`/`test_zone_batch_worker.py` 4개 파일 22건도
+동일 커밋 기준 전부 통과 확인.
+
+### 2. 독립 GUI 골든패스 (QTest 실이벤트, pinned 873d95d 워크트리 전용 스크립트
+`verify_r1_r2_r4.py`, 38개 assert, 전부 PASS)
+
+구현자 코드를 직접 호출하는 것은 상태 세팅(합성 `InferenceResult`를 실제 워커
+시그널 핸들러 `_on_inference_result()`로 주입)에만 썼고, "동작 확인" 자체는
+전부 `QTest.mousePress/mouseMove/mouseRelease/mouseClick` 실이벤트로 수행
+(좌표는 매번 `canvas._orig_to_screen()`으로 현재 zoom/pan 기준 실제 화면
+좌표로 변환 — 위젯 auto-fit 배율에 의존하지 않게 함).
+
+**R1(브러시 색상)**: `ZoneCanvas` 단독 인스턴스에서 브러시그리기 모드로 실제
+드래그 → 커밋된 스트로크 캐시(`_stroke_overlay`) 픽셀이 `_COLOR_DRAW`
+(96,165,250)와 일치(안티앨리어싱 톨러런스 ±6) 확인. 브러시지우기 모드로 겹침
+없는 새 위치에 실제 드래그 → `_COLOR_ERASE`(156,163,175)와 일치 확인. 방금
+그린 파란 영역 위에 지우기를 실제로 겹쳐 드래그하면 더 이상 순수 파란색이
+아님(두 반투명 스탬프의 SourceOver 합성 — 기존부터 있던 렌더링 특성, 이번
+라운드가 새로 만든 문제 아님, R2 이전 색상(초록/빨강)에서도 동일했을 합성
+동작이라 회귀 아님)도 별도로 확인. `apply_manual_strokes()`로 AI 원본 검출
+영역+수동 그린 영역 둘 다 실제로 지워짐(last-write-wins) 재확인. **완료기준
+전문에 명시된 "우측 존별 % 숫자가 즉시 갱신됨"까지 실제 `ZoneAnalysisTab`
+인스턴스로 확인**: 원 1개 설정 후 브러시지우기 실드래그 → `_zone_list` 항목
+텍스트가 `중심부 43.29%→15.30%`, `바깥쪽 2.39%→0.00%`로 실제 갱신됨(before/after
+문자열 리스트 직접 비교).
+
+**R2(도구 재클릭 토글)**: `ZoneAnalysisTab`에서 타겟 클래스 1개 검출 상태로
+브러시그리기/브러시지우기/블랍삭제/팬 4개 도구 각각에 대해 (a) 툴바
+`QToolButton`(`widgetForAction()`)을 `QTest.mouseClick`으로 실클릭 → 활성화
+확인(`isChecked()` + `_active_tool_action`), (b) 같은 버튼 재클릭 → 원편집
+(`circle`)으로 복귀 확인(`_act_circle.isChecked()`, `_canvas._mode=="circle"`,
+`_active_tool_action is _act_circle` 3중 확인) — 4개 도구 전부 정상. 원편집
+자체를 재클릭해도 상태 불변 확인. 도구 A→B(재클릭 아닌 정상 전환, 브러시그리기→
+블랍삭제)는 회귀 없이 정상 동작 확인. **blob_delete "클릭=즉시삭제" 회귀**:
+타겟 클래스 영역 내부 좌표를 실제 마우스 클릭 → `_removed_blob_ids`가 정확히
+1개 늘어남(R2가 `_on_edit_tool_changed`를 건드렸지만 blob_delete 자체 동작은
+전혀 안 바뀜) 확인.
+
+**R4(BUG-031)**: (1) 정상 경로 — 타겟 클래스 1개 검출 시 `_btn_detect`+브러시
+3액션 전부 활성 확인, 자동검출 버튼 실클릭(원 0개 검출되어 `QMessageBox.
+information` 모달이 뜨려 했음 — offscreen 환경에서 모달이 뜨면 클릭해줄
+사용자가 없어 그대로 행(hang)하므로 `QMessageBox.information/warning/critical`
+을 프로젝트 기존 테스트 관례(`test_zone_batch_worker.py`)대로 no-op 스텁으로
+패치해 호출 여부만 카운트, 로직 자체는 건드리지 않음) 후에도 브러시그리기
+버튼 실클릭 → 정상 체크(활성) 전환 + 실제 드래그로 스탬프 커밋까지 확인 —
+자동검출 결과(원 0개/found)와 무관하게 브러시가 정상 동작(회귀 없음). (2)
+엣지케이스 — `raw_class_map` 전량 배경(0)으로 구성한 `InferenceResult`를 실제
+결과 핸들러로 주입 → `_detected_ids==[]` 확정 재현, `_btn_detect.isEnabled()
+==False`(BUG-031 수정 확인) + 브러시 3액션도 여전히 비활성(일관성) 확인 —
+구현자가 이미 확인한 것과 별개로 독립 재현 성공.
+
+### 최종 판정
+
+**통과 — push 가능.** R1/R2/R4 완료기준 전항목 QTest 실이벤트로 독립 재현
+(38/38 PASS), zone 회귀 테스트 pinned 873d95d 23건 + 라이브 HEAD 24건 전부
+통과, R3(동시 작업)와의 파일 충돌·오염 없이 검증 완료(worktree 격리).
+`_paint_erase_preview`/`_rasterize_stroke`의 SourceOver 합성 특성(겹친
+반투명 스탬프가 정확히 단일 색이 아니게 보임)은 이번 라운드가 만든 문제가
+아니라 스탬프 오버레이 캐시 설계상 기존부터 있던 특성으로 판단 — 별도 버그
+등록 안 함. 신규 버그 없음.
