@@ -4593,3 +4593,52 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   Zone 탭에서 브러시그리기/브러시지우기/블랍삭제/팬 4개 도구 각각 재클릭 시
   원편집 복귀 + 캔버스 상 원 드래그/생성이 실제로 재개되는지, 도구 A→B 정상
   전환에 회귀가 없는지 확인하기 전까지는 완료로 간주하지 않는다.**
+
+## 2026-09-01 — 요청 6(버그): 자동 검출 이후 브러시로 결과를 조정 못 함
+
+- 대상: `app/tabs/zone_analysis_tab.py` (`feature/zone-analysis-tab` 브랜치).
+  스펙 `docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md` "요청 6"(281~364행)의
+  "권장 절차"를 그대로 따름 — planner가 정적 추적만으로는 확정 못 했던 부분을
+  실행 도구(Bash + QTest)로 라이브 재현.
+- **재현 절차 1 (정상 경로, 실 체크포인트+실 이미지)**: `projects/manual_demo/
+  checkpoints/학습1_best.pt` + `projects/manual_demo/images/`의 실 이미지로
+  `ZoneAnalysisTab`을 오프스크린(`QT_QPA_PLATFORM=offscreen`) 인스턴스화 →
+  `engine.run_sliding_window()`로 실제 추론 → `_setup_target_classes()`(타겟
+  클래스 1개 검출, `ids=[1]`) → `_on_auto_detect()`(원 2개 생성) →
+  `_act_brush_draw.trigger()`(액션 실제 트리거) → `QTest.mousePress/mouseMove/
+  mouseRelease`로 캔버스에 실제 드래그 이벤트 주입. 결과: 브러시 아이콘 체크됨,
+  `_erase_brush_spin` 활성화됨, `_manual_strokes`에 스트로크 1개 실제로 추가됨,
+  `_current_target_mask()`가 non-None으로 갱신됨, 우측 존 퍼센티지도 재계산됨
+  — **재현 불가**(정적 감사 결과와 일치, 이미 정상 동작).
+- **재현 절차 2 (엣지케이스 직접 검증)**: planner의 유력 가설(확신도 낮음, 스펙
+  308~318행)을 직접 재현 — `InferenceResult.raw_class_map`을 전량 배경(0)으로
+  강제해 "AI가 타겟 클래스를 0픽셀 검출" 상황을 합성. `_setup_target_classes()`
+  호출 결과: `_btn_detect.isEnabled() == True`인데 `_act_brush_draw/_act_brush_
+  erase/_act_blob_delete.isEnabled() == False` 전부 — **가설 그대로 재현 성공**.
+  근본 원인: `_setup_target_classes()`(`:752-771`)에서 `_btn_detect.setEnabled(True)`
+  가 함수 최상단에서 `ids` 빈 여부와 무관하게 실행되는 반면, 브러시 3개 액션은
+  같은 함수의 `ids` 빈 분기에서 이미 `False`로 내려가 있어 두 위젯 그룹의
+  활성화 조건이 어긋나 있었음(정상 경로에서는 `_on_target_changed()`가 브러시
+  3개를 함께 `True`로 올려 문제 없음).
+- **수정**(스펙 344~350행 그대로, 확장 없음): `_setup_target_classes()`의 `ids`
+  빈 분기에 `self._btn_detect.setEnabled(False)` 1줄 추가 — 이미 표시 중인
+  `_lbl_target_info`("배경 외 클래스가 검출되지 않았습니다") 메시지와 일관되게
+  "AI가 아무것도 못 찾았으니 자동 검출이든 브러시든 편집할 대상이 없다"는
+  하나의 메시지로 통일. "AI가 못 찾은 걸 브러시로 처음부터 그릴 수 있게"
+  해달라는 후속 요청은 별도 스코프(스펙 명시)라 이번 라운드에서 손대지 않음.
+  QA.md에 BUG-031(Closed)로 등록.
+- 회귀 확인: `tests/test_zone_edit_toolbar.py`/`test_zone_github_13_14.py`/
+  `test_zone_state_persistence.py`/`test_zone_batch_worker.py` 4개 파일 22건
+  전부 통과. 수정 후 재현 절차 1(정상 경로 골든패스: 자동검출→브러시그리기
+  트리거→실제 드래그→존 퍼센티지 갱신)을 재실행해 무회귀 확인. 수정 후
+  재현 절차 2(강제 ids 빈 시나리오)를 재실행해 `_btn_detect.isEnabled() ==
+  False`로 일관되게 정정됨을 확인.
+- `git diff` 최소화 확인 — 다른 동시 진행 라운드(브러시 색상 `zone_canvas.py`,
+  도구 토글 `_on_edit_tool_changed` 근처 `zone_analysis_tab.py`)와 겹치는 코드
+  영역 없음(`_setup_target_classes()`만 수정, 1줄 diff).
+- 커밋: `0841e06` (fix, `feature/zone-analysis-tab` 브랜치). push는 하지 않았다.
+- 상태: 구현 완료(스펙 완료 기준 358~363행 충족 — 라이브 재현 로그 남김,
+  근본 원인의 최소 수정 + 5모드 골든패스 회귀 확인까지 완료). **검증 에이전트가
+  `python main.py` 실구동(또는 QTest)으로 (1) 정상 경로 브러시 골든패스,
+  (2) 타겟 클래스 미검출 시 자동 검출 버튼도 함께 비활성화되는지 재확인하기
+  전까지는 완료로 간주하지 않는다.**
