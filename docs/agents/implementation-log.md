@@ -4642,3 +4642,55 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   `python main.py` 실구동(또는 QTest)으로 (1) 정상 경로 브러시 골든패스,
   (2) 타겟 클래스 미검출 시 자동 검출 버튼도 함께 비활성화되는지 재확인하기
   전까지는 완료로 간주하지 않는다.**
+
+## 2026-09-01 — Zone 탭 요청4: 블랍 클릭 선택 (AI 블랍 + 브러시 블랍 둘 다)
+
+- 상태: 구현 완료. 스펙(`docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md` 91~229행)을
+  코드 재해석 없이 그대로 따랐다.
+- `app/widgets/zone_canvas.py`: 신규 시그널 `blob_clicked = pyqtSignal(int, int)`(원본
+  이미지 좌표) 추가. 신규 공개 메서드 `highlight_blob_bbox(x, y, w, h)` —
+  `_orig_scale()`로 픽스맵 좌표 변환 후 상속받은 `OverlayViewer.set_highlight_rect()`에
+  위임(`ZoneCanvas.paintEvent()`가 최상단에서 `super().paintEvent()`를 호출하므로 하이라이트
+  렌더링이 자동 포함됨, 신규 페인트 코드 불필요). `mouseReleaseEvent()`의 기존
+  "드래그 없는 단순 클릭" 분기(`circle_selected.emit(None)` 직후, `if self._circles:`
+  가드 앞)에 `self.blob_clicked.emit(int(click_x), int(click_y))` 한 줄만 추가 —
+  blob_delete/brush_draw/brush_erase/pan 모드는 이 코드 경로에 도달하지 않도록 각
+  모드가 최상단에서 조기 return하므로 자동으로 circle 모드 전용이 된다(신규 모드
+  분기 불필요).
+- `app/tabs/zone_analysis_tab.py`: 우측 패널에 amber(`#fbbf24`, `inference_tab.py`와
+  시각 언어 통일) `QLabel _lbl_selected_blob` 추가. `_canvas.blob_clicked`를 신규 슬롯
+  `_on_canvas_blob_clicked(x, y)`에 연결 — `_ai_and_final_masks()`로 최신 마스크를 얻고
+  `compute_blob_labels(final_mask)`로 클릭 지점 라벨을 조회한 뒤 `zone_blob_stats()`
+  (R3에서 이미 구현된 4-connectivity/타겟클래스전용/`final_mask` 기준 — 화면 편집과
+  Excel 통계의 블랍 정체성을 항상 일치시키는 기존 원칙 재사용, `blob_at()`/`BlobStat`
+  등 추론 탭의 8-connectivity 코드는 재사용하지 않음)로 존/면적/AI점수를 계산해
+  `highlight_blob_bbox()` + 라벨 텍스트로 표시한다. 배경/범위밖 클릭이거나 blob이
+  이미 삭제됐으면 하이라이트/텍스트를 비운다. 기존 `self._canvas.set_blob_data(...)`
+  호출 3곳(새 이미지 로드 실패 시, 타겟 클래스 없음 시, 타겟 클래스 재계산 시) 직후에
+  각각 `set_highlight_rect(None)` + `_lbl_selected_blob.setText("")`를 추가해 라벨 id가
+  무의미해지는 시점마다 이전 선택 표시를 함께 초기화했다(BUG-018/019류 staleness 방지
+  원칙 재사용).
+- 신규 함수·클래스 없음 — 전부 R3에서 이미 검증된 `zone_metrics.compute_blob_labels()`/
+  `zone_blob_stats()`와 `OverlayViewer.set_highlight_rect()` 재사용. `compute_blob_labels()`가
+  클릭당 2회(라벨 조회 1회 + `zone_blob_stats()` 내부 1회) 호출되는 소폭의 중복 연산이
+  있으나 클릭 이벤트 빈도가 낮아 무시 가능하다고 판단해 시그니처 변경 없이 단순함을
+  택함(스펙에 이미 명시된 판단).
+- 검증: `tests/test_zone_edit_toolbar.py`에 신규 회귀 테스트
+  `test_blob_clicked_only_in_circle_mode_and_blob_delete_unaffected` 추가 — circle 모드
+  클릭 시 `blob_clicked` 1회 emit(좌표 일치 확인), blob_delete 모드에서는 `blob_clicked`
+  0회 + 기존 `blob_deleted`(클릭=즉시삭제) 동작이 그대로임을 동시에 확인, brush_draw/
+  brush_erase/pan 3개 모드 각각에서 `blob_clicked` 0회 확인. `tests/test_zone_edit_toolbar.py`
+  (6건)/`test_zone_github_13_14.py`(8건)/`test_zone_batch_worker.py`/
+  `test_zone_state_persistence.py` 전부 통과. `ZoneAnalysisTab()` 인스턴스화 스모크로
+  `_lbl_selected_blob`/`_on_canvas_blob_clicked`/`blob_clicked`/`highlight_blob_bbox` 존재
+  확인. `tests/` 전체 실행 시 zone과 무관한 61건이 `PermissionError`(Windows 임시 폴더
+  `pytest-of-Feel` 접근 거부, 샌드박스 환경 이슈)로 에러났으나 zone 테스트는 전부
+  포함돼 통과했고 실패(FAILED)는 0건 — 환경 이슈로 판단, 이번 변경과 무관.
+- 커밋: `0589058` (feat, `feature/zone-analysis-tab` 브랜치). push는 하지 않았다.
+- 상태: 구현 완료(스펙 완료 기준 217~229행의 5개 항목 중 정적 코드 경로/시그널
+  배선/자동 테스트로 확인 가능한 부분은 전부 확인했다). **검증 에이전트가
+  `python main.py` 실구동으로 (1) 원편집 모드에서 AI 검출 영역 클릭 시 하이라이트+
+  텍스트, (2) 브러시로 그린 영역 클릭 시 "AI 점수 N/A(수동 편집)", (3) 원이 없는
+  상태에서도 정상 동작("미분류"), (4) 배경 클릭 시 하이라이트/텍스트 비워짐,
+  (5) 타겟 클래스 전환/새 이미지 로드 시 선택 자동 해제까지 실제 UI 조작으로 재확인
+  하기 전까지는 완료로 간주하지 않는다.**
