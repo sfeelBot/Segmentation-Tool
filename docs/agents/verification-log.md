@@ -5293,3 +5293,88 @@ Bash 자동화, 대화형 데스크톱 세션 아님)에서는 배치 Excel 내�
 로직, `zone_blob_stats`/`export_zone_percentages_to_excel`)는 배치와 동일
 함수를 공유하므로 코드 신뢰도는 높으나, 배치 특유의 다이얼로그/스레드
 정리 경로는 이 세션에서 확정적으로 검증하지 못했다.
+
+## 2026-09-01 — BUG-030 독립 재검증 (verifier, 재시도 세션)
+
+구현자(implementer)가 `147ce67`(fix)+`0f0e63d`(docs)로 완료 보고한 BUG-030
+("존 분석 배치 처리 2회차 실 CUDA 추론 직후 `ZoneBatchResultDialog` 오픈 시
+`STATUS_STACK_BUFFER_OVERRUN` 하드크래시") 수정을 독립적으로 재검증했다.
+구현자 본인 검증(pytest 20건 + 크래시 재현 스크립트)과는 별개로, 요청받은
+4개 항목을 전부 직접 확인했다.
+
+### 1. 크래시 재현 스크립트 독립 재실행
+
+`repro_batch_real_platform.py`(실 체크포인트 `projects/manual_demo/checkpoints/
+학습1_best.pt` + 실 이미지 2장, 네이티브 Qt 플랫폼)를 PowerShell로 직접 실행
+(git-bash `$?` 대신 `$LASTEXITCODE` 사용):
+
+```
+app created / tab shown / image selected / model set
+run clicked, waiting worker / single inference done, ok= True
+target class: 1 / btn_batch enabled: True
+dialog constructed 4 30 / noop exec entered
+batch clicked, worker: False / ALL DONE / CLOSED OK
+LASTEXITCODE=0
+```
+
+크래시 재현 안 됨, `LASTEXITCODE=0` + "CLOSED OK" 정상 출력 확인. **통과.**
+
+### 2. 실 GUI 골든패스 — 독립 시나리오(구현자 테스트와 다른 데이터/시나리오)
+
+구현자의 `tests/test_zone_batch_worker.py::test_golden_path_button_click_...`를
+그대로 신뢰하지 않고, 별도 스크립트(`verify_golden_path.py`, scratchpad)로
+5장 합성 이미지 2세트를 새로 만들어 재확인:
+
+- **시나리오 A(진행률+취소)**: `time.sleep(0.4)`로 인위 지연시킨 `engine.run`
+  monkeypatch 후 `▶ 선택 이미지 일괄 처리` 버튼을 `QTest.mouseClick`으로 실제
+  클릭 → `QProgressDialog`가 `isVisible()==True`로 실제 표시됨 확인 → 진행률이
+  실제로 올라감(`dlg.value()>=1`) 확인 → 다이얼로그의 실제 Cancel 버튼(
+  `dlg.findChildren(QPushButton)`)을 `QTest.mouseClick`으로 실제 클릭 →
+  워커가 인터럽션을 받아 5장 중 3장만 처리하고 중단됨 확인, 그 부분 결과로
+  `ZoneBatchResultDialog`가 정상적으로 열림(빈 처리 없이 부분 결과 표시)을 확인.
+  **주의**: 최초 시도에서 이 시나리오가 100초+ "행"처럼 보였는데, 원인은 내
+  진단 스크립트가 `ZoneBatchResultDialog`를 스텁하지 않아 취소 후 실제
+  모달 다이얼로그가 `.exec()`로 열려 사용자 클릭을 기다리며 정상적으로
+  블로킹된 것이었다(앱 버그 아님) — `faulthandler.dump_traceback_later()`로
+  스택을 덤프해 `_on_batch_finished` → `ZoneBatchResultDialog(...).exec()`
+  지점에서 멈춰있음을 직접 확인해 원인을 특정했다. 다이얼로그를 스텁한 뒤
+  재실행하니 즉시 정상 종료·PASS. 오히려 "취소 후에도 그때까지 처리된 부분
+  결과로 다이얼로그가 뜬다"는 앱의 실제 동작을 재확인한 셈.
+- **시나리오 B(에러 배지+결과 다이얼로그)**: 별도 5장 세트, 4번째 이미지(`b3.png`)
+  에서 `engine.run`이 `ValueError`를 던지도록 monkeypatch → 배치 버튼
+  실제 클릭 → 워커 완료 대기 → 에러 이미지의 상태 배지가 `("done", "오류")`로
+  정확히 표시됨 확인, 결과 다이얼로그가 정확히 1회 열리고 성공한 4장×존 2개
+  = 8행이 정확히 담김을 확인.
+
+두 시나리오 모두 **PASS**(스크립트: `C:\Users\Feel\AppData\Local\Temp\claude\
+d--segmentation-model\6601b6b5-5d86-491f-8786-9c4f151f70ec\scratchpad\
+verify_golden_path.py`).
+
+### 3. 회귀 확인
+
+`pytest tests/test_zone_batch_worker.py tests/test_zone_github_13_14.py
+tests/test_zone_state_persistence.py tests/test_zone_edit_toolbar.py
+tests/test_inference_blob_at.py` → **25 passed**(0 failed/error), 1.96s.
+
+배치 3모드(`apply_all`/`apply_all_edit`/`per_image`) 코드 리뷰: `_on_batch_
+image_inferred()`의 분기가 `self._batch_mode == "per_image"` 하나만으로
+자동검출 여부를 가르고, `apply_all`/`apply_all_edit`은 둘 다 `_scale_circles()`
+경로를 공유 — 이 조건식은 수정 전 원본 `_ZoneBatchWorker.run()`의 `self._mode
+== "per_image"` 분기를 그대로 옮긴 것으로 로직 변경 없음(diff 대조 확인).
+`_on_export_single()`(단일 이미지 Excel 내보내기)은 이번 diff에서 아예 건드리지
+않음(`git show 147ce67 -- app/tabs/zone_analysis_tab.py | grep _on_export_single`
+결과 없음) — 회귀 위험 없음.
+
+### 4. `pytest-of-Feel` PermissionError 영향 확인
+
+위 3번 회귀 실행에서 zone 관련 5개 테스트 파일 25건 전부 에러 0건으로 통과 —
+구현자가 보고한 무관 tmp `PermissionError`는 이번 zone 테스트 범위에는 나타나지
+않음, 영향 없음 확인.
+
+### 최종 판정
+
+**통과 — push 가능.** 크래시 재현 스크립트 독립 재실행(LASTEXITCODE=0),
+독립 GUI 골든패스(진행률 표시/실제 취소 버튼/부분 결과 다이얼로그/에러 배지/
+정상 완주 결과 다이얼로그) 전부 실이벤트 기반 확인, 회귀 테스트 25건 전부
+통과, 3배치모드·단일 export 경로 코드 리뷰로 회귀 없음 확인. 신규 버그
+없음.
