@@ -4561,3 +4561,35 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   추론 → 브러시 그리기(파란색 확인) → 브러시 지우기로 AI 영역 + 방금 그린
   파란 영역 둘 다 지워지는지(회색 표시 + 우측 존별 % 갱신) 확인하기 전까지는
   완료로 간주하지 않는다.**
+
+## 2026-09-01 — 요청 5: 존 분석 탭 도구 버튼 재클릭 시 토글 비활성화(원편집 복귀)
+
+- 대상: `app/tabs/zone_analysis_tab.py` (`feature/zone-analysis-tab` 브랜치).
+  스펙 `docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md` "요청 5"(233~277행)를
+  줄 번호까지 그대로 따라 구현 — 재해석 없음.
+- `QActionGroup`(`_tool_group`, exclusive)은 이미 체크된 액션을 다시 클릭해도
+  `triggered`가 여전히 emit되는 Qt 동작을 이용해, 클릭된 액션을 직접 추적하는
+  `self._active_tool_action` 필드를 `_act_circle.setChecked(True)` 직후(초기화부,
+  `:321` 부근)에 추가하고 초기값을 `self._act_circle`로 설정.
+- `_on_edit_tool_changed()` 최상단에 재클릭 감지 삽입: `action is self._active_tool_action
+  and action is not self._act_circle`이면 `_act_circle.setChecked(True)`로 강제 전환 후
+  `action = self._act_circle`로 치환, 이하 기존 로직(모드 문자열 분기) 그대로 실행.
+  `setChecked()`는 프로그램적 호출이라 `triggered`를 재발생시키지 않아 재귀 없음
+  (스펙에서 이미 확인된 Qt 규칙, 코드 변경 없이 그대로 적용).
+- `:583-584`, `:764-765`의 기존 `self._act_circle.setChecked(True); self._on_edit_tool_
+  changed(self._act_circle)` 호출부는 `action is not self._act_circle` 조건에 걸려
+  토글 로직이 개입하지 않고 기존 동작 그대로 유지됨(회귀 없음, 직접 추적으로 확인).
+- 검증(구현자 자체 self-check, `build/venv`의 프로젝트 venv + `QT_QPA_PLATFORM=offscreen`
+  으로 `ZoneAnalysisTab()`을 직접 생성해 `_on_edit_tool_changed()`를 시뮬레이션):
+  브러시그리기 클릭→재클릭 시 `_active_tool_action`이 `_act_circle`로 복귀하고
+  체크 상태도 전환됨, 팬→블랍삭제 정상 전환(재클릭 아님) 시 회귀 없음, 원편집
+  자체 재클릭 시 상태 불변 — 스펙 완료 기준 4개 항목 모두 어설션으로 통과.
+  단, 이 self-check는 캔버스 실제 드래그/생성 동작까지 QTest로 확인한 것은
+  아니므로 UI 골든패스 확인은 검증 에이전트 몫으로 남겨둔다.
+- `app/tabs/zone_analysis_tab.py`만 수정(요청대로 색상/브러시 활성화 로직 등
+  다른 부분은 손대지 않음).
+- 커밋: `121ce85` (feat, `feature/zone-analysis-tab` 브랜치). push는 하지 않았다.
+- 상태: 구현 완료. **검증 에이전트가 `python main.py` 실구동(또는 QTest)으로
+  Zone 탭에서 브러시그리기/브러시지우기/블랍삭제/팬 4개 도구 각각 재클릭 시
+  원편집 복귀 + 캔버스 상 원 드래그/생성이 실제로 재개되는지, 도구 A→B 정상
+  전환에 회귀가 없는지 확인하기 전까지는 완료로 간주하지 않는다.**
