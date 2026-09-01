@@ -5458,3 +5458,115 @@ information` 모달이 뜨려 했음 — offscreen 환경에서 모달이 뜨면
 반투명 스탬프가 정확히 단일 색이 아니게 보임)은 이번 라운드가 만든 문제가
 아니라 스탬프 오버레이 캐시 설계상 기존부터 있던 특성으로 판단 — 별도 버그
 등록 안 함. 신규 버그 없음.
+
+## 2026-09-01 — R3(블랍 클릭 선택, 요청4) 독립 골든패스 검증
+
+워크트리 `D:\segmentation model-zone-analysis-tab`(브랜치 `feature/zone-analysis-tab`),
+검증 시작 시점 HEAD `31aa62e`(대상 구현은 `0589058`+`e68fff7`). 스펙:
+`docs/specs/zone-edit-ux-and-brush-fix-2026-09-01.md` "요청 4"(91~229행). 구현자
+자체 검증(유닛/시그널 테스트)은 이미 끝난 상태였고, 실제 `python main.py` 수준
+(`QT_QPA_PLATFORM=offscreen` + `QTest` 실이벤트)의 라이브 골든패스는 이번이
+처음이라는 전제로 진행. `tests/test_zone_edit_toolbar.py`의 구현자 유닛테스트
+(`test_blob_clicked_only_in_circle_mode_and_blob_delete_unaffected`)는 참고만
+하고 재사용하지 않음 — 독립 스크립트(`build/venv/Scripts/python.exe` 실행,
+`verify_r3_blob_click.py`, scratchpad)로 처음부터 다시 구성.
+
+### 실행 방식
+
+`ZoneAnalysisTab` 실제 인스턴스 + `projects/manual_demo/checkpoints/학습1_best.pt`
+(실 학습 체크포인트) + 실 이미지(프로젝트 실데이터 오염 방지를 위해
+`projects/manual_demo/images/8번.png`/`9번.png`를 사이드카(`.zone.json`) 없이
+scratchpad에 복사해 별도 파일로 사용 — 실제 `projects/manual_demo` 디렉토리는
+전혀 건드리지 않음, 검증 후 `git status`/타임스탬프로 무변경 확인). "동작 확인"
+자체는 전부 `QTest.mousePress/mouseMove/mouseRelease/mouseClick/keyClick` 실이벤트로
+수행하고, `QFileDialog.getOpenFileName(s)` 반환값만 monkeypatch, `zone_analysis_tab.
+QMessageBox`도 no-op 스텁(호출 횟수만 카운트, 최종 0회 — 모달 없이 완주). 이미지
+로드(`_btn_image` 클릭) → 체크포인트 로드(`_btn_ckpt` 클릭) → `▶ 추론 실행`(`_btn_run`
+클릭, 실 CUDA 추론 완료까지 폴링 대기) 전부 실버튼 클릭으로 수행. 블랍 클릭 좌표는
+`cv2.distanceTransform`으로 마스크 내부에서 경계로부터 가장 먼 안전점을 골라
+`canvas._orig_to_screen()`으로 현재 줌/팬 기준 실제 화면좌표로 변환(위젯 auto-fit
+배율에 의존하지 않음), 클릭 전 매번 `canvas._hit_test()`로 기존 원과 안 겹치는지
+확인.
+
+### 결과 — 완료 기준 6항목 중 5항목 정상, 1항목에서 신규 P1 버그 발견(BUG-032)
+
+54개 assertion 실행(53 PASS + 1건 의도적 non-critical FAIL로 버그를 기록하고 완주):
+
+1. **원 0개 상태에서 AI 블랍 클릭**(항목1의 핵심 메커니즘) — `blob_clicked`가 실제
+   클릭한 원본 이미지 좌표를 정확히 emit(오차 ≤1px), 노란 테두리 하이라이트 표시,
+   `"선택된 블랍 — 존: 미분류 · 면적 9064px · AI 점수 96.7%"` — `zone_metrics.
+   zone_blob_stats()`로 독립 재계산한 기대값과 텍스트 완전 일치 확인.
+2. **브러시로 새 영역(파란) 그린 뒤 원편집 모드 클릭** — 실제 `QTest` 드래그로
+   배경 지점에 브러시 스탬프 커밋(`final_mask`엔 True, `ai_mask`엔 False로
+   순수 수동임을 확인) 후 원편집 모드로 복귀해 클릭 → `"AI 점수 N/A(수동 편집)"`
+   정확히 표시됨.
+3. **원 0개 상태에서 블랍 클릭 → "미분류"** — 텍스트에 `"존: 미분류"` 포함, 크래시
+   없음(추가로 확인: 이 스크립트에서는 원이 아예 없는 상태가 기본이라 항목1도 같은
+   경로를 탄다 — 아래 BUG-032 참고).
+4. **배경 클릭 → 선택 해제** — 하이라이트/텍스트 모두 빈 값으로 정상 정리.
+5. **모드별 회귀** — `blob_delete`/`brush_draw`/`brush_erase`/`pan` 4개 모드
+   전부에서 같은 좌표를 클릭해도 `blob_clicked` 미emit 확인. **blob_delete
+   "클릭=즉시삭제" 회귀를 독립 재현**: 실 AI 블랍의 안전점을 클릭 → `blob_clicked`
+   0회 + `blob_deleted` 1회 + `canvas.blob_labels()`(캔버스 내부 원시 AI
+   라벨맵, req4의 `final_mask` 기준 라벨맵과는 별개 네임스페이스임을 확인하고
+   대조)로 식별한 라벨 id가 `removed_blob_ids()`에 실제로 추가됨 — 요청4가
+   기존 삭제 동작을 전혀 바꾸지 않았음을 확인.
+6. **타겟 클래스 전환/새 이미지 로드 시 선택 해제** — `_target_name_edit`에
+   실제 `QTest.keyClicks`로 텍스트 변경 후 Enter(`editingFinished`) → 하이라이트/
+   텍스트 해제 확인. 이어서 실제 `_btn_image` 재클릭으로 새 이미지(사이드카 없는
+   9번.png)로 전환 → 하이라이트/텍스트 자동 해제 확인.
+
+### BUG-032(P1, 신규 발견, Open) — 원이 존재하면 클릭 좌표가 corrupt됨
+
+항목1을 원래 계획대로 "원 1개를 실제 드래그로 만든 뒤 AI 블랍 클릭"으로 진행하자
+재현: 원 1개 생성 후 화면상 서로 다른 3개 지점(600,300)/(900,600)/(300,700)을
+각각 실제 클릭(매번 `_hit_test()`가 `None`, 즉 기존 원과 안 겹침을 사전 확인)했는데
+`blob_clicked`가 **매번 완전히 동일한 좌표**(예: `(-14,-67)`)를 emit — 이 값은
+세 클릭 위치 중 어느 것도 아니고, 정확히 **방금 만든 원의 중심**과 일치. 원인
+추적: `ZoneCanvas.mousePressEvent()`(GitHub #13 R13-A, 커밋 `7b7ca95`)가 "원이
+이미 있으면 신규 원 중심을 클릭 위치 대신 기존 원들의 평균 중심으로 강제"하는
+동심원 UX 규칙을 갖고 있는데, `mouseReleaseEvent()`의 "드래그 없는 단순 클릭"
+판정 분기가 이 임시(곧 삭제될) 원의 `item.cx, item.cy`를 그대로 `click_x,
+click_y`로 재사용 — 요청4(`blob_clicked`)뿐 아니라 기존 `zone_clicked`(GitHub
+#13)도 같은 변수를 공유해 동일하게 영향받음을 별도 재현 스크립트로 확인(원 1개
+존재 시 서로 다른 2곳 클릭 → `zone_clicked`가 매번 index=0/중심부만 emit).
+**이 라운드(요청4)가 만든 버그는 아니고 기존 GitHub #13 버그를 상속받은 것**이지만,
+요청4의 완료 기준이 요구하는 정확한 시나리오("원이 이미 있는 상태에서 블랍 클릭")가
+바로 이 손상된 경로를 타므로, 원이 하나라도 존재하면 블랍 클릭 선택 기능이 실질적
+으로 사용 불가능하다(항상 원 평균중심의 블랍/미분류만 보고). 원 0개 상태(위 항목1/3)
+는 정상 동작 확인. `QA.md` `BUG-032`(P1)로 등록.
+
+이후 항목들(2·4·5·6)은 이 오염을 피하기 위해 버그 재현용 원을 즉시 삭제(실제
+`QTest.keyClick(Key_Delete)`로 선택 후 삭제)하고 원 0개 상태로 진행 — 그 경로들의
+정상 동작 확인 자체는 유효하지만, "원이 존재하는 실사용 시나리오"에서의 항목1/6은
+BUG-032로 인해 완전히 검증되지 못했음(원 0개 하위 케이스만 확인).
+
+### 회귀 테스트 (항목 7)
+
+`build/venv/Scripts/python.exe -m pytest tests/test_zone_edit_toolbar.py
+tests/test_zone_github_13_14.py tests/test_zone_state_persistence.py
+tests/test_zone_batch_worker.py -q` — **23 passed**, 회귀 없음(R3 구현자 자체
+신규 테스트 1건 포함).
+
+### 데이터 위생
+
+`projects/manual_demo`는 이미지 복사(사이드카 없는 사본을 scratchpad에 별도
+생성)만 하고 원본은 읽기 전용으로도 건드리지 않음 — 검증 전/후 `git status
+--porcelain`이 항상 빈 결과, `*.zone.json` 파일 mtime도 검증 전과 동일함을
+확인(변경 없음).
+
+### 최종 판정
+
+**재작업 필요 — 아직 push 불가.** 완료 기준 6항목 중 원 0개 상태의 핵심 메커니즘
+(하이라이트/텍스트 포맷/AI점수 퍼센트·N/A 구분/미분류/배경클릭 해제/모드별 회귀/
+blob_delete 즉시삭제 무회귀/타겟클래스·이미지전환 시 선택해제)은 전부 실증됐으나,
+**요청4가 실제로 겨냥한 핵심 사용 시나리오("원을 이미 정의해둔 상태에서 블랍을
+클릭해 선택") 자체가 BUG-032(P1)로 인해 동작하지 않는다** — 원이 하나라도 있으면
+클릭 위치와 무관하게 항상 원들의 평균 중심 지점만 보고됨. Zone 탭의 핵심 워크플로우가
+"원(zone 경계)을 먼저 그리고 → 블랍을 검토"하는 순서라는 점을 고려하면 이 버그는
+드문 엣지케이스가 아니라 요청4의 주된 활용 조건에서 상시 발현한다. 구현 담당이
+`ZoneCanvas.mouseReleaseEvent()`의 클릭 판정 분기가 참조하는 좌표를 "동심원 강제로
+치환된 임시 원의 중심"이 아니라 "실제 마우스 클릭 위치"(예: `mousePressEvent`에서
+클릭 시점 원본좌표를 별도로 기록해두거나, release 시점 이벤트 좌표를 직접
+`_screen_to_orig()`로 재계산)로 고쳐야 한다. 회귀 테스트(23건)는 전부 통과,
+`QA.md` `BUG-032` 등록 완료.
