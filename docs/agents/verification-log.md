@@ -3491,3 +3491,103 @@ Inno Setup 컴파일이 100% 실패 — GitHub #22/BUG-016 신규 로직뿐 아�
   위젯/다이얼로그 조작 골든패스 + GitHub #2 export/import 왕복 회귀 확인 + 대규모(500장)
   성능 확인까지 모두 문제 없음. 발견된 버그 없음(QA.md 신규 항목 없음).
 - 커밋은 리더가 수행 예정(지시에 따라 이번 검증에서 커밋하지 않음).
+
+---
+
+## 2026-09-22 — GitHub #35(BUG-032, undo 스택 메모리 누적) main 브랜치 독립 재검증
+
+### 배경
+- `feature/zone-analysis-tab` 브랜치에서 동일 이슈(그쪽 BUG-033)를 먼저 수정·검증 완료(87개
+  독립 어서션, 실제 UI 골든패스+Export 골든패스 PASS)한 뒤, main 브랜치에 독립 재구현된 것
+  (커밋 `74639d4`, `9ea66ac`)을 이번 라운드에서 검증. 구현자가 이미 스크립트 기반 로직
+  검증(A→B→A 복원/A→B→C→A 소실/clear() 리셋/개수·바이트 캡 트리밍/rle_decode MemoryError
+  스킵 7개 항목)을 마쳤으나, 지시에 따라 구현자 벤치마크를 재사용하지 않고 처음부터 독립
+  스크립트로 재현.
+- 작업은 main 워크트리(`D:\segmentation model`)에서 수행. zone 브랜치 워크트리
+  (`D:\segmentation model-zone-analysis-tab`)는 건드리지 않음.
+
+### 1. 정적 검토
+- `git diff ba8bf5e 74639d4 -- app/widgets/annotation_canvas.py app/core/annotation_store.py`
+  전체를 라인 단위로 검토.
+- `load_image()`의 순서가 핵심 — 새로 여는 이미지가 `_prev_image_path`(직전 슬롯)와
+  일치하는지 **먼저** 확인해 `restored_stack`을 결정한 뒤에야 `_prev_image_path`/
+  `_prev_undo_stack`을 현재 이미지 값으로 덮어쓴다. 이 순서가 A→B→A 왕복 복원의 정확성을
+  보장함을 코드 리딩으로 직접 확인(비교 먼저 → 덮어쓰기 나중, 뒤바뀌면 항상 빈 스택이 됨).
+- `_push_undo()`의 트리밍 `while len(self._undo_stack) > 1 and (개수>30 or 바이트>200MB): pop(0)`
+  — `> 1` 조건 덕분에 트리밍이 아무리 심해도 최소 1개 스냅샷은 항상 남아 undo 1회는 보장됨을
+  확인.
+- `annotation_store.load()`의 `rle_decode()` 호출이 `try/except MemoryError`로 감싸져 있고,
+  실패한 brush_mask 항목만 `continue`로 건너뛰며 나머지(다른 brush_mask, polygon)는 그대로
+  로드를 계속함을 확인. `export_dialog.py`의 `ExportWorker`가 동일한 `annotation_store.load`
+  를 재사용하므로 export 경로도 자동으로 보호됨을 import 경로로 확인.
+- `clear()`가 `_prev_image_path`/`_prev_undo_stack`도 함께 리셋함을 확인(스코핑 상태 누수
+  없음).
+
+### 2. 실행 확인
+- `python -m py_compile app/widgets/annotation_canvas.py app/core/annotation_store.py` —
+  통과(시스템 기본 `python`이 아닌 `py -3`으로 실행, Windows 환경에서 기본 `python.exe`가
+  WindowsApps 별칭이라 `py -3` 사용).
+- `PYTHONIOENCODING=utf-8 py -3 main.py` — 정상 기동 확인(QApplication 생성, 디바이스 정보
+  로그 출력, RTX 5060 인식). `PYTHONIOENCODING` 미설정 시 로그의 em-dash(`—`) 문자가 cp949
+  콘솔에서 `UnicodeEncodeError`를 내는 현상은 재현되나, 이는 기존에 이미 문서화된(이 로그
+  2026-08-28 R6 항목 등) 검증 셸 로케일 특이사항이며 이번 변경 파일과 무관하고 `logging`이
+  예외를 삼켜 앱 동작에 영향 없음 — 신규 버그 등록 안 함.
+
+### 3. 독립 스크립트 기반 UI 골든패스 재현 (핵심)
+- 이 환경에는 클릭 자동화/스크린샷 도구가 없어(headless), `QT_QPA_PLATFORM=offscreen`으로
+  실제 `AnnotationCanvas`/`annotation_store`/`ExportWorker` 클래스를 직접 구동해 UI가
+  호출하는 것과 동일한 public 메서드(`load_image()`/`undo()`/`clear()`/`_push_undo()`/
+  `_do_save()`)를 실제로 호출하는 방식으로 재현(로직을 별도로 재구현하지 않고 실제 코드
+  경로를 그대로 태움).
+- 스크립트: `scratchpad/verify_bug032.py`(19개 어서션), `scratchpad/verify_export.py`
+  (9개 어서션) — 총 28개 전부 PASS.
+- 대형 이미지: PIL로 5472×3648(20MP급, GitHub #35 재현 조건과 동일한 대형 해상도) 합성
+  이미지 A/B/C/D 4장 생성.
+- **A→B→A 왕복**: A에서 브러시 편집 2회(`_push_undo()`+마스크 추가+`_do_save(sync=True)`)
+  → B로 전환(A의 경로/undo 스택이 `_prev_image_path`/`_prev_undo_stack`에 정확히 캡처됨,
+  B의 undo 스택은 빈 상태로 시작) → B 편집 1회 → A로 복귀(A의 undo 스택 길이·어노테이션
+  개수가 전환 전과 정확히 일치) → `canvas.undo()` 2회 연속 호출로 어노테이션 개수가
+  2→1→0으로 정확히 되돌아감(Ctrl+Z 동작과 동일 경로).
+- **A→B→C→A 소실**: A 편집 2회 → B 편집 1회 → C 편집 1회 → A로 복귀 시 `_undo_stack == []`
+  (스펙대로 A 이력 소실, "현재+직전 1개"만 유지하는 설계와 일치).
+- **clear() 리셋**: `_prev_image_path is None`, `_prev_undo_stack == []`, `_undo_stack == []`
+  전부 확인.
+- **트리밍(개수/바이트 캡)**: A에 브러시 편집 40회 연속 실행(마스크 1개당 약 19.04MiB,
+  200MB 예산 ÷ 19.04MiB ≈ 10.5개 — 개수 캡(30)보다 바이트 캡이 먼저 작동하는 실측
+  시나리오, 설계 주석의 의도와 일치) → 최종 `len(_undo_stack) <= 30`이면서 항상
+  `>= 1`(최소 1회 undo 보장) 확인, 트리밍 후에도 `canvas.undo()` 1회가 실제로 어노테이션
+  개수를 바꿔 정상 동작함을 확인. `_annotations_mask_bytes()` 합산으로 바이트 예산 준수도
+  확인.
+- **일반 골든패스 회귀**: 새 이미지 D에 폴리곤 1개 추가 → 저장(`_do_save(sync=True)`) →
+  `annotation_store.load()`로 재로드해 왕복 일치 확인, B→D 이미지 전환 후에도 D의 저장된
+  어노테이션이 손상되지 않음을 확인.
+- **Export 골든패스 회귀**: 새 프로젝트에 폴리곤 1개+brush_mask 1개 혼합 어노테이션을 저장한
+  뒤 실제 `ExportWorker(out_dir, fmt, [img_path], ...).run()`(QThread를 `start()`하지 않고
+  동기 직접 호출)을 JSON/YOLO/COCO 3개 포맷 각각 실행 — `error` 시그널 미발생, 각 포맷
+  출력 파일 존재 및 어노테이션 2개(JSON/COCO) 또는 2줄 이상(YOLO, 브러시가 컨투어로 분해될
+  수 있어 `>=2`로 확인) 정상 확인.
+- **rle_decode MemoryError 가드**: `annotation_store.rle_decode`를 `MemoryError`를 던지는
+  함수로 몽키패치한 뒤, brush_mask 1개+polygon 1개가 섞인 어노테이션 JSON을 직접 작성해
+  `store.load()` 호출 — 예외로 전체 로드가 실패하지 않고, 문제의 brush_mask 항목만
+  건너뛰어지고 형제 polygon 항목은 정상 로드됨을 확인.
+
+### 4. 스크립트 버그로 인한 오탐 1건(제품 버그 아님, 기록만)
+- 최초 스크립트 버전에서 "일반 골든패스 회귀" 검증을 이미지 A로 재사용했다가, 직전
+  트리밍 섹션(40회 브러시 편집)이 이미 A.json에 어노테이션 40개를 누적 저장해둔 상태라
+  재로드 결과가 예상(1개)과 다르게 나와 2건 FAIL로 오탐됨 — `_annotations`(실제 편집
+  이력)와 `_undo_stack`(되돌리기용 스냅샷)은 별개 개념이라 트리밍은 undo 스택만 줄이고
+  이미 저장된 어노테이션 자체는 그대로 누적된다는 점을 스크립트가 놓쳤던 것. 새 이미지
+  D로 시나리오를 분리해 재실행하자 즉시 해소(28/28 PASS) — 제품 코드 이슈 아님, 검증
+  스크립트 설계 오류였음을 재확인 후 QA.md에는 등록하지 않음.
+
+### 5. git 상태
+- `git log --oneline -5`: `9ea66ac`(문서) → `74639d4`(fix) → `ba8bf5e` → ... 확인.
+- `git status`: 워킹 트리 clean, `.codex/`·`.worktrees/`·`AGENTS.md`만 기존 untracked
+  (이번 작업과 무관, 지시대로 무시).
+
+### 결론
+- **통과(PASS).** GitHub #35(BUG-032) main 브랜치 독립 재구현이 실제 UI 조작 기준(스크립트
+  구동을 통한 실제 코드 경로 재현)으로 정상 동작함을 확인. 라벨링 탭 골든패스, Export 3개
+  포맷 골든패스 모두 회귀 없음. 발견된 제품 버그 없음.
+- QA.md BUG-032를 Open Issues에서 Closed Issues로 이동, 독립 재검증 결과 추가.
+- `git push`는 지시에 따라 수행하지 않음 — 사용자 확인 후 리더가 처리.
