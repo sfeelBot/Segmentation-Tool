@@ -694,3 +694,12 @@ zone-analysis-tab 브랜치: planner 스펙(`docs/specs/github-35-memory-issue-2
 사용자 요청("존 분석 브랜치와 main 브랜치 모두 작업할 수 있도록") 반영 — 관련 3개 파일이 두 브랜치에서 완전히 동일함을 diff로 확인. 에디션 브랜치 정책상(zone→main 역병합/cherry-pick 금지) main에는 **독립적으로 재구현**하기로 결정. main 워크트리(`D:/segmentation model`)에 implementer를 직접 디스패치(별도 planner 라운드 생략 — 스펙이 이미 코드로 검증되어 동일하게 적용 가능하다고 판단, main은 QA.md 넘버링만 BUG-032로 독립). 진행 중.
 
 추가로 사용자가 작업 중간에 "undo 스택 최대 개수를 지정해서 메모리 에러 안 나게" 요청 → planner에게 SendMessage로 추가 반영 지시(바이트 예산 상한 `_MAX_UNDO_BYTES=200MB` 설계로 스펙에 포함됨, 이미 zone 브랜치 구현·검증에 반영 완료, main 구현에도 동일 적용 지시).
+
+## 2026-09-23 — 나머지 열린 GitHub 이슈 정리 (#32/#23 close, #22/#5 유지)
+
+사용자 요청: "github 이슈에서 close할 수 있는 것들은 해줘". 남은 열린 이슈 4개(#32/#23/#22/#5) 실제 완료 상태를 QA.md/roadmap.md/decisions-needed.md/git 커밋(origin push 여부 포함)으로 교차 확인.
+
+- **#32 "zone 병목현상"**: 구현+수차례 독립 재검증 통과(verification-log 2026-08-31 등), 커밋 `609fb10` 등 origin/feature/zone-analysis-tab에 이미 push 확인 → 코멘트+close.
+- **#23 "학습,추론 탭 이슈"**: roadmap 체크박스 `[x]` 완료, main→zone sync 커밋까지 origin에 반영 확인 → 코멘트+close.
+- **#22 "installer 기존버전 체크"**: 스펙만 완료, roadmap 체크박스 `[ ]` 미완료 — 경고만/자동제거후재설치/설치거부 3택 결정 필요한 상태라 **미착수 확인, Open 유지**(코멘트 안 남김).
+- **#5 "모델 탭 변경"**: `decisions-needed.md` "보류된 항목"에 2026-08-20 사용자 확정 기록("보류 — 탭 구조 유지") — **의도적으로 Open 유지**(코멘트 안 남김, 기존 정책 그대로).
