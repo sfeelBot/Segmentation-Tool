@@ -4717,3 +4717,63 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
     tests/test_zone_state_persistence.py tests/test_zone_batch_worker.py` 23건 전부 통과.
 - QA.md BUG-032를 Closed로 이동(원인/수정/검증 기록). 커밋 `a33343c` (push 안 함).
 - **검증 서브에이전트의 독립 재확인 필요** — 구현자 본인 확인만으로 완료로 보지 않는다.
+
+## 2026-09-22 — GitHub #35 "메모리 이슈" (BUG-033) 수정
+
+- 대상: `docs/specs/github-35-memory-issue-2026-09-22.md`(planner 작성). 이 워크트리
+  (`feature/zone-analysis-tab`)에서만 작업 — main 워크트리(`D:/segmentation model`)는
+  별도 라운드에서 독립 적용 예정, 건드리지 않음.
+- **Part 1** (`app/widgets/annotation_canvas.py`) — undo 스택 이미지별 스코프: `__init__`에
+  `_prev_image_path: Path | None`/`_prev_undo_stack: list[list[AnnotationItem]]`(직전 이미지
+  슬롯 1개) 추가. `load_image()`가 `self._finish_brush()` 호출 뒤·`self._image_path = path`
+  대입 **직전**에, 새로 여는 경로가 `_prev_image_path`와 일치하는지 **먼저** 확인해
+  `restored_stack`을 정하고 **그다음** 현재 `_image_path`/`_undo_stack`을 직전 슬롯으로
+  이관하는 순서를 스펙 그대로 지킴(순서를 바꾸면 A→B→A 왕복 복원이 깨짐). `clear()`에도
+  `_prev_image_path = None`/`_prev_undo_stack = []` 추가.
+- **Part 2** (같은 파일) — 바이트 예산 상한: 모듈 상수 `_MAX_UNDO_STEPS = 30`/
+  `_MAX_UNDO_BYTES = 200 * 1024 * 1024`를 `_IMAGE_CACHE_SIZE` 옆에 추가, 모듈 레벨 헬퍼
+  `_annotations_mask_bytes(anns)`(`a.mask.nbytes` 합산, `_mask_bbox()` 뒤에 배치)를 신규
+  작성. `_push_undo()`의 기존 `if len() > 30: pop(0)`을 `while len() > 1 and (len() >
+  _MAX_UNDO_STEPS or sum(bytes) > _MAX_UNDO_BYTES): pop(0)`으로 교체 — `len() > 1` 가드로
+  스냅샷 1개(방금 push한 것)조차 예산을 넘는 극단 케이스에서도 최소 1개는 항상 남김.
+- **Part 3** (`app/core/annotation_store.py`) — `rle_decode()` 메모리 가드: 파일 상단에
+  `from app.core.logger import get_logger` + 모듈 레벨 `log = get_logger(__name__)` 추가.
+  `load()`의 `brush_mask` 분기에서 `rle_decode()` 호출을 `try/except MemoryError`로 감싸,
+  실패 시 `log.warning()`으로 `annotation_id`/이미지명/크기를 남기고 그 항목만 `continue`
+  (나머지 polygon/정상 brush_mask는 그대로 로드). `export_dialog.py`는 스펙 확인대로
+  `annotation_store.load()`(alias `load_annotations`)를 그대로 재사용하므로 코드 변경 없음
+  (Part 3-B, 손대지 않음).
+- 검증(구현자, scratchpad 전용 — 프로젝트에 스크립트 미보존):
+  - `python -m py_compile app/widgets/annotation_canvas.py app/core/annotation_store.py` 통과.
+  - `annotation_canvas.py`: `store.load`/`store.save`를 in-memory dict로 모킹한 뒤
+    `AnnotationCanvas` 인스턴스(offscreen Qt) 하나로 8개 시나리오를 순서대로 재현·assert —
+    ① 최초 로드 시 `_prev_image_path`/`_prev_undo_stack` 불변·`_undo_stack=[]`, ② A→B 최초
+    전환 시 B는 새 스택·직전 슬롯=A, ③ **A→B→A 왕복 시 `_undo_stack`이 A의 이전 상태와
+    정확히 일치**(스펙의 핵심 순서 요구사항), ④ **A→B→C→A 시 A의 이력이 스펙대로 소실**
+    (`_undo_stack == []`), ⑤ `clear()` 후 직전 슬롯도 빈 상태로 리셋, ⑥ 개수 캡 — 4×4
+    소형 마스크 40회 push 시 최종 스택 길이 30(개수 캡이 먼저 작동), ⑦ 바이트 캡 —
+    2000×2000 마스크 3개(스냅샷당 12MB)를 10회 push 시 총 바이트 120,000,000(≤200MB)로
+    자동 트리밍(스택 길이 10), ⑧ 최소 1개 가드 — 8000×8000 마스크 4개(스냅샷 1개
+    ≈256MB, 예산 초과)를 연속 2회 push해도 `len(_undo_stack) == 1`로 유지(스택이 완전히
+    비지 않음). 8개 전부 assert 통과.
+  - `annotation_store.py`: `rle_decode`를 모킹해 특정 `rle` 값("fake")일 때만
+    `MemoryError`를 던지도록 구성한 JSON(polygon 1개 + 정상 brush_mask 1개 + 실패
+    brush_mask 1개)에 `load()`를 실행 — 실패 항목만 결과에서 빠지고(`len(items)==2`)
+    `log.warning` 메시지가 `annotation_id=bm_fail`/이미지명/크기를 포함해 정상 출력됨을
+    확인. `_ann_path`를 임시 디렉터리로 리다이렉트해 실제 프로젝트 `data/annotations/`는
+    건드리지 않음.
+  - 기존 회귀 테스트 `tests/test_annotation_type_merge.py tests/test_canvas_zoom_pan.py`
+    (offscreen, QT_QPA_PLATFORM=offscreen) 7건 전부 통과 — 무회귀.
+- 버전: `release.ini`(zone-v1.4.0, 미태깅) 확인. 과거 유사 버그 수정 커밋들(BUG-031
+  `0841e06`, BUG-032 `a33343c`)도 커밋 시점에 release.ini를 개별적으로 올리지 않고
+  "chore: zone-v*.*.* 릴리스 버전 갱신" 커밋으로 배포 단계에서 별도 배치 처리해온 이
+  저장소 관례(`git log -- release.ini`로 확인)를 그대로 따라, 이번 `fix:` 커밋에서도
+  버전 파일은 건드리지 않음 — 필요 시 배포 에이전트가 배치 태깅.
+- 커밋 대상: `app/widgets/annotation_canvas.py`, `app/core/annotation_store.py`,
+  `QA.md`(BUG-033 Open→Closed 이동), 이 로그. `docs/specs/github-35-memory-issue-2026-09-22.md`
+  와 `docs/agents/leader-log.md`/`planning-log.md`/`docs/roadmap.md`는 planner/leader가
+  이미 별도로 작성/수정해둔 것으로 이번 구현 커밋 범위 밖 — 손대지 않음.
+- **검증 서브에이전트의 독립 재확인 필요** — 구현자 본인 확인만으로 완료로 보지 않는다.
+  특히 스펙의 "검증 골든패스 제안"(실제 대형 이미지 A→B→A/A→B→C→A UI 왕복, export
+  3포맷 회귀)은 이번 라운드에서 스크립트로만 확인했고 `python main.py` 실구동 UI
+  조작으로는 아직 확인되지 않았다.
