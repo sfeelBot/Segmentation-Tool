@@ -703,3 +703,11 @@ zone-analysis-tab 브랜치: planner 스펙(`docs/specs/github-35-memory-issue-2
 - **#23 "학습,추론 탭 이슈"**: roadmap 체크박스 `[x]` 완료, main→zone sync 커밋까지 origin에 반영 확인 → 코멘트+close.
 - **#22 "installer 기존버전 체크"**: 스펙만 완료, roadmap 체크박스 `[ ]` 미완료 — 경고만/자동제거후재설치/설치거부 3택 결정 필요한 상태라 **미착수 확인, Open 유지**(코멘트 안 남김).
 - **#5 "모델 탭 변경"**: `decisions-needed.md` "보류된 항목"에 2026-08-20 사용자 확정 기록("보류 — 탭 구조 유지") — **의도적으로 Open 유지**(코멘트 안 남김, 기존 정책 그대로).
+
+## 2026-09-23 — GitHub #22(installer 기존버전 체크) 착수 + push 예약
+
+사용자 요청: "installer 기존 버전 체크 진행해줬으면 해. 이거 끝나고 나서, push 진행할 수 있도록 해줘." 기존 스펙 문서(`docs/specs/github-issue-22-and-16-followup-2026-08-29.md`)에 3택 결정 대기가 있어 AskUserQuestion으로 확인:
+1) 기존 버전 발견 시 동작 → **자동 제거 후 재설치** 선택
+2) 적용 브랜치 → **main + zone-analysis-tab 둘 다**
+
+옵션2 선택으로 BUG-016(무인 제거 후 data\logs\ 잔존, P3 Open)과 직접 얽힘을 확인 — planner에게 #22 구현 스펙 + BUG-016 통합 수정까지 함께 작성하도록 위임(양쪽 브랜치 setup.iss 구조 차이 반영). 완료되면 main/zone 각각 별도 implementer→verifier 라운드(에디션 브랜치 정책상 역병합 금지), 전체 완료 후 사용자 요청대로 push 진행 예정.
