@@ -686,3 +686,11 @@ zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-ana
 사용자 확정 방향: "이전 이미지 편집은 최대 그 직전 이미지에 대해서만 진행할 수 있도록" — undo 스택을 이미지별로 스코프하되 현재+직전 1개 이미지까지만 유지(전환 시 떠나는 이미지 스택을 "직전 슬롯"에 저장, 슬롯은 항상 교체돼 최대 1개만 유지, 재방문 시 복원). 여기에 `rle_decode()` 방어적 try/except(BUG-014와 동일 완화 패턴)도 함께 적용하기로 함.
 
 planner 서브에이전트에 위임(BUG-033 가칭, QA.md 등록 + 정확한 라인 기준 구현 스펙 작성). 구현은 다음 단계.
+
+## 2026-09-22 (계속) — BUG-033(GitHub #35) zone 브랜치 완료, main 브랜치 병행 착수
+
+zone-analysis-tab 브랜치: planner 스펙(`docs/specs/github-35-memory-issue-2026-09-22.md`) → implementer 구현(커밋 `775b083`/`8cb6d0d`) → verifier 독립 재검증(87개 어서션, 실제 UI 골든패스+Export 골든패스 전부 통과, PASS) 완료. 문서 커밋(`24b5aa8`)으로 마무리.
+
+사용자 요청("존 분석 브랜치와 main 브랜치 모두 작업할 수 있도록") 반영 — 관련 3개 파일이 두 브랜치에서 완전히 동일함을 diff로 확인. 에디션 브랜치 정책상(zone→main 역병합/cherry-pick 금지) main에는 **독립적으로 재구현**하기로 결정. main 워크트리(`D:/segmentation model`)에 implementer를 직접 디스패치(별도 planner 라운드 생략 — 스펙이 이미 코드로 검증되어 동일하게 적용 가능하다고 판단, main은 QA.md 넘버링만 BUG-032로 독립). 진행 중.
+
+추가로 사용자가 작업 중간에 "undo 스택 최대 개수를 지정해서 메모리 에러 안 나게" 요청 → planner에게 SendMessage로 추가 반영 지시(바이트 예산 상한 `_MAX_UNDO_BYTES=200MB` 설계로 스펙에 포함됨, 이미 zone 브랜치 구현·검증에 반영 완료, main 구현에도 동일 적용 지시).
