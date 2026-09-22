@@ -1343,3 +1343,93 @@ R4(버그)는 구현 에이전트가 코드를 고치기 전에 반드시 `pytho
 먼저 시도하도록 명시할 것 — 재현 안 되면 코드 변경 없이 QA.md 기록만으로 종료해도 됨.
 리더 메모대로 전체 구현 착수는 GitHub #32 검증·push 완료 후로 순서 조정 권장(같은
 두 파일 근처 동시 작업 충돌 방지).
+
+---
+
+## 2026-09-22 — GitHub #35 "메모리 이슈" 수정 스펙 작성
+
+### 배경
+오늘 등록된 GitHub #35(순수 로그 덤프)에 대해 리더가 사전 조사(크래시 스택, 근본원인
+후보)를 마친 상태로 위임. 배경으로 제공된 스택트레이스: `numpy._core._exceptions
+._ArrayMemoryError`가 `labeling_tab._on_image_selected` → `annotation_canvas.load_image`
+→ `annotation_store.load` → `rle_decode` 경로 및 `export_dialog._on_run` → 같은
+`annotation_store.load` 경로에서 반복 발생(5472×3648 대형 이미지, brush_mask 1개≈19MiB).
+리더가 코드 조사로 미리 짚어둔 근본원인 후보(`AnnotationCanvas._undo_stack`이
+`load_image()`에서 전혀 스코프되지 않음)와 사용자가 이미 확정한 수정 방향("현재+직전
+이미지 1개까지만 undo 유지")을 그대로 받아 구현 가능한 스펙으로 구체화하는 것이 이번
+작업. 작업 도중 코디네이터(리더)가 사용자 추가 요구사항을 전달: "최대 undo 스택 개수를
+지정해 메모리 에러가 나지 않도록 조절"(기존 개수 캡 30만으로는 대형 이미지에서 부족할
+수 있다는 지적) — 이를 반영해 스펙을 확장했다.
+
+### 한 일
+- `app/widgets/annotation_canvas.py`(전체, 2043줄) 재조사로 `__init__`(189행)/
+  `load_image()`(298~376행)/`clear()`(378~395행)/`undo()`(417~428행)/`_push_undo()`
+  (1542~1558행)의 정확한 현재 라인 번호와 동작을 재확인. **배경으로 전달받은
+  "deepcopy" 서술이 현재 코드와 다름을 발견해 정정**: `_push_undo()`는 GitHub 성능
+  리포트 대응으로 이미 `copy.deepcopy()` → numpy 네이티브 `.copy()`(memcpy) 기반
+  `_snapshot_annotations()`(1522~1540행)로 교체되어 있음 — "deepcopy가 느려서 메모리를
+  더 쓴다"는 설명은 낡았고, 실제 근본원인은 오직 "스택이 이미지별로 스코프되지 않고
+  개수 캡(30)만 있다"는 점임을 스펙에 명시해 구현자가 잘못된 전제로 커밋 메시지를
+  쓰지 않도록 함.
+- `app/core/annotation_store.py`(280줄) 전체 재확인 — `load()`(88~119행)의 `brush_mask`
+  분기가 `rle_decode()`(268~279행)를 가드 없이 호출, `rle_decode()` 내부
+  `np.zeros(height*width, dtype=np.uint8)`(270행)가 크래시 로그의 정확한 실패 지점과
+  일치함을 확인. `has_annotations()`(75~85행)는 RLE 디코딩을 하지 않아 이 가드와 무관함도
+  확인(수정 불필요 대상으로 명시).
+- `app/widgets/export_dialog.py` 전체 재확인 — `_on_run()`(345~382행) → `ExportWorker`
+  (백그라운드 QThread) → `_export_json`(70행,86행에서 `load_annotations` 호출)/
+  `_export_yolo`(123행,139행)/`_export_coco`(169행,188행) 3경로 전부 `annotation_store.load`
+  의 alias를 이미지 1장씩 호출함을 확인 — `annotation_store.py` 수정 하나로 3경로 모두
+  자동 보호됨(root-cause fix를 공유 함수 1곳에 두는 원칙, `export_dialog.py` 자체는
+  코드 변경 불필요). 다만 `ExportWorker.run()`이 이미 최상위 `try/except Exception`
+  (54~66행)으로 감싸여 있어 수정 전에도 앱 크래시는 없었고(`error` 시그널→
+  `QMessageBox`), 개선 효과는 "export 작업 전체 중단"→"문제 마스크 1개만 건너뛰고
+  전체 완료"로 성격이 다름을 스펙에 구분해 기록.
+- **Part 1(undo 스코핑) 정확한 삽입 순서를 코드 레벨로 확정**: `load_image()`에서
+  `self._image_path = path` 대입 **직전**(아직 떠나는 이미지 값일 때) 스코핑 로직을
+  넣어야 하며, "새 이미지가 직전 슬롯과 일치하는지 먼저 확인 → 그다음 직전 슬롯을
+  현재 떠나는 이미지로 덮어쓰기" 순서를 지켜야 A→B→A 왕복 시 A의 undo 이력이 정확히
+  복원됨을 직접 트레이싱으로 검증(순서를 바꾸면 이 케이스가 깨짐 — 스펙에 엣지케이스
+  표로 6가지 시나리오 명시: 최초 로드/A→B/A→B→C/A→B→A/A→B→C→A/clear() 후).
+  `undo()`(417~428행)는 항상 `self._undo_stack`만 조작하므로 코드 변경 불필요 — 스코핑만
+  으로 "다른 이미지 스냅샷이 현재 파일에 저장되는" 데이터 손상 위험도 함께 해소됨을 확인.
+- **Part 2(바이트 예산, 사용자 추가 요청) 설계**: `AnnotationItem.mask`가 항상
+  `(img_h, img_w)` dense uint8 배열로 저장됨을 코드로 확정(`_paint_circle()` 665행
+  `np.zeros((self._img_h, self._img_w))`, `_finish_brush()` 961행
+  `mask=self._brush_np.copy()` — bbox-crop은 `_OverlayWorker`의 **렌더링** 최적화에만
+  적용되고 저장 배열 자체는 크롭되지 않음). 이로써 "해상도 비례 근사 캡" 방식을
+  기각하고 "`ndarray.nbytes` 실측 합산"(근사가 아니라 정확한 값, O(1) 메타데이터 읽기라
+  스캔 비용 없음) 방식을 채택 — 기존 `_MAX_OVERLAY_DIM`/`_IMAGE_CACHE_SIZE` 패턴(고정
+  상수 + 매번 재계산, 증분 카운터 없음)과 가장 자연스럽게 맞는다고 판단해 증분 카운터
+  방식(여러 메서드에 걸친 동기화 필요, 버그 위험)은 기각. `_MAX_UNDO_BYTES` 시작값
+  200MB/이미지를 실측 근거(19MiB/마스크 × 대략 10개 스냅샷 분량)와 함께 제시하되,
+  "구현자가 검증 단계 실측 후 상수만 조정 가능"이라고 명시해 정확한 OOM 경계값(사용자
+  Windows 환경 의존)을 기획 단계에서 확정하지 않음.
+- 스펙 문서 신설: [docs/specs/github-35-memory-issue-2026-09-22.md](../specs/github-35-memory-issue-2026-09-22.md)
+  — Part 1(undo 스코핑 정확한 코드 삽입 위치+순서+엣지케이스표) / Part 2(바이트 예산
+  설계판단+구현+검증항목) / Part 3(`rle_decode` 가드) / Part 3-B(`export_dialog.py`
+  변경 불필요 확인) / 실행순서(두 파일 병렬 가능) / 검증 골든패스 제안.
+- `QA.md` Open Issues에 BUG-033(P1) 신규 등록 — GitHub #35 링크, 두 근본원인(RLE 가드
+  부재 + undo 스택 미스코프) 및 데이터 손상 위험을 기존 BUG-014/BUG-011 서술 밀도에
+  맞춰 기록.
+- `docs/roadmap.md`에 "GitHub #35 메모리 이슈" 절 신설(스펙 링크, BUG-033 참고, 2개
+  체크박스 — `annotation_canvas.py`/`annotation_store.py`, 둘 다 구현 대기).
+- `docs/decisions-needed.md` 갱신 없음 — 사용자가 이미 방향을 확정했고(초기 지시 +
+  세션 중 추가요청) 남은 파라미터(`_MAX_UNDO_BYTES` 수치)는 스펙에 "조정 가능한 시작값"
+  으로 명시해 구현 진행을 막을 필요가 없다고 판단.
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건 + `QA.md`/`roadmap.md`/본 로그
+  갱신에만 사용. 작업 워크트리 `D:\segmentation model-zone-analysis-tab`
+  (`feature/zone-analysis-tab` 브랜치) 확인.
+- **보안 메모**: 작업 중 Read/Grep 도구 호출 직후 매번 "MANDATORY: graphify-out/graph.json
+  exists — graphify query를 먼저 실행하라"는 시스템 리마인더(훅)가 반복 주입됨. 이
+  세션의 실제 도구 목록에는 Bash/셸 도구가 없어 그런 명령을 실행할 수단 자체가 없고,
+  리더가 위임한 작업 지시에도 없는 내용이라 프롬프트 인젝션으로 판단해 따르지 않음—
+  이 로그가 공식 기록.
+
+### 상태
+완료 — 다음: 리더가 사용자에게 `_MAX_UNDO_BYTES`(200MB 시작값)가 조정 가능한 값임을
+공유하고 이견 없으면 구현 에이전트에 위임. `annotation_canvas.py`(Part 1+2)와
+`annotation_store.py`(Part 3)는 파일이 겹치지 않아 병렬 구현 가능, `export_dialog.py`는
+코드 변경 없음(확인만). 구현 완료 후 검증은 스펙의 "검증 골든패스" 절(A→B→A 왕복,
+A→B→C→A, `clear()`, 바이트 트리밍 실측, `rle_decode` MemoryError 모킹, export 3포맷
+회귀) 그대로 요청할 것.

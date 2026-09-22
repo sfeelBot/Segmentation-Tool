@@ -1166,6 +1166,27 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
   관례 근거로 직접 결정. 요청6은 "결정"이 아니라 "라이브 재현 필요"라 결정대기 목록
   대상 아님(GitHub #9/#16 라운드와 동일 처리).
 
+## GitHub #35 "메모리 이슈" (2026-09-22 접수)
+
+기획 완료: [docs/specs/github-35-memory-issue-2026-09-22.md](specs/github-35-memory-issue-2026-09-22.md).
+QA.md BUG-033(P1) 참고. 순수 로그 덤프로 접수된 반복 크래시(`numpy._core._exceptions._ArrayMemoryError`,
+대형 이미지 brush_mask RLE 디코딩)를 코드 조사로 원인 2건 확정: ① `annotation_store.rle_decode()`에
+메모리 부족 가드가 없어 단일 대형 이미지에서도 앱이 죽을 수 있음(`labeling_tab`/`export_dialog`
+양쪽 경로 공통) ② `AnnotationCanvas._undo_stack`이 `load_image()`(이미지 전환)에서 전혀 스코프되지
+않아 여러 이미지의 대형 마스크 undo 스냅샷이 누적(메모리 누적 원인) + `undo()`가 다른 이미지
+스냅샷을 현재 화면 이미지 파일에 잘못 저장할 잠재적 데이터 손상 위험. 사용자 확정 방향: undo 기록을
+"현재 이미지 + 바로 직전 이미지 1개"로 스코프. 작업 중 사용자 추가 요청으로 기존 개수 캡(30)만으로는
+대형 이미지에서 불충분함을 확인해 바이트 예산 기반 2차 상한(`_MAX_UNDO_BYTES`, 시작값 200MB/이미지)도
+스펙에 포함.
+
+- [ ] `app/widgets/annotation_canvas.py` — undo 스택 이미지 스코프(`_prev_image_path`/
+      `_prev_undo_stack` 신설, `load_image()`/`clear()` 수정) + 바이트 예산 상한
+      (`_MAX_UNDO_BYTES`, `_push_undo()` 트리밍 조건 확장). 구현 대기.
+- [ ] `app/core/annotation_store.py` — `load()`의 `rle_decode()` 호출을
+      `try/except MemoryError`로 감싸 실패한 brush_mask 1개만 건너뛰고 나머지 어노테이션은
+      정상 로드(BUG-014와 동일 완화 패턴). `export_dialog.py`는 공유 함수 수정만으로 자동
+      보호되어 별도 코드 변경 불필요(스펙 Part 3-B 확인 완료). 구현 대기.
+
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
   그리기/지우기/연결 블랍 삭제/팬/Undo), 수동 스트로크 last-write-wins와 혼합 LIFO Undo.

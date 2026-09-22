@@ -5629,3 +5629,108 @@ blob_delete 즉시삭제 무회귀/타겟클래스·이미지전환 시 선택�
   동심원 강제 규칙 모두 회귀 없음. `QA.md` `BUG-032`는 이미 Closed로 반영돼 있어 추가
   갱신 불필요(구현자 기록에 "검증 에이전트의 독립 재확인 필요"로 남아있던 문구만 이번
   독립 재검증으로 충족됨 — 별도 텍스트 수정 없이 이 로그로 보강).
+## 2026-09-22 — BUG-033(GitHub #35 "메모리 이슈") 독립 재검증
+
+- 대상: `docs/specs/github-35-memory-issue-2026-09-22.md`, `QA.md` `BUG-033`(구현 완료,
+  커밋 `775b083`+`8cb6d0d`). 구현자 자체 스크립트 검증(8개+2개 assertion, 기존 회귀 7건)은
+  리더가 이미 전달받은 상태 — 이 라운드는 그것을 신뢰하지 않고 verifier가 처음부터 새로
+  작성한 스크립트로 재현하는 독립 재검증. 워크트리 `feature/zone-analysis-tab`에서만 작업,
+  `D:/segmentation model`(main)은 건드리지 않음.
+
+### 정적 검토
+
+`git show 775b083`로 diff 전체를 스펙(`docs/specs/github-35-memory-issue-2026-09-22.md`)과
+줄 단위 대조 — Part 1(`load_image()`의 `_prev_image_path`/`_prev_undo_stack` 스코핑, 순서:
+먼저 `restored_stack` 판정 후 현재 스택을 직전 슬롯으로 이관 → A→B→A 왕복 복원 보장) /
+Part 2(`_MAX_UNDO_STEPS=30`/`_MAX_UNDO_BYTES=200MB` 이중 캡, `_annotations_mask_bytes()`,
+`_push_undo()`의 `while len()>1 and (...)` 트리밍) / Part 3(`annotation_store.load()`의
+`rle_decode()` `try/except MemoryError` 가드, `log.warning`) 전부 스펙 코드 블록과 정확히
+일치함을 확인. `export_dialog.py`는 실제로 코드 변경 없음(Part 3-B대로 `load_annotations`
+재사용만).
+
+### 실행 확인
+
+- `build/venv/Scripts/python.exe -m py_compile app/widgets/annotation_canvas.py
+  app/core/annotation_store.py` 통과.
+- `python main.py`(offscreen, timeout으로 Qt 이벤트루프 진입까지 확인) — 로그가 정상 순서로
+  출력되며(장치 정보 등) 크래시 없이 기동, timeout으로 정상 종료(SIGTERM). 콘솔 cp949 인코딩이
+  em-dash(—)를 인코딩 못해 `--Logging error--` 경고가 다수 출력되지만 로깅 모듈 자체의
+  기존 콘솔 인코딩 이슈이고 이번 수정과 무관 — 앱 동작에는 영향 없음(파일 로그는 UTF-8로
+  정상 기록됨, `PYTHONIOENCODING=utf-8`로 재현 시 문제 없음). 새 버그로 등록하지 않음(사소한
+  기존 콘솔 인코딩 이슈, 별도 트리아지 필요 시 P3급).
+- `pytest tests/test_annotation_type_merge.py tests/test_canvas_zoom_pan.py -q`(offscreen)
+  — 7 passed, 무회귀.
+
+### 독립 재작성 스크립트 검증 (구현자 스크립트 재사용 안 함)
+
+1. **`annotation_canvas.py` 단위 스크립트**(offscreen `AnnotationCanvas` 인스턴스, `store.load/
+   save`를 in-memory dict로 모킹, 실 PNG 3장 A/B/C를 QImage로 생성해 QPixmap 디코딩까지 실동작
+   시킴) — 실제 press 핸들러와 동일한 호출 순서(`_push_undo()`로 "변경 전" 상태 스냅샷 → 그 다음
+   `_annotations` 교체)를 재현해 26개 assertion: 최초 로드 시 `_prev_*` 불변, A→B 최초 전환 시
+   B는 새 스택·직전 슬롯=A, **A→B→A 왕복 시 `_undo_stack`이 스위치 전과 `annotation_id` 단위로
+   완전히 일치**(스펙 핵심 순서 요구사항), `undo()` 2회 연속 호출로 정확한 이전 상태로 순차
+   복원, **A→B→C→A 시 A 이력이 정확히 소실**(스펙대로, 버그 아님), `clear()` 후 직전 슬롯도
+   리셋, 개수 캡(40회 편집 후 정확히 30), 바이트 캡(2000×2000×3 마스크 스냅샷 10회=108MB
+   무트리밍 → 30회 후 204MB로 자동 트리밍·길이17), 최소 1개 가드(8000×8000×4=256MB 단일
+   스냅샷도 스택이 비지 않음, 연속 편집해도 항상 길이1 유지) — 전부 통과.
+2. **`annotation_store.py` 단위 스크립트** — `_ann_path`를 임시 디렉터리로 리다이렉트, 실
+   JSON(폴리곤 1개 + 정상 brush_mask 1개 + `rle` 값이 특정 트리거일 때만 `MemoryError`를 던지는
+   모킹된 `rle_decode` 대상 brush_mask 1개)에 `load()`를 실경로로 호출 — 손상 항목만 결과에서
+   빠지고 나머지 2건은 정상 반환, `log.warning`에 `annotation_id=bm_fail`/이미지명/크기
+   (5472x3648) 포함 확인, 정상 케이스 회귀(1건 정상 로드), `has_annotations()`는 이 가드와
+   무관하게 정상 동작(RLE 디코딩 안 함) — 9개 assertion 전부 통과.
+3. **실제 `LabelingTab` UI 골든패스**(QTest 실이벤트, 임시 프로젝트를 새로 생성해 실 프로젝트
+   `projects/manual_demo`/`projects/nok`는 전혀 건드리지 않음 — `git status`로 검증 전후 변화
+   없음 확인) — A=합성 5472×3648(GitHub #35 크래시 로그와 동일 해상도), B/C=`projects/
+   manual_demo`의 실 이미지를 복사(원본 미접촉)해 실제 `LabelingTab`을 `show()`하고 브러시/
+   undo 툴바 버튼을 실클릭:
+   - 이미지 브라우저 트리 실클릭(`QTest.mouseClick`)으로 A 선택 → 브러시 도구 툴바 버튼
+     실클릭 → 서로 다른 두 disjoint 영역에 실제 마우스 press/move/release 드래그 스트로크
+     2회 → `undo_stack` 길이/내용 확인.
+   - B로 실클릭 전환 → 직전 슬롯=A(스택 길이 일치) 확인 → A로 왕복 실클릭 전환 → `undo_stack`
+     길이가 정확히 복원되고, 디스크 재로드된 `_annotations`도 스트로크 2회분과 정확히 일치함을
+     확인(전환마다 `wait_for_pending_saves()`로 비동기 저장 스레드 완료를 기다려 레이스 없이
+     검증).
+   - 툴바 undo 버튼 실클릭(Ctrl+Z와 동일 슬롯 — `act_undo.triggered.connect(self._canvas.
+     undo)`) → 어노테이션이 정확히 스트로크1 직후 상태로 복원(개수 정확 일치), 현재 화면
+     이미지는 여전히 A(다른 이미지로 안 바뀜) 확인. 이어서 실제 `QTest.keyClick(Ctrl+Z)`
+     단축키 경로로도 별도 재확인 — `undo_stack`이 정확히 1 감소.
+   - A에서 재편집 후 B→C→A로 2단계 이상 전환 → A의 undo 이력이 정확히 소실(스펙대로, 버그
+     아님) 확인.
+   - 폴리곤 도구 실클릭 → 3점 실클릭 + 첫 꼭짓점으로 실제 호버(`QTest.mouseMove`, `_poly_snap`
+     갱신 필요) 후 닫기 클릭 → 어노테이션 1개 정상 추가(일반 라벨링 회귀 없음).
+   - 이미지 전환으로 저장 flush → `annotation_store.load()`로 디스크 저장 개수 정확히 일치
+     확인.
+   - 대형 이미지(A)에서 브러시 크기 200px로 반복 12회 실드래그 → 바이트 예산이 실제로
+     작동함을 실측: 최종 `undo_stack`이 1개로 트리밍되고 그 1개 스냅샷 자체가 219.6MB(200MB
+     예산 초과)인 것은 스펙이 명시한 "`len()>1` 가드로 최소 1개는 항상 보존, 그 1개가 예산을
+     넘어도 허용" 엣지케이스와 정확히 일치(구현자가 이론값으로 추정했던 "~10개 스냅샷 분량"
+     근처에서 실측으로 재현됨) — `MemoryError` 경고 0건(정상 트리밍 경로로 처리됐고 시스템
+     메모리 부족까지는 가지 않음), 그 상태에서도 undo 버튼 클릭이 크래시 없이 동작.
+   - 총 30개 assertion 전부 통과.
+4. **Export 골든패스**(`ExportWorker`를 실제 `QThread.start()`로 JSON/YOLO/COCO 각각 실행,
+   임시 프로젝트 이미지 2장 중 1장에 `rle_decode` `MemoryError` 강제 주입) — 3포맷 전부 에러
+   없이 완료, 손상 이미지도 건너뛰지 않고 2장 모두 처리 완료(Part 3-B가 주장한 개선 효과 —
+   "문제 마스크 1개만 건너뛰고 export 전체 완주" — 실측 확인), JSON export 결과 파일에서 손상
+   brush_mask(`bm_corrupt`)는 정확히 제외되고 정상 polygon(`p2`)만 포함됨을 파일 내용으로 직접
+   확인, YOLO txt/COCO json 출력 파일도 정상 생성(COCO images 2장 등록, annotations에 정상
+   항목만 포함) — 15개 assertion 전부 통과.
+
+### 데이터 위생
+
+모든 스크립트가 `tempfile.mkdtemp()`로 만든 임시 프로젝트 안에서만 동작했고, B/C 이미지는
+`projects/manual_demo`에서 **복사**만 해서 사용(원본 미접촉). 검증 전/후 `git status
+--porcelain -- projects/`가 항상 빈 결과 — 실 프로젝트 데이터 무변경 확인.
+
+### 최종 판정
+
+**통과 — 블로커 없음.** 정적 검토(스펙-diff 줄 단위 대조) + 실행 확인(`py_compile`, `python
+main.py` 기동) + 독립 재작성 스크립트(단위 35개 + UI 골든패스 30개 + Export 15개 = 총 87개
+assertion, 구현자 스크립트 재사용 없이 verifier가 새로 작성) + 기존 회귀 테스트(7건) 전부
+통과. Part 1(undo 스코핑)의 핵심 요구사항인 "A→B→A 왕복 복원" / "A→B→C→A 소실(사양)" /
+"다른 이미지 스냅샷이 현재 파일에 저장되는 데이터 손상 방지"가 실제 UI 조작 기준으로 전부
+확인됐고, Part 2(바이트 예산)의 "최소 1개 보존" 엣지케이스가 대형 이미지(크래시 로그와 동일
+해상도 5472×3648) 실측으로 재현됐으며, Part 3(rle_decode 가드)이 `annotation_store.load()`
+직접 호출과 Export 파이프라인 양쪽에서 모두 정상 동작함을 확인. 새로 발견된 버그 없음 —
+`QA.md` `BUG-033`에 신규 항목 없이 기존 행에 독립 재검증 결과를 append로 기록. push 가능
+판단은 리더에게 위임(버전 태깅 등 배포 단계는 검증 범위 밖).
