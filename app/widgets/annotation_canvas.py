@@ -156,6 +156,16 @@ _SNAP_PX  = 15            # 스냅-투-클로즈 판정 거리 (화면 픽셀)
 
 _IMAGE_CACHE_SIZE = 2      # 최근 방문 이미지 LRU 캐시 최대 장수 (대형 원본 메모리 고려, 확장 금지)
 
+# GitHub #35 — undo 스택 상한. 개수 캡(30)은 소형 이미지에서 여전히 유효한 1차 방어선으로
+# 유지하고, 바이트 예산은 대형 이미지에서 실질적으로 작동하는 2차 방어선이다. 마스크는
+# 항상 (img_h*img_w) 바이트 dense 배열이므로(설계 판단 참고) 이 값은 근사치가 아니라
+# "이미지 1장의 undo 스택에 허용할 마스크 총량"을 그대로 의미한다. 200MB는 시작값 —
+# 5472x3648(19MiB/마스크) 기준 약 10개 스냅샷 분량. 현재+직전 이미지 슬롯이 각각 이 예산을
+# 가지므로 undo만으로 늘어날 수 있는 최악 총량은 대략 2x(400MB). 실측 OOM 여유가 이보다
+# 타이트해야 한다고 검증 단계에서 확인되면 이 상수만 낮추면 된다(구조 변경 불필요).
+_MAX_UNDO_STEPS = 30
+_MAX_UNDO_BYTES = 200 * 1024 * 1024
+
 
 @dataclass
 class _ImageCacheEntry:
@@ -187,6 +197,8 @@ class AnnotationCanvas(QWidget):
         # 어노테이션 목록
         self._annotations: list[AnnotationItem] = []
         self._undo_stack: list[list[AnnotationItem]] = []
+        self._prev_image_path: Path | None = None              # GitHub #35 — "직전 이미지" 경로
+        self._prev_undo_stack: list[list[AnnotationItem]] = []  # GitHub #35 — "직전 이미지" 슬롯 1개
 
         # 뷰 변환
         self._zoom = 1.0
@@ -308,6 +320,25 @@ class AnnotationCanvas(QWidget):
         self._smooth_worker = None
         self._cancel_polygon()
         self._finish_brush()
+
+        # GitHub #35 — undo 스택을 이미지별로 스코프한다: 현재 이미지 + 바로 직전 이미지
+        # 1개까지만 유지(그 이상은 자동으로 버려짐). 스코프 없이 그대로 쌓이면 여러 이미지의
+        # 대형 마스크 스냅샷이 undo 스택 하나에 섞여 메모리가 누적되고, undo() 시 다른
+        # 이미지의 스냅샷이 튀어나와 현재 이미지 파일에 잘못 저장될 위험이 있었다.
+        #
+        # 순서가 중요하다: "직전 슬롯"을 덮어쓰기 전에 먼저 새로 여는 이미지가 그 슬롯과
+        # 일치하는지 확인해야 A→B→A 왕복 시 A의 undo 이력이 복원된다(엣지케이스는 스펙 참고).
+        if path == self._prev_image_path:
+            restored_stack = self._prev_undo_stack
+        else:
+            restored_stack = None
+
+        if self._image_path is not None:   # 최초 load_image 호출(첫 이미지)이 아닐 때만
+            self._prev_image_path = self._image_path
+            self._prev_undo_stack = self._undo_stack
+
+        self._undo_stack = restored_stack if restored_stack is not None else []
+
         self._image_path = path
 
         t_total = _perf.mark("load_image_total")
@@ -380,6 +411,8 @@ class AnnotationCanvas(QWidget):
         self._image_path = None
         self._annotations.clear()
         self._undo_stack.clear()
+        self._prev_image_path = None      # GitHub #35
+        self._prev_undo_stack = []        # GitHub #35
         self._poly_pts.clear()
         self._selected_ids.clear()
         self._brush_np = None
@@ -1554,7 +1587,12 @@ class AnnotationCanvas(QWidget):
             )
             return
         self._undo_stack.append(snap)
-        if len(self._undo_stack) > 30:
+        # GitHub #35 — 개수 캡(30)은 소형 이미지 보호용으로 유지, 바이트 예산은 대형
+        # 이미지(마스크 1개당 수십MB)에서 개수 캡보다 먼저 작동하는 실질 상한이다.
+        while len(self._undo_stack) > 1 and (
+            len(self._undo_stack) > _MAX_UNDO_STEPS
+            or sum(_annotations_mask_bytes(s) for s in self._undo_stack) > _MAX_UNDO_BYTES
+        ):
             self._undo_stack.pop(0)
 
     def _schedule_save(self) -> None:
@@ -2007,6 +2045,12 @@ def _mask_bbox(mask: np.ndarray, margin: int = 1) -> tuple[int, int, int, int] |
     x1 = min(iw, x + w + margin)
     y1 = min(ih, y + h + margin)
     return x0, y0, x1, y1
+
+
+def _annotations_mask_bytes(anns: list[AnnotationItem]) -> int:
+    """스냅샷(어노테이션 목록) 하나가 차지하는 마스크 바이트 총량.
+    polygon은 points(튜플 리스트)만 가져 사실상 0바이트 — brush_mask만 집계한다."""
+    return sum(a.mask.nbytes for a in anns if a.mask is not None)
 
 
 def _floodfill_interior(walls: np.ndarray) -> np.ndarray | None:

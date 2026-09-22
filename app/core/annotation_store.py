@@ -8,6 +8,9 @@ import numpy as np
 
 from app.core import project as _project
 from app.core.file_io import atomic_write
+from app.core.logger import get_logger
+
+log = get_logger(__name__)
 
 DEFAULT_PALETTE: list[tuple[int, int, int]] = [
     (  0,   0,   0),  # 0 background
@@ -106,7 +109,15 @@ def load(image_path: Path) -> list[AnnotationItem]:
             ))
         elif a["type"] == "brush_mask":
             w, h = a["width"], a["height"]
-            mask = rle_decode(a.get("rle", ""), h, w)
+            try:
+                mask = rle_decode(a.get("rle", ""), h, w)
+            except MemoryError as exc:   # numpy _ArrayMemoryError는 MemoryError 서브클래스
+                log.warning(
+                    f"brush_mask 디코딩 실패(메모리 부족) — "
+                    f"annotation_id={a.get('annotation_id')} 건너뜀 "
+                    f"(image={image_path.name}, {w}x{h}): {exc}"
+                )
+                continue
             items.append(AnnotationItem(
                 annotation_id=a["annotation_id"],
                 class_id=a["class_id"],
