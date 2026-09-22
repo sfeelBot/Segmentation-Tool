@@ -11,6 +11,69 @@
 
 ---
 
+## 2026-09-22 — BUG-032(GitHub #35) 메모리 이슈 수정 — main 독립 적용
+
+`feature/zone-analysis-tab` 브랜치에서 이미 수정·검증 완료한 동일 이슈(그쪽 BUG-033,
+`docs/specs/github-35-memory-issue-2026-09-22.md`)를 main에도 적용해달라는 리더 지시.
+`app/widgets/annotation_canvas.py`/`app/core/annotation_store.py`/`app/widgets/export_dialog.py`
+3개 파일이 두 브랜치에서 완전히 동일함을 `diff`로 먼저 확인한 뒤, 정책(에디션 브랜치 →
+main 역병합/cherry-pick 금지)에 따라 `D:\segmentation model`(main 워크트리)에서 **처음부터
+다시 구현**하고 별도로 커밋했다(zone 브랜치 커밋 `775b083`과 코드 내용은 동일하나 커밋 자체는
+독립).
+
+### 원인
+- `AnnotationCanvas._undo_stack`이 이미지별로 스코프되지 않고 앱 세션 내내 누적됨 — 여러
+  이미지를 오가며 편집하면 서로 다른 이미지의 전체 해상도 brush_mask 스냅샷이 undo 스택
+  하나에 계속 쌓여 메모리가 단조 증가. `undo()`가 다른 이미지의 스냅샷을 현재 이미지 파일에
+  잘못 저장할 잠재적 데이터 손상 위험도 있었음.
+- `annotation_store.load()`의 `brush_mask` 분기가 `rle_decode()` 실패(MemoryError)를 방어하지
+  않아, 손상/과대 RLE 데이터 항목 하나 때문에 해당 이미지의 정상 항목까지 전부 로드 실패.
+
+### 변경
+- `app/widgets/annotation_canvas.py`
+  - `__init__`에 `_prev_image_path: Path | None`, `_prev_undo_stack: list[list[AnnotationItem]]`
+    필드 추가 — "현재 이미지 + 바로 직전 이미지" 1개까지만 undo 스택을 스코프.
+  - `load_image(path)`에서 `self._image_path = path` 대입 직전에 스코핑 블록 삽입: 새로
+    여는 이미지가 직전 슬롯과 일치하면 그 스택을 복원(A→B→A 왕복 정확 복원), 아니면 새
+    스택으로 시작. 순서가 핵심 — 비교를 먼저 하고 그다음 직전 슬롯을 덮어쓴다(A→B→C→A는
+    C 진입 시 직전 슬롯이 B로 덮여 A 이력 소실 — 사양, 버그 아님).
+  - `clear()`에 `_prev_image_path = None`, `_prev_undo_stack = []` 추가.
+  - 모듈 상수 `_MAX_UNDO_STEPS = 30`, `_MAX_UNDO_BYTES = 200 * 1024 * 1024`(200MB) 신설,
+    모듈 헬퍼 `_annotations_mask_bytes()` 신설(brush_mask만 `.nbytes` 합산, polygon은 0).
+  - `_push_undo()`의 기존 개수 캡(30)을 개수+바이트 이중 조건 `while` 루프로 교체,
+    `len() > 1` 가드로 최소 1개(가장 최근 스냅샷)는 예산 초과 시에도 항상 보존. 기존
+    `MemoryError` try/except(BUG-014 대응, 스냅샷 생성 자체 실패 시 이번 undo만 건너뜀)는
+    그대로 유지.
+- `app/core/annotation_store.py`
+  - `get_logger`/모듈 로거 `log` 추가.
+  - `load()`의 `rle_decode()` 호출을 `try/except MemoryError`로 감싸 실패한 항목만
+    `continue`로 건너뛰고 경고 로그(annotation_id/image/크기) 남긴 뒤 나머지 항목은 정상
+    로드 계속. `export_dialog.py`는 이 함수를 그대로 재사용하므로 코드 변경 없이 자동 보호.
+- `release.ini` 버전은 건드리지 않음 — 기존 관례(BUG-029/030/031 등)상 installer 버전은
+  배포 시점에 별도 chore 커밋으로 일괄 처리하므로 이번 라운드에서는 손대지 않았다.
+
+### 검증 (구현자 자체 확인 — scratchpad, 프로젝트에 스크립트 미추가)
+- `python -m py_compile app/widgets/annotation_canvas.py app/core/annotation_store.py` 통과.
+- `diff`로 두 워크트리 파일 바이트 비교 — annotation_canvas.py는 완전 동일, annotation_store.py는
+  줄바꿈(main=LF, zone=CRLF)만 다르고 정규화 후 내용 100% 동일함을 확인.
+- scratchpad 스크립트로 로직 단위 검증 4종 모두 통과:
+  1. A→B→A 왕복 시 A의 undo 스택 정확히 복원.
+  2. A→B→C→A는 A 이력 소실(사양대로).
+  3. `clear()` 후 직전 슬롯도 초기화됨.
+  4. `_push_undo()` 개수 캡 30개로 정상 트리밍.
+  5. 바이트 캡 — 30MB짜리 스냅샷 20개 push 시 200MB 예산 내로 트리밍(6개, 180MB 유지).
+  6. 단일 스냅샷이 예산(250MB > 200MB)을 초과해도 최소 1개는 보존(`len()>1` 가드).
+  7. `annotation_store.load()`에서 `rle_decode()`가 MemoryError를 던지면 해당 항목만
+     건너뛰고 나머지(polygon) 항목은 정상 로드됨을 monkeypatch로 확인.
+- 실제 GUI(`python main.py`) 골든 패스 구동 확인은 구현자 범위 밖 — **검증 서브에이전트의
+  실행 확인이 필요**.
+
+### 관련
+- `QA.md` BUG-032(main 넘버링, Open — 검증 대기)로 등록. GitHub #35.
+- zone 브랜치 동일 이슈: BUG-033(그쪽 `QA.md`), 커밋 `775b083`/`8cb6d0d`/`24b5aa8`.
+
+---
+
 ## 2026-08-28 — GitHub #23 학습·추론 개선
 
 - `QThread` 기반 전체 이미지 추론과 진행률·결과 캐시·원본 선표시·`F` 토글 구현.
