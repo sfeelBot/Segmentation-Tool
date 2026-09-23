@@ -729,3 +729,19 @@ zone 쪽은 실제 AppId로 빌드+설치+무인제거까지 실측한 적이 �
 구현이 아니라 검증 라운드. 완료되면 BUG-016(zone) Closed 전환 + GitHub #22 zone
 roadmap 체크박스 갱신 예정. 이후 사용자 요청대로 전체(BUG-033/032 push는 이미 완료,
 이번 GitHub #22 라운드 커밋 포함) push 진행.
+
+## 2026-09-23 (계속) — GitHub #22 zone 실측검증 통과, 전체 push 완료 + 이슈 close
+
+zone verifier: 실제 zone 빌드(`SegmentationModelUIZone-Setup-1.4.0.exe`)로 7개 항목
+전부 실측 검증 — 구버전 감지·안내(레지스트리 직접 대조로 간접 확인, 이 자동화 환경엔
+데스크탑 창 스테이션이 없어 팝업 클릭 자체는 직접 못 함)/무인 재설치 무행/무인 제거 시
+로그만 삭제+데이터 보존/최초 설치 회귀 없음/비admin 권한 정상 동작/레지스트리 키 문자열
+일치(BUG-030 재발 없음) 전부 PASS. QA.md BUG-034/BUG-016 Closed 전환, 커밋 `b4b509d`.
+
+전체 완료 확인 후 사용자 요청대로 push 진행:
+- `feature/zone-analysis-tab`: `a2d3f05..b4b509d`
+- `main`: `9aee96f..e5794cc`
+
+GitHub 이슈 #22에 수정 완료 코멘트+close. 오늘 세션 요약: GitHub #35(메모리, BUG-033/
+032)·#32(zone 병목)·#23(학습·추론)·#22(installer 버전체크+BUG-016) 전부 종료, #5(모델탭
+변경)는 기존 보류 결정 유지, main/zone 양쪽 모두 push 완료.
