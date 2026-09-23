@@ -504,14 +504,21 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 기획 완료: [docs/specs/github-issue-22-and-16-followup-2026-08-29.md](specs/github-issue-22-and-16-followup-2026-08-29.md).
 서로 무관, 파일 겹침 없음 — 병렬 진행 가능.
 
-- [ ] [GitHub #22](https://github.com/sfeelBot/Segmentation-Tool/issues/22) "installer로
-      설치 시 기존 버전 있는지 체크 필요" — `installer/setup.iss`에 `[Code]` 섹션
-      자체가 없어 기존 설치 여부를 사용자에게 전혀 안내하지 않음(같은 `AppId`라 Inno
-      Setup 기본 덮어쓰기 업그레이드는 이미 동작). Inno Setup 표준 패턴(`InitializeSetup()`
-      + `RegQueryStringValue`+`HKA`)으로 설계 완료, 실측 불필요. **결정 대기 1건**
-      (경고만/자동제거후재설치/설치거부 3택, BUG-016과의 연계 여부 포함) —
-      `docs/decisions-needed.md` 등록됨. 구현 대상 `installer/setup.iss` 1개 파일.
-- [ ] GitHub #16 후속 — retry 헬퍼 확장 (오늘 코드리뷰 발견, 별도 이슈 번호 없음) —
+- [x] [GitHub #22](https://github.com/sfeelBot/Segmentation-Tool/issues/22) "installer로
+      설치 시 기존 버전 있는지 체크 필요" — **2026-09-23 재확인(사용자 결정: 옵션2 —
+      자동 제거 후 재설치)**: `installer/setup.iss`를 직접 읽어본 결과 `[Code]`
+      (`InitializeSetup()`+`GetUninstallRegKey()`)/`[UninstallDelete]`가 **main과
+      완전히 동일한 코드로 zone에도 이미 구현되어 있음**(옵션2 흐름 그대로, BUG-016
+      통합 포함, `HKA`/`PrivilegesRequired=lowest` 대응 포함). main은 `v1.10.5`로
+      이미 출시 + 독립검증 완료(`QA.md`(main) BUG-029/030/031/016). 상세: [docs/specs/github-22-installer-version-check-2026-09-23.md](specs/github-22-installer-version-check-2026-09-23.md).
+      **2026-09-23 zone 자체 검증 완료(verifier)**: zone `build.bat`으로 실제
+      `SegmentationModelUIZone-Setup-1.4.0.exe` 빌드 + 구버전(1.3.1) 업그레이드/무인
+      재설치(BUG-031 재발 없음)/무인 제거(BUG-016 로그 삭제+사용자 데이터 보존)/최초
+      설치 회귀 없음/`PrivilegesRequired=lowest` 비관리자 동작/레지스트리 키 문자열
+      일치(BUG-030 재발 없음) 전부 실측 확인 — 대화상자 실클릭 캡처만 자동화 셸의
+      데스크톱 접근 제약으로 간접 증빙(`reg query` 실측으로 대체). 상세는
+      `QA.md`(zone) BUG-034(Closed) 참고.
+- [x] GitHub #16 후속 — retry 헬퍼 확장 (오늘 코드리뷰 발견, 별도 이슈 번호 없음) —
       기존 `export_dialog.py` 전용 `_copy_with_retry()`(GitHub #16, 커밋 `6ecee43`)를
       공용 최소 모듈 `app/core/file_io.py`(신설, `retry_on_permission_error`+
       `atomic_write` 2개 제네릭 헬퍼)로 승격해 나머지 4개 무보호 쓰기 경로에 적용:
@@ -519,7 +526,10 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       (가장 빈번한 쓰기 경로, 재시도+원자적 쓰기 둘 다 없었음), `trainer.py:382,389`
       (체크포인트 저장). `image_browser.py:83`의 bare-ish except가 실패 원인을 조용히
       스킵하던 것은 재시도와 별개의 관찰성 버그로 분리해 로그 추가만(동작 변경 없음).
-      결정 대기 없음, 바로 구현 가능.
+      **2026-09-23 재확인(planner)**: `app/core/file_io.py` 존재 확인 +
+      `retry_on_permission_error`/`atomic_write`가 위 5개 파일(`annotation_store.py`/
+      `image_browser.py`/`import_dialog.py`/`export_dialog.py`/`trainer.py`) 전부에서
+      실제로 쓰이고 있음을 grep으로 확인 — 이미 완료 상태였음이 맞음, 체크박스만 정정.
 
 ## 프로젝트 이름 자동 동기화 + 이미지 리스트 순번 표시 (2026-08-31 요청)
 

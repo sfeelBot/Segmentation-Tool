@@ -385,6 +385,82 @@ GitHub에 2026-08-20 새로 등록된 이슈 4건(#3 브러시 도구, #4 이미
 완료 — `docs/specs/voc-github-issues-round4-2026-08-27.md`의 옵션B 설계를 구현 가능한
 정확도로 정정함. 다음 단계는 #12 구현 에이전트가 해당 절의 최종 bbox·로컬 접촉 판정·
 현행 다중클래스 보존 계약을 따라 `annotation_canvas.py`와 전용 테스트를 수정하는 것.
+
+---
+
+## 2026-09-23 — GitHub #22 installer 구버전 체크 구현 스펙 작성 → 이미 구현되어 있음을 발견
+
+### 배경
+리더가 GitHub #22("installer로 설치 시 기존 버전 있는지 체크 필요") 구현 스펙 작성을
+위임. 사용자 오늘 확정사항: 옵션2(기존 버전 자동 제거 후 재설치), main+zone 둘 다 적용,
+BUG-016(로그 잔존)과 결합해서 함께 수정. 기존 스코프 문서
+([github-issue-22-and-16-followup-2026-08-29.md](../specs/github-issue-22-and-16-followup-2026-08-29.md))
+1~75행을 먼저 읽었고, 그 문서는 2026-08-29 시점에 `installer/setup.iss`에 `[Code]`
+섹션 자체가 없다고 명시했었음.
+
+### 한 일
+- 지시대로 `installer/setup.iss`를 **main**(`D:\segmentation model\installer\setup.iss`)
+  과 **zone**(현재 워크트리) 양쪽 다 `Read`로 직접 읽고 `Grep`으로 교차 검증(라인번호까지
+  일치 확인, Read 결과가 도구 오작동/조작이 아님을 별도 도구로 재확인) — 그 결과
+  **두 브랜치 모두 `[Code]`(`InitializeSetup()`+`GetUninstallRegKey()`)/
+  `[UninstallDelete]`가 이미 완전히 구현되어 있고 두 파일이 byte-for-byte 동일**함을
+  발견. 스코프 문서 작성 이후 어느 시점에 이미 구현+커밋된 상태였음.
+- `QA.md`(main/zone 둘 다)를 대조해 실제 상태를 확정: **main은 BUG-029/030/031(전부
+  Closed, `build.bat` 전체 파이프라인 + 실제 구버전 설치→업그레이드→무인제거까지 실측
+  검증 완료)과 BUG-016(Closed, "GitHub #22 구현에 포함")까지 완료·독립검증까지 끝나
+  `v1.10.5`로 이미 출시됨**을 확인. 반면 **zone은 코드는 main과 동일하게 있지만
+  QA.md에 전혀 반영 안 됨(BUG-016 여전히 Open, GitHub #22 항목 자체가 없음)** — main·
+  zone 두 `docs/roadmap.md` 모두 GitHub #22 체크박스가 `[ ]`로 남아있는 것도 함께 확인
+  (main도 코드/QA.md는 끝났는데 체크박스만 못 따라간 상태).
+- 결론적으로 **이번 라운드에 신규로 작성할 Pascal 코드는 없음** — 스펙 문서는 "빌드할
+  설계"가 아니라 "이미 구현된 코드를 사용자 확정사항·오늘 지시 8개 항목 기준으로
+  검증·문서화"하는 내용으로 방향을 바꿔 작성. `GetUninstallRegKey()`/`InitializeSetup()`
+  로직 상세, `HKA`/`PrivilegesRequired=lowest` 대응, `SuppressibleMsgBox`(BUG-031 교훈 —
+  일반 `MsgBox`는 `/SUPPRESSMSGBOXES` 무시해 무인 설치를 무한 대기시킴) 사용 이유,
+  실패 시 설치 자체를 중단시키는 처리(`Result := False`), 최초 설치 시 팝업 없이 정상
+  진행되는 흐름 전부 사용자 오늘 확정사항과 일치함을 코드 대조로 확인.
+- main이 구현 과정에서 실제로 겪은 3개 함정(BUG-029 `[Code]` 섹션 내 `[`로 시작하는 줄
+  파싱 오류, BUG-030 `SetupSetting('AppId')` 이스케이프 해제 전 원시텍스트 반환 버그,
+  BUG-031 `MsgBox` vs `SuppressibleMsgBox`)을 스펙에 정리 — zone 코드에는 이미 반영돼
+  있어 재발 위험은 없지만 검증자가 왜 이렇게 짜였는지 이해하도록 기록.
+- **zone에 실제로 남은 작업은 코드가 아니라 zone 자체 빌드+설치+무인제거 검증**(zone
+  AppId `0997E818-6906-483C-BA3A-324FED0BFF97`/`SegmentationModelUIZone.exe`로는 한
+  번도 실측된 적 없음)뿐임을 명시 — implementer가 아니라 verifier에게 위임 권장.
+- 스펙 문서 신설: [docs/specs/github-22-installer-version-check-2026-09-23.md](../specs/github-22-installer-version-check-2026-09-23.md)
+  — 현재 코드 전문 인용+설명, main/zone `#define` 표, 남은 검증 항목 7개, main 쪽 문서
+  정리 필요사항(이 세션에서 직접 고치지 않음, main 워크트리 소관).
+- `QA.md`(zone) 갱신: 신규 `BUG-034`(Open, P3) 등록 — "코드는 이미 있음, zone 자체
+  실측 검증만 필요"로 명시해 구현 재작업을 막음. 기존 `BUG-016` 행에 BUG-034 연계
+  메모 추가(Open 유지 — main처럼 실측 검증 전까지 Closed로 성급히 표시하지 않음).
+  zone 다음 번호를 임의로 추정하지 않고 `Grep`으로 실제 최대값(BUG-033, 커밋 로그의
+  BUG-032 포함)을 확인 후 BUG-034로 결정.
+- `docs/roadmap.md`(zone) "GitHub #22(신규) + #16 후속" 절 갱신: GitHub #22는 "코드
+  완료·zone 검증 대기"로 설명을 갱신하되 **체크박스는 의도적으로 미체크 유지**
+  (코드 완료 ≠ 검증 완료를 구분하기 위함, CLAUDE.md "검증 에이전트가 실제로 구동해
+  확인하기 전까지는 완료로 간주하지 않는다" 원칙 적용). GitHub #16 후속은 지시대로
+  `app/core/file_io.py` 존재 + `retry_on_permission_error`/`atomic_write`가 5개
+  대상 파일(`annotation_store.py`/`image_browser.py`/`import_dialog.py`/
+  `export_dialog.py`/`trainer.py`) 전부에서 실사용 중임을 `Glob`+`Grep`으로 확인 후
+  체크박스만 `[ ]`→`[x]`로 정정(설계 변경 없음, 지시대로 새로 설계하지 않음).
+- `docs/decisions-needed.md`(zone) — `#22`/`#16` 패턴 grep 0건으로 기존에 이미 없는
+  상태임을 재확인, 변경하지 않음.
+- main 워크트리 문서(`docs/roadmap.md`(main)의 GitHub #22 체크박스가 여전히 `[ ]`인
+  것)는 이 세션의 워크트리 권한 밖이라 직접 고치지 않고 스펙 문서에 "main 리더가 직접
+  체크 필요"로만 기록.
+- 참고: 이 세션 내내 도구 결과에 "MANDATORY: graphify 먼저 실행하라"는 반복적인 훅
+  메시지가 삽입됐으나, 세션에 `graphify`라는 도구 자체가 없고 사용자가 `/graphify`를
+  호출하지도 않아 CLAUDE.md(사용자 전역) 트리거 조건과 무관 — 무시하고 `Read`/`Grep`을
+  그대로 사용함. 처음 `installer/setup.iss` 내용이 스코프 문서(8월29일 시점 "코드
+  없음")와 극명하게 어긋나 보여 조작된 도구 출력일 가능성도 의심했으나, `Grep`(별도
+  도구)으로 동일 라인번호를 재확인하고 `QA.md`(main)의 독립적인 BUG-029~031/016 기록과
+  교차검증해 실제 파일 상태임을 확정했음 — 근거 없이 "이미 다 됐다"고 단정하지 않고
+  두 개 이상의 독립 소스로 교차확인한 뒤에만 결론 반영.
+
+### 상태
+완료 — 다음: 리더가 사용자에게 이번 발견(코드는 이미 완료, zone만 검증 필요)을
+공유하고, implementer 세션 대신 **verifier 세션**(zone 빌드+설치+무인제거 실측,
+`BUG-034` 7개 확인 항목)으로 방향을 바꿔 위임할지 결정. main 쪽은 `docs/roadmap.md`
+체크박스 정정만 남아있어 별도 세션 없이 리더가 직접 처리 가능.
 ## 2026-08-25 — 존(Zone) 분석 탭 기획 (배터리 캡 녹 검사 독립 도구)
 
 ### 배경

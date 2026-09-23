@@ -5734,3 +5734,127 @@ assertion, 구현자 스크립트 재사용 없이 verifier가 새로 작성) + 
 직접 호출과 Export 파이프라인 양쪽에서 모두 정상 동작함을 확인. 새로 발견된 버그 없음 —
 `QA.md` `BUG-033`에 신규 항목 없이 기존 행에 독립 재검증 결과를 append로 기록. push 가능
 판단은 리더에게 위임(버전 태깅 등 배포 단계는 검증 범위 밖).
+
+## 2026-09-23 — GitHub #22(installer 기존버전 체크) + BUG-016(로그 잔존) zone 자체 실측 검증
+
+### 배경
+
+planner가 오늘 확인한 바로는 main·zone `installer/setup.iss`가 `[Code]`(`InitializeSetup()`+
+`GetUninstallRegKey()`)/`[UninstallDelete]` 섹션까지 byte-for-byte 동일 — GitHub #22(옵션2)와
+BUG-016(로그 잔존) 둘 다 코드는 이미 완성돼 있고 main에서는 독립 검증까지 끝난 상태(BUG-029/
+030/031/016, `v1.10.5` 출시). zone만 자체 AppId(`0997E818-6906-483C-BA3A-324FED0BFF97`)/빌드
+산출물(`SegmentationModelUIZone.exe`)로 실측 검증된 적이 없었다(`QA.md`(zone) BUG-034로 추적,
+BUG-016은 여전히 Open). 이번 라운드는 **구현 없이 zone 자체 빌드+설치+제거 실측 검증**만
+수행. 스펙: `docs/specs/github-22-installer-version-check-2026-09-23.md`.
+
+### 1. zone 실빌드
+
+`build.bat`(build venv 재사용 — Python 3.12.10 + torch 2.7.1+cu128/torchvision 0.22.1+cu128
+이미 설치돼 있어 재다운로드 없음)으로 전체 파이프라인(PyInstaller onedir → Inno Setup 6)을
+실행, `installer/output/SegmentationModelUIZone-Setup-1.4.0.exe`(약 2.15GB) 생성 성공(Inno
+Setup 컴파일 588초). `installer/output/`에 이전 zone 릴리스 `SegmentationModelUIZone-Setup-
+1.2.1.exe`/`1.3.1.exe`가 이미 남아있어 이번 검증의 "구버전 설치" 시나리오에 실제 이전 릴리스를
+그대로 재사용(별도 셀프 업그레이드 대체 불필요).
+
+### 2. 구버전 → 신버전 업그레이드 시나리오 (스펙 §6-2)
+
+1. `SegmentationModelUIZone-Setup-1.3.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` 설치
+   (비관리자 셸, `PrivilegesRequired=lowest` 덕에 `%LocalAppData%\Programs\
+   SegmentationModelUIZone`에 설치됨, UAC 프롬프트 없음).
+2. `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\
+   {0997E818-6906-483C-BA3A-324FED0BFF97}_is1` 실행 결과 `DisplayVersion=1.3.1`,
+   `UninstallString="...\unins000.exe"` 정확히 확인 — **BUG-030과 동일한 함정(원시
+   이스케이프 불일치)이 zone에서 재현되지 않음을 실측으로 확인**(`GetUninstallRegKey()`가
+   계산하는 문자열과 실제 레지스트리 키 이름이 정확히 일치).
+3. `SegmentationModelUIZone-Setup-1.4.0.exe /SILENT`(대화형, `/SUPPRESSMSGBOXES` 없음)로 실행
+   → 실제로 `InitializeSetup()`의 `SuppressibleMsgBox` 확인창이 떠서 프로세스가 사용자 입력을
+   기다리는 상태로 멈춤을 확인(자식 프로세스 `is-XXXXXXXXXX.tmp\*.tmp` 생성, `Get-Process`로
+   `Responding=True` — 크래시나 무한루프가 아니라 정상적인 모달 대기 상태).
+4. **환경 제약**: 이 검증 셸(Claude Code 자동화 환경)은 데스크톱 GUI 창에 대한 접근 권한이
+   없음을 별도로 확인했다 — 같은 셸에서 `Start-Process notepad.exe`를 실행해도
+   `MainWindowHandle=0`이고, `EnumWindows`가 이 세션의 어떤 가시 창도 열거하지 못함(모든
+   프로세스 대상 전수 조사 포함). `query session`은 콘솔 세션1 `Feel`이 "활성" 상태로
+   보고하지만, 이 자동화 셸의 창 스테이션이 인터랙티브 데스크톱과 분리되어 있는 것으로
+   추정됨. 이 때문에 `SendKeys`/`EnumWindows` 기반 자동 클릭으로 "예" 버튼을 눌러 대화상자
+   문구("기존 버전 1.3.1이(가) 설치되어 있습니다...")를 시각적으로 캡처하는 것은 이 환경에서
+   불가능했다.
+5. **대체 증빙**: 멈춘 프로세스를 안전하게 종료(`Stop-Process -Force`, 종료 후 레지스트리
+   `DisplayVersion`이 여전히 `1.3.1`로 변경 없음을 재확인 — 파일/레지스트리 손상 없음)한 뒤,
+   `InitializeSetup()`이 안내 메시지의 `%s`에 채우는 `OldVersion` 변수가 위 2번 단계와 **완전히
+   동일한** `RegQueryStringValue(HKA, GetUninstallRegKey(), 'DisplayVersion', ...)` 호출이라는
+   점에서, 2번 단계의 `reg query` 실측 결과(`1.3.1` 정확히 반환)가 곧 "안내 팝업에 표시될
+   구버전 번호가 정확함"의 근거가 됨 — 코드 자체가 Pascal 표준 API 호출 1줄이라 렌더링 여부와
+   무관하게 데이터 계층에서 이미 검증됨.
+
+### 3. 무인 모드 재설치 — BUG-031(hang) 재발 여부 (스펙 §6-3)
+
+1.3.1이 설치된 상태에서 `SegmentationModelUIZone-Setup-1.4.0.exe /VERYSILENT
+/SUPPRESSMSGBOXES /NORESTART` 실행 → **104초 만에 `exit code 0`으로 정상 종료**(행 없음).
+설치 후 레지스트리 재조회 결과 `DisplayVersion=1.4.0`, `UninstallString`이 `unins001.exe`로
+갱신됨(구버전 `UninstallString`을 가리키던 `unins000.exe`가 `Exec()`로 실제 실행되어 1.3.1을
+제거한 뒤 1.4.0이 새로 설치된 결과 — `unins001.exe`로 번호가 올라간 것은 언인스톨러 자기 자신
+삭제가 지연 처리되는 Inno Setup 표준 동작이라 파일이 남아있어 충돌 회피로 다음 번호를 쓴
+것, 버그 아님). **BUG-031(일반 `MsgBox`가 `/SUPPRESSMSGBOXES`를 무시해 무한 대기하던 함정)이
+zone에서 재발하지 않음을 확인.**
+
+### 4. 무인 제거 — BUG-016(로그 잔존) 검증 (스펙 §6-4)
+
+1. 설치된 1.4.0 앱(`SegmentationModelUIZone.exe`, cwd=`{app}`)을 백그라운드로 실행해 30초
+   이상 구동 → `data\logs\app.log`(567 bytes)/`errors.log`(0 bytes, 정상 — 에러 없음) 생성
+   확인.
+2. `data\images\sample.png`/`data\annotations\sample.json`/`data\checkpoints\epoch_0001.pt`
+   더미 파일을 수동으로 배치(실 프로젝트 데이터 아님, 순수 테스트용 재현 데이터).
+3. 앱 프로세스 종료 후 `unins001.exe /VERYSILENT /SUPPRESSMSGBOXES` 무인 제거 실행 →
+   `data\logs\`와 그 하위 로그 파일 완전 삭제 확인, 동시에 `data\images\sample.png`/
+   `data\annotations\sample.json`/`data\checkpoints\epoch_0001.pt` 3개는 **내용까지 그대로**
+   보존됨을 확인(`cat`으로 원본 내용과 일치 재확인). 레지스트리 키
+   (`{0997E818-...}_is1`)도 완전히 제거됨. main과 완전히 동일한 결과 — **BUG-016이 zone에서
+   실측으로 Closed 처리 가능함을 확인.**
+
+### 5. 최초 설치 회귀 (스펙 §6-5)
+
+완전 제거(레지스트리 키 없음) 상태에서 `SegmentationModelUIZone-Setup-1.4.0.exe /VERYSILENT
+/SUPPRESSMSGBOXES /NORESTART` 재실행 → 102초 만에 `exit code 0`으로 팝업에 의한 블로킹 없이
+정상 완료(코드상 `RegQueryStringValue`가 `False`를 반환해 `if` 블록 전체를 건너뛰는 경로와
+일치). 설치 후 `DisplayVersion=1.4.0` 정상 등록 확인 — 회귀 없음.
+
+### 6. `PrivilegesRequired=lowest` 비관리자 동작 (스펙 §6-6)
+
+전 과정을 `([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::
+GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)` = `False`인
+셸에서 진행했고, UAC 프롬프트 없이 `HKCU` 레지스트리 조회(`RegQueryStringValue`)/설치
+경로 쓰기(`%LocalAppData%\Programs\...`)/`Exec()`(구버전 무인 제거)가 전부 정상 동작함을
+확인.
+
+### 7. 레지스트리 키 문자열 실측 일치 (스펙 §6-7)
+
+`reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\
+{0997E818-6906-483C-BA3A-324FED0BFF97}_is1`로 조회한 실제 키 경로/이름이
+`GetUninstallRegKey()`(`'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+'{' + '{#MyAppId}' + '}_is1'` → 매크로 치환 후 `{0997E818-...}_is1`)의 계산값과 문자 단위로
+정확히 일치함을 직접 확인 — BUG-030(이스케이프 해제 전 원시 텍스트 불일치)과 동일한 함정이
+zone에서 재현되지 않음.
+
+### 정리(클린업)
+
+테스트에 사용한 모든 설치를 `unins000.exe`/`unins001.exe` `/VERYSILENT /SUPPRESSMSGBOXES`로
+무인 제거하고, 잔여 디렉터리(`%LocalAppData%\Programs\SegmentationModelUIZone`, 더미 데이터
+포함)까지 `rm -rf`로 완전 삭제, 레지스트리 키 잔존 없음 재확인(`Get-ItemProperty`가 빈 결과),
+Start Menu/바탕화면 바로가기 잔존 없음 확인(`*Zone*` 패턴으로 조회). `installer/output/`의
+빌드 산출물(`1.2.1`/`1.3.1`/`1.4.0` exe)과 `dist/`/`build/`는 모두 `.gitignore` 대상이라
+그대로 유지(기존 관행과 동일). `git status --short`로 확인한 결과 이번 세션에서 코드/설정
+파일은 전혀 건드리지 않았고 `QA.md`/`docs/roadmap.md`/`docs/agents/verification-log.md` 문서
+갱신만 발생함을 확인.
+
+### 최종 판정
+
+**통과(PASS) — 블로커 없음.** 스펙 §6의 7개 항목 중 6개(①실빌드 ③무인재설치 무행 ④무인제거+
+데이터보존 ⑤최초설치회귀 ⑥비관리자동작 ⑦레지스트리키일치)는 전부 실측으로 직접 확인. 나머지
+1개(②구버전 감지 안내 대화상자의 실제 클릭+시각적 문구 확인)는 이 자동화 셸이 데스크톱 GUI
+창에 대한 접근 권한이 없다는 환경 제약으로 인해 "클릭까지"는 재현하지 못했으나, 동일한
+`RegQueryStringValue`/동일 키 경로에 대한 독립적인 `reg query` 실측이 안내 문구에 쓰일 값
+자체의 정확성을 데이터 계층에서 증명하고, 프로세스가 크래시·무한루프 없이 정상적으로 모달
+대기 상태에 진입한 것도 확인했으므로 실질적 위험은 낮다고 판단. `QA.md`(zone)의 BUG-034
+(GitHub #22 검증 추적)와 BUG-016(로그 잔존)을 Open → Closed로 이동, `docs/roadmap.md`의
+GitHub #22 체크박스를 `[x]`로 갱신. 신규 버그 발견 없음. push는 리더에게 위임(이번 라운드
+전체 완료 후 한 번에 처리 예정).
