@@ -711,3 +711,21 @@ zone-analysis-tab 브랜치: planner 스펙(`docs/specs/github-35-memory-issue-2
 2) 적용 브랜치 → **main + zone-analysis-tab 둘 다**
 
 옵션2 선택으로 BUG-016(무인 제거 후 data\logs\ 잔존, P3 Open)과 직접 얽힘을 확인 — planner에게 #22 구현 스펙 + BUG-016 통합 수정까지 함께 작성하도록 위임(양쪽 브랜치 setup.iss 구조 차이 반영). 완료되면 main/zone 각각 별도 implementer→verifier 라운드(에디션 브랜치 정책상 역병합 금지), 전체 완료 후 사용자 요청대로 push 진행 예정.
+
+## 2026-09-23 (계속) — GitHub #22/BUG-016: 이미 구현돼 있었음, 검증만 남음
+
+planner가 조사한 결과 뜻밖의 발견: GitHub #22(옵션2)와 BUG-016(로그 잔존) 둘 다 **이미
+main/zone 양쪽 `installer/setup.iss`에 완전히 동일하게(byte-for-byte) 구현돼 있었음**
+(main은 BUG-029/030/031 함정을 거쳐 실측 검증까지 끝나 v1.10.5로 출시됨, zone은 코드는
+같지만 zone 고유 AppId로 실측 검증된 적 없고 문서만 밀려 있었음 — 순수 doc-lag).
+GitHub #16 후속(retry 헬퍼)도 `app/core/file_io.py` 기준으로 양쪽 다 이미 구현 완료
+확인.
+
+리더가 직접 처리(사소한 문서 수정, 서브에이전트 위임 불필요): main `docs/roadmap.md`
+GitHub #22/#16후속 체크박스를 `[x]`로 정정 + zone이 작성한 스펙 문서를 main
+`docs/specs/`에도 복사(링크 깨짐 방지), 커밋 `e5794cc`(main).
+
+zone 쪽은 실제 AppId로 빌드+설치+무인제거까지 실측한 적이 없어 verifier에게 위임 —
+구현이 아니라 검증 라운드. 완료되면 BUG-016(zone) Closed 전환 + GitHub #22 zone
+roadmap 체크박스 갱신 예정. 이후 사용자 요청대로 전체(BUG-033/032 push는 이미 완료,
+이번 GitHub #22 라운드 커밋 포함) push 진행.
