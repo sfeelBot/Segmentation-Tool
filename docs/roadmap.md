@@ -498,14 +498,13 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 기획 완료: [docs/specs/github-issue-22-and-16-followup-2026-08-29.md](specs/github-issue-22-and-16-followup-2026-08-29.md).
 서로 무관, 파일 겹침 없음 — 병렬 진행 가능.
 
-- [ ] [GitHub #22](https://github.com/sfeelBot/Segmentation-Tool/issues/22) "installer로
-      설치 시 기존 버전 있는지 체크 필요" — `installer/setup.iss`에 `[Code]` 섹션
-      자체가 없어 기존 설치 여부를 사용자에게 전혀 안내하지 않음(같은 `AppId`라 Inno
-      Setup 기본 덮어쓰기 업그레이드는 이미 동작). Inno Setup 표준 패턴(`InitializeSetup()`
-      + `RegQueryStringValue`+`HKA`)으로 설계 완료, 실측 불필요. **결정 대기 1건**
-      (경고만/자동제거후재설치/설치거부 3택, BUG-016과의 연계 여부 포함) —
-      `docs/decisions-needed.md` 등록됨. 구현 대상 `installer/setup.iss` 1개 파일.
-- [ ] GitHub #16 후속 — retry 헬퍼 확장 (오늘 코드리뷰 발견, 별도 이슈 번호 없음) —
+- [x] [GitHub #22](https://github.com/sfeelBot/Segmentation-Tool/issues/22) "installer로
+      설치 시 기존 버전 있는지 체크 필요" — 사용자 확정(2026-09-23, 옵션2: 자동 제거 후
+      재설치)에 따라 `installer/setup.iss`에 `InitializeSetup()`(`RegQueryStringValue`+
+      `HKA`+`Exec` 구버전 언인스톨러 실행) 구현·검증 완료(BUG-029/030/031 함정 전부
+      해결, `1.10.5`로 출시). BUG-016(로그 잔존)도 `[UninstallDelete]`로 같은 라운드에서
+      함께 해결. 상세: [docs/specs/github-22-installer-version-check-2026-09-23.md](specs/github-22-installer-version-check-2026-09-23.md).
+- [x] GitHub #16 후속 — retry 헬퍼 확장 (오늘 코드리뷰 발견, 별도 이슈 번호 없음) —
       기존 `export_dialog.py` 전용 `_copy_with_retry()`(GitHub #16, 커밋 `6ecee43`)를
       공용 최소 모듈 `app/core/file_io.py`(신설, `retry_on_permission_error`+
       `atomic_write` 2개 제네릭 헬퍼)로 승격해 나머지 4개 무보호 쓰기 경로에 적용:
