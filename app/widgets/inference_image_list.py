@@ -19,10 +19,10 @@ from typing import Literal
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QTreeWidgetItemIterator, QLabel, QLineEdit, QComboBox,
+    QTreeWidgetItemIterator, QLabel, QLineEdit, QComboBox, QMenu,
 )
 from PyQt6.QtGui import QColor, QFont, QIcon
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent, QObject
 
 from app.widgets.icons import icon as svg_icon
 
@@ -92,6 +92,7 @@ class InferenceImageList(QWidget):
     image_selected = pyqtSignal(Path)
     display_changed = pyqtSignal()   # 필터·정렬·목록 갱신 시 매번 emit (선택 경로 불변 케이스 포함)
     selection_changed = pyqtSignal()   # 다중 선택(Ctrl/Shift) 상태가 바뀔 때마다 (R-C 3b, 애디티브)
+    images_removed = pyqtSignal(list)   # 목록에서 제거된 Path 리스트 (원본 파일은 보존)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -154,27 +155,45 @@ class InferenceImageList(QWidget):
         self._tree.currentItemChanged.connect(self._on_current_item_changed)
         self._tree.itemSelectionChanged.connect(self.selection_changed.emit)
         self._tree.itemSelectionChanged.connect(self._on_selection_changed_multi)
+        self._tree.installEventFilter(self)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._tree, stretch=1)
 
     # ── 공개 API ──────────────────────────────────────────────────────────────
 
-    def load_folder(self, root: Path) -> None:
+    def load_folder(self, root: Path, append: bool = False) -> None:
         """root 이하를 재귀적으로 스캔(rglob)해 전체 목록 갱신.
 
         하위 폴더 구조가 그대로 트리에 반영된다 (폴더 정렬 모드 선택 시).
+        append=True면 기존 목록에 합친다(중복 경로는 자동 제거) — 루트가 기존과
+        다르면 공통 루트를 보장할 수 없어 평탄 그룹 트리로 폴백한다.
         """
-        self._root = root
-        self._all_paths = sorted(
+        new_paths = sorted(
             p for p in root.rglob("*")
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
         )
+        if append and self._all_paths:
+            if self._root is not None and self._root != root:
+                self._root = None
+            existing = set(self._all_paths)
+            self._all_paths = sorted(existing | set(new_paths))
+        else:
+            self._root = root
+            self._all_paths = new_paths
         self._apply_display()
 
-    def load_files(self, paths: list[Path]) -> None:
+    def load_files(self, paths: list[Path], append: bool = False) -> None:
         """파일 대화상자로 개별 선택된 파일들 — 공통 루트가 없어 폴더 그룹핑은
-        직속 부모 폴더명 기준 1단계만 적용."""
-        self._root = None
-        self._all_paths = sorted(paths)
+        직속 부모 폴더명 기준 1단계만 적용. append=True면 기존 목록에 합친다
+        (중복 경로는 자동 제거, 공통 루트를 보장 못 하므로 항상 평탄 그룹화)."""
+        if append and self._all_paths:
+            self._root = None
+            existing = set(self._all_paths)
+            self._all_paths = sorted(existing | {Path(p) for p in paths})
+        else:
+            self._root = None
+            self._all_paths = sorted(paths)
         self._apply_display()
 
     def clear(self) -> None:
@@ -266,6 +285,39 @@ class InferenceImageList(QWidget):
         new_idx = max(0, min(idx + step, len(self._paths) - 1))
         if new_idx != idx:
             self._select_by_index(new_idx)
+
+    # ── 이벤트 필터 — Delete/Backspace로 목록에서 제거 ───────────────────────────
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if (obj is self._tree and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)):
+            self._remove_selected()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _remove_selected(self) -> None:
+        """목록에서만 제거 — 원본 파일은 건드리지 않는다(Zone/추론 탭 둘 다
+        외부 파일을 직접 참조하므로 삭제는 위험)."""
+        removed = {
+            p for item in self._tree.selectedItems()
+            if (p := self._get_item_path(item)) is not None
+        }
+        if not removed:
+            return
+        self._all_paths = [p for p in self._all_paths if p not in removed]
+        for p in removed:
+            self._status.pop(p, None)
+        self._apply_display()
+        self.images_removed.emit(list(removed))
+
+    def _on_context_menu(self, pos) -> None:
+        item = self._tree.itemAt(pos)
+        if item is None or self._get_item_path(item) is None:
+            return
+        menu = QMenu(self)
+        action = menu.addAction("목록에서 제거")
+        if menu.exec(self._tree.viewport().mapToGlobal(pos)) == action:
+            self._remove_selected()
 
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 

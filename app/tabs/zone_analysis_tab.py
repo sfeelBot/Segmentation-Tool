@@ -462,6 +462,7 @@ class ZoneAnalysisTab(QWidget):
         self._img_list.selection_changed.connect(self._update_batch_button_label)
         self._img_list.display_changed.connect(self._update_batch_button_label)
         self._img_list.display_changed.connect(self._update_batch_button_state)
+        self._img_list.images_removed.connect(self._on_images_removed)
         self._btn_batch.clicked.connect(self._on_batch_process)
         self._btn_ckpt.clicked.connect(self._on_select_checkpoint)
         self._btn_validate.clicked.connect(self._on_validate)
@@ -514,8 +515,7 @@ class ZoneAnalysisTab(QWidget):
         )
         if not paths:
             return
-        self._img_list.clear_status()
-        self._img_list.load_files([Path(p) for p in paths])
+        self._img_list.load_files([Path(p) for p in paths], append=True)
         self._lbl_folder_path.setText(
             f"{len(paths)}개 파일 선택됨" if len(paths) > 1 else str(Path(paths[0]).parent)
         )
@@ -527,8 +527,7 @@ class ZoneAnalysisTab(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if not folder:
             return
-        self._img_list.clear_status()
-        self._img_list.load_folder(Path(folder))
+        self._img_list.load_folder(Path(folder), append=True)
         if self._img_list.count() == 0:
             QMessageBox.information(
                 self, "이미지 없음", "선택한 폴더(하위 폴더 포함)에 지원되는 이미지가 없습니다."
@@ -542,6 +541,25 @@ class ZoneAnalysisTab(QWidget):
         # 목록은 이미지가 2장 이상일 때만 표시 — 단일 이미지 워크플로우는 목록
         # 없이 그대로 동작(회귀 없음, 스펙 C-1 명시).
         self._img_list.setVisible(self._img_list.count() > 1)
+
+    def _on_images_removed(self, removed: list[Path]) -> None:
+        """목록에서 이미지가 제거됐을 때 — 추론 결과 캐시를 정리하고, 현재
+        로드된 이미지가 삭제 대상이면 캔버스를 비운다(메모리/상태 누수 방지)."""
+        for p in removed:
+            self._results.pop(p, None)
+        if self._image_path in removed:
+            self._image_path = None
+            self._last_result = None
+            self._image_size = (0, 0)
+            self._original_pixmap = None
+            self._canvas.set_image_size(*self._image_size)
+            self._canvas.clear()
+            for action in self._tool_group.actions():
+                action.setEnabled(False)
+            self._btn_detect.setEnabled(False)
+            self._canvas.set_blob_data(None, None)
+            self._canvas.set_highlight_rect(None)
+            self._lbl_selected_blob.setText("")
 
     def _on_list_image_selected(self, path: Path) -> None:
         """목록에서 이미지를 클릭(단일 선택 또는 load_folder/load_files 직후 자동
