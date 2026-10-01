@@ -4777,3 +4777,45 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   특히 스펙의 "검증 골든패스 제안"(실제 대형 이미지 A→B→A/A→B→C→A UI 왕복, export
   3포맷 회귀)은 이번 라운드에서 스크립트로만 확인했고 `python main.py` 실구동 UI
   조작으로는 아직 확인되지 않았다.
+
+## 2026-10-01 — 존 분석 탭 전면 재설계("상/하부 분석") 라운드 A/B 구현
+
+- 상태: 라운드 A/B 완료 — **검증 에이전트의 실행/골든패스 확인 필요**.
+- 대상 브랜치/경로: `feature/zone-analysis-tab`, 워크트리
+  `D:\segmentation model-zone-analysis-tab`. 스펙:
+  `docs/specs/zone-tab-redesign-2026-10-01.md`(기획·디자인 사용자 컨펌 완료, 11절
+  실행 순서 A→B→C→D→E→F 그대로 따름).
+- **라운드 A**(탭 순서+탭명+체크포인트 날짜, 독립 변경 3건, 커밋 `4477bc3`):
+  - `app/main_window.py`: `addTab` 호출 순서를 Zone 탭이 맨 앞에 오도록 변경. 탭
+    인덱스 하드코딩은 `Grep`으로 전체 확인했고 `main_window.py`에는 없음을 재확인
+    (`auto_label_dialog.py`의 `_tabs.currentIndex()`는 별개 다이얼로그 내부 탭이라 무관).
+  - `app/core/i18n.py`: `tab.zone_analysis` ko "존 분석" → "상/하부 분석", en
+    "Zone Analysis" → "Top/Bottom Analysis"(스펙 12절 — 영문명은 저위험 기본값으로
+    기획이 제안, 사용자 미지정).
+  - `app/core/trainer.py`: `from datetime import date` 추가, 에폭 루프 진입 전
+    `run_date = date.today().strftime("%Y%m%d")` 1회만 계산(자정 넘겨도 날짜 안 바뀜),
+    체크포인트 `prefix` 조립에 `run_date` 포함 — 결과 파일명 예:
+    `simple_unet_20261001_epoch_0010.pt`. 스펙이 사전 확인한 대로 파일명 포맷에
+    의존하는 파싱 로직이 없어(전부 `.pt` glob + 파일 내부 메타 읽기) 하위 호환 영향 없음.
+- **라운드 B**(체크포인트 자동 선택, 커밋 `68de90f`):
+  - `app/tabs/inference_tab.py`: `selected_checkpoint_path() -> Path | None` 공개
+    getter 추가(`_get_selected_ckpt()` 위임).
+  - `app/tabs/zone_analysis_tab.py`: `_on_select_checkpoint()` 본문을
+    `_apply_checkpoint(self, path: Path) -> None`으로 추출(다이얼로그 로직만
+    `_on_select_checkpoint`에 남김). `set_default_checkpoint(path)` 추가 — 이미
+    `self._ckpt_path`가 설정돼 있으면 아무 것도 하지 않는 멱등 동작.
+  - `app/main_window.py`: `self._tabs.currentChanged.connect(self._on_tab_changed)`
+    배선 + `_on_tab_changed(index)`가 `widget(index) is self._zone_tab`일 때
+    추론 탭의 `selected_checkpoint_path()`를 Zone 탭에 기본값으로 제안(인덱스
+    비의존이라 라운드 A의 탭 순서 변경과 무관하게 동작).
+- 검증: 각 라운드 후 `build/venv/Scripts/python.exe -m py_compile`로 변경 파일만
+  컴파일 확인 + `PYTHONIOENCODING=utf-8 timeout 8 python main.py`로 8초간 기동해
+  예외 없이 GPU 인식 로그까지 정상 출력되고 타임아웃(exit 124, 즉 창이 계속 떠 있는
+  상태)으로 종료됨을 확인 — 실제 GUI 탭 클릭/체크포인트 전환까지는 수행하지 않음
+  (저위험 라운드로 분류, 스펙 11절 표에도 "저위험"으로 표기됨).
+- **검증 서브에이전트 확인 필요 항목**: Zone 탭이 실제로 맨 앞 탭에 표시되는지,
+  탭 라벨이 "상/하부 분석"으로 보이는지, 추론 탭에서 체크포인트를 선택한 뒤 Zone
+  탭으로 전환하면 자동으로 같은 체크포인트가 채워지는지(또한 Zone 탭에서 수동으로
+  다른 체크포인트를 고른 뒤 탭을 왕복해도 덮어써지지 않는지 — 멱등성), 학습 1
+  에폭이라도 돌려 체크포인트 파일명에 날짜가 포함되는지. 다음 라운드(C)는
+  `run_sliding_window` 시그니처 선확인 후 착수 예정.
