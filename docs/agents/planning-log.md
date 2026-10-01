@@ -1509,3 +1509,98 @@ R4(버그)는 구현 에이전트가 코드를 고치기 전에 반드시 `pytho
 코드 변경 없음(확인만). 구현 완료 후 검증은 스펙의 "검증 골든패스" 절(A→B→A 왕복,
 A→B→C→A, `clear()`, 바이트 트리밍 실측, `rle_decode` MemoryError 모킹, export 3포맷
 회귀) 그대로 요청할 것.
+
+---
+
+## 2026-10-01 — Zone 탭 전면 재설계 "상/하부 분석" 스코프 산정
+
+### 배경
+사용자가 Zone 분석 탭(배터리 캡 녹 검사 도구) 전면 재설계를 요청 — 명칭을 "상/하부
+분석"으로 변경, 탭 순서 맨 앞 이동, 체크포인트 자동 선택(추론 탭 승계), 추론 방식
+sliding window 고정(선택 UI 제거), 이미지 업로드 append+개별삭제, 영역(zone) 레시피
+저장/불러오기(팝업+최근목록), 수동 원 편집 강화(방향키 이동/휠 지름조절/정렬버튼),
+추론 결과 보정(라벨링 탭과 동등한 도구), 결과 분석 테이블(최대 blob 픽셀수 +
+Excel/클립보드), 체크포인트 파일명에 학습 시작 날짜 포함. 사용자 원문은 번호가 일부
+꼬여 있어 요구사항을 정리해 반영.
+
+### 한 일
+- CLAUDE.md/roadmap.md/planning-log.md(Zone 탭 전체 이력, R1~R4·R-A~R-C·R3-1~R3-5·
+  GitHub #13/14·오프라인 팝업 삭제·배치모드 3종·GitHub #32·블랍클릭선택+Excel확장·
+  편집UX 6건) 선행 확인 후, `app/main_window.py`, `app/core/i18n.py`,
+  `app/tabs/zone_analysis_tab.py`(전체 1283줄), `app/widgets/zone_canvas.py`(핵심 구간),
+  `app/core/zone_metrics.py`, `app/core/zone_state_store.py`,
+  `app/widgets/inference_image_list.py`(전체), `app/widgets/zone_batch_result_dialog.py`,
+  `app/widgets/image_browser.py`(delete/clipboard 패턴 대조), `app/tabs/inference_tab.py`
+  (체크포인트 테이블), `app/core/trainer.py`(체크포인트 저장), `app/core/inference_engine.py`
+  (`list_checkpoints`/`load_checkpoint_meta`/`run_sliding_window` 시그니처), `app/core/
+  project.py`(data 루트), `app/widgets/overlay_viewer.py`(`wheelEvent`/줌 구조)를 전수
+  조사.
+- **로드맵 체크박스-코드 불일치 재발견**: "편집 도구 UX 개선 6건(2026-09-01)" R1(색상)과
+  "블랍 클릭 선택"(요청④)이 로드맵엔 `[ ]`로 남아있지만 실제 코드엔 이미 구현되어
+  있음을 확인(`zone_canvas.py:55-56` 색상 상수, `_on_canvas_blob_clicked`/`blob_clicked`
+  배선). 2026-09-23 GitHub #22/#16 때와 같은 패턴 — 코드를 1차 소스로 삼아 설계함.
+- **숨은 결함 발견(번들 수정 대상)**: 단일 이미지 추론(`_ZoneInferenceWorker`)만 sliding
+  window 선택을 반영하고, 배치 처리(`_ZoneBatchWorker.run()`)는 선택과 무관하게 항상
+  `engine.run()`(resize)만 호출하던 것을 확인 — sliding window 고정 작업 범위에 포함.
+- **활성화 조건 재설계 근거**: `_btn_detect`(자동 원 검출)가 "추론 완료 후"에만
+  활성화되던 기존 제약이 실제 기술적 의존관계가 아님을 확인(`_on_auto_detect()`가
+  원본 이미지만 읽고 `InferenceResult`를 참조하지 않음, `ZoneCanvas.get_state()`/
+  `set_state()`도 원(circle) 자체는 블랍 라벨맵과 무관). 사용자가 요청한 "영역 설정 →
+  추론 실행" 순서와 정확히 맞아떨어져 활성화 조건을 이미지 로드 직후로 당기도록 설계
+  (브러시 3종만 블랍 마스크 의존이라 추론 후 활성화 유지).
+- **이미지 리스트 재사용 판단**: `ImageBrowser` 직접 재사용은 과거(2026-08-20 추론 탭
+  라운드)와 동일한 이유(프로젝트 경로 하드코딩, 파일 복사/삭제가 실제 디스크 변경,
+  라벨 상태 UI 불일치)로 재확인 후 기각. 대신 이미 추론 탭과 공유 중인
+  `InferenceImageList`에 `append` 파라미터(기본값 `False`로 하위호환) + 개별 삭제
+  (Delete 키 + 컨텍스트 메뉴, 파일은 보존하고 목록에서만 제거)를 추가해 두 탭 모두
+  혜택을 보는 애디티브 확장으로 설계. "이미지 열기/폴더 열기 버그" 재현 후보는
+  `load_folder`/`load_files`가 항상 전체 교체(append 개념 자체가 없음)인 점과 삭제
+  기능 부재를 코드로 확정 — 신규 기능 추가로 그대로 해결됨.
+- **레시피 설계**: 저장 위치 `data/zone_recipes/{이름}.json`(완전 독립 원칙 유지,
+  `app/core/project.py`의 `data/` 폴백 루트 관례 재사용), 스키마는 `circles`+`ref_size`
+  (기존 `_scale_circles()` 비례스케일 헬퍼 그대로 재사용). "최근 레시피"는 별도 목록을
+  저장하지 않고 파일 mtime 정렬로 대체(YAGNI). 팝업(`zone_recipe_dialog.py` 신규)은
+  2026-08-30에 삭제된 "오프라인 원 검출 테스트" 팝업과 동일한 "임베디드 ZoneCanvas +
+  라운드트립 적용" 골격을 재사용하되 목적만 레시피 관리로 전환 — "영역 미설정 시
+  진행 불가"는 팝업의 "메인 탭에 적용" 버튼을 원이 1개 이상일 때만 활성화하는 방식으로
+  구현(완전 차단이 아니라 "취소"로 빠져나가는 것은 허용 — 데이터를 바꾸지 않는 선택이므로).
+- **수동 원 편집**: 방향키 이동(1px/Shift 10px)과 마우스 휠 지름 조절(5px/Shift 20px,
+  원 미선택 시엔 기존 줌 동작으로 폴백)을 `ZoneCanvas.keyPressEvent`/신규 `wheelEvent`에
+  추가. 연타/연속 스크롤이 매번 `_push_undo()`를 호출하면 Ctrl+Z 체감이 나빠지는 문제를
+  막기 위해 "제스처당 undo 1개"를 보장하는 타이머 기반 디바운스(`_begin_edit_gesture`,
+  500ms)를 신규 설계 — 기존 드래그의 "누르는 시점 1회 push"와 다른 메커니즘이 필요함을
+  확인하고 별도로 설계함. "정렬(중심 맞추기)" 버튼은 `ZoneCanvas.align_centers()`
+  메서드 하나로 메인 탭/팝업 양쪽에서 공유(같은 클래스 재사용).
+- **추론 결과 보정 요구사항 감사**: 2026-08-31 R2 감사("라벨링 탭과 격차 없음") 결과를
+  이번에 재확인해 신규 구현이 불필요함을 확정 — 브러시 그리기/지우기 → `apply_manual_
+  strokes()` → 사이드카 자동저장 경로가 이미 완전히 동작, 코드 변경 없음(검증만 필요).
+- **결과 분석 테이블**: `zone_metrics.max_blob_pixels_by_zone()`(신규 순수 함수, blob_rows
+  groupby max)로 (이미지,존)별 최대 blob 픽셀수를 구해 `zones` Excel 시트 4번째 열 +
+  `ZoneBatchResultDialog`의 Long 탭 4번째 열로 추가, "클립보드로 복사" 버튼(TSV, 기존
+  "버튼 1개=전체 복사" 관례 재사용, 셀 범위 선택 등 과설계 없음)을 신설. 단일 이미지
+  내보내기(`_on_export_single`)도 파일 저장으로 바로 가던 것을 동일
+  `ZoneBatchResultDialog` 재사용으로 통합해 단일/배치 코드 경로 중복을 제거.
+  mm 환산은 사용자가 이미 "계수 추후 제공"이라 밝혀 이번엔 만들지 않음(YAGNI) —
+  `docs/decisions-needed.md`에 참고 기록만 남김(결정 대기 아님).
+- 체크포인트 파일명(10번)은 `list_checkpoints()`(glob, mtime 정렬)/`load_checkpoint_meta()`
+  (딕셔너리 내부 값만 읽음) 둘 다 파일명 구조에 의존하지 않음을 `Grep` 전수 확인 후
+  `trainer.py`의 `prefix` 조립에 `date.today()`(에폭 루프 진입 전 1회만 계산, 자정
+  경계 방지)를 끼워넣는 설계로 확정 — 기존 파싱 로직 깨짐 없음.
+- 스펙 문서 신설: [docs/specs/zone-tab-redesign-2026-10-01.md](../specs/zone-tab-redesign-2026-10-01.md)
+  — 요구사항 12개 항목 각각 현재 코드 근거+설계+정확한 함수 시그니처/파일 경로,
+  실행 순서 라운드 A~F(파일 겹침 기준) 포함.
+- `docs/decisions-needed.md`에 참고 기록 1건 추가(mm 환산 보류, 결정 대기 아님).
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절 말미에 신규 하위 절 추가(요청 요약, 숨은
+  결함/재설계 근거 요약, 라운드 A~F 체크박스).
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건 + `decisions-needed.md`/
+  `roadmap.md`/본 로그 갱신에만 사용. 작업 워크트리
+  `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab` 브랜치) 확인,
+  다른 워크트리/main 미접촉.
+
+### 상태
+완료 — 다음: 리더가 스펙 문서를 검토한 뒤 "11. 실행 순서 제안" 절대로 구현 에이전트에
+라운드 A부터 순차 위임. 결정 대기 등록 없음(레시피 저장위치/영문 탭명은 저위험 기본값을
+기획이 직접 채택, mm 환산은 사용자가 이미 방향을 정함). 라운드 E(레시피+수동편집)는
+"주요 기능 추가"로 분류해 검증 단계에서 명시적으로 골든패스(원 생성/이동/방향키 이동/
+휠 지름조절/정렬/레시피 저장·불러오기·최근자동로드/팝업 적용버튼 게이트/추론 전 영역
+설정 가능/추론 실행 시 영역없음 확인팝업) 실 GUI 조작 확인을 요청할 것.
