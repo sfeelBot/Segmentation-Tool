@@ -4819,3 +4819,113 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   다른 체크포인트를 고른 뒤 탭을 왕복해도 덮어써지지 않는지 — 멱등성), 학습 1
   에폭이라도 돌려 체크포인트 파일명에 날짜가 포함되는지. 다음 라운드(C)는
   `run_sliding_window` 시그니처 선확인 후 착수 예정.
+
+## 2026-10-01 — 존 분석 탭 전면 재설계 라운드 C/D/E 구현
+
+- 상태: 라운드 C/D/E 완료 — **검증 에이전트의 독립 실행/골든패스 확인 필요**.
+  같은 브랜치/워크트리, 같은 스펙 문서(라운드 A/B는 위 항목 참고).
+- **라운드 C**(sliding window 고정 + 배치 처리 숨은 버그 수정, 커밋 `222c40d`):
+  - `inference_engine.py:153`에서 `run_sliding_window()` 시그니처를 선확인
+    (`run()`과 키워드 인자 전부 동일, `prepared` 포함) — 스펙 사전조사 그대로였음.
+  - `zone_analysis_tab.py`: `_infer_mode` 선택 `QComboBox`(resize/sliding window)를
+    UI에서 완전히 제거. `_ZoneInferenceWorker.__init__`에서 `mode` 매개변수 제거,
+    `run()`이 항상 `engine.run_sliding_window(**kwargs)`만 호출. **숨은 버그
+    수정**: `_ZoneBatchWorker.run()`이 지금까지 `engine.run()`(resize 방식)을
+    무조건 호출해 배치 처리 경로에는 sliding window 선택이 전혀 반영되지 않고
+    있었다 — `engine.run_sliding_window()`로 교체(키워드 인자 동일해 매핑 변경
+    불필요). `_on_run()`의 워커 생성 호출에서 `mode` 인자 제거.
+  - 기존 테스트 2건이 이 변경과 충돌해 함께 수정: `test_zone_edit_toolbar.py`(이제
+    `zone._infer_mode` 자체가 없음을 확인하는 방향으로 전환),
+    `test_zone_batch_worker.py`(`module.engine.run` 몽키패치 2곳을
+    `module.engine.run_sliding_window`로 교체 — 코드가 실제로 호출하는 함수와
+    일치시킴).
+- **라운드 D**(이미지 리스트 append + 개별 삭제, 커밋 `00a4c22`):
+  - `inference_image_list.py`: `load_folder()`/`load_files()`에 `append: bool =
+    False` 매개변수 추가 — 기본값 덕분에 추론 탭 호출부는 변경 없이 회귀 없음.
+    `append=True`면 기존 `_all_paths`와 신규 경로를 `set` 합집합으로 합쳐 중복을
+    자동 제거. 폴더 로드 중 기존 `_root`와 새 `root`가 다르면(공통 루트 불일치)
+    `_root`를 `None`으로 낮춰 평탄 그룹 트리로 폴백. 개별 파일 추가는 항상
+    `_root = None`(공통 루트를 보장 못 함).
+  - `eventFilter()`(Delete/Backspace로 `_remove_selected()` 호출) +
+    `customContextMenuRequested`("목록에서 제거" 메뉴) 신규 추가, 신규 시그널
+    `images_removed(list[Path])` — 제거는 목록/상태 캐시에서만 빠지고 원본 파일·
+    사이드카는 절대 건드리지 않음(메뉴 문구도 "삭제"가 아니라 "목록에서 제거").
+  - `zone_analysis_tab.py`: `_on_select_image()`/`_on_select_folder()`가
+    `append=True`로 호출하도록 변경, 기존 `clear_status()` 호출 제거(배치 처리
+    상태 배지 보존). `images_removed` 신호에 `_on_images_removed()` 연결 —
+    `_results` 캐시에서 제거된 경로를 pop, 현재 로드된 이미지가 삭제 대상이면
+    캔버스/도구 활성화 상태/블랍 데이터까지 이미지 로드 실패 시와 동일한 방식으로
+    초기화.
+  - 공유 위젯이라 추론 탭에도 Delete 키/컨텍스트 메뉴가 동일하게 나타나지만
+    의도된 애디티브 확장으로 간주(스펙 판단 그대로).
+- **라운드 E**(레시피 관리 + 수동 원 편집, 최대 스코프, 커밋 `3d363e7`):
+  - `zone_canvas.py`: `align_centers()`(원 2개 이상일 때만 평균 중심으로 정렬,
+    반지름 불변), `wheelEvent()` 오버라이드(원편집 모드 + 선택된 원이 있으면 휠로
+    반지름/지름 조절 — 기본 5px, Shift 20px, 없으면 `super().wheelEvent()`로
+    기존 줌 유지), `keyPressEvent()`에 방향키 이동 분기(기본 1px, Shift 10px),
+    `_begin_edit_gesture()`로 방향키 연타/휠 연속 스크롤을 500ms 디바운스된 "제스처
+    1개 = undo 1개"로 묶음(`QTimer` 싱글샷, 연속 입력마다 재시작).
+  - **리팩터링**: `zone_analysis_tab.py`에 있던 비공개 `_scale_circles()`를
+    `zone_metrics.scale_circles()`(Qt 비의존 순수 함수)로 승격 — `zone_recipe_
+    dialog.py`가 같은 함수가 필요해지면서(순환 import 회피 + 중복 제거) 공용
+    모듈로 이동. 기존 호출부(`_on_batch_image_inferred`)와 테스트
+    (`test_zone_github_13_14.py`의 `_scale_circles` import 경로)도 함께 갱신.
+  - `zone_recipe_store.py`(신규): `data/zone_recipes/{안전한 이름}.json` —
+    `save_recipe`/`load_recipe`/`list_recipes()`(mtime 내림차순)/`touch_recipe()`.
+    "최근" 판정은 파일시스템 mtime 그대로 재사용(별도 "최근 사용 목록" 없음,
+    YAGNI). 이름 충돌 시 같은 파일을 덮어쓴다(의도된 동작 — mtime이 "최근"으로
+    갱신됨). 모듈 자체에 `__main__` self-check 포함, 단독 실행으로 통과 확인.
+  - `zone_recipe_dialog.py`(신규) `ZoneRecipeDialog`: 생성자가
+    `(reference_pixmap, ref_size, parent)`를 받아 메인 탭이 이미 들고 있는 미리보기
+    픽스맵/원본 크기를 그대로 재사용(새 이미지 로드 없음). 내부 `ZoneCanvas` 1개로
+    자동검출(QPixmap→numpy BGR 변환 후 `detect_circles()`, 결과를 `scale_circles()`
+    로 픽스맵 스케일→`ref_size`로 보정)/정렬/Undo/레시피 불러오기·저장을 제공.
+    "메인 탭에 적용" 버튼은 `circles_changed` 시그널에 연결된 슬롯이
+    `len(get_circles()) >= 1`일 때만 활성화 — 원 없이는 이 경로로 빠져나갈 수
+    없음(취소는 항상 가능). 오픈 시 `list_recipes()[0]`(최신 mtime)을 자동 로드.
+  - `zone_analysis_tab.py`:
+    - **활성화 조건 분리(7-2)**: `_on_list_image_selected()`가 이미지 로드에
+      성공하면 `_act_circle`과 함께 `_btn_detect`도 즉시 활성화(기존에는 추론
+      완료 후에만 활성화됐음 — `detect_circles()`가 원본 이미지만 참조하고
+      추론 결과를 전혀 쓰지 않는다는 사실을 스펙 조사에서 재확인했기 때문).
+      실패 시(이미지 로드 예외)에만 비활성화. `_setup_target_classes()`에
+      남아있던 `_btn_detect.setEnabled(True/False)` 2곳(추론 완료 시 활성화,
+      타겟 클래스 없을 때 BUG-031 사유로 비활성화)을 모두 제거 — 더 이상 추론
+      결과와 연동되지 않음. 브러시 그리기/지우기/블랍삭제 3종은 기존 그대로
+      추론 완료 후에만 활성화(블랍 마스크에 실제로 의존하는 진짜 제약이라 변경
+      없음).
+    - "원(Zone) 설정..." 버튼을 `_batch_box`(`_mode_combo` 바로 아래)에 추가,
+      `_mode_combo.currentIndexChanged`에 `_on_batch_mode_changed()`를 연결해
+      "일괄 적용"/"일괄 적용 후 수정" 모드에서만 보이고 "장별 적용"에서는 숨김.
+      `_on_open_recipe_dialog()`가 기존 원이 있으면 교체 확인(`QMessageBox.
+      question`) 후 `ZoneRecipeDialog`를 열고, 결과를 `scale_circles()`로 현재
+      이미지 크기에 맞춰 `self._canvas.set_circles()`에 반영.
+    - 우측 원 목록 패널에 "정렬(중심 맞추기)" 버튼 추가, `canvas.align_centers`에
+      직접 연결(메인 탭/레시피 팝업 둘 다 같은 `ZoneCanvas` 메서드 재사용).
+    - `_on_run()`에 "영역(원) 없음" 확인 가드 추가 — 원이 1개도 없으면
+      `QMessageBox.question`으로 진행 여부를 물은 뒤 "예"가 아니면 추론을 중단.
+  - **검증**: 변경 파일 전부 `py_compile` 통과. 전체 테스트 스위트(`pytest tests/`,
+    `QT_QPA_PLATFORM=offscreen`) **147건 전부 통과**(기존 134건 + 신규
+    `tests/test_zone_redesign_2026_10_01.py` 13건) — 신규 테스트는 append/루트
+    불일치 폴백/목록 제거(파일 보존 확인)/`align_centers`/휠 지름조절/방향키
+    디바운스 undo/레시피 저장·불러오기·스케일/다이얼로그 적용 버튼 게이팅/자동
+    로드/활성화 조건 분리/모드별 버튼 가시성까지 커버. **골든패스 1회 수동 실행**
+    (ponytail 규칙 — "비trivial 로직은 runnable check를 남긴다"에 따라 offscreen
+    스크립트로 구성, `QMessageBox.information/warning/critical`을 no-op으로
+    몽키패치해 모달 블로킹 회피): 이미지 열기(append) → `ZoneRecipeDialog` 열기 →
+    (빈 PNG라 실제 OpenCV 자동검출은 원을 못 찾아 수동으로 원 2개 세팅,
+    "자동검출 호출 자체"는 정상 동작 확인했으나 결과 유무는 이미지 콘텐츠에
+    좌우되는 부분이라 수동 대체) → 레시피 저장 → 레시피 목록에서 다시 불러오기
+    → "메인 탭에 적용" → 방향키로 원 이동 → "정렬" 버튼 → 가짜 모델/체크포인트 +
+    `engine.run_sliding_window` 몽키패치로 추론 실행까지 전 과정 예외 없이 완료.
+    `python main.py` 8~10초 기동 확인도 각 라운드마다 반복(예외 없음, GPU 인식
+    로그까지 정상 출력).
+  - `release.ini` 버전은 지시사항대로 건드리지 않음(배포 단계 일괄 처리 예정).
+- **검증 서브에이전트 확인 필요 항목(C/D/E 전체)**: 실제 `python main.py` GUI에서
+  수동으로 — 추론 방식 선택 UI가 Zone 탭에서 사라졌는지 + 배치 처리가 sliding
+  window로 동작하는지(패치 학습 모델로 실측), 이미지 열기/폴더 열기를 연속으로
+  여러 번 실행해 append가 실제로 누적되는지 + Delete 키/우클릭 "목록에서 제거"가
+  원본 파일을 지우지 않는지, "원(Zone) 설정..." 팝업에서 실제 자동검출 버튼을
+  눌러 진짜 이미지로 원이 검출되는지(이번 라운드는 빈 PNG라 대체 경로로만
+  확인), 방향키/휠 조작감이 실제 마우스/키보드로 자연스러운지, "일괄 적용 후
+  수정"/"장별 적용" 모드 전환 시 레시피 버튼이 기대대로 숨는지.

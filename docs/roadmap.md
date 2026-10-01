@@ -1221,12 +1221,16 @@ append/개별삭제 + 영역(zone) 레시피 저장·불러오기(팝업+최근�
       — 구현 완료, 커밋 `4477bc3`, 검증 대기.
 - [x] 라운드 B — 체크포인트 자동 선택(`inference_tab.py`/`zone_analysis_tab.py`/
       `main_window.py`) — 구현 완료, 커밋 `68de90f`, 검증 대기.
-- [ ] 라운드 C — sliding window 고정 + 배치 처리 숨은 버그 수정(`zone_analysis_tab.py`)
-- [ ] 라운드 D — 이미지 리스트 append + 개별 삭제(`inference_image_list.py`/
-      `zone_analysis_tab.py`, 추론 탭 회귀 확인)
-- [ ] 라운드 E — 레시피(팝업+저장/불러오기) + 수동 원 편집(방향키/휠/정렬) — **주요
+- [x] 라운드 C — sliding window 고정 + 배치 처리 숨은 버그 수정(`zone_analysis_tab.py`)
+      — 구현 완료, 커밋 `222c40d`, 검증 대기.
+- [x] 라운드 D — 이미지 리스트 append + 개별 삭제(`inference_image_list.py`/
+      `zone_analysis_tab.py`, 추론 탭 회귀 확인) — 구현 완료, 커밋 `00a4c22`, 검증 대기.
+- [x] 라운드 E — 레시피(팝업+저장/불러오기) + 수동 원 편집(방향키/휠/정렬) — **주요
       기능 추가로 분류, 골든패스 검증 필요**(`zone_canvas.py`, 신규
       `zone_recipe_dialog.py`/`zone_recipe_store.py`, `zone_analysis_tab.py`)
+      — 구현 완료, 커밋 `3d363e7`, 구현자 자체 offscreen 골든패스 1회 확인
+      (`docs/agents/implementation-log.md` 참고) + 전체 테스트 147건 통과,
+      독립 검증 에이전트의 실제 `python main.py` GUI 조작 확인 대기.
 - [ ] 라운드 F — 결과 분석 테이블(최대 blob 픽셀수 + 클립보드 복사, E 이후)
       (`zone_metrics.py`/`zone_batch_result_dialog.py`/`zone_analysis_tab.py`)
 - 결정 대기 없음(레시피 저장위치/영문 탭명은 기획이 저위험 기본값으로 직접 결정,
