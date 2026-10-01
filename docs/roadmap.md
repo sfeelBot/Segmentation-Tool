@@ -1231,8 +1231,12 @@ append/개별삭제 + 영역(zone) 레시피 저장·불러오기(팝업+최근�
       — 구현 완료, 커밋 `3d363e7`, 구현자 자체 offscreen 골든패스 1회 확인
       (`docs/agents/implementation-log.md` 참고) + 전체 테스트 147건 통과,
       독립 검증 에이전트의 실제 `python main.py` GUI 조작 확인 대기.
-- [ ] 라운드 F — 결과 분석 테이블(최대 blob 픽셀수 + 클립보드 복사, E 이후)
-      (`zone_metrics.py`/`zone_batch_result_dialog.py`/`zone_analysis_tab.py`)
+- [x] 라운드 F — 결과 분석 테이블(최대 blob 픽셀수 + 그룹화 + 필터 바 + 클립보드
+      복사, E 이후) (`zone_metrics.py`/`zone_batch_result_dialog.py`/
+      `zone_analysis_tab.py`) — 구현 완료, 커밋 `f850e21`, 전체 테스트 153건
+      통과, 독립 검증 에이전트의 실제 GUI 확인(Long 탭 병합 시각 확인 포함) 대기.
+- A~F 전 라운드 구현 완료(8번 보정 도구는 코드 변경 없는 검증 전용 항목) —
+  독립 검증 에이전트의 최종 확인 필요.
 - 결정 대기 없음(레시피 저장위치/영문 탭명은 기획이 저위험 기본값으로 직접 결정,
   mm 환산은 사용자가 이미 방향을 정함 — `decisions-needed.md`에 참고 기록만 추가).
 

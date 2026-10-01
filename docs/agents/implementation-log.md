@@ -4929,3 +4929,71 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   눌러 진짜 이미지로 원이 검출되는지(이번 라운드는 빈 PNG라 대체 경로로만
   확인), 방향키/휠 조작감이 실제 마우스/키보드로 자연스러운지, "일괄 적용 후
   수정"/"장별 적용" 모드 전환 시 레시피 버튼이 기대대로 숨는지.
+
+## 2026-10-01 — 존 분석 탭 전면 재설계 라운드 F 구현 (A~F 전체 완료)
+
+- 상태: 라운드 F 완료, 이로써 스펙(`docs/specs/zone-tab-redesign-2026-10-01.md`)
+  11절 실행 순서 A→B→C→D→E→F 전체 구현 종료 — **검증 에이전트의 독립 확인
+  필요**(구현자 자체 확인은 아래 참고). 커밋 `f850e21`.
+- `zone_metrics.py`:
+  - `max_blob_pixels_by_zone(blob_rows)` 신규(순수 함수) — (이미지파일명, 존이름)
+    별 최대 blob 픽셀수 dict. 해당 조합에 blob이 없으면 키 자체가 없음(호출부가
+    0으로 렌더링).
+  - `export_zone_percentages_to_excel()`의 "zones" 시트에 4번째 열 "최대 blob
+    픽셀수" 추가 — `blob_rows is None`(호출부가 애초에 blob 데이터를 안 줌)이면
+    공란, `blob_rows`가 주어졌지만 해당 (이미지,존)에 blob이 0개면 `0`으로
+    명확히 구분(스펙 명시, 하위 호환을 위해 `None` 분기 유지하되 실제 호출부는
+    전부 blob_rows를 넘겨 거의 발생 안 함).
+  - `_zone_name_sort_key`를 `zone_name_sort_key()`로 공개 전환(라운드 E의
+    `scale_circles` 승격과 동일 패턴) — `zone_batch_result_dialog.py`의 필터
+    바(존 토글 버튼 정렬 순서: 중심부→링 N→바깥쪽)가 `pivot_wide_format()`과
+    동일한 정렬 기준을 재사용.
+- `zone_batch_result_dialog.py` — Long/Wide 두 탭 공통 변경:
+  - **그룹화**: Long 탭 렌더링 전에 `rows`를 이미지명 기준으로 정렬(파이썬
+    stable sort라 같은 이미지 안의 zone 순서는 원래 순서 유지)한 뒤, 연속된
+    같은 이미지 구간을 `QTableWidget.setSpan(start, 0, count, 1)`으로 병합 —
+    이미지명 셀은 1회만 표시되지만 zone별 행 자체(원본 데이터)는 그대로 분리
+    유지. 사용자(리더)가 디자인 검토 중 추가 요청한 2건 중 1번째, 설계팀 판단
+    대로 `QTreeWidget` 전환 대신 `setSpan()` 채택(기존 Excel/클립보드 내보내기가
+    이미 플랫 리스트 기반이라 변경 최소화).
+  - **필터 바**(2번째 추가 요청): 이미지명 검색 `QLineEdit`(실시간, `textChanged`
+    직결 — 디바운스 불필요할 만큼 가벼운 연산) + 존 다중 선택(체크 가능한
+    `QPushButton` 토글 그룹 — 존 종류가 적어(보통 2~5개) `QComboBox` 커스텀
+    모델보다 단순) + "N / 전체" 카운터 라벨 + 초기화 버튼. `setRowHidden`/
+    `setColumnHidden`으로 "표시 행/열"만 걸러내고 `self._rows`/`self._blob_rows`
+    (Excel·클립보드 내보내기가 참조하는 원본)는 전혀 건드리지 않음 — 필터는
+    "찾아보기" 전용, "내보내기 범위 제한" 아님(스펙·리더 지시 명시, YAGNI로
+    비율/픽셀수 임계값 필터는 범위 밖).
+  - "클립보드로 복사" 버튼 신규("Excel로 내보내기" 옆) — TSV 포맷(`이미지\t존\t
+    타겟 비율(%)\t최대 blob 픽셀수`), 기존 "버튼 1개 = 표 전체 복사" 관례
+    (`cuda_diag_dialog.py` 등)를 그대로 따름(셀 범위 선택 등 부분 복사는 범위
+    밖).
+- `zone_analysis_tab.py`: `_on_export_single()`을 `ZoneBatchResultDialog` 재사용
+  으로 단순화 — 기존엔 바로 `QFileDialog.getSaveFileName()`으로 가서 화면에
+  아무 것도 안 보여주고 파일부터 저장했는데, 이제 배치 경로와 완전히 동일한
+  코드 경로(다이얼로그를 먼저 열어 표로 보여준 뒤 그 안에서 Excel/클립보드
+  내보내기)를 탄다 — 단일/배치 중복 로직 제거. 버튼 라벨 "Excel로 내보내기" →
+  "결과 분석 보기"(다이얼로그가 Excel+클립보드 둘 다 제공하므로 기존 라벨이
+  더 이상 정확하지 않았음). 더 이상 직접 호출하지 않게 된
+  `export_zone_percentages_to_excel` import 제거.
+- **검증**: 변경 파일 `py_compile` 통과. 전체 테스트 스위트
+  (`QT_QPA_PLATFORM=offscreen pytest tests/`) **153건 전부 통과**(라운드 E까지
+  147건 + 신규 6건 — `max_blob_pixels_by_zone` 집계, Excel `zones` 시트 4번째
+  열 검증(openpyxl로 직접 읽어 셀 값 확인), Long 탭 `setSpan` 그룹화(이미지명
+  기준 정렬 후 span 크기 확인), 필터 바 검색/존 토글이 카운터·`isRowHidden`에
+  정확히 반영되고 리셋이 원상복구하는지, 클립보드 복사 텍스트에 4번째 열이
+  포함되는지, `_on_export_single()`이 실제로 `ZoneBatchResultDialog`를 올바른
+  인자로 호출하는지). `python main.py` 8~10초 기동 확인도 예외 없음.
+  `release.ini` 버전은 변경하지 않음(배포 단계 일괄 처리 예정).
+- **검증 서브에이전트 확인 필요 항목(F)**: 실제 배치 처리/단일 이미지 양쪽에서
+  결과 분석 다이얼로그를 열어 — Long 탭에서 같은 이미지의 여러 zone 행이
+  실제로 병합돼 보이는지(시각적 확인 필수, 자동 테스트는 `rowSpan()` 값만
+  확인했음), 필터 바 체감 반응성(이미지가 많을 때 느려지지 않는지), 클립보드
+  복사 결과를 실제로 엑셀/메모장에 붙여넣어 탭 구분이 깨지지 않는지, "결과
+  분석 보기" 버튼으로 전환된 단일 이미지 경로가 기존 "Excel로 내보내기"와
+  동일한 파일을 생성하는지(회귀 없음 확인).
+- 이로써 스펙 11절 표의 A~F 전 라운드(8번 보정 도구는 코드 변경 없는 검증
+  전용 항목)가 구현 완료 상태 — `docs/roadmap.md` "전면 재설계" 절 체크박스
+  전부 `[x]`로 갱신함. 다음 단계는 검증 에이전트의 독립 재확인(정적 리뷰 +
+  실행 확인, 라운드 E/F는 "주요 기능 추가"로 분류돼 골든패스 실 GUI 조작까지
+  요청 필요 — CLAUDE.md 검증 수준 기준).
