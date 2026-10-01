@@ -1147,19 +1147,24 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - **감사 결과 — 요청②③은 이미 완전히 동작**: `zone_metrics.apply_manual_strokes()`가
   last-write-wins로 `final_mask`를 실계산(존 퍼센티지·Excel blob)에 이미 반영 중 —
   색상만 바꾸면 됨.
-- [ ] R1(①②③) — `zone_canvas.py` 색상 상수 `_COLOR_DRAW`(#60a5fa 파랑, 앱 표준 accent
+- [x] R1(①②③) — `zone_canvas.py` 색상 상수 `_COLOR_DRAW`(#60a5fa 파랑, 앱 표준 accent
       재사용)/`_COLOR_ERASE`(#9ca3af 회색, 라벨링 탭 지우개 색 재사용) 신설 + 2개
-      사용처(`_rasterize_stroke`/`_paint_erase_preview`) 교체. 최저 리스크.
+      사용처(`_rasterize_stroke`/`_paint_erase_preview`) 교체. 최저 리스크. — **2026-10-01
+      리더 확인: 코드에 이미 구현돼 있었음**(`zone_canvas.py:55-56`), 체크박스만 누락.
+      GitHub #22/#16(2026-09-23)과 동일 패턴 — 존 분석 탭 전면 재설계 기획(계획 에이전트)이
+      발견, 상세는 `docs/specs/zone-tab-redesign-2026-10-01.md` 0절.
 - [ ] R2(⑤) — `zone_analysis_tab.py` 단독. `_on_edit_tool_changed()`에 "같은 액션
       재클릭 감지"(`self._active_tool_action` 추적) 추가, 기본 모드 = 원편집(circle,
       기존 리셋 관례 3곳과 동일).
-- [ ] R3(④) — `zone_canvas.py`(신규 시그널 `blob_clicked`+`highlight_blob_bbox()`) +
+- [x] R3(④) — `zone_canvas.py`(신규 시그널 `blob_clicked`+`highlight_blob_bbox()`) +
       `zone_analysis_tab.py`(신규 슬롯, `zone_metrics.compute_blob_labels`/
       `zone_blob_stats`(R3 Excel 라운드에서 이미 구현된 함수) 재사용, 신규 core 함수
       없음). 설계 판단: "선택"과 "삭제"를 분리(클릭=하이라이트+정보표시만, 삭제는
       기존 blob_delete 모드 그대로) — 오늘 이미 구현된 추론 탭 블랍 클릭 패턴과 동일
       철학, blob 정체성은 4-connectivity `final_mask` 기준이라 AI+브러시 블랍이 자동
-      으로 둘 다 포함됨. **주요 기능 추가로 분류 — 골든패스 검증 필요.**
+      으로 둘 다 포함됨. **주요 기능 추가로 분류 — 골든패스 검증 필요.** — **2026-10-01
+      리더 확인: 코드에 이미 구현돼 있었음**(`_on_canvas_blob_clicked()`/`blob_clicked`
+      시그널 배선, `zone_analysis_tab.py` 492행대), 체크박스만 누락. R1과 동일 발견 경위.
 - [ ] R4(⑥ 버그) — **정적 감사로 단일 원인 확정 실패**(실행 도구 미지급, 순수 코드
       추적만 수행). 모드 상태머신/자동검출 부작용/브러시 활성화 조건/스트로크→퍼센티지
       반영 경로 4갈래를 전수 추적했으나 결함 없음. 유일한 후보(확신 낮음): AI가 타겟
@@ -1175,6 +1180,57 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - 결정 대기 없음 — 설계 판단(요청4 선택-vs-삭제 분리, 요청5 기본모드) 전부 기존 코드
   관례 근거로 직접 결정. 요청6은 "결정"이 아니라 "라이브 재현 필요"라 결정대기 목록
   대상 아님(GitHub #9/#16 라운드와 동일 처리).
+
+### 전면 재설계 — "상/하부 분석" 명칭 변경 + 워크플로우 재편 (2026-10-01 요청)
+
+기획 완료: [docs/specs/zone-tab-redesign-2026-10-01.md](specs/zone-tab-redesign-2026-10-01.md).
+사용자 요청 — 탭 명칭을 "상/하부 분석"으로 변경 + 탭 순서를 맨 앞으로 + 체크포인트 자동
+선택(추론 탭 선택값 승계) + 추론 방식 sliding window 고정(선택 UI 제거) + 이미지 업로드
+append/개별삭제 + 영역(zone) 레시피 저장·불러오기(팝업+최근목록) + 수동 원 편집(방향키
+이동/휠 지름조절/정렬버튼) + 추론 결과 보정(라벨링 탭과 동등, 감사 결과 이미 충족
+확인) + 결과 분석 테이블(최대 blob 픽셀수 컬럼 + Excel/클립보드) + 체크포인트 파일명에
+학습 시작 날짜 포함.
+
+- **코드 조사로 발견한 숨은 결함 1건(번들 수정 대상)**: 단일 이미지 추론 경로
+  (`_ZoneInferenceWorker`)만 sliding window 선택을 반영하고, **배치 처리 경로
+  (`_ZoneBatchWorker.run()`)는 선택과 무관하게 항상 `engine.run()`(resize 방식)만
+  호출**하고 있었음 — sliding window 고정 작업에 함께 수정.
+- **활성화 조건 재설계**: 자동 원 검출(`_btn_detect`)이 "추론 완료 후"에만 활성화되던
+  기존 UX 제약은 실제 기술적 의존관계가 아님을 코드로 확인(`detect_circles()`는 원본
+  이미지만 읽고 추론 결과를 참조하지 않음) — 사용자가 요청한 "영역 설정 → 추론 실행"
+  순서와 맞춰 이미지 로드 직후 자동검출/원편집을 활성화하도록 재설계(브러시 계열
+  3개 도구는 블랍 마스크에 진짜 의존하므로 추론 후 활성화 유지).
+- **레시피 저장**: `data/zone_recipes/{이름}.json`(circles + ref_size, 완전 독립 원칙에
+  맞춰 프로젝트 시스템 미사용), "최근" 판정은 파일 mtime 재사용(별도 최근목록 저장
+  안 함, YAGNI). 일괄 적용 전용 팝업(`zone_recipe_dialog.py` 신규, 2026-08-30 삭제된
+  오프라인 원 검출 팝업과 동일 골격 재사용)에서 원이 없으면 "메인 탭에 적용" 버튼
+  자체가 비활성화되어 "영역 미설정 시 진행 불가"를 구현.
+- **결과 분석**: 기존 `ZoneBatchResultDialog`/`export_zone_percentages_to_excel()`을
+  확장(열 추가 + 클립보드 복사 버튼)하고 단일 이미지 내보내기도 동일 다이얼로그를
+  재사용하도록 통합(중복 코드 경로 제거). mm 환산은 사용자가 계수 미제공 상태라
+  이번엔 만들지 않음 — `docs/decisions-needed.md` 참고 기록.
+- **감사 결과 — 신규 구현 불필요**: "추론 결과 보정(라벨링 탭과 동등한 도구)"은
+  2026-08-31 R2 감사("격차 없음")와 이번 재확인으로 이미 완전히 동작 중임을 확인
+  (브러시 그리기/지우기 → `apply_manual_strokes()` → 사이드카 자동저장 → 모든 통계가
+  최신 보정값 기준). 코드 변경 없음, 검증만 필요.
+- 실행 순서(파일 겹침 기준, 스펙 "11. 실행 순서 제안" 절): A(탭순서+탭명+체크포인트
+  날짜, 독립) → B(체크포인트 자동선택) → C(sliding window 고정+배치버그수정) →
+  D(이미지 리스트 append+삭제) → E(레시피+수동편집, 최대 스코프) → F(결과 분석
+  테이블, E 이후 권장). 8(보정 도구)는 검증 전용, 코드 변경 없음.
+- [x] 라운드 A — 탭 순서/탭명/체크포인트 날짜(`main_window.py`/`i18n.py`/`trainer.py`)
+      — 구현 완료, 커밋 `4477bc3`, 검증 대기.
+- [x] 라운드 B — 체크포인트 자동 선택(`inference_tab.py`/`zone_analysis_tab.py`/
+      `main_window.py`) — 구현 완료, 커밋 `68de90f`, 검증 대기.
+- [ ] 라운드 C — sliding window 고정 + 배치 처리 숨은 버그 수정(`zone_analysis_tab.py`)
+- [ ] 라운드 D — 이미지 리스트 append + 개별 삭제(`inference_image_list.py`/
+      `zone_analysis_tab.py`, 추론 탭 회귀 확인)
+- [ ] 라운드 E — 레시피(팝업+저장/불러오기) + 수동 원 편집(방향키/휠/정렬) — **주요
+      기능 추가로 분류, 골든패스 검증 필요**(`zone_canvas.py`, 신규
+      `zone_recipe_dialog.py`/`zone_recipe_store.py`, `zone_analysis_tab.py`)
+- [ ] 라운드 F — 결과 분석 테이블(최대 blob 픽셀수 + 클립보드 복사, E 이후)
+      (`zone_metrics.py`/`zone_batch_result_dialog.py`/`zone_analysis_tab.py`)
+- 결정 대기 없음(레시피 저장위치/영문 탭명은 기획이 저위험 기본값으로 직접 결정,
+  mm 환산은 사용자가 이미 방향을 정함 — `decisions-needed.md`에 참고 기록만 추가).
 
 ## GitHub #35 "메모리 이슈" (2026-09-22 접수)
 
