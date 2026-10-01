@@ -4,6 +4,7 @@ import math
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import torch
@@ -251,6 +252,7 @@ class TrainerWorker(QThread):
             log.info(f"LR 스케쥴러: 없음 (고정 {cfg.lr:.2e})")
 
         _project.checkpoints_dir().mkdir(parents=True, exist_ok=True)
+        run_date = date.today().strftime("%Y%m%d")   # 학습 시작 시점 1회만 계산(자정 넘어가도 날짜 안 바뀜)
         self.training_started.emit(len(train_loader), cfg.epochs)
         log.info(f"배치 수/epoch: {len(train_loader)}, 총 epochs: {cfg.epochs}")
 
@@ -379,7 +381,7 @@ class TrainerWorker(QThread):
                     "scheduler":    cfg.scheduler,
                 },
             }
-            prefix = f"{self._ckpt_prefix}_" if self._ckpt_prefix else ""
+            prefix = f"{self._ckpt_prefix}_{run_date}_" if self._ckpt_prefix else f"{run_date}_"
             if mean_iou > best_iou:
                 best_iou = mean_iou
                 best_path = _project.checkpoints_dir() / f"{prefix}best.pt"

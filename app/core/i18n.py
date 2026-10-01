@@ -11,7 +11,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tab.labeling":  "라벨링",
         "tab.training":  "학습",
         "tab.inference": "추론",
-        "tab.zone_analysis": "존 분석",
+        "tab.zone_analysis": "상/하부 분석",
 
         # ── 공통 ──────────────────────────────────────────────────────────
         "common.ok":     "확인",
@@ -310,7 +310,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tab.labeling":  "Labeling",
         "tab.training":  "Training",
         "tab.inference": "Inference",
-        "tab.zone_analysis": "Zone Analysis",
+        "tab.zone_analysis": "Top/Bottom Analysis",
 
         # ── Common ────────────────────────────────────────────────────────
         "common.ok":     "OK",

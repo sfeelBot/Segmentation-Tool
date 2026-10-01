@@ -39,11 +39,11 @@ class MainWindow(QMainWindow):
         self._training_tab.set_start_guard(self._labeling_tab.prepare_for_training)
         self._zone_tab       = ZoneAnalysisTab()
 
+        self._tabs.addTab(self._zone_tab,      t("tab.zone_analysis"))
         self._tabs.addTab(self._labeling_tab,  t("tab.labeling"))
         self._tabs.addTab(self._training_tab,  t("tab.training"))
         self._tabs.addTab(self._inference_tab, t("tab.inference"))
         self._tabs.addTab(self._model_tab,     t("tab.model"))
-        self._tabs.addTab(self._zone_tab,      t("tab.zone_analysis"))
 
         # ── 우측 상단 코너 위젯: 프로젝트명 + 전환 + 설정 ──────────────────
         corner = QWidget()
