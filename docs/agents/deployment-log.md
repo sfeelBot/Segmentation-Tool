@@ -134,3 +134,41 @@
 - installer 출력명: `SegmentationModelUIZone-Setup-1.4.0.exe`.
 - sync PR #33 병합 완료. main과 `feature/zone-analysis-tab` 모두 origin과 동기화.
 - 태그와 실제 installer 빌드는 이번 요청 범위에 포함하지 않았다.
+
+---
+
+## 2026-10-01 — zone-v1.5.0 배포 (존 분석 탭 "상/하부 분석" 전면 재설계)
+
+### 배경
+- 존 분석 탭 전면 재설계(스펙 `docs/specs/zone-tab-redesign-2026-10-01.md`)가 구현+검증
+  완료(커밋 `4477bc3`~`4fecaa6` + 문서 커밋, QA.md BUG-035 Closed). 기존 `release.ini`의
+  `1.4.0`은 이미 실제 installer로 빌드·배포된 버전이라 그대로 두고, 이번 재설계는 그
+  이후의 새 기능 추가이므로 SemVer MINOR 상승 → `1.5.0` 채택.
+
+### 조치
+- `release.ini`: `version` `1.4.0` → `1.5.0` (다른 키는 변경 없음, `main_base_tag`/
+  `main_base_commit`은 `v1.10.4`/`ba8bf5e` 그대로 유지 — main 동기화 작업 아님).
+- `docs/CHANGELOG.md`에 `## [zone-v1.5.0] 2026-10-01` 섹션 추가: 탭 명칭/순서 변경,
+  체크포인트 자동 승계, 레시피 팝업(자동검출/수동편집/저장·불러오기), 원 중심 정렬·
+  방향키 이동·휠 지름조절, 영역 설정 활성화 조건 분리, 이미지 append+개별 제거, 결과
+  분석 테이블 최대 blob 픽셀수/그룹화/필터/클립보드, 체크포인트 파일명 날짜 포함,
+  sliding window 고정 + 배치 처리 숨은 버그 수정, BUG-035(P3) 수정을 정리.
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe scripts\generate_version_info.py`
+  실행 → `Generated release metadata for 1.5.0` 성공 (release.ini/CHANGELOG 정합성 검증 통과).
+  `build/version_info.txt`, `build/release-defines.iss`는 `.gitignore` 대상(생성 산출물)이라
+  커밋하지 않음.
+- `release.ini`, `docs/CHANGELOG.md` 2개 파일만 커밋(`5f644db`, `chore: zone 1.5.0 릴리스
+  버전 갱신`) — 같은 워크트리에 planning/design 에이전트가 남긴 기존 미커밋 문서 변경
+  (`docs/agents/design-log.md`, `docs/agents/planning-log.md`, `docs/decisions-needed.md`
+  수정분, `docs/specs/zone-tab-redesign-2026-10-01.md` 신규)과 무관한 미추적 파일
+  (`.codex/`, `AGENTS.md`, `data/annotations/`, `graphify-out/`)은 배포 범위 밖이라 손대지
+  않음 — 리더 확인 필요.
+- 태그 `zone-v1.5.0` (annotate, 커밋 `5f644db` 대상).
+- 사용자 명시 승인에 따라 push 진행: `git push origin feature/zone-analysis-tab`
+  (`246ba8a..5f644db`), `git push origin zone-v1.5.0`. 둘 다 성공.
+
+### 결과 요약
+- 버전: zone-v1.5.0
+- 커밋: `5f644db` (origin/feature/zone-analysis-tab에 push 완료)
+- 태그: `zone-v1.5.0` (origin에 push 완료)
+- installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
