@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
 
         self._tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
         self._tabs.currentChanged.connect(self._on_tab_changed)
+        self._on_tab_changed(self._tabs.currentIndex())   # BUG-035: Zone이 기본(0번) 탭이라 currentChanged가 기동 시 발화하지 않음
 
         self.setCentralWidget(self._tabs)
 
