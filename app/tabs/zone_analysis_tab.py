@@ -628,7 +628,17 @@ class ZoneAnalysisTab(QWidget):
         )
         if not path:
             return
-        self._ckpt_path = Path(path)
+        self._apply_checkpoint(Path(path))
+
+    def set_default_checkpoint(self, path: Path | None) -> None:
+        """탭 진입 시 외부(추론 탭)에서 넘겨주는 기본값 — 이미 사용자가 뭔가
+        선택해둔 상태(self._ckpt_path is not None)면 아무 것도 하지 않는다."""
+        if path is None or self._ckpt_path is not None:
+            return
+        self._apply_checkpoint(path)
+
+    def _apply_checkpoint(self, path: Path) -> None:
+        self._ckpt_path = path
         self._lbl_ckpt.setText(self._ckpt_path.name)
         self._lbl_ckpt.setStyleSheet("color:#e5e7eb;")
         self._model = None

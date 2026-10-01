@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         cl.addWidget(self._btn_settings)
 
         self._tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         self.setCentralWidget(self._tabs)
 
@@ -139,6 +140,12 @@ class MainWindow(QMainWindow):
 
     def set_status(self, message: str) -> None:
         self._status_label.setText(message)
+
+    def _on_tab_changed(self, index: int) -> None:
+        if self._tabs.widget(index) is self._zone_tab:
+            self._zone_tab.set_default_checkpoint(
+                self._inference_tab.selected_checkpoint_path()
+            )
 
     def _on_open_settings(self) -> None:
         dlg = SettingsDialog(self)

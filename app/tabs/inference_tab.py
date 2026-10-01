@@ -650,6 +650,10 @@ class InferenceTab(QWidget):
             return self._ckpt_metas[idx].path
         return None
 
+    def selected_checkpoint_path(self) -> Path | None:
+        """다른 탭(Zone 분석)이 기본 체크포인트를 제안받기 위해 쓰는 공개 getter."""
+        return self._get_selected_ckpt()
+
     # ── 내부 ─────────────────────────────────────────────────────────────────
 
     def _update_legend(self, result: InferenceResult) -> None:
