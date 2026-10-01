@@ -71,13 +71,11 @@ class _ZoneInferenceWorker(QThread):
     result_ready = pyqtSignal(object, object, int, int)
     failed = pyqtSignal(object, str)
 
-    def __init__(self, model, paths: list[Path], checkpoint_path: Path,
-                 mode: str) -> None:
+    def __init__(self, model, paths: list[Path], checkpoint_path: Path) -> None:
         super().__init__()
         self._model = model
         self._paths = paths
         self._checkpoint_path = checkpoint_path
-        self._mode = mode
 
     def run(self) -> None:
         total = len(self._paths)
@@ -88,8 +86,7 @@ class _ZoneInferenceWorker(QThread):
                     checkpoint_path=self._checkpoint_path,
                     opacity=0.5, classes=None,
                 )
-                result = (engine.run_sliding_window(**kwargs)
-                          if self._mode == "sliding_window" else engine.run(**kwargs))
+                result = engine.run_sliding_window(**kwargs)
                 self.result_ready.emit(path, result, done, total)
             except Exception as exc:
                 self.failed.emit(path, str(exc))
@@ -134,7 +131,7 @@ class _ZoneBatchWorker(QThread):
             try:
                 result = self._cached_results.get(path)
                 if result is None:
-                    result = engine.run(
+                    result = engine.run_sliding_window(
                         model=self._model, image_path=path,
                         checkpoint_path=self._checkpoint_path, classes=self._classes,
                         min_confidence=self._min_confidence,
@@ -236,13 +233,6 @@ class ZoneAnalysisTab(QWidget):
         self._btn_run = QPushButton("▶  추론 실행")
         self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
         toolbar_row1.addWidget(self._btn_run)
-
-        self._infer_mode = QComboBox()
-        self._infer_mode.addItem("resize", "resize")
-        self._infer_mode.addItem("sliding window", "sliding_window")
-        self._infer_mode.setCurrentIndex(self._infer_mode.findData("sliding_window"))
-        self._infer_mode.setToolTip("패치 학습 모델은 sliding window를 선택하세요")
-        toolbar_row1.addWidget(self._infer_mode)
 
         self._infer_progress = QProgressBar()
         self._infer_progress.setFixedWidth(110)
@@ -738,7 +728,7 @@ class ZoneAnalysisTab(QWidget):
         self._infer_progress.setValue(0)
         self._infer_progress.show()
         self._worker = _ZoneInferenceWorker(
-            self._model, paths, self._ckpt_path, self._infer_mode.currentData()
+            self._model, paths, self._ckpt_path
         )
         self._worker.result_ready.connect(self._on_inference_result)
         self._worker.failed.connect(
