@@ -1,4 +1,5 @@
-"""2026-10-01 Zone 탭 전면 재설계 — 라운드 D(append+삭제)/E(레시피+수동편집) 회귀 테스트.
+"""2026-10-01 Zone 탭 전면 재설계 — 라운드 D(append+삭제)/E(레시피+수동편집)/
+F(결과 분석 테이블) 회귀 테스트.
 
 스펙: docs/specs/zone-tab-redesign-2026-10-01.md
 """
@@ -17,11 +18,20 @@ from PyQt6.QtWidgets import QApplication
 from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.zone_recipe_dialog import ZoneRecipeDialog
+from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
 from app.core import zone_recipe_store as recipe_store
-from app.core.zone_metrics import scale_circles
+from app.core.zone_metrics import scale_circles, max_blob_pixels_by_zone, ZoneBlobStat
 from app.tabs.zone_analysis_tab import ZoneAnalysisTab
 
 _APP = QApplication.instance() or QApplication(sys.argv)
+
+
+def _stat(zone_name: str, blob_id: int, pixel_count: int) -> ZoneBlobStat:
+    return ZoneBlobStat(
+        zone_name=zone_name, blob_id=blob_id, pixel_count=pixel_count,
+        ai_score=0.9, centroid_x=1.0, centroid_y=1.0,
+        bbox_x=0, bbox_y=0, bbox_w=1, bbox_h=1,
+    )
 
 
 def _save_png(path: Path) -> None:
@@ -261,6 +271,117 @@ def test_recipe_button_visibility_follows_batch_mode() -> None:
         per_image_idx = [tab._mode_combo.itemData(i) for i in range(tab._mode_combo.count())].index("per_image")
         tab._mode_combo.setCurrentIndex(per_image_idx)
         assert tab._btn_recipe.isHidden()
+    finally:
+        tab.close()
+
+
+# ── 라운드 F: 결과 분석 테이블(최대 blob 픽셀수 + 그룹화 + 필터 + 클립보드) ──
+
+def test_max_blob_pixels_by_zone_picks_max_per_image_and_zone() -> None:
+    blob_rows = [
+        ("a.png", _stat("중심부", 1, 100)),
+        ("a.png", _stat("중심부", 2, 300)),
+        ("a.png", _stat("바깥쪽", 1, 50)),
+        ("b.png", _stat("중심부", 1, 10)),
+    ]
+    result = max_blob_pixels_by_zone(blob_rows)
+    assert result == {
+        ("a.png", "중심부"): 300, ("a.png", "바깥쪽"): 50, ("b.png", "중심부"): 10,
+    }
+
+
+def test_export_excel_zones_sheet_has_max_blob_column(tmp_path: Path) -> None:
+    from app.core.zone_metrics import export_zone_percentages_to_excel
+    from openpyxl import load_workbook
+
+    rows = [("a.png", "중심부", 80.0), ("a.png", "바깥쪽", 5.0)]
+    blob_rows = [("a.png", _stat("중심부", 1, 123))]
+    out = tmp_path / "out.xlsx"
+
+    export_zone_percentages_to_excel(rows, out, blob_rows)
+
+    wb = load_workbook(out)
+    ws = wb["zones"]
+    assert [c.value for c in ws[1]] == ["이미지파일명", "존이름", "타겟비율(%)", "최대 blob 픽셀수"]
+    assert ws[2][3].value == 123   # 중심부 blob 있음
+    assert ws[3][3].value == 0     # 바깥쪽은 blob 없음 -> 0
+
+
+def test_long_tab_groups_same_image_rows_via_span_and_sorts_by_image() -> None:
+    rows = [("b.png", "중심부", 10.0), ("a.png", "중심부", 20.0), ("a.png", "바깥쪽", 5.0)]
+    blob_rows: list = []
+    dialog = ZoneBatchResultDialog(rows, blob_rows)
+    try:
+        # 이미지명 기준 정렬 -> a.png(2행) 먼저, b.png(1행) 나중
+        assert [r[0] for r in dialog._long_rows_sorted] == ["a.png", "a.png", "b.png"]
+        assert dialog._long_table.rowSpan(0, 0) == 2   # a.png 2행 그룹화
+        assert dialog._long_table.rowSpan(2, 0) == 1   # b.png 1행은 병합 없음
+    finally:
+        dialog.close()
+
+
+def test_filter_bar_search_and_zone_toggle_affect_only_visible_rows() -> None:
+    rows = [("a.png", "중심부", 10.0), ("b.png", "중심부", 20.0), ("b.png", "바깥쪽", 5.0)]
+    dialog = ZoneBatchResultDialog(rows, [])
+    try:
+        # 초기 상태 — 전부 표시
+        assert dialog._lbl_filter_count.text() == "3 / 3"
+
+        dialog._search_edit.setText("b.png")
+        assert dialog._lbl_filter_count.text() == "2 / 3"
+        for r, (img, _zone, _pct) in enumerate(dialog._long_rows_sorted):
+            assert dialog._long_table.isRowHidden(r) == (img != "b.png")
+
+        dialog._on_reset_filter()
+        assert dialog._lbl_filter_count.text() == "3 / 3"
+
+        dialog._zone_buttons["바깥쪽"].setChecked(False)
+        assert dialog._lbl_filter_count.text() == "2 / 3"
+
+        # 내보내기 데이터는 필터와 무관하게 항상 전체
+        assert len(dialog._rows) == 3
+    finally:
+        dialog.close()
+
+
+def test_clipboard_copy_includes_max_blob_column(monkeypatch) -> None:
+    rows = [("a.png", "중심부", 80.0)]
+    blob_rows = [("a.png", _stat("중심부", 1, 999))]
+    dialog = ZoneBatchResultDialog(rows, blob_rows)
+    try:
+        dialog._on_copy_clipboard()
+        text = QApplication.clipboard().text()
+        assert "이미지\t존\t타겟 비율(%)\t최대 blob 픽셀수" in text
+        assert "a.png\t중심부\t80.00\t999" in text
+    finally:
+        dialog.close()
+
+
+def test_export_single_reuses_batch_result_dialog(tmp_path: Path, monkeypatch) -> None:
+    img_path = tmp_path / "img.png"
+    assert QImage(20, 20, QImage.Format.Format_RGB32).save(str(img_path))
+    tab = ZoneAnalysisTab()
+    opened = []
+
+    class _Dlg:
+        def __init__(self, rows, blob_rows, parent=None):
+            opened.append((rows, blob_rows))
+
+        def exec(self):
+            return 0
+
+    import app.tabs.zone_analysis_tab as module
+    monkeypatch.setattr(module, "ZoneBatchResultDialog", _Dlg)
+    monkeypatch.setattr(tab, "_compute_zone_percentages", lambda: [("중심부", 50.0)])
+    monkeypatch.setattr(tab, "_compute_zone_blob_rows", lambda: [])
+    tab._image_path = img_path
+
+    try:
+        tab._on_export_single()
+        assert len(opened) == 1
+        rows, blob_rows = opened[0]
+        assert rows == [("img.png", "중심부", 50.0)]
+        assert blob_rows == []
     finally:
         tab.close()
 

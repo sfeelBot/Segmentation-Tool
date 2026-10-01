@@ -198,8 +198,12 @@ def zone_blob_stats(
     return results
 
 
-def _zone_name_sort_key(name: str) -> tuple[int, int]:
-    """중심부 -> 링 N(N 오름차순) -> 바깥쪽 순 정렬 키 (스펙 R3-2 판단 4)."""
+def zone_name_sort_key(name: str) -> tuple[int, int]:
+    """중심부 -> 링 N(N 오름차순) -> 바깥쪽 순 정렬 키 (스펙 R3-2 판단 4).
+
+    2026-10-01 공개 전환(언더스코어 제거) — `zone_batch_result_dialog.py`의
+    필터 바(존 토글 버튼 정렬 순서)가 `pivot_wide_format()`과 동일한 중심->외곽
+    순서를 재사용한다(scale_circles와 동일한 승격 패턴)."""
     if name == "중심부":
         return (0, 0)
     if name == "바깥쪽":
@@ -229,8 +233,20 @@ def pivot_wide_format(
             images.append(image_name)
         zone_names.add(zone_name)
         values[(image_name, zone_name)] = pct
-    zone_cols = sorted(zone_names, key=_zone_name_sort_key)
+    zone_cols = sorted(zone_names, key=zone_name_sort_key)
     return images, zone_cols, values
+
+
+def max_blob_pixels_by_zone(
+    blob_rows: list[tuple[str, "ZoneBlobStat"]],
+) -> dict[tuple[str, str], int]:
+    """(이미지파일명, ZoneBlobStat) 목록 -> (이미지,존)별 최대 blob 픽셀수.
+    해당 (이미지,존) 조합에 blob이 하나도 없으면 키가 없음(호출부가 0으로 렌더링)."""
+    result: dict[tuple[str, str], int] = {}
+    for image_name, stat in blob_rows:
+        key = (image_name, stat.zone_name)
+        result[key] = max(result.get(key, 0), stat.pixel_count)
+    return result
 
 
 def export_zone_percentages_to_excel(
@@ -254,12 +270,14 @@ def export_zone_percentages_to_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "zones"
-    ws.append(["이미지파일명", "존이름", "타겟비율(%)"])
+    ws.append(["이미지파일명", "존이름", "타겟비율(%)", "최대 blob 픽셀수"])
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
+    max_blobs = max_blob_pixels_by_zone(blob_rows) if blob_rows else {}
     for image_name, zone_name, pct in rows:
-        ws.append([image_name, zone_name, round(pct, 2)])
+        cell = "" if blob_rows is None else max_blobs.get((image_name, zone_name), 0)
+        ws.append([image_name, zone_name, round(pct, 2), cell])
 
     images, zone_cols, values = pivot_wide_format(rows)
     ws2 = wb.create_sheet("zones_wide")

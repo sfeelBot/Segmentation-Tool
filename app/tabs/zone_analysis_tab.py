@@ -48,8 +48,7 @@ from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import (
     Circle, zones_from_circles, zone_stats, compute_blob_labels,
-    export_zone_percentages_to_excel, apply_manual_strokes,
-    zone_blob_stats, ZoneBlobStat, scale_circles,
+    apply_manual_strokes, zone_blob_stats, ZoneBlobStat, scale_circles,
 )
 from app.core import zone_state_store as zstate
 from app.core.logger import get_logger
@@ -438,8 +437,8 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_selected_blob.setWordWrap(True)
         self._lbl_selected_blob.setStyleSheet("color:#fbbf24; font-size:11px;")
         side_layout.addWidget(self._lbl_selected_blob)
-        self._btn_export_single = QPushButton("Excel로 내보내기")
-        self._btn_export_single.setToolTip("현재 화면에 표시된 존 목록(이미지 1장)을 xlsx로 저장합니다")
+        self._btn_export_single = QPushButton("결과 분석 보기")
+        self._btn_export_single.setToolTip("현재 화면에 표시된 존 목록(이미지 1장)을 표로 보고 Excel/클립보드로 내보냅니다")
         side_layout.addWidget(self._btn_export_single)
         side.setMinimumWidth(160)
         side.setMaximumWidth(220)
@@ -1053,33 +1052,19 @@ class ZoneAnalysisTab(QWidget):
     # ── 슬롯 — 단일 이미지 Excel 내보내기 (R3-1) ─────────────────────────────
 
     def _on_export_single(self) -> None:
-        """일괄 처리를 거치지 않은 현재 화면(이미지 1장) 존 목록을 xlsx로 저장.
-
-        신규 core 함수 없음 — `export_zone_percentages_to_excel()`(R-C 3c에서
-        일괄 처리용으로 이미 신설됨, 범용 long rows를 받음)을 그대로 재사용한다.
-        """
+        """일괄 처리를 거치지 않은 현재 화면(이미지 1장) 존 목록 — 배치 경로와
+        동일한 `ZoneBatchResultDialog`를 재사용(2026-10-01 재설계, 라운드 F)해
+        화면에 먼저 표로 보여준 뒤, 다이얼로그 안에서 Excel/클립보드로 내보낸다
+        (신규 core 함수 없음, 단일/배치 양쪽이 같은 코드 경로를 타 중복 로직 제거)."""
         rows = self._compute_zone_percentages()
         if not rows or self._image_path is None:
             QMessageBox.information(
                 self, "내보낼 결과 없음", "먼저 원을 정의하고 추론을 실행하세요."
             )
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Excel로 내보내기", "zones.xlsx", "Excel (*.xlsx)"
-        )
-        if not path:
-            return
         excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
         blob_rows = self._compute_zone_blob_rows()
-        try:
-            export_zone_percentages_to_excel(excel_rows, Path(path), blob_rows)
-        except Exception as exc:
-            log.exception("존 분석 단일 이미지 Excel 내보내기 실패")
-            QMessageBox.critical(self, "내보내기 오류", str(exc))
-            return
-        QMessageBox.information(
-            self, "내보내기 완료", f"{len(excel_rows)}개 행을 내보냈습니다."
-        )
+        ZoneBatchResultDialog(excel_rows, blob_rows, self).exec()
 
     # ── 슬롯 — 원(circle) 자동 검출 (라운드 2) ──────────────────────────────
 
