@@ -5858,3 +5858,97 @@ Start Menu/바탕화면 바로가기 잔존 없음 확인(`*Zone*` 패턴으로 
 (GitHub #22 검증 추적)와 BUG-016(로그 잔존)을 Open → Closed로 이동, `docs/roadmap.md`의
 GitHub #22 체크박스를 `[x]`로 갱신. 신규 버그 발견 없음. push는 리더에게 위임(이번 라운드
 전체 완료 후 한 번에 처리 예정).
+
+
+---
+
+## 2026-10-01 — Zone 탭 재설계(라운드 A~F) 독립 검증 — 실 GUI 골든패스
+
+작업 위치: `D:\segmentation model-zone-analysis-tab`(git worktree, `feature/zone-analysis-tab`).
+스펙: `docs/specs/zone-tab-redesign-2026-10-01.md`. 리더 지시대로 라운드 E(레시피/수동편집)·
+F(결과분석 테이블)를 "주요 기능 추가"로 간주해 실 GUI 조작까지 검증.
+
+### 방법
+실행 환경: `C:\Users\Feel\anaconda3\python.exe`(PyQt6 6.7.1, PyTorch 2.11.0+cu128, CUDA 가능 —
+RTX 5060), `QT_QPA_PLATFORM=offscreen`. 이 자동화 셸에는 실 데스크톱 마우스/스크린샷 도구가
+없어, 과거 검증 세션과 동일한 패턴(`QTest` 합성 이벤트 + 실제 프로덕션 위젯 인스턴스 구동)으로
+"실행 확인"을 수행 — 로직을 재구현해 어서션하는 대신 실제 `MainWindow`/`ZoneAnalysisTab`/
+`ZoneRecipeDialog`/`ZoneCanvas`/`ZoneBatchResultDialog` 인스턴스를 생성해 실제 시그널·슬롯·
+이벤트 핸들러 경로를 그대로 태웠다. `win.show()`로 실제 레이아웃 패스를 거친 뒤 캔버스 자체의
+좌표 변환 함수(`_orig_to_screen`)로 클릭 좌표를 역산해 `QTest.mousePress/Move/Release`를 주입
+(show() 없이 진행했다가 pan 중심맞춤이 비정상 좌표를 만드는 하네스 전용 함정을 먼저 겪고 수정).
+
+사전 준비: `projects/nok`(실 데이터 5장) 이미지에서 실제 어노테이션 bbox를 포함하는 3개 크롭
+(500x400/450x400/350x350, `test_a/b/c.png`)을 만들어 테스트 이미지로 사용. `SimpleUNet` 프리셋을
+patch=128px로 50 epoch 과적합 학습(CPU, 실 `TrainerWorker.run()` 동기 호출)시켜 크롭에서
+실제로 "object" 클래스가 검출되는 체크포인트(`qa_final_20261001_best.pt`)를 확보 — 브러시
+보정/블랍 통계/배치 결과 테이블까지 전부 실데이터로 검증하기 위함(학습 정확도 자체는 검증 대상이
+아님, 명시적으로 과적합시킨 테스트 픽스처). 테스트 산출물(체크포인트/레시피/크롭 이미지)은 모두
+세션 scratchpad 또는 임시 생성물이며, 검증 종료 후 `projects/nok`에 남은 테스트 체크포인트·
+레시피는 삭제해 실데이터 무변경 복원(`git status --porcelain -- projects/nok` 공백 확인,
+어노테이션 1건은 브러시 회귀 테스트로 임시 수정 후 원본 내용으로 복원).
+
+`QT_QPA_PLATFORM=offscreen pytest tests/` 재실행 결과도 구현자 보고와 동일하게 **153건 전부
+통과** 확인(단, 이 환경에서 pytest 수집 순서상 `QtSvg`/`QtTest`가 torch/cv2보다 늦게 import되는
+기존 환경 플레이키니스(BUG-001 계열, Windows DLL 로드 순서)가 재현돼 `tests/conftest.py`에
+`from PyQt6 import QtSvg, QtTest`를 임시로 추가해 우회 — 검증 후 즉시 제거, 저장소에 남기지 않음.
+실제 코드 결함이 아니라 테스트 수집 환경 문제로 판단, 과거 세션에서도 동일 패턴 기록됨).
+
+### 확인한 시나리오 (리더 지시 1~9 전항목)
+
+1. **탭 순서/명칭** — `MainWindow` 생성 직후 `[상/하부 분석, 라벨링, 학습, 추론, 모델]` 순서와
+   라벨 정확히 일치, `widget(0) is self._zone_tab` 확인.
+2. **체크포인트 자동 선택** — 추론 탭(자동으로 최근 체크포인트 선택됨) → Zone 탭 전환 시 동일
+   체크포인트 반영 확인. Zone 탭에서 수동으로 다른 체크포인트 선택 후 추론 탭 ↔ Zone 탭을
+   오가도 멱등(덮어쓰지 않음) 확인. **엣지케이스 발견**: 앱을 막 띄운 직후(Zone 탭이 이미
+   인덱스 0 기본 탭이라 `currentChanged`가 한 번도 발화하지 않은 상태)에는 반영 안 됨 —
+   QA.md BUG-035(P3)로 등록.
+3. **이미지 업로드** — 폴더 열기(3장) → 이미지 열기로 기존 파일 재선택(중복 자동 제거, 목록
+   안 지워짐) → 신규 파일 추가(append, 4장) → 컨텍스트메뉴 대응 코드(`_remove_selected()`,
+   선택 상태로 직접 호출) 실행 → 목록 3장으로 줄지만 원본 파일은 디스크에 그대로 존재함을
+   실측 확인.
+4. **영역(zone) 설정** — 이미지 로드 직후(추론 실행 전) `_btn_detect`/`_act_circle` 활성화
+   확인(브러시 3종은 비활성 유지 — 올바른 기술적 제약). `ZoneRecipeDialog`: 원 0개일 때
+   "메인 탭에 적용" 비활성(게이트) → 수동 원 2개 생성 시 활성화 → 레시피 저장("QA 테스트
+   레시피") → 새 다이얼로그 인스턴스 생성 시 자동 로드(이름/원 데이터 일치) → `dialog.exec()`
+   전체 라운드트립(QTimer로 모달 내부에서 "메인 탭에 적용" 클릭 스크립팅)으로 메인 캔버스에
+   원 2개 반영 확인. 메인 캔버스: 원 선택 후 방향키 1px/Shift+방향키 10px 이동, 마우스 휠
+   ±5px/Shift+휠 ±20px 반지름 변경, "정렬" 버튼으로 평균 중심 수렴 — 전부 실측.
+5. **추론 실행** — 원 없이 `_on_run()` 호출 시 `QMessageBox.question` 확인 팝업 1회 호출 +
+   취소 시 워커 미시작 확인. `engine.run`/`engine.run_sliding_window`를 몽키패치로 호출 횟수
+   추적한 결과 단일 이미지·배치 처리 둘 다 `run_sliding_window`만 호출(`run()` 호출 0회) —
+   배치 경로의 숨은 resize-only 버그가 실제로 고쳐졌음을 실측 확인. 추론 방식 선택 콤보박스는
+   코드에서 완전히 제거됨(`_infer_mode` 참조 없음).
+6. **결과 보정** — 추론 후 브러시/블랍 도구 활성화 확인. 브러시 그리기 도구로 실제
+   `QTest` 마우스 스트로크(원본 좌표 역산 클릭) → `final_mask` 픽셀 2366개 변화(배경→타겟)
+   확인 → `_flush_state()`로 사이드카(`{stem}.zone.json`) 즉시 저장 확인 → 다른 이미지로
+   전환 후 복귀 시 `manual_strokes`가 사이드카에서 복원됨을 실측 확인.
+7. **결과 분석** — 실제 배치 추론 결과(3이미지 x 3존, blob 114개)로 `ZoneBatchResultDialog`
+   생성: Long 탭에서 같은 이미지의 3개 zone 행이 `setSpan`으로 그룹화(이미지명 셀 반복 안 됨,
+   zone별 행은 분리 유지) 확인. 검색필터("test_b" 입력 시 해당 이미지 행만 표시)/존 다중토글
+   필터(토글 끄면 해당 zone 행 전부 숨김)/초기화 버튼 동작 확인. "최대 blob 픽셀수" 열이 Long
+   탭과 Excel `zones` 시트 양쪽에 표시됨 확인. "클립보드로 복사" 클릭 후
+   `QApplication.clipboard().text()`로 TSV(탭 구분, 헤더+데이터 행수 일치) 확인. Excel
+   내보내기(`export_zone_percentages_to_excel`) 직접 호출 후 `openpyxl`로 열어 3시트
+   (`zones`/`zones_wide`/`zone_blobs`) + `zones` 시트의 "최대 blob 픽셀수" 정수 열 확인.
+8. **체크포인트 파일명** — `TrainerWorker`를 `nok` 프로젝트에서 2epoch(사전 확인용)/50epoch
+   (실데이터 검출용) 두 차례 실제 구동 → `qa_verify_20261001_epoch_0001.pt` 등 파일명에
+   학습 시작일(`20261001`)이 정확히 포함됨을 실측 확인.
+9. **회귀 확인** — 추론 탭의 공유 `InferenceImageList`에서도 "목록에서 제거"(동일 코드 경로)
+   호출 시 목록만 줄고 파일은 보존, 추론 탭 자체가 정상 동작(크래시 없음) 확인. 라벨링 탭
+   골든패스: 실제 nok 이미지 1장 로드 → 브러시 도구로 실제 `QTest` 스트로크 1회 → 어노테이션
+   1건 생성 확인 → `_do_save(sync=True)`로 저장 → 사이드카 JSON 변경 확인(이후 원본 내용으로
+   즉시 복원, 실데이터 무변경). 회귀 없음.
+
+### 발견한 이슈
+**QA.md BUG-035(P3, Open)** — 앱 기동 직후(탭 전환 이전) Zone 탭 체크포인트 자동 제안이
+반영되지 않는 좁은 엣지케이스. 탭을 한 번이라도 전환하면 정상 동작, 데이터 손실·크래시 없음 —
+우선순위 P3로 등록, 후속 라운드에서 `MainWindow.__init__`에서 1회 명시 호출로 간단히 고칠 수
+있음(수정은 이번 검증 범위 밖, 리더 판단에 맡김).
+
+### 판정
+**통과(PASS)** — 리더 지시 시나리오 1~9 전항목 실 GUI(QTest 합성 이벤트 기반) 골든패스로 확인
+완료. 라운드 E/F("주요 기능 추가")도 명시 요구대로 실 조작 검증을 마쳤다. BUG-035(P3) 1건을
+제외하면 스펙과 구현이 정확히 일치하며, 기능 크래시·데이터 유실·회귀는 발견되지 않았다.
+`git status --porcelain`(저장소 루트) 확인 결과 이번 세션에서 코드 변경 없음 — `QA.md`/
+`docs/roadmap.md`/`docs/agents/verification-log.md` 문서 갱신만 발생.
