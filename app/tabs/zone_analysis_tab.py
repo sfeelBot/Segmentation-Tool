@@ -49,7 +49,7 @@ from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import (
     Circle, zones_from_circles, zone_stats, compute_blob_labels,
     export_zone_percentages_to_excel, apply_manual_strokes,
-    zone_blob_stats, ZoneBlobStat,
+    zone_blob_stats, ZoneBlobStat, scale_circles,
 )
 from app.core import zone_state_store as zstate
 from app.core.logger import get_logger
@@ -57,6 +57,7 @@ from app.core.device_info import prompt_gpu_availability
 from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
+from app.widgets.zone_recipe_dialog import ZoneRecipeDialog
 from app.widgets.icons import icon as svg_icon
 
 log = get_logger(__name__)
@@ -150,20 +151,6 @@ def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
     h, w, _ = rgb.shape
     qimg = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
     return QPixmap.fromImage(qimg.copy())
-
-
-def _scale_circles(
-    circles: list[tuple[float, float, float]],
-    from_size: tuple[int, int],
-    to_size: tuple[int, int],
-) -> list[tuple[float, float, float]]:
-    """원 좌표를 기준 이미지 크기에서 대상 이미지 크기로 비례 스케일한다."""
-    fw, fh = from_size
-    tw, th = to_size
-    if fw <= 0 or fh <= 0 or (fw, fh) == (tw, th):
-        return list(circles)
-    sx, sy = tw / fw, th / fh
-    return [(cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles]
 
 
 class ZoneAnalysisTab(QWidget):
@@ -405,6 +392,12 @@ class ZoneAnalysisTab(QWidget):
             "장별 적용: 이미지마다 원을 개별 자동 검출(민감도 슬라이더 값 사용)"
         )
         batch_layout.addWidget(self._mode_combo)
+        self._btn_recipe = QPushButton("원(Zone) 설정...")
+        self._btn_recipe.setToolTip(
+            "레시피(저장된 원 집합)를 불러오거나 새로 만들어 기준 이미지에 적용합니다.\n"
+            "'장별 적용' 모드에서는 이미지마다 개별 자동 검출을 쓰므로 표시되지 않습니다."
+        )
+        batch_layout.addWidget(self._btn_recipe)
         self._btn_batch = QPushButton("▶ 선택 이미지 일괄 처리 (0장)")
         self._btn_batch.setEnabled(False)
         self._btn_batch.setToolTip(
@@ -434,6 +427,9 @@ class ZoneAnalysisTab(QWidget):
         side_layout.addWidget(QLabel("검출된 원 (반지름 오름차순)"))
         self._circle_list = QListWidget()
         side_layout.addWidget(self._circle_list, stretch=1)
+        self._btn_align = QPushButton("정렬(중심 맞추기)")
+        self._btn_align.setToolTip("모든 원의 중심을 평균 중심으로 맞춥니다(반지름은 그대로).")
+        side_layout.addWidget(self._btn_align)
         side_layout.addWidget(QLabel("존별 타겟 클래스 비율 (%)"))
         self._zone_list = QListWidget()
         self._zone_list.setToolTip("클릭하면 캔버스에서 해당 존이 하이라이트됩니다")
@@ -463,6 +459,9 @@ class ZoneAnalysisTab(QWidget):
         self._img_list.display_changed.connect(self._update_batch_button_label)
         self._img_list.display_changed.connect(self._update_batch_button_state)
         self._img_list.images_removed.connect(self._on_images_removed)
+        self._btn_recipe.clicked.connect(self._on_open_recipe_dialog)
+        self._mode_combo.currentIndexChanged.connect(self._on_batch_mode_changed)
+        self._on_batch_mode_changed()   # 초기 모드 기준 버튼 표시 상태 반영
         self._btn_batch.clicked.connect(self._on_batch_process)
         self._btn_ckpt.clicked.connect(self._on_select_checkpoint)
         self._btn_validate.clicked.connect(self._on_validate)
@@ -479,6 +478,7 @@ class ZoneAnalysisTab(QWidget):
         )
         self._conf_slider.valueChanged.connect(lambda _v: self._threshold_timer.start())
         self._min_px_spin.valueChanged.connect(lambda _v: self._threshold_timer.start())
+        self._btn_align.clicked.connect(self._canvas.align_centers)
         self._canvas.circles_changed.connect(self._refresh_circle_list)
         self._canvas.circles_committed.connect(self._recompute_zones)
         self._canvas.circles_changed.connect(self._update_batch_button_state)
@@ -585,6 +585,10 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_pixmap(self._original_pixmap)
             self._act_circle.setEnabled(True)
             self._act_pan.setEnabled(True)
+            # 7-2: 자동 검출/원 편집은 추론 결과와 무관하게 이미지만 로드되면
+            # 바로 쓸 수 있다(detect_circles()는 원본 이미지만 참조) — 영역
+            # 설정을 추론 전에 할 수 있어야 한다는 재설계 요구사항과 일치.
+            self._btn_detect.setEnabled(True)
         except Exception:
             self._image_size = (0, 0)
             self._original_pixmap = None
@@ -592,7 +596,7 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.clear()
             for action in self._tool_group.actions():
                 action.setEnabled(False)
-        self._btn_detect.setEnabled(False)   # 새 이미지는 아직 추론 전 -- 원 자동검출은 불가
+            self._btn_detect.setEnabled(False)
         self._canvas.set_blob_data(None, None)
         self._canvas.set_highlight_rect(None)
         self._lbl_selected_blob.setText("")
@@ -738,6 +742,16 @@ class ZoneAnalysisTab(QWidget):
         if not prompt_gpu_availability(self, "존 분석"):
             return
 
+        if not self._canvas.get_circles():
+            reply = QMessageBox.question(
+                self, "영역 없음",
+                "영역(원)이 설정되지 않았습니다. 그래도 추론을 진행하시겠습니까?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         paths = self._img_list.paths() or [self._image_path]
         self._results.clear()
         self._btn_run.setEnabled(False)
@@ -777,7 +791,8 @@ class ZoneAnalysisTab(QWidget):
     def _setup_target_classes(self, result: InferenceResult) -> None:
         ids = sorted(int(i) for i in set(result.raw_class_map.ravel().tolist()) if i != 0)
         self._detected_ids = ids
-        self._btn_detect.setEnabled(True)   # 추론 완료 -- 캔버스에 배경 pixmap이 생겨 원이 보임
+        # 7-2: _btn_detect는 이미지 로드 시점에 이미 활성화돼 있다(추론 결과와
+        # 무관) — 여기서 다시 건드리지 않는다.
 
         self._target_name_edit.hide()
         self._target_combo.hide()
@@ -791,7 +806,10 @@ class ZoneAnalysisTab(QWidget):
             self._lbl_selected_blob.setText("")
             self._act_circle.setChecked(True)
             self._on_edit_tool_changed(self._act_circle)
-            self._btn_detect.setEnabled(False)   # BUG-031: 타겟 클래스가 없으면 브러시와 동일하게 편집 대상 자체가 없음
+            # 7-2: _btn_detect는 블랍 마스크와 무관(detect_circles는 원본 이미지만
+            # 참조)하므로 타겟 클래스가 없어도 비활성화하지 않는다 — BUG-031 당시의
+            # 제약은 "추론 전엔 원 설정 불가"라는 구UX 전제에 묶여 있던 것으로,
+            # 재설계(7-2)로 그 전제 자체가 제거됨.
             for action in (self._act_brush_draw, self._act_brush_erase, self._act_blob_delete):
                 action.setEnabled(False)
             self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
@@ -1083,6 +1101,34 @@ class ZoneAnalysisTab(QWidget):
         if not circles:
             QMessageBox.information(self, "검출 결과 없음", "원을 찾지 못했습니다. 민감도를 조절하거나 수동으로 추가하세요.")
 
+    # ── 슬롯 — 레시피 팝업(7-3) ─────────────────────────────────────────────
+
+    def _on_batch_mode_changed(self) -> None:
+        """'장별 적용' 모드는 이미지마다 개별 자동검출을 쓰므로 레시피 버튼이
+        의미가 없다(스펙 7-3 — 일괄 적용/일괄 적용 후 수정 모드에서만 표시)."""
+        mode = self._mode_combo.currentData()
+        self._btn_recipe.setVisible(mode in ("apply_all", "apply_all_edit"))
+
+    def _on_open_recipe_dialog(self) -> None:
+        if self._image_path is None or self._original_pixmap is None:
+            QMessageBox.warning(self, "이미지 없음", "이미지를 먼저 선택하세요.")
+            return
+        existing = self._canvas.get_circles()
+        if existing:
+            reply = QMessageBox.question(
+                self, "기존 원 발견", "기존 원을 레시피로 교체하시겠습니까?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        dialog = ZoneRecipeDialog(self._original_pixmap, self._image_size, self)
+        if dialog.exec():
+            scaled = scale_circles(
+                dialog.result_circles(), dialog.result_ref_size(), self._image_size
+            )
+            self._canvas.set_circles(scaled)
+
     # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
 
     def _refresh_circle_list(self) -> None:
@@ -1246,7 +1292,7 @@ class ZoneAnalysisTab(QWidget):
                     rgb = np.array(im.convert("RGB"))
                 circles = detect_circles(rgb[:, :, ::-1].copy(), sensitivity=self._batch_sensitivity)
             else:
-                circles = _scale_circles(self._batch_circles_ref, self._batch_ref_size, (w, h))
+                circles = scale_circles(self._batch_circles_ref, self._batch_ref_size, (w, h))
             if not circles:
                 self._on_batch_progress(path, "done", "원 없음", done, total)
                 return

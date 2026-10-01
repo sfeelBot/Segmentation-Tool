@@ -48,16 +48,19 @@ def _batch_tab(circles_ref, ref_size, sensitivity, mode, target_cid):
 
 
 def test_worker_run_only_infers_and_never_touches_cv2_or_sidecars():
-    """BUG-030 회귀 방지 — 워커 스레드는 CUDA 추론(engine.run)만 하고, `image_inferred`로
-    raw 결과를 넘길 뿐 zone/blob(cv2) 계산이나 사이드카 저장은 절대 하지 않는다."""
+    """BUG-030 회귀 방지 — 워커 스레드는 CUDA 추론(engine.run_sliding_window)만 하고,
+    `image_inferred`로 raw 결과를 넘길 뿐 zone/blob(cv2) 계산이나 사이드카 저장은
+    절대 하지 않는다. 2026-10-01 재설계(라운드 C) 이후 배치 경로는 항상
+    run_sliding_window()를 호출한다(기존 run() 숨은 버그 수정)."""
     with tempfile.TemporaryDirectory() as tmp:
         paths = [Path(tmp) / f"{i}.png" for i in range(3)]
         for path in paths:
             Image.new("RGB", (20, 20)).save(path)
         calls = []
-        old_prepare, old_run = module.engine.prepare_inference, module.engine.run
+        old_prepare = module.engine.prepare_inference
+        old_run_sw = module.engine.run_sliding_window
         module.engine.prepare_inference = lambda *args: calls.append("prepare") or object()
-        module.engine.run = lambda **kwargs: calls.append(kwargs["prepared"]) or _result()
+        module.engine.run_sliding_window = lambda **kwargs: calls.append(kwargs["prepared"]) or _result()
         try:
             worker = _ZoneBatchWorker(
                 object(), paths, Path(tmp) / "model.pt", {}, _classes(), 0, 0,
@@ -72,7 +75,8 @@ def test_worker_run_only_infers_and_never_touches_cv2_or_sidecars():
             for path in paths:
                 assert zstate.load_state(path) is None   # 워커는 사이드카를 절대 쓰지 않음
         finally:
-            module.engine.prepare_inference, module.engine.run = old_prepare, old_run
+            module.engine.prepare_inference = old_prepare
+            module.engine.run_sliding_window = old_run_sw
 
 
 def test_main_thread_postprocessing_persists_every_mode_and_computes_rows():
@@ -163,7 +167,7 @@ def test_golden_path_button_click_reports_progress_error_and_opens_dialog():
             Image.new("RGB", (16, 16)).save(p)
 
         tab = ZoneAnalysisTab()
-        old_run = module.engine.run
+        old_run_sw = module.engine.run_sliding_window
         old_prepare = module.engine.prepare_inference
         old_gpu = module.prompt_gpu_availability
         old_dialog = module.ZoneBatchResultDialog
@@ -187,7 +191,7 @@ def test_golden_path_button_click_reports_progress_error_and_opens_dialog():
                 raise RuntimeError("boom")
             return _result(16)
 
-        module.engine.run = fake_run
+        module.engine.run_sliding_window = fake_run
         module.engine.prepare_inference = lambda *a: object()
         module.prompt_gpu_availability = lambda *a, **k: True
         module.ZoneBatchResultDialog = _Dlg
@@ -218,7 +222,8 @@ def test_golden_path_button_click_reports_progress_error_and_opens_dialog():
             assert len(rows) == 4   # img0/img2 성공(1원 -> 2존씩) = 4행, img1은 에러라 0행
             assert tab._img_list._status[paths[1]] == ("done", "오류")
         finally:
-            module.engine.run, module.engine.prepare_inference = old_run, old_prepare
+            module.engine.run_sliding_window = old_run_sw
+            module.engine.prepare_inference = old_prepare
             module.prompt_gpu_availability = old_gpu
             module.ZoneBatchResultDialog = old_dialog
             ZoneAnalysisTab._confirm_existing_zones = old_confirm

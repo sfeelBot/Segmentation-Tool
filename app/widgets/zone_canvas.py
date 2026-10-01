@@ -39,7 +39,7 @@ from dataclasses import dataclass
 import numpy as np
 from PyQt6.QtWidgets import QMenu, QInputDialog
 from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QKeySequence, QImage
-from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer
 
 from app.widgets.overlay_viewer import OverlayViewer
 from app.core.zone_metrics import disk_mask
@@ -48,6 +48,12 @@ from app.core import zone_metrics
 _CENTER_HIT_PX = 10.0   # 중심(이동) 판정 반경 — 화면 픽셀
 _BORDER_HIT_PX = 8.0    # 테두리(반지름 조절) 판정 허용 오차 — 화면 픽셀
 _MIN_CREATE_R_PX = 6.0  # 이보다 작게 드래그하고 놓으면 생성 취소
+
+_ARROW_STEP_PX = 1.0
+_ARROW_STEP_PX_SHIFT = 10.0
+_WHEEL_STEP_PX = 5.0
+_WHEEL_STEP_PX_SHIFT = 20.0
+_GESTURE_DEBOUNCE_MS = 500
 
 _COLOR_NORMAL = QColor(0, 230, 140)
 _COLOR_SELECTED = QColor(255, 200, 0)
@@ -111,6 +117,11 @@ class ZoneCanvas(OverlayViewer):
         # 좌표 목록)이라 annotation_canvas의 30개 캡(BUG-014 대응)이 여기선
         # 필요 없다(스펙 판단 1) — 캡 없이 무제한.
         self._undo_stack: list[dict] = []
+        # ── 방향키/휠 편집 제스처 디바운스(7-5) ─────────────────────────────────
+        self._gesture_active = False
+        self._gesture_timer = QTimer(self)
+        self._gesture_timer.setSingleShot(True)
+        self._gesture_timer.timeout.connect(lambda: setattr(self, "_gesture_active", False))
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # 클릭 후 Delete 키 삭제를 받으려면 필요
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
@@ -182,6 +193,21 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
         self.circles_committed.emit()
         self.circle_selected.emit(None)
+
+    def align_centers(self) -> None:
+        """선택된 원이 없어도 전체 원 대상 — 모든 원의 중심을 평균 중심으로 맞춘다
+        (반지름은 그대로, 배터리 캡 동심원 전제와 동일한 '평균 중심' 규칙을
+        신규 원 생성에 쓰는 것과 통일)."""
+        if len(self._circles) < 2:
+            return
+        self._push_undo()
+        cx = sum(c.cx for c in self._circles) / len(self._circles)
+        cy = sum(c.cy for c in self._circles) / len(self._circles)
+        for c in self._circles:
+            c.cx, c.cy = cx, cy
+        self.update()
+        self.circles_changed.emit()
+        self.circles_committed.emit()
 
     def highlight_blob_bbox(self, x: int, y: int, w: int, h: int) -> None:
         """블랍 클릭 선택(요청4) — 원본 이미지 좌표계 bbox를 픽스맵 좌표계로 변환해
@@ -395,6 +421,15 @@ class ZoneCanvas(OverlayViewer):
 
     def can_undo(self) -> bool:
         return bool(self._undo_stack)
+
+    def _begin_edit_gesture(self) -> None:
+        """방향키 연타/휠 연속 스크롤을 '하나의 편집 제스처'로 묶어 undo 1개만
+        쌓는다. 제스처가 끝나고 500ms 안에 새 제스처가 시작되지 않으면 다음
+        입력이 새 push를 만든다."""
+        if not self._gesture_active:
+            self._push_undo()
+            self._gesture_active = True
+        self._gesture_timer.start(_GESTURE_DEBOUNCE_MS)   # 매 입력마다 타이머 재시작
 
     def get_state(self) -> dict:
         """현재 편집 상태 스냅샷 — `_push_undo()`와 완전히 동일한 경량 표현.
@@ -774,8 +809,40 @@ class ZoneCanvas(OverlayViewer):
             return
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self._selected_id is not None:
             self.remove_selected()
+        elif (self._selected_id is not None
+              and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down)):
+            item = self._find(self._selected_id)
+            if item is not None:
+                self._begin_edit_gesture()
+                step = (_ARROW_STEP_PX_SHIFT if event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                        else _ARROW_STEP_PX)
+                dx, dy = {
+                    Qt.Key.Key_Left: (-step, 0), Qt.Key.Key_Right: (step, 0),
+                    Qt.Key.Key_Up: (0, -step), Qt.Key.Key_Down: (0, step),
+                }[event.key()]
+                item.cx += dx
+                item.cy += dy
+                self.update()
+                self.circles_changed.emit()
+                self.circles_committed.emit()
         else:
             super().keyPressEvent(event)
+
+    def wheelEvent(self, event) -> None:
+        if self._mode == "circle" and self._selected_id is not None:
+            item = self._find(self._selected_id)
+            if item is not None:
+                self._begin_edit_gesture()
+                step = (_WHEEL_STEP_PX_SHIFT if event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                        else _WHEEL_STEP_PX)
+                delta = step if event.angleDelta().y() > 0 else -step
+                item.r = max(0.0, item.r + delta)
+                self.update()
+                self.circles_changed.emit()
+                self.circles_committed.emit()
+                event.accept()
+                return
+        super().wheelEvent(event)   # 선택된 원이 없으면 기존처럼 화면 줌
 
     def contextMenuEvent(self, event) -> None:
         if self._pixmap is None or self._mode != "circle":

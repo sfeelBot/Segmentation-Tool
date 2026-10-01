@@ -16,11 +16,12 @@ from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication
 
 from app.tabs.zone_analysis_tab import (
-    ZoneAnalysisTab, _PREVIEW_MAX_DIM, _ZoneInferenceWorker, _scale_circles,
+    ZoneAnalysisTab, _PREVIEW_MAX_DIM, _ZoneInferenceWorker,
 )
 from app.tabs import zone_analysis_tab as zone_tab_module
 from app.core.annotation_store import ClassDef
 from app.core.inference_engine import _colorize_and_blend
+from app.core.zone_metrics import scale_circles as _scale_circles
 from app.widgets.zone_canvas import ZoneCanvas
 import app.widgets.zone_canvas as zone_canvas_module
 
@@ -163,7 +164,9 @@ def test_original_preview_and_failure_clear() -> None:
         assert tab._image_size == (3000, 1200)
         assert tab._canvas._pixmap is not None
         assert max(tab._canvas._pixmap.width(), tab._canvas._pixmap.height()) <= _PREVIEW_MAX_DIM
-        assert not tab._btn_detect.isEnabled()
+        # 2026-10-01 재설계(7-2): 자동 검출은 추론 결과와 무관하게 이미지 로드
+        # 직후 바로 활성화된다(detect_circles는 원본 이미지만 참조).
+        assert tab._btn_detect.isEnabled()
 
         broken_path = Path(tmp) / "broken.png"
         broken_path.write_bytes(b"not an image")
@@ -206,7 +209,7 @@ def test_zone_worker_runs_all_images() -> None:
         zone_tab_module.engine.run_sliding_window = lambda **kwargs: calls.append(
             kwargs["image_path"]
         ) or kwargs["image_path"]
-        worker = _ZoneInferenceWorker(object(), paths, Path("model.pt"), "sliding_window")
+        worker = _ZoneInferenceWorker(object(), paths, Path("model.pt"))
         progress = []
         worker.result_ready.connect(
             lambda path, _result, done, total: progress.append((path, done, total))

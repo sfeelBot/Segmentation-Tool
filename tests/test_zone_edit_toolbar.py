@@ -47,7 +47,10 @@ def test_zone_toolbar_is_exclusive_and_defaults_are_patch_based() -> None:
 
     assert zone._tool_group.isExclusive()
     assert zone._act_circle.isChecked()
-    assert zone._infer_mode.currentData() == "sliding_window"
+    # 2026-10-01 재설계: Zone 탭은 추론 방식 선택 UI 자체가 제거되고 sliding
+    # window로 고정됐다(_ZoneInferenceWorker/_ZoneBatchWorker가 항상
+    # run_sliding_window()만 호출) — 선택 콤보(_infer_mode)는 더 이상 존재하지 않음.
+    assert not hasattr(zone, "_infer_mode")
     assert inference._infer_mode.currentData() == "sliding_window"
     assert training._sample_mode.currentData() == "random_crop"
 

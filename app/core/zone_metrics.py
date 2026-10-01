@@ -43,6 +43,24 @@ def disk_mask(cx: float, cy: float, r: float, img_shape: tuple[int, int]) -> np.
     return (xx - cx) ** 2 + (yy - cy) ** 2 <= r ** 2
 
 
+def scale_circles(
+    circles: list[tuple[float, float, float]],
+    from_size: tuple[int, int],
+    to_size: tuple[int, int],
+) -> list[tuple[float, float, float]]:
+    """원 좌표를 기준 이미지 크기에서 대상 이미지 크기로 비례 스케일한다.
+
+    배치 적용(R13-B)/레시피 적용(2026-10-01 재설계) 양쪽이 공유하는 순수 함수 —
+    Qt 의존성 없음, `zone_analysis_tab.py`/`zone_recipe_dialog.py` 둘 다 이 함수를
+    재사용한다(중복 제거)."""
+    fw, fh = from_size
+    tw, th = to_size
+    if fw <= 0 or fh <= 0 or (fw, fh) == (tw, th):
+        return list(circles)
+    sx, sy = tw / fw, th / fh
+    return [(cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles]
+
+
 def zones_from_circles(circles: list[Circle], img_shape: tuple[int, int]) -> list[Zone]:
     """반지름 오름차순 정렬 후 원판 마스크 차집합으로 존 목록 생성.
 
