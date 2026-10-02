@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt, QSize, QThread, QTimer, pyqtSignal
 
 from app.widgets.icons import icon as svg_icon
 
+from app.core.i18n import t
 from app.core import inference_engine as engine
 from app.core.inference_engine import (
     InferenceResult, BlobStat, list_checkpoints, load_checkpoint_meta, CheckpointMeta,
@@ -118,8 +119,8 @@ class InferenceTab(QWidget):
         top_layout.setSpacing(6)
 
         ctrl = QHBoxLayout()
-        self._btn_file = QPushButton("파일 선택…")
-        self._btn_folder = QPushButton("폴더 선택…")
+        self._btn_file = QPushButton(t("infer.select_file"))
+        self._btn_folder = QPushButton(t("infer.select_folder"))
         ctrl.addWidget(self._btn_file)
         ctrl.addWidget(self._btn_folder)
 
