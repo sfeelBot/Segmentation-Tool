@@ -23,6 +23,7 @@ class Circle:
     cx: float
     cy: float
     r: float
+    name: str | None = None
 
 
 @dataclass
@@ -44,21 +45,22 @@ def disk_mask(cx: float, cy: float, r: float, img_shape: tuple[int, int]) -> np.
 
 
 def scale_circles(
-    circles: list[tuple[float, float, float]],
+    circles: list[tuple],
     from_size: tuple[int, int],
     to_size: tuple[int, int],
-) -> list[tuple[float, float, float]]:
+) -> list[tuple]:
     """원 좌표를 기준 이미지 크기에서 대상 이미지 크기로 비례 스케일한다.
 
     배치 적용(R13-B)/레시피 적용(2026-10-01 재설계) 양쪽이 공유하는 순수 함수 —
     Qt 의존성 없음, `zone_analysis_tab.py`/`zone_recipe_dialog.py` 둘 다 이 함수를
-    재사용한다(중복 제거)."""
+    재사용한다(중복 제거). `*rest`(이름 등 4번째 이후 원소)는 좌표 변환 없이 그대로
+    통과시킨다 — 기존 3요소 호출부도 그대로 동작한다."""
     fw, fh = from_size
     tw, th = to_size
     if fw <= 0 or fh <= 0 or (fw, fh) == (tw, th):
         return list(circles)
     sx, sy = tw / fw, th / fh
-    return [(cx * sx, cy * sy, r * (sx + sy) / 2) for cx, cy, r in circles]
+    return [(cx * sx, cy * sy, r * (sx + sy) / 2, *rest) for cx, cy, r, *rest in circles]
 
 
 def zones_from_circles(circles: list[Circle], img_shape: tuple[int, int]) -> list[Zone]:
@@ -72,10 +74,10 @@ def zones_from_circles(circles: list[Circle], img_shape: tuple[int, int]) -> lis
     n = len(sorted_c)
     masks = [disk_mask(c.cx, c.cy, c.r, img_shape) for c in sorted_c]
 
-    zones = [Zone(0, "중심부", masks[0])]
+    zones = [Zone(0, sorted_c[0].name or "중심부", masks[0])]
     for i in range(n - 1):
-        zones.append(Zone(i + 1, f"링 {i + 1}", masks[i + 1] & ~masks[i]))
-    zones.append(Zone(n, "바깥쪽", ~masks[-1]))
+        zones.append(Zone(i + 1, sorted_c[i + 1].name or f"링 {i + 1}", masks[i + 1] & ~masks[i]))
+    zones.append(Zone(n, "바깥쪽", ~masks[-1]))   # "바깥쪽"은 특정 원에 귀속되지 않아 커스터마이즈 범위 밖(의도적 축소)
     return zones
 
 
@@ -225,13 +227,13 @@ def pivot_wide_format(
     """
     images: list[str] = []
     seen_images: set[str] = set()
-    zone_names: set[str] = set()
+    zone_names: dict[str, None] = {}   # set() 대신 — 첫 등장 순서 보존(동점 정렬 결정성, 2026-10-03#5)
     values: dict[tuple[str, str], float] = {}
     for image_name, zone_name, pct in rows:
         if image_name not in seen_images:
             seen_images.add(image_name)
             images.append(image_name)
-        zone_names.add(zone_name)
+        zone_names[zone_name] = None
         values[(image_name, zone_name)] = pct
     zone_cols = sorted(zone_names, key=zone_name_sort_key)
     return images, zone_cols, values
@@ -401,5 +403,11 @@ if __name__ == "__main__":
     assert blob_b.zone_name == "바깥쪽", f"blob B는 바깥쪽 배정 예상, 실측 {blob_b.zone_name}"
     assert blob_b.ai_score is None, f"순수 수동 blob은 AI 점수 None(N/A) 예상, 실측 {blob_b.ai_score}"
     assert blob_a.pixel_count == 1 and blob_b.pixel_count == 1
+
+    # ── 존 이름 커스터마이즈(2026-10-03#5): 지정하면 그 이름, 없으면 자동 이름 ──
+    circles3 = [Circle(1, 2, 2, 1, "상부")]
+    zones3 = zones_from_circles(circles3, shape)
+    assert zones3[0].name == "상부"
+    assert zones3[1].name == "바깥쪽"   # 바깥쪽은 커스터마이즈 범위 밖(의도된 설계)
 
     print("zone_metrics self-check OK")

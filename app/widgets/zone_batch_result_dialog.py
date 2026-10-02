@@ -90,7 +90,9 @@ class ZoneBatchResultDialog(QDialog):
         bar.addWidget(self._search_edit, stretch=1)
 
         bar.addWidget(QLabel("존:"))
-        zone_names = sorted({zone for _, zone, _ in rows}, key=zone_name_sort_key)
+        # set() 대신 dict.fromkeys — 동점(같은 정렬 버킷) 처리 순서를 해시 랜덤화에
+        # 맡기지 않고 첫 등장 순서로 고정(2026-10-03#5, pivot_wide_format과 동일 수정).
+        zone_names = sorted(dict.fromkeys(zone for _, zone, _ in rows), key=zone_name_sort_key)
         for zone in zone_names:
             btn = QPushButton(zone)
             btn.setCheckable(True)

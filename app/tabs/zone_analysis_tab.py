@@ -1067,10 +1067,10 @@ class ZoneAnalysisTab(QWidget):
         `_recompute_zones()`(사이드 패널 표시)와 단일 이미지 Excel 내보내기(R3-1)가
         공유하는 헬퍼(스펙 판단 3, 순수 추출 — 동작 변화 없음).
         """
-        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r)
+        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r, name)
         if not circles_raw or self._last_result is None or self._target_class_id is None:
             return []
-        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
+        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in circles_raw]
         h, w = self._last_result.raw_class_map.shape
         zones = zones_from_circles(circles, (h, w))
         target_mask = self._current_target_mask()
@@ -1083,7 +1083,7 @@ class ZoneAnalysisTab(QWidget):
         circles_raw = self._canvas.circles_with_ids()
         if not circles_raw or self._last_result is None or self._target_class_id is None:
             return []
-        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in circles_raw]
+        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in circles_raw]
         h, w = self._last_result.raw_class_map.shape
         zones = zones_from_circles(circles, (h, w))
         ai_mask, final_mask = self._ai_and_final_masks()
@@ -1170,7 +1170,7 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             return
-        circles = [Circle(cid, cx, cy, r) for cid, cx, cy, r in self._canvas.circles_with_ids()]
+        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in self._canvas.circles_with_ids()]
         zones = zones_from_circles(circles, (h, w))
         blob_rows = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
         blob = next((b for b in blob_rows if b.blob_id == label_id), None)
@@ -1263,8 +1263,10 @@ class ZoneAnalysisTab(QWidget):
         self._circle_list.blockSignals(True)
         self._circle_list.clear()
         selected_row = -1
-        for i, (circle_id, cx, cy, r) in enumerate(self._canvas.circles_with_ids(), start=1):
-            item = QListWidgetItem(f"원 {i}  r={r:.1f}px  중심=({cx:.0f}, {cy:.0f})")
+        for i, (circle_id, cx, cy, r, name) in enumerate(self._canvas.circles_with_ids(), start=1):
+            label = f"{name}  r={r:.1f}px  중심=({cx:.0f}, {cy:.0f})" if name else \
+                f"원 {i}  r={r:.1f}px  중심=({cx:.0f}, {cy:.0f})"
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, circle_id)
             self._circle_list.addItem(item)
             if circle_id == selected:
@@ -1443,13 +1445,17 @@ class ZoneAnalysisTab(QWidget):
             state = previous or {
                 "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
             }
-            state["circles"] = [
-                (idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)
+            # circles는 모드에 따라 (cx,cy,r)(장별 자동검출) 또는 (cx,cy,r,name)
+            # (기준 이미지 레시피 적용, *rest로 이름 보존)일 수 있다 — *rest로 흡수.
+            indexed = [
+                (idx, cx, cy, r, rest[0] if rest else None)
+                for idx, (cx, cy, r, *rest) in enumerate(circles)
             ]
+            state["circles"] = indexed
             zstate.save_state(path, state)
 
             zones = zones_from_circles(
-                [Circle(idx, cx, cy, r) for idx, (cx, cy, r) in enumerate(circles)], (h, w)
+                [Circle(idx, cx, cy, r, name) for idx, cx, cy, r, name in indexed], (h, w)
             )
             percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
             self._batch_rows.extend(

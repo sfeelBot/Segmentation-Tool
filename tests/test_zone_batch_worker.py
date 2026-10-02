@@ -110,7 +110,7 @@ def test_existing_edits_survive_circle_replacement_and_skip_leaves_bytes_untouch
             saved = zstate.load_state(path)
             assert saved["removed_blob_ids"] == {3}
             assert saved["manual_strokes"] == [(True, [(2.0, 2.0, 1.0)])]
-            assert saved["circles"][0][1:] == (5.0, 5.0, 2.0)
+            assert saved["circles"][0][1:] == (5.0, 5.0, 2.0, None)
             assert zstate.sidecar_path(path).read_bytes() != before
 
             untouched = zstate.sidecar_path(path).read_bytes()
@@ -132,7 +132,7 @@ def test_per_image_mode_uses_detected_circles():
         tab = _batch_tab([(5.0, 5.0, 2.0)], (20, 20), .5, "per_image", 1)
         try:
             tab._on_batch_image_inferred(path, _result(), 1, 1)
-            assert zstate.load_state(path)["circles"][0][1:] == (9.0, 8.0, 3.0)
+            assert zstate.load_state(path)["circles"][0][1:] == (9.0, 8.0, 3.0, None)
         finally:
             module.detect_circles = old_detect
             tab.close()

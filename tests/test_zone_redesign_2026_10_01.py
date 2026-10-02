@@ -125,9 +125,9 @@ def test_align_centers_averages_without_changing_radius() -> None:
 
     circles = canvas.get_circles()
     assert len(circles) == 2
-    for cx, cy, r in circles:
+    for cx, cy, r, _name in circles:
         assert abs(cx - 5.0) < 1e-6 and abs(cy - 10.0) < 1e-6
-    assert sorted(r for _, _, r in circles) == [5.0, 9.0]
+    assert sorted(r for _, _, r, _name in circles) == [5.0, 9.0]
 
 
 def test_align_centers_noop_with_fewer_than_two_circles() -> None:
@@ -141,7 +141,8 @@ def test_align_centers_noop_with_fewer_than_two_circles() -> None:
     assert canvas.get_circles() == before
 
 
-def test_wheel_resizes_selected_circle_and_zooms_when_none_selected() -> None:
+def test_alt_wheel_resizes_selected_circle_plain_wheel_always_zooms() -> None:
+    """2026-10-03#6: Alt+휠=지름 조절, 일반 휠(원 선택 여부 무관)=항상 화면 줌."""
     canvas = ZoneCanvas()
     canvas.resize(200, 200)
     canvas.set_image_size(100, 100)
@@ -153,15 +154,24 @@ def test_wheel_resizes_selected_circle_and_zooms_when_none_selected() -> None:
     from PyQt6.QtGui import QWheelEvent
     from PyQt6.QtCore import QPointF, QPoint
 
-    event = QWheelEvent(
-        QPointF(50, 50), QPointF(50, 50), QPoint(0, 0), QPoint(0, 120),
-        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase, False,
-    )
-    canvas.wheelEvent(event)
+    def make_event(modifiers: Qt.KeyboardModifier) -> QWheelEvent:
+        return QWheelEvent(
+            QPointF(50, 50), QPointF(50, 50), QPoint(0, 0), QPoint(0, 120),
+            Qt.MouseButton.NoButton, modifiers,
+            Qt.ScrollPhase.NoScrollPhase, False,
+        )
 
-    _, _, r = canvas.get_circles()[0]
-    assert r > 10.0   # 휠 위로 스크롤 -> 반지름(지름) 증가
+    zoom_before = canvas._zoom
+    undo_depth_before = len(canvas._undo_stack)
+    canvas.wheelEvent(make_event(Qt.KeyboardModifier.NoModifier))
+    _, _, r, _name = canvas.get_circles()[0]
+    assert r == 10.0   # 일반 휠은 지름을 건드리지 않는다
+    assert canvas._zoom != zoom_before   # 대신 화면 줌이 동작한다
+    assert len(canvas._undo_stack) == undo_depth_before   # 줌은 undo 스택에 쌓이지 않는다
+
+    canvas.wheelEvent(make_event(Qt.KeyboardModifier.AltModifier))
+    _, _, r, _name = canvas.get_circles()[0]
+    assert r > 10.0   # Alt+휠 위로 스크롤 -> 반지름(지름) 증가
     assert canvas.can_undo()
 
 
@@ -182,12 +192,12 @@ def test_arrow_key_moves_selected_circle_with_gesture_debounced_undo() -> None:
         ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
         canvas.keyPressEvent(ev)
 
-    cx, cy, _ = canvas.get_circles()[0]
+    cx, cy, _, _name = canvas.get_circles()[0]
     assert cx == 53.0   # 1px * 3회
     assert len(canvas._undo_stack) == undo_depth_before + 1   # 제스처 디바운스 -> 1개만
 
     canvas.undo()
-    cx2, _, _ = canvas.get_circles()[0]
+    cx2, _, _, _name = canvas.get_circles()[0]
     assert cx2 == 50.0   # 디바운스된 제스처 전체가 undo 1회로 복원
 
 
@@ -225,7 +235,7 @@ def test_recipe_dialog_apply_button_gated_on_circle_count(tmp_path: Path, monkey
 
         dialog._canvas.set_circles([(25.0, 25.0, 10.0)])
         dialog._on_apply()
-        assert dialog.result_circles() == [(25.0, 25.0, 10.0)]
+        assert dialog.result_circles() == [(25.0, 25.0, 10.0, None)]
         assert dialog.result_ref_size() == (50, 50)
     finally:
         dialog.close()
@@ -237,7 +247,7 @@ def test_recipe_dialog_autoloads_most_recent_recipe(tmp_path: Path, monkeypatch)
     pixmap = QPixmap(20, 20)
     dialog = ZoneRecipeDialog(pixmap, (20, 20))
     try:
-        assert dialog._canvas.get_circles() == [(2.0, 2.0, 2.0)]   # (10,10)->(20,20) 2배 스케일
+        assert dialog._canvas.get_circles() == [(2.0, 2.0, 2.0, None)]   # (10,10)->(20,20) 2배 스케일
         assert dialog._btn_apply.isEnabled()
     finally:
         dialog.close()

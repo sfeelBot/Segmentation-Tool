@@ -68,6 +68,7 @@ class _CircleItem:
     cx: float
     cy: float
     r: float
+    name: str | None = None
 
 
 class ZoneCanvas(OverlayViewer):
@@ -140,11 +141,13 @@ class ZoneCanvas(OverlayViewer):
         self.circles_committed.emit()
         self.circle_selected.emit(None)
 
-    def set_circles(self, circles: list[tuple[float, float, float]]) -> None:
-        """(cx, cy, r) 리스트로 전체 교체 — 자동 검출 결과 반영용."""
+    def set_circles(self, circles: list[tuple]) -> None:
+        """(cx, cy, r) 또는 (cx, cy, r, name) 리스트로 전체 교체 — 자동 검출
+        결과 반영용(역호환: name 없는 3요소 입력도 그대로 동작)."""
         self._push_undo()
         self._circles = [
-            _CircleItem(self._next_id + i, cx, cy, r) for i, (cx, cy, r) in enumerate(circles)
+            _CircleItem(self._next_id + i, cx, cy, r, rest[0] if rest else None)
+            for i, (cx, cy, r, *rest) in enumerate(circles)
         ]
         self._next_id += len(circles)
         self._selected_id = None
@@ -153,13 +156,13 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
         self.circles_committed.emit()
 
-    def get_circles(self) -> list[tuple[float, float, float]]:
-        """반지름 오름차순 (cx, cy, r) 리스트."""
-        return [(c.cx, c.cy, c.r) for c in sorted(self._circles, key=lambda c: c.r)]
+    def get_circles(self) -> list[tuple[float, float, float, str | None]]:
+        """반지름 오름차순 (cx, cy, r, name) 리스트."""
+        return [(c.cx, c.cy, c.r, c.name) for c in sorted(self._circles, key=lambda c: c.r)]
 
-    def circles_with_ids(self) -> list[tuple[int, float, float, float]]:
-        """사이드 패널 등 id가 필요한 UI용 — 반지름 오름차순 (id, cx, cy, r)."""
-        return [(c.id, c.cx, c.cy, c.r) for c in sorted(self._circles, key=lambda c: c.r)]
+    def circles_with_ids(self) -> list[tuple[int, float, float, float, str | None]]:
+        """사이드 패널 등 id가 필요한 UI용 — 반지름 오름차순 (id, cx, cy, r, name)."""
+        return [(c.id, c.cx, c.cy, c.r, c.name) for c in sorted(self._circles, key=lambda c: c.r)]
 
     def select_circle(self, circle_id: int | None) -> None:
         """사이드 패널 클릭 등 외부에서 선택 상태만 동기화(드래그 없음)."""
@@ -413,7 +416,7 @@ class ZoneCanvas(OverlayViewer):
         찍어도 annotation_canvas의 BUG-014(대형 마스크 deepcopy) 같은 메모리
         문제가 생기지 않는다 — 마스크 배열 자체는 절대 저장하지 않는다."""
         self._undo_stack.append({
-            "circles": [(c.id, c.cx, c.cy, c.r) for c in self._circles],
+            "circles": [(c.id, c.cx, c.cy, c.r, c.name) for c in self._circles],
             "removed_blob_ids": set(self._removed_blob_ids),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
@@ -435,7 +438,7 @@ class ZoneCanvas(OverlayViewer):
         """현재 편집 상태 스냅샷 — `_push_undo()`와 완전히 동일한 경량 표현.
         호출부(탭)가 이미지 전환 시 사이드카(디스크)에 저장하는 용도(R-ZONE-3)."""
         return {
-            "circles": [(c.id, c.cx, c.cy, c.r) for c in self._circles],
+            "circles": [(c.id, c.cx, c.cy, c.r, c.name) for c in self._circles],
             "removed_blob_ids": set(self._removed_blob_ids),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
@@ -444,9 +447,11 @@ class ZoneCanvas(OverlayViewer):
     def set_state(self, state: dict) -> None:
         """`get_state()`(또는 사이드카에서 로드한 동일 포맷)가 반환한 스냅샷을
         복원한다 — `undo()`가 스택에서 꺼낸 스냅샷에 적용하던 로직 그대로이지만
-        여기서는 undo 스택 자체엔 영향을 주지 않는다(R-ZONE-3)."""
+        여기서는 undo 스택 자체엔 영향을 주지 않는다(R-ZONE-3). 역호환: 이름 필드가
+        없던 기존 4요소(id,cx,cy,r) 저장분도 *rest로 흡수한다."""
         self._circles = [
-            _CircleItem(cid, cx, cy, r) for cid, cx, cy, r in state["circles"]
+            _CircleItem(cid, cx, cy, r, rest[0] if rest else None)
+            for cid, cx, cy, r, *rest in state["circles"]
         ]
         self._removed_blob_ids = set(state["removed_blob_ids"])
         self._erase_strokes = list(state["erase_strokes"])
@@ -858,12 +863,15 @@ class ZoneCanvas(OverlayViewer):
         self.update()
         menu = QMenu(self)
         resize_action = menu.addAction("지름 변경...")
+        rename_action = menu.addAction("이름 변경...")
         delete_action = menu.addAction("원 삭제")
         chosen = menu.exec(event.globalPos())
         if chosen == delete_action:
             self.remove_selected()
         elif chosen == resize_action:
             self._prompt_diameter_change(circle_id)
+        elif chosen == rename_action:
+            self._prompt_name_change(circle_id)
 
     def _prompt_diameter_change(self, circle_id: int) -> None:
         """이슈#13 요구사항1 — 우클릭 메뉴 "지름 변경...": QInputDialog로 지름
@@ -882,6 +890,23 @@ class ZoneCanvas(OverlayViewer):
             return
         self._push_undo()
         item.r = diameter / 2
+        self.update()
+        self.circles_changed.emit()
+        self.circles_committed.emit()
+
+    def _prompt_name_change(self, circle_id: int) -> None:
+        """우클릭 메뉴 "이름 변경..." — 레시피/메인 탭 양쪽에 공유되는 이 캔버스
+        한 곳만 고치면 존 이름 커스터마이즈가 전부 적용된다(스펙 5번 "핵심 관찰 2")."""
+        item = self._find(circle_id)
+        if item is None:
+            return
+        text, ok = QInputDialog.getText(
+            self, "이름 변경", "존 이름(비우면 자동 이름 사용):", text=item.name or "",
+        )
+        if not ok:
+            return
+        self._push_undo()
+        item.name = text.strip() or None
         self.update()
         self.circles_changed.emit()
         self.circles_committed.emit()

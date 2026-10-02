@@ -147,9 +147,9 @@ def test_shared_center_and_diameter_undo() -> None:
         canvas._prompt_diameter_change(first_circle_id)
     finally:
         zone_canvas_module.QInputDialog.getDouble = previous
-    assert any(abs(r - 40.0) < 1e-6 for _, _, r in canvas.get_circles())
+    assert any(abs(r - 40.0) < 1e-6 for _, _, r, _ in canvas.get_circles())
     canvas.undo()
-    assert any(abs(r - 20.0) < 1e-6 for _, _, r in canvas.get_circles())
+    assert any(abs(r - 20.0) < 1e-6 for _, _, r, _ in canvas.get_circles())
     canvas.close()
 
 

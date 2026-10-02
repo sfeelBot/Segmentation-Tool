@@ -57,12 +57,12 @@ def test_sidecar_saved_on_switch_and_restored_on_return() -> None:
 
         saved = zstate.load_state(img1)
         assert saved is not None
-        assert [(cx, cy, r) for _, cx, cy, r in saved["circles"]] == [(5.0, 5.0, 2.0)]
+        assert [(cx, cy, r) for _, cx, cy, r, *_rest in saved["circles"]] == [(5.0, 5.0, 2.0)]
 
         # 새 ZoneAnalysisTab(앱 재시작 시뮬레이션)에서도 사이드카가 그대로 복원돼야 한다.
         tab2 = ZoneAnalysisTab()
         tab2._on_list_image_selected(img1)
-        assert tab2._canvas.get_circles() == [(5.0, 5.0, 2.0)]
+        assert tab2._canvas.get_circles() == [(5.0, 5.0, 2.0, None)]
         tab2.close()
         tab.close()
 
