@@ -15,6 +15,7 @@ from app.core import zone_state_store as zstate
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.tabs import zone_analysis_tab as module
 from app.tabs.zone_analysis_tab import ZoneAnalysisTab, _ZoneBatchWorker, _compute_zone_rows
+from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -270,3 +271,61 @@ def test_compute_zone_rows_matches_batch_path_output():
     assert all(pct == 100.0 for _, _name, pct in rows)
     assert all(img == "img.png" for img, _name, _pct in rows)
     assert len(blob_rows) == 1   # 전체가 하나로 이어진 블랍 1개
+
+
+# ── BUG-036 회귀 방지 — 전체 결과 보기 + 비활성 이미지 사이드카 circles ─────────
+
+def test_view_all_results_with_inactive_image_sidecar_does_not_crash():
+    """BUG-036: 사이드카 "circles"는 (id, cx, cy, r, name) 5-튜플(ZoneCanvas.get_state()/
+    _on_batch_image_inferred() 둘 다 id를 맨 앞에 저장)인데, `_on_view_all_results()`가
+    비활성 이미지에 대해 이를 자르지 않고 그대로 `_compute_zone_rows()`에 넘기면
+    cx 자리에 id가, 존 이름 자리에 float(반지름)가 들어간다. 실제 크래시는 그 틀어진
+    결과가 `ZoneBatchResultDialog` 생성 중 `_build_filter_bar()`의
+    `zone_name_sort_key()`에 전달되는 시점에 TypeError로 터진다(검증 에이전트 진단,
+    2장 이상 처리하는 핵심 시나리오에서 100% 재현) — 그래서 실제 다이얼로그 클래스를
+    그대로 쓰되 모달 `exec()`만 no-op으로 막아 생성 경로 전체를 재현한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path1 = Path(tmp) / "a.png"
+        path2 = Path(tmp) / "b.png"
+        Image.new("RGB", (20, 20)).save(path1)
+        Image.new("RGB", (20, 20)).save(path2)
+
+        # path2(비활성 이미지)는 실사용과 동일하게 id 포함 5-튜플 사이드카로 저장.
+        zstate.save_state(path2, {
+            "circles": [(1, 3.0, 3.0, 1.0, "커스텀")],
+            "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
+        })
+
+        created: list[ZoneBatchResultDialog] = []
+
+        class _NoExecDialog(ZoneBatchResultDialog):
+            def __init__(self, rows, blob_rows, parent=None):
+                super().__init__(rows, blob_rows, parent)
+                created.append(self)
+
+            def exec(self):
+                return None
+
+        tab = ZoneAnalysisTab()
+        tab._results = {path1: _result(20), path2: _result(20)}
+        tab._target_class_id = 1
+        tab._img_list.load_files([path1, path2])
+        tab._image_path = path1   # 활성 이미지 — get_circles() 경로
+        tab._image_size = (20, 20)
+        tab._canvas.set_image_size(20, 20)
+        tab._canvas.set_circles([(5.0, 5.0, 2.0)])
+
+        old_dialog = module.ZoneBatchResultDialog
+        module.ZoneBatchResultDialog = _NoExecDialog
+        try:
+            tab._on_view_all_results()   # 수정 전엔 다이얼로그 생성 중 TypeError로 크래시했음
+        finally:
+            module.ZoneBatchResultDialog = old_dialog
+            tab.close()
+
+        assert len(created) == 1, "결과 없음 팝업으로 빠지면 안 됨(두 이미지 다 집계돼야 함)"
+        rows = created[0]._rows
+        assert all(isinstance(name, str) for _, name, _pct in rows), \
+            "존 이름 자리에 float(반지름)이 섞이면 안 됨(BUG-036 핵심 증상)"
+        zone_names = {name for _, name, _pct in rows}
+        assert zone_names == {"중심부", "바깥쪽", "커스텀"}   # path2의 커스텀 이름이 온전히 보존됨

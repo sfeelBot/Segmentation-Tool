@@ -1283,8 +1283,13 @@ class ZoneAnalysisTab(QWidget):
                 skipped.append(path.name)
                 continue
             previous = zstate.load_state(path)
+            # BUG-036: 사이드카의 "circles"는 (id, cx, cy, r, name) — ZoneCanvas.get_state()/
+            # _on_batch_image_inferred()가 항상 id를 맨 앞에 저장한다(get_circles()와 다른
+            # 스키마). id를 자르지 않고 그대로 넘기면 _compute_zone_rows()가 cx 자리에
+            # id를, name 자리에 실제 반지름(float)을 받아 zone_name_sort_key()에서
+            # TypeError로 크래시한다(QA.md BUG-036).
             circles = (self._canvas.get_circles() if path == self._image_path
-                       else (previous or {}).get("circles", []))
+                       else [c[1:] for c in (previous or {}).get("circles", [])])
             computed = _compute_zone_rows(path, result, self._target_class_id, circles, previous)
             if computed is None:
                 continue
