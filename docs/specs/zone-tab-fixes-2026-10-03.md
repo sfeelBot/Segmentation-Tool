@@ -145,6 +145,13 @@ def _on_batch_image_inferred(self, path: Path, result: InferenceResult,
 아니라 "열 구성 원복"이라 추론 탭 쪽 회귀 리스크도 낮다(구현 완료 후 양쪽 다
 `python main.py`로 목록 폭/우클릭 삭제/Delete키 확인 권장).
 
+### 디자인 확인 (2026-10-03)
+**문제없음 — 추가 지침 불필요.** 2026-10-02 라운드에서 상시 삭제 아이콘을 넣은 것 자체가
+"발견성을 높이려던" 보완책이었는데, 실사용에서 오히려 불필요한 열 하나가 목록 폭을
+갉아먹는 부작용으로 느껴진 것으로 보인다 — 우클릭 메뉴/Delete 키로도 삭제가 충분히
+가능하므로 원복이 합리적이다. 위 수정 설계(1컬럼 복원 + `_attach_delete_icon()` 제거)
+그대로 진행하면 된다. 추가로 조정할 비주얼 요소 없음.
+
 ---
 
 ## 3. 추론 실행 진행 팝업에 %/예상시간 없음
@@ -193,18 +200,44 @@ def _on_batch_image_inferred(self, path: Path, result: InferenceResult,
    퍼센트 계산엔 문제없다. `_on_batch_progress()`의 ETA 계산식·분기(60초 미만이면
    분 생략)와 동일 패턴 재사용, 신규 로직 없음.)
 
-### 디자인 확인 필요 — 폭 제약 (리더가 디자인 에이전트에 확인 요청)
-`self._infer_progress`는 현재 `setFixedWidth(110)`이고, 같은 줄(`toolbar_row1`)에
-체크포인트 버튼·상태점·라벨·배지·"타겟(녹) 클래스:" 라벨·콤보박스가 이미 빽빽하게
-들어차 있다(227-254행). `"7/10 (70%) · 12초"` 같은 텍스트는 110px에 들어가기 빠듯하다.
-**과설계를 피하기 위한 기본 제안**: 폭은 그대로 두고 퍼센트까지만 바 텍스트로
-표시(`f"{done}/{total} (%p%)"`, 대략 폭 안에 들어감)하고, **ETA는
-`self._infer_progress.setToolTip(eta_txt)`로 호버 텍스트에 넣는다** — 레이아웃
-변경 없이 요구사항(%는 상시 가시, 예상시간은 확인 가능)을 충족하는 가장 작은 diff.
-다만 "항상 보여야 한다"는 사용자 기대와 어긋날 수 있어, 디자인 에이전트가 판단해
-필요하면 (대안) 바 폭을 약 180~220px로 넓히고 옆 위젯 간격을 줄이는 쪽으로 대신
-갈 수 있음을 기록해 둔다 — 이번 라운드는 둘 중 하나를 디자인/구현 단계에서
-확정하면 됨(둘 다 저리스크, 결정 대기 등록 대상 아님).
+### 디자인 확인 (2026-10-03) — (A) 채택: 폭 유지 + 퍼센트만 상시, ETA는 툴팁
+
+**결론: (A)안 채택.** 실제 `toolbar_row1`(= `ckpt_card`, 219~267행) 구성을 다시 확인한
+결과, 이 줄은 이미 `_btn_ckpt`(버튼) + 초록 점 + `_lbl_ckpt` + `_lbl_ckpt_badge`("자동
+선택됨") + `_infer_progress`(110px) + "타겟(녹) 클래스:" 라벨 + `_target_name_edit`
+(120px, 1클래스일 때) 또는 `_target_combo`(160px, 다중 클래스일 때) + stretch + 추론방식
+안내 텍스트 + `_btn_run`까지 **카드 하나(`setContentsMargins(14,7,14,7)`)에 전부 들어가
+있다.** 더 중요한 건 `_infer_progress`가 보이는 시점(추론 진행 중)과 `_target_combo`가
+보이는 시점(현재 이미지 결과가 이미 도착해 타겟 클래스가 구성된 시점)이 **겹칠 수 있다**는
+점이다 — 여러 장을 "▶ 전체 추론 실행"으로 돌리면 현재 이미지 결과가 먼저 도착해
+`_target_combo`(160px)가 나타난 채로 나머지 이미지들에 대한 진행바가 계속 움직인다. 이
+상태에서 진행바를 180~220px로 넓히면 같은 줄에 110px 폭 증가분(+70~110px)이 그대로
+추가되어, 좁은 창 폭(`main_window.py` 기본 1280px, 좌/우 사이드 패널 합쳐 ~450px 소비)에서
+줄바꿈·잘림 위험이 레이아웃 재작업(폭 제약 완화) 없이는 해소되지 않는다. 반면 (A)안은
+위젯 폭을 전혀 바꾸지 않으므로 이 겹침 시나리오에서도 안전하다.
+
+적용 방식(스펙 본문의 코드를 아래처럼 조정):
+```python
+eta_txt = ""
+if done > 0:
+    avg_ms = self._infer_elapsed.elapsed() / done
+    remain_s = max(0, avg_ms * (total - done) / 1000.0)
+    m, s = divmod(int(remain_s), 60)
+    eta_txt = f"예상 남은 시간: 약 {m}분 {s}초" if m else f"예상 남은 시간: 약 {s}초"
+self._infer_progress.setFormat(f"{done}/{total} (%p%)")   # 바 안에는 퍼센트까지만
+self._infer_progress.setToolTip(eta_txt)                   # ETA는 호버로 확인
+```
+`"7/10 (70%)"` 정도면 기존 110px 폭 안에 10~11px 폰트 기준으로 들어간다(기존
+`"완료 7 / 10"` 포맷도 비슷한 글자 수였으므로 폭 초과 위험 낮음). ETA는 숫자가 없을 때
+(`done == 0`) 빈 문자열로 둬 툴팁이 비어 보이지 않게 한다(`setToolTip("")`는 툴팁 자체를
+안 띄우므로 자연스러움).
+
+**(B)안(폭 확장)을 기각하는 추가 근거**: 배치 처리 쪽 진행 표시(3번 항목의 (b),
+`QProgressDialog`)는 이미 모달 전용 공간이 있어 폭 걱정 없이 ETA를 상시 노출하고 있다 —
+"인라인 바는 공간이 좁아 보조 정보는 툴팁, 모달은 공간이 넉넉해 상시 노출"이라는 역할
+분담이 기존 설계와도 자연스럽게 맞아떨어진다. 나중에 실사용에서 "툴팁을 못 찾는다"는
+피드백이 나오면, 그때 `toolbar_row1`을 2행으로 쪼개는 더 큰 레이아웃 변경을 검토하면
+된다(지금은 YAGNI).
 
 ---
 
@@ -240,11 +273,51 @@ def _on_batch_image_inferred(self, path: Path, result: InferenceResult,
    lbl_max.setStyleSheet("color:#9ca3af;font-size:10px;")
    v.addWidget(lbl_max)
    ```
-4. **행 높이 조정 필수**: `_recompute_zones()`(1136행)의
-   `item.setSizeHint(QSize(0, 40))`를 텍스트 한 줄이 늘어난 만큼
-   `QSize(0, 56)`(가이드값, 실측 후 디자인이 최종 조정) 정도로 키워야 새 줄이
-   잘리지 않는다. **디자인 에이전트가 레이아웃 패딩과 함께 최종 수치 확인 필요**
-   (비주얼 조정 범주, 2026-10-02 라운드와 동일 성격).
+4. **행 높이 조정 필수 — 디자인 확인 결과: 완전히 새 줄을 추가하지 않고 색상바와
+   같은 행에 작게 넣는 쪽을 채택**(`QSize(0, 56)` 대신 `QSize(0, 48)`).
+
+   **판단 근거**: 기존 구조(`_make_zone_row_widget`, `QVBoxLayout` margins `(6,4,6,4)`
+   spacing `3`)는 "top row(이름+퍼센티지, ~20px) + bar(6px)"로 margins(8)+20+spacing(3)+6
+   ≈ 37px — 기존 가이드 `QSize(0,40)`과 거의 일치해 역산이 맞아떨어진다. 여기에 완전히
+   새로운 세 번째 줄(10px 폰트 `QLabel`, 줄간격 포함 실측 약 13~14px)을 **그대로 추가**하면
+   37 + spacing(3) + 14 ≈ 54 → 56 가이드값 자체는 틀리지 않지만, 우측 패널 폭이
+   160~220px(`side.setMinimumWidth(160)`/`setMaximumWidth(220)`, 503~504행)로 좁은데
+   세로 공간까지 한 줄 더 늘리면 `_circle_list`/`_zone_list`(둘 다 `stretch=1`로 같은
+   세로 공간을 나눠 씀)가 한 번에 보여주는 항목 수가 줄어든다 — 존이 3~4개만 돼도
+   스크롤이 생기기 쉬워진다.
+
+   **채택안**: 색상바를 담는 `QWidget`(기존 `bar_bg`)을 `QHBoxLayout`으로 감싸고, 그 옆에
+   "최대 blob" 텍스트를 같은 행에 배치한다(기존 "top row + bar row" 2줄 구조를 유지,
+   bar row의 내용만 "바"에서 "바+텍스트"로 바뀌는 것):
+   ```python
+   bar_row = QHBoxLayout()
+   bar_row.setContentsMargins(0, 0, 0, 0)
+   bar_row.setSpacing(6)
+   bar_bg = QWidget()
+   bar_bg.setFixedHeight(6)
+   bar_bg.setStyleSheet("background:#1a1d23;border-radius:3px;")
+   # ... 기존 fill/spacer 로직 그대로, bar_bg에 적용 ...
+   bar_row.addWidget(bar_bg, stretch=1)
+   lbl_max = QLabel(f"최대 {max_px:,}px")
+   lbl_max.setStyleSheet("color:#9ca3af;font-size:9.5px;")
+   lbl_max.setStyleSheet(lbl_max.styleSheet() + "white-space:nowrap;")  # 참고용, Qt는 자동 줄바꿈 없음
+   bar_row.addWidget(lbl_max, alignment=Qt.AlignmentFlag.AlignVCenter)
+   v.addLayout(bar_row)   # 기존 v.addWidget(bar_bg) 대체
+   ```
+   이러면 bar row 높이는 `lbl_max`(~13~14px)가 기준이 되고(바는 6px짜리라 세로 중앙
+   정렬되어 작게 보임 — Artifact의 "바 아래 캡션" 느낌과는 다르지만 "비율 바 옆에 보조
+   수치"라는 같은 정보 위계를 더 적은 세로 공간으로 표현), 총 높이는
+   margins(8) + top row(20) + spacing(3) + bar row(14) ≈ 45 → **`QSize(0, 48)`**을
+   기본값으로 제안한다(3px 여유).
+
+   **실측 조정 안내**: 폰트 렌더링은 OS/스케일링에 따라 ±2~4px 오차가 날 수 있으므로,
+   구현 후 `python main.py`로 실제 화면에서 텍스트가 잘리면 `48` → `50`~`52` 정도로만
+   미세 조정하면 된다(완전히 새 줄을 추가하는 56 구조로 되돌릴 필요는 없음 — 그 경우에도
+   먼저 이 48 구조의 폭/정렬만 손보는 쪽을 우선 시도할 것).
+
+   존 이름이 길어 `lbl_max`와 겹칠 걱정은 낮다 — 우측 패널 폭 최소 160px 기준으로도
+   "최대 1,840px"(~70px) + 바(최소 유지폭 ~40px) + spacing(6) ≈ 116px로 160px 안에 들어간다
+   (좌측 `lbl_name`/`lbl_pct`가 있는 top row는 기존 구조 그대로라 이번 변경과 무관).
 
 ### 성능 메모
 `_recompute_zones()`는 `circles_committed`(드래그 릴리즈)와 `erase_changed`에만
@@ -453,15 +526,29 @@ def wheelEvent(self, event) -> None:
 `color:#9ca3af;font-size:11px`, 레시피 다이얼로그 `footer_caption`
 `color:#6b7280;font-size:10px`)를 그대로 재사용. 위치: 캔버스 헤더
 (`toolbar_header_layout`, 467-476행) — `_edit_toolbar` 다음, `addStretch()` 전에
-삽입:
+삽입.
+
+### 디자인 확인 (2026-10-03) — 문구 수정, 위치는 그대로 승인
+
+**위치는 제안대로 확정**(편집 툴바 바로 옆, align 버튼 앞) — 캔버스를 다루는 도구들과
+같은 헤더에 있어야 "이 캔버스 조작법"이라는 소속 관계가 명확하다. 다른 자리(예: 상단
+체크포인트 카드)로 옮기면 캔버스와 무관한 안내처럼 보여 오히려 발견성이 떨어진다.
+
+**문구는 수정 필요**: 제안 문구 "원 선택 후 휠: 줌 · Alt+휠: 지름 조절"은 "원 선택 후"가
+앞의 "휠: 줌"에도 걸리는 것처럼 읽혀 혼동을 준다 — 실제 동작은 "휠은 원 선택 여부와
+무관하게 항상 줌"이고 "Alt+휠만 원이 선택돼 있을 때 지름을 조절"하는 것이므로(6번 수정
+설계의 핵심), "원 선택 후"라는 전제가 잘못된 대상(줌)에 붙어버린다. 아래 문구로 교체:
 ```python
-self._lbl_wheel_hint = QLabel("원 선택 후 휠: 줌 · Alt+휠: 지름 조절")
+self._lbl_wheel_hint = QLabel("휠: 화면 줌 · Alt+휠: 선택한 원 지름 조절")
 self._lbl_wheel_hint.setStyleSheet("color:#9ca3af;font-size:10.5px;")
 toolbar_header_layout.addWidget(self._edit_toolbar)
 toolbar_header_layout.addWidget(self._lbl_wheel_hint)   # NEW
 toolbar_header_layout.addStretch()
 ```
-신규 QLabel 1개, 조건부 표시 로직 없음(항상 보임) — 과설계 방지.
+"선택한 원"이라는 표현 자체가 "원이 선택돼 있어야 함"을 함의하므로 "원 선택 후"라는
+별도 전제절 없이도 의미가 정확히 전달된다. 길이도 기존 제안과 거의 같아(약 1자 증가)
+레이아웃에 영향 없음. 신규 QLabel 1개, 조건부 표시 로직 없음(항상 보임) — 과설계 방지
+원칙은 그대로 유지.
 
 ---
 
@@ -588,15 +675,49 @@ def _on_view_all_results(self) -> None:
         )
     ZoneBatchResultDialog(all_rows, all_blob_rows, self).exec()
 ```
-**진입점 UI**: 좌측 `_batch_box`("Zone 결정 방법" 그룹박스, 415-450행) 맨 아래
-`_lbl_batch_condition` 다음에 `self._btn_view_all = QPushButton("전체 결과 보기")`
-추가 — 배치 모드와 무관하게(단일 추론만으로도) 쓸 수 있는 기능이라 같은
-그룹박스 안이되 모드 콤보와는 독립적으로 항상 평가되는 활성화 조건
-(`bool(self._results)`)을 쓴다. 갱신 지점: `_on_run()` 시작부(`self._results.clear()`
-직후 비활성화) + `_on_inference_result()`(결과 1개라도 생기면 활성화) +
-`_on_batch_image_inferred()`(1번 수정으로 `self._results[path]=result`가 추가되므로
-동일하게 활성화 트리거) — 간단히 `self._btn_view_all.setEnabled(bool(self._results))`
-한 줄을 이 3곳에 추가.
+### 디자인 확인 (2026-10-03) — (a) 버튼 위치: 좌측 그룹박스가 아니라 우측 패널로
+
+**좌측 `_batch_box`("Zone 결정 방법") 안이 아니라 우측 패널, `_btn_export_single`
+("결과 분석 보기") 바로 아래에 배치할 것을 권장한다 — 기획안(좌측 그룹박스 맨 아래)을
+뒤집는 결정.**
+
+**근거**: 이 탭의 좌/우 분할은 처음 확정된 Artifact 목업(2026-10-01,
+https://claude.ai/artifact/4bw8wooYywZjmBQkSYxxP8 Main 아트보드) 때부터 "좌측 =
+이미지·영역 설정(②③ 단계, 입력), 우측 = 원·존 현황과 ⑦ 결과 분석 진입(출력)"으로
+일관되게 설계돼 있고, 우측 패널 맨 아래에 "⑦ 결과 분석 보기" 버튼을 두는 것 자체가
+그 설계의 일부였다(design-log.md 2026-10-01 항목 "우측 패널=③원 목록이자 ⑦존
+비율·결과분석 진입점을 겸용" 참고). "전체 결과 보기"는 같은 ⑦ 단계의 범위만 넓힌
+변형(현재 이미지 1장 → 세션 전체)이지 "Zone 결정 방법"(③ 단계, 영역 설정 방식 선택)과
+같은 범주가 아니다 — 기획안의 "배치 모드와 무관하게 쓸 수 있는 기능이니 좌측 배치 박스에"
+라는 근거는 "독립성"은 설명하지만 "어디에 둬야 사용자가 직관적으로 찾는가"는 설명하지
+못한다. 결과를 보는 두 버튼(현재/전체)이 서로 떨어져 있으면("전체 보기"는 왼쪽 아래,
+"현재 보기"는 오른쪽 아래) 사용자가 "결과를 보는 방법이 두 가지 있다"는 사실 자체를
+발견하기 어렵다 — 같은 패널에 나란히 둬야 "아, 현재 이미지만 볼 수도, 전체를 볼 수도
+있구나"가 한눈에 보인다.
+
+**구현 스펙**:
+```python
+# side_layout 구성부, 기존 self._btn_export_single 추가 직후(440행 부근)
+self._btn_export_single.setText("현재 이미지 결과 보기")   # 기존 "결과 분석 보기"에서
+                                                           # 문구만 교체(동작 변경 없음) —
+                                                           # 아래 버튼과 구분하기 위함
+side_layout.addWidget(self._btn_export_single)
+self._btn_view_all = QPushButton("전체 결과 보기")
+self._btn_view_all.setToolTip(
+    "이번 세션에서 추론을 실행한 모든 이미지를 모아서 봅니다.\n"
+    "(세션 메모리 기반 — 과거 세션 결과나 미추론 이미지는 제외됩니다.)"
+)
+self._btn_view_all.setEnabled(False)
+side_layout.addWidget(self._btn_view_all)
+```
+스타일은 `_btn_export_single`(accent, `#1e3a5f`/`#60a5fa`/`#93c5fd`)과 차등을 둬 "현재
+이미지"가 여전히 주 동작임을 유지 — `_btn_view_all`은 기본 `QPushButton` 스타일(강조
+없음)로 둔다. 활성화 갱신 로직(`setEnabled(bool(self._results))`)은 기획안 그대로
+3곳(`_on_run()` 시작부, `_on_inference_result()`, `_on_batch_image_inferred()`)에 추가 —
+이 부분은 변경 없음, 버튼 위치만 좌→우로 이동.
+
+좌측 `_batch_box`는 기획안대로 손대지 않는다(`_lbl_batch_condition` 다음에 아무 것도
+추가하지 않음).
 
 ### 정렬 — Long 탭(그룹화)과 Wide 탭(피벗) 충돌 검토
 `zone_batch_result_dialog.py`의 Long 탭(`_build_long_tab()`, 144-192행)은
@@ -616,9 +737,36 @@ def _on_view_all_results(self) -> None:
 **(b)안(Long 탭도 정렬 지원, 기준이 '이미지'가 아닐 때 그룹화 해제)은 과설계로
 판단해 채택하지 않는다** — 사용자 원문이 Long 탭 정렬을 명시적으로 요구했는지
 불확실하고, 그룹화를 깨는 토글 로직까지 추가하면 diff/리스크가 커진다.
-**디자인 확인 필요**: 사용자가 실제로 원하는 게 Long 탭 정렬인지, 아니면 "전체
-보기 자체"가 핵심 요구였고 정렬은 Wide 탭 하나로 충분한지 디자인 단계에서
-최종 확인 권장(결정 대기 등록은 아님 — (a)로 우선 진행해도 리스크 낮음).
+
+### 디자인 확인 (2026-10-03) — (a)안 확정, Wide 탭만 정렬
+
+**(a)안(Wide 탭만 정렬)을 그대로 확정한다.** 근거: Long 탭의 존재 이유 자체가
+"이미지별로 묶어서 원본 데이터를 정확히 보는 것"(파일 상단 주석 "long format 채택 이유"
+— 개별 자동검출 모드에서 이미지마다 zone 개수가 달라질 수 있어 wide format이 들쭉날쭉해
+지는 문제의 대안)이다. 이 탭에서 열 정렬까지 지원하면 "이미지별로 묶여서 읽힌다"는
+원래 목적과 "비율 높은 순으로 섞여서 보인다"는 정렬 결과가 서로 충돌해, 오히려 두 탭의
+역할 차이가 흐려진다 — 사용자가 "정렬하고 싶다"고 느끼는 상황은 대부분 "어떤 이미지/존이
+비율이 가장 높은지 한눈에 보고 싶다"는 요구일 가능성이 높고, 이건 Wide 탭(이미지 1행 ×
+존 열)에서 열 헤더를 클릭해 정렬하는 쪽이 Long 탭을 정렬하는 것보다 더 직접적으로
+충족된다(Long 탭은 정렬해도 같은 이미지의 여러 zone 행이 흩어지므로 "어떤 이미지가
+심한지"를 한눈에 보기엔 오히려 Wide보다 못하다). 즉 (a)안은 타협이 아니라 **Wide 탭이
+이 요구에 더 적합한 도구라서 자연스러운 선택**이다.
+
+**다만 발견성 보완 1건 추가**: Wide 탭에 정렬 기능이 생겼다는 사실 자체를 사용자가
+모르면 "정렬 요청"이 또 들어올 수 있으므로, `_build_wide_tab()`의 기존 안내
+`QLabel`(피벗 한계 설명, 206~210행 부근) 문구에 한 줄 추가:
+```python
+note = QLabel(
+    "참고: 이미지마다 원(존) 개수가 다르면 같은 열이라도 다른 위치를 가리킬 "
+    "수 있습니다. 정확한 원본 데이터는 'Long' 탭을 참고하세요.\n"
+    "열 헤더를 클릭하면 그 열 기준으로 정렬됩니다."
+)
+```
+(기존 안내 문구 끝에 정렬 안내 한 줄만 덧붙임 — 신규 위젯 없음, diff 최소.)
+
+**일단 Wide만 지원하고, 실사용에서 "Long 탭도 정렬하고 싶다"는 피드백이 다시 들어오면
+그때 (b)안(그룹화 토글)을 후속 라운드로 분리해 검토한다** — 지금 단계에서 먼저 만들
+근거는 부족하다고 판단.
 
 ### 필터 — 기존 필터 바 재사용, 신규 UI 없음
 `ZoneBatchResultDialog`는 이미지명 검색 + 존 다중 토글 필터 바를 이미 갖추고
@@ -658,10 +806,19 @@ def _on_view_all_results(self) -> None:
    그대로 사용하므로 **1·5번 이후** 진행. `zone_batch_result_dialog.py` Wide 탭
    정렬은 다른 항목과 파일이 겹치지 않아 이 안에서도 독립적으로 먼저 끝내도 무방.
 
-디자인 영향 지점(리더 판단으로 구현 전 디자인 확인 권장): **2**(레이아웃 축소,
-저위험) · **3**(진행바 폭/ETA 표시 방식) · **4**(패널 행 높이) · **6**(휠 힌트
-캡션 문구/위치, 저위험) · **8**(Long 탭 정렬 지원 여부 재확인, "전체 결과 보기"
-버튼 위치 확정).
+디자인 영향 지점 5곳은 2026-10-03 디자인 확인을 거쳐 전부 확정됐다(각 절의 "디자인 확인
+(2026-10-03)" 하위 절 참고) — 구현 에이전트가 추가로 판단할 필요 없음:
+- **2**: 문제없음, 추가 지침 불필요(원안 그대로 진행).
+- **3**: (A)안 확정 — 진행바 폭(110px) 유지, 퍼센트만 상시 표시, ETA는 툴팁.
+- **4**: 행 높이 `QSize(0, 56)` 대신 `QSize(0, 48)` — 완전히 새 줄 대신 색상바와 같은
+  행에 "최대 blob" 텍스트 배치.
+- **6**: 위치는 원안 확정, 문구만 "휠: 화면 줌 · Alt+휠: 선택한 원 지름 조절"로 수정
+  (원안의 "원 선택 후"가 줌에도 걸리는 것처럼 읽히는 모호함 제거).
+- **8**: (a) 버튼 위치는 원안(좌측 그룹박스)을 뒤집어 **우측 패널**
+  (`_btn_export_single` 바로 아래)로 확정 — 2026-10-01 Artifact가 확립한 "우측=⑦ 결과
+  분석 진입점" 배치 원칙과의 일관성이 근거. (b) Long 탭 정렬은 비채택(Wide만) 확정 —
+  Long 탭의 그룹화 목적 자체와 열 정렬이 상충한다는 것이 근거(타협이 아니라 Wide가 더
+  적합한 도구라는 적극적 판단).
 
 결정 대기 없음. 4번 "등등" 건만 `decisions-needed.md`에 참고 기록 추가(완료).
 5번의 "바깥쪽 존 이름 커스터마이즈 제외"·"중심/바깥쪽 renamed 시 Excel 열 순서
