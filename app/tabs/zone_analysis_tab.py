@@ -833,7 +833,11 @@ class ZoneAnalysisTab(QWidget):
         self._btn_run.setText("추론 중…")
         self._infer_progress.setRange(0, len(paths))
         self._infer_progress.setValue(0)
+        self._infer_progress.setFormat("0/%d (0%%)" % len(paths))
+        self._infer_progress.setToolTip("")
         self._infer_progress.show()
+        self._infer_elapsed = QElapsedTimer()
+        self._infer_elapsed.start()
         self._worker = _ZoneInferenceWorker(
             self._model, paths, self._ckpt_path
         )
@@ -849,7 +853,13 @@ class ZoneAnalysisTab(QWidget):
                              done: int, total: int) -> None:
         self._results[path] = result
         self._infer_progress.setValue(done)
-        self._infer_progress.setFormat(f"{done} / {total}")
+        self._infer_progress.setFormat(f"{done}/{total} (%p%)")   # 폭(110px) 유지 — 바 안엔 퍼센트까지만
+        if done > 0:
+            avg_ms = self._infer_elapsed.elapsed() / done
+            remain_s = max(0, avg_ms * (total - done) / 1000.0)
+            m, s = divmod(int(remain_s), 60)
+            eta_txt = f"예상 남은 시간: 약 {m}분 {s}초" if m else f"예상 남은 시간: 약 {s}초"
+            self._infer_progress.setToolTip(eta_txt)   # ETA는 호버로 확인(디자인 확인 2026-10-03#3)
         if path == self._image_path:
             self._last_result = result
             self._setup_target_classes(result)
