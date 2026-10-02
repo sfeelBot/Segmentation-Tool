@@ -829,7 +829,8 @@ class ZoneCanvas(OverlayViewer):
             super().keyPressEvent(event)
 
     def wheelEvent(self, event) -> None:
-        if self._mode == "circle" and self._selected_id is not None:
+        if (self._mode == "circle" and self._selected_id is not None
+                and event.modifiers() & Qt.KeyboardModifier.AltModifier):
             item = self._find(self._selected_id)
             if item is not None:
                 self._begin_edit_gesture()
@@ -842,7 +843,7 @@ class ZoneCanvas(OverlayViewer):
                 self.circles_committed.emit()
                 event.accept()
                 return
-        super().wheelEvent(event)   # 선택된 원이 없으면 기존처럼 화면 줌
+        super().wheelEvent(event)   # Alt 없으면(원 선택 여부 무관) 항상 화면 줌
 
     def contextMenuEvent(self, event) -> None:
         if self._pixmap is None or self._mode != "circle":
