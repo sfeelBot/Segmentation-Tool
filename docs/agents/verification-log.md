@@ -6079,3 +6079,33 @@ prepare_inference/prompt_gpu_availability 몽키패치 + QMessageBox 모달 무�
 BUG-036 수정 후 8번 항목만 재검증(또는 리더 판단에 따라 재검증 범위 확대) 필요. 나머지
 7개 항목은 재검증 불필요(이미 실 GUI 골든패스로 통과 확인됨, 8번 수정이 1~7번 코드를
 건드리지 않는 한).
+
+## 2026-10-02 — BUG-036(P0) 독립 재검증 (8번 "전체 결과 보기" 단독)
+
+작업 위치: `D:\segmentation model-zone-analysis-tab` (worktree), 브랜치
+`feature/zone-analysis-tab`. 이전 세션이 1~7번 PASS / 8번 FAIL(BUG-036)로 판정한 뒤,
+구현자가 커밋 `e4f4252`로 수정 완료 보고 — 8번만 독립 재검증.
+
+### 재검증 방법
+구현자의 회귀 테스트(`tests/test_zone_batch_worker.py::test_view_all_results_with_inactive_image_sidecar_does_not_crash`)를
+그대로 신뢰하지 않고, 별도 스크립트로 실제 `ZoneAnalysisTab()` 위젯을 띄워 독립 재현:
+- 이미지 3장을 생성하고 `tab._on_batch_image_inferred()`(실제 배치 후처리 경로, `detect_circles`만
+  모킹)로 각기 다른 원 구성/커스텀 존 이름(`CUSTOM_A`, `CUSTOM_B`)으로 순차 처리 — 사이드카에
+  `(id, cx, cy, r, name)` 5-튜플로 저장됨을 확인.
+- 활성 이미지를 셋 중 어느 것도 아닌 상태로 전환하지 않고 2번째 이미지로 설정한 뒤(1·3번
+  이미지는 비활성 → 사이드카 경로를 반드시 타게 구성) `_on_view_all_results()`를 직접 호출.
+- 결과: 크래시 없이 다이얼로그 생성(`ZoneBatchResultDialog`, `exec()`만 no-op), 모든 행의 zone
+  이름이 문자열(float 섞임 없음), 비활성 이미지의 커스텀 존 이름(`CUSTOM_A`, `CUSTOM_B`) 둘 다
+  정상 집계됨을 확인.
+- 코드 리뷰: `_compute_zone_rows()`가 기대하는 4-튜플과 `ZoneCanvas.get_circles()` 반환 타입이
+  일치함을 재확인. 사이드카 `"circles"`를 직접 언패킹하는 다른 호출부가 더 있는지 전수 검색 —
+  1468행(`(zstate.load_state(p) or {}).get("circles")`)은 truthiness 체크뿐이라 영향 없음, 그 외
+  소비처 없음을 확인(구현자 보고와 일치).
+- 회귀 확인: 기존 배치 골든패스 테스트(`test_golden_path_button_click_reports_progress_error_and_opens_dialog`
+  등) 포함 `QT_QPA_PLATFORM=offscreen build/venv/Scripts/python.exe -m pytest tests/` 160개 전부
+  재통과 확인. 1~7번 항목은 범위 밖이라 재검증하지 않음(요청대로).
+
+### 판정
+**PASS** — BUG-036 해결 확인. `docs/roadmap.md` 8번 체크박스 `[x]`로 갱신, QA.md BUG-036
+항목에 "독립 재검증 완료" 기록. 이로써 `docs/specs/zone-tab-fixes-2026-10-03.md` 8건 라운드
+전체(1~8) 완료.
