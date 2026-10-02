@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
     QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem,
-    QProgressDialog, QProgressBar, QToolBar, QFrame,
+    QProgressDialog, QProgressBar, QToolBar, QFrame, QMenu,
 )
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize, QElapsedTimer
 from PyQt6.QtGui import QImage, QPixmap, QAction, QActionGroup
@@ -487,6 +487,8 @@ class ZoneAnalysisTab(QWidget):
         side_layout.setContentsMargins(4, 0, 0, 0)
         side_layout.addWidget(QLabel("검출된 원 (반지름 오름차순)"))
         self._circle_list = QListWidget()
+        self._circle_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._circle_list.customContextMenuRequested.connect(self._on_circle_list_context_menu)
         side_layout.addWidget(self._circle_list, stretch=1)
         side_layout.addWidget(QLabel("존별 타겟 클래스 비율 (%)"))
         self._zone_list = QListWidget()
@@ -1302,6 +1304,20 @@ class ZoneAnalysisTab(QWidget):
         item = self._circle_list.item(row)
         circle_id = item.data(Qt.ItemDataRole.UserRole) if item else None
         self._canvas.select_circle(circle_id)
+
+    def _on_circle_list_context_menu(self, pos) -> None:
+        """우클릭 "삭제" — 2번 항목에서 되돌린 상시 아이콘과 반대 패턴을 또
+        추가하지 않도록 우클릭 메뉴만 둔다. 신규 삭제 로직 없이 기존
+        `ZoneCanvas.remove_selected()`를 재사용(선택 동기화 후 호출)."""
+        item = self._circle_list.itemAt(pos)
+        if item is None:
+            return
+        circle_id = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        action = menu.addAction("삭제")
+        if menu.exec(self._circle_list.viewport().mapToGlobal(pos)) == action:
+            self._canvas.select_circle(circle_id)   # remove_selected()는 _selected_id 기준
+            self._canvas.remove_selected()
 
     # ── 슬롯 — 배치(일괄) 처리 (스펙 판단 C-2, R-C 3b) ───────────────────────
 
