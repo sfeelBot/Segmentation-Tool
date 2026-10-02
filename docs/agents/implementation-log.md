@@ -5128,3 +5128,46 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   (리더가 검증 확인 후 처리 예정).
 - 커밋 해시(순서대로): `0c56634`, `c03f53d`, `fa3d4c9`, `f48e552`, `12fbe96`, `af77c53`,
   `7820b72`, `10ec15d`.
+
+## 2026-10-03 — BUG-036(P0) "전체 결과 보기" 크래시 수정 (존 분석 탭 에디션 브랜치)
+
+- 상태: 구현 완료 — **검증 에이전트의 독립 재검증 필요**(8번 항목만, 1~7번은 이미
+  실 GUI 골든패스 통과 완료로 재검증 불필요하다고 리더가 전달함).
+- 대상 브랜치/경로: `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+- 배경: 검증 에이전트가 8번("전체 결과 보기") 골든패스 검증 중 P0 크래시를 발견해
+  `QA.md` BUG-036으로 등록(재현 스크립트 포함). 근본 원인은 검증 에이전트가 이미 정확히
+  진단: `_on_view_all_results()`가 비활성 이미지의 원(circle)을 사이드카
+  (`zstate.load_state(path)["circles"]`)에서 읽을 때, `ZoneCanvas.get_state()`/
+  `_on_batch_image_inferred()`가 저장하는 **id-prefixed 5-튜플**
+  `(id, cx, cy, r, name)`을 `_compute_zone_rows()`가 기대하는 **4-튜플**
+  `(cx, cy, r, name)`(`self._canvas.get_circles()`와 동일한 활성 이미지 스키마) 그대로
+  넘겨 `cx, cy, r, *rest = (id, cx, cy, r, name)`로 잘못 언패킹됐다 — `cx=id`,
+  `cy=실제cx`, `r=실제cy`, `name=실제r`(zone 이름 자리에 반지름 float)이 되어
+  `zone_name_sort_key()`의 `re.search(r"\d+", name)`이 `TypeError`로 다이얼로그 생성
+  자체를 크래시시킴. 2장 이상 처리하는 핵심 시나리오에서 100% 결정적 재현.
+- 수정: 검증 에이전트가 제안한 2개 방향 중 **1안(호출부에서 id 슬라이스)** 채택 —
+  `_on_view_all_results()`의 비활성 이미지 분기에서 `previous["circles"]`를
+  `[c[1:] for c in ...]`로 슬라이스해 id를 제거, `get_circles()`와 동일한 4-튜플로
+  맞췄다. `_compute_zone_rows()`/사이드카 스키마 자체는 건드리지 않아 diff 최소.
+- **다른 호출부 점검(리더 요청)**: `grep`으로 "circles" 딕셔너리 키를 쓰는 모든
+  위치(`zone_canvas.py`/`zone_state_store.py`/`zone_recipe_store.py`/
+  `zone_recipe_dialog.py`/`zone_analysis_tab.py`)를 전수 확인 — `_on_batch_image_inferred()`
+  등 다른 호출부는 sidecar "circles"를 직접 재사용하지 않고 매번 새 원 목록
+  (`scale_circles()`/`detect_circles()` 결과)을 조립해 넘기므로 동일 유형의 id 혼입
+  버그가 없음을 확인. `zone_recipe_store.py`(레시피 저장소)는 애초에 id를 저장하지
+  않는 별도 스키마(4-튜플)라 혼동 소지가 다름을 재확인. **추가 발견 없음**.
+- 회귀 테스트: `tests/test_zone_batch_worker.py::test_view_all_results_with_inactive_image_sidecar_does_not_crash`
+  추가 — 비활성 이미지가 섞인 "전체 결과 보기"를 **실제** `ZoneBatchResultDialog`
+  (모달 `exec()`만 no-op 서브클래스로 막음, `_build_filter_bar()`가 실행되는 생성
+  경로는 그대로 유지)로 끝까지 생성해 재현을 faithful하게 검증. **sanity check**:
+  수정 전 코드(`git stash`로 일시 되돌림)로 재실행하면 리더가 보고한 것과 정확히
+  동일한 `TypeError: expected string or bytes-like object, got 'float'`가
+  `app/widgets/zone_batch_result_dialog.py:107`(`_build_filter_bar`)→
+  `app/core/zone_metrics.py:214`(`zone_name_sort_key`)에서 재현됨을 확인 — 양방향
+  (고장/정상)으로 테스트의 유효성을 직접 검증했다.
+- 검증: `QT_QPA_PLATFORM=offscreen build/venv/Scripts/python.exe -m pytest tests/`
+  160개 전부 통과(기존 159 + 회귀 테스트 1). `python main.py`(offscreen) 정상 기동
+  확인(예외 없음).
+- `release.ini` 버전 미변경. push 안 함(리더 확인 후 처리). `QA.md` BUG-036을
+  Open에서 Closed로 이동하고 근본원인/해결방법 기록 완료.
+- 커밋 해시: `e4f4252`(코드+회귀 테스트), `9b87efa`(QA.md Closed 이동).
