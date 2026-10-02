@@ -51,6 +51,7 @@ from app.core.zone_metrics import (
     apply_manual_strokes, zone_blob_stats, ZoneBlobStat, scale_circles,
 )
 from app.core import zone_state_store as zstate
+from app.core.i18n import t
 from app.core.logger import get_logger
 from app.core.device_info import prompt_gpu_availability
 from app.widgets.zone_canvas import ZoneCanvas
@@ -395,12 +396,10 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_images_header.setStyleSheet("color:#60a5fa;font-weight:bold;background:transparent;border:none;")
         header_row.addWidget(self._lbl_images_header)
         header_row.addStretch()
-        self._btn_image = QPushButton("+")
-        self._btn_image.setToolTip("이미지 추가")
-        self._btn_image.setFixedSize(26, 24)
-        self._btn_folder = QPushButton("⊞")
-        self._btn_folder.setToolTip("폴더 추가")
-        self._btn_folder.setFixedSize(26, 24)
+        self._btn_image = QPushButton(t("ui.add_file"))
+        self._btn_image.setToolTip(t("ui.add_file.tip"))
+        self._btn_folder = QPushButton(t("ui.add_folder"))
+        self._btn_folder.setToolTip(t("ui.add_folder.tip"))
         header_row.addWidget(self._btn_image)
         header_row.addWidget(self._btn_folder)
         left_layout.addLayout(header_row)
