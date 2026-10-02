@@ -57,6 +57,7 @@ from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
 from app.widgets.zone_recipe_dialog import ZoneRecipeDialog
+from app.widgets.zone_step_indicator import ZoneStepIndicator
 from app.widgets.icons import icon as svg_icon
 
 log = get_logger(__name__)
@@ -190,7 +191,10 @@ class ZoneAnalysisTab(QWidget):
         self._save_timer.timeout.connect(self._flush_state)
         self._save_failed_once = False   # 세션당 1회만 저장 실패 팝업(판단 6)
         self._ckpt_auto_selected = False
+        self._step6_touched = False   # 브러시 그리기/지우기/블랍삭제를 1번이라도 했는가
+        self._result_viewed = False   # 결과 분석 팝업을 1번이라도 열었는가
         self._build_ui()
+        self._refresh_step_indicator()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
@@ -198,6 +202,9 @@ class ZoneAnalysisTab(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
+
+        self._step_indicator = ZoneStepIndicator()
+        root.addWidget(self._step_indicator)
 
         # ── 상단 툴바 (승인된 목업 순서, Artifact 984ea900 — 이번 세션엔 Artifact
         #    도구가 없어 스펙 문서 "승인된 UI 레이아웃" 절 서술을 그대로 따름):
@@ -557,6 +564,10 @@ class ZoneAnalysisTab(QWidget):
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
         self._btn_export_single.clicked.connect(self._on_export_single)
+        # 스텝 인디케이터 — 신규 시그널 없이 기존 호출부에 편승(주석 위 Undo 관례와 동일 패턴).
+        self._canvas.circles_changed.connect(self._refresh_step_indicator)
+        self._canvas.blob_deleted.connect(lambda _id: self._mark_step6_touched())
+        self._canvas.erase_changed.connect(self._mark_step6_touched)
 
     # ── 슬롯 — 이미지 / 체크포인트 선택 (C-1) ────────────────────────────────
 
@@ -830,6 +841,7 @@ class ZoneAnalysisTab(QWidget):
         )
         self._worker.finished.connect(self._on_inference_finished)
         self._worker.start()
+        self._refresh_step_indicator()
 
     def _on_inference_result(self, path: Path, result: InferenceResult,
                              done: int, total: int) -> None:
@@ -847,6 +859,7 @@ class ZoneAnalysisTab(QWidget):
             f"완료 {len(self._results)} / {self._infer_progress.maximum()}"
         )
         self._worker = None
+        self._refresh_step_indicator()
 
     # ── 타겟(녹) 클래스 즉석 구성 (판단 4) ────────────────────────────────────
 
@@ -1020,6 +1033,32 @@ class ZoneAnalysisTab(QWidget):
     def _update_undo_button_state(self) -> None:
         self._act_undo.setEnabled(self._canvas.can_undo())
 
+    # ── 스텝 인디케이터 (Artifact 조정 — 순수 표시용, 전환 강제 없음) ─────────
+
+    def _compute_step_state(self) -> tuple[int, set[int]]:
+        done = {
+            1: self._ckpt_path is not None,
+            2: self._image_path is not None or self._img_list.count() >= 1,
+            3: len(self._canvas.get_circles()) >= 1,
+            4: self._last_result is not None or bool(self._results),
+        }
+        done[5] = done[4]   # "진행상황"은 결과가 있으면 이미 끝난 것으로 간주(아래 러닝 중 예외)
+        done[6] = self._step6_touched
+        done[7] = self._result_viewed
+        if self._worker is not None or self._batch_worker is not None:
+            return 5, {k for k in (1, 2, 3, 4) if done[k]}   # 추론 진행 중엔 강제로 5번 강조
+        completed = {k for k, v in done.items() if v}
+        current = next((k for k in range(1, 8) if k not in completed), 7)
+        return current, completed
+
+    def _refresh_step_indicator(self) -> None:
+        current, completed = self._compute_step_state()
+        self._step_indicator.set_state(current, completed)
+
+    def _mark_step6_touched(self) -> None:
+        self._step6_touched = True
+        self._refresh_step_indicator()
+
     def _compute_zone_percentages(self) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
 
@@ -1158,6 +1197,8 @@ class ZoneAnalysisTab(QWidget):
             return
         excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
         blob_rows = self._compute_zone_blob_rows()
+        self._result_viewed = True
+        self._refresh_step_indicator()
         ZoneBatchResultDialog(excel_rows, blob_rows, self).exec()
 
     # ── 슬롯 — 원(circle) 자동 검출 (라운드 2) ──────────────────────────────
@@ -1341,6 +1382,7 @@ class ZoneAnalysisTab(QWidget):
         self._batch_worker.image_inferred.connect(self._on_batch_image_inferred)
         self._batch_worker.finished.connect(self._on_batch_finished)
         self._batch_worker.start()
+        self._refresh_step_indicator()
 
     def _on_batch_progress(self, path: Path, status: str, detail,
                            done: int, total: int) -> None:
@@ -1428,7 +1470,10 @@ class ZoneAnalysisTab(QWidget):
         rows, blob_rows = self._batch_rows, self._batch_blob_rows
         self._batch_worker = None
         self._update_batch_button_state()
+        self._refresh_step_indicator()
         if not rows:
             QMessageBox.information(self, "결과 없음", "처리된 결과가 없습니다.")
             return
+        self._result_viewed = True
+        self._refresh_step_indicator()
         ZoneBatchResultDialog(rows, blob_rows, self).exec()
