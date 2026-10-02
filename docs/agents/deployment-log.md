@@ -172,3 +172,39 @@
 - 커밋: `5f644db` (origin/feature/zone-analysis-tab에 push 완료)
 - 태그: `zone-v1.5.0` (origin에 push 완료)
 - installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
+
+---
+
+## 2026-10-02 — zone-v1.5.1 배포 준비 (상/하부 분석 탭 Artifact 비주얼 조정)
+
+### 배경
+- 상/하부 분석 탭을 확정 디자인 Artifact에 맞춰 조정하는 작업(기능 변경 없음, 순수
+  비주얼 — 스텝 인디케이터 신설, 체크포인트 카드/배지, 편집 툴바 재배치, 좌측 삭제
+  아이콘, 우측 비율 색상바, 레시피/결과분석/진행상황 팝업 스타일)이 구현+검증 완료
+  (커밋 `59e136b`~`bacdc13`, 스펙 `docs/specs/zone-tab-ui-reconciliation-2026-10-02.md`,
+  검증 결과 `docs/agents/verification-log.md` 2026-10-02 항목 — PASS, 문제 0건).
+- 사용자가 버전을 명시적으로 **1.5.1**(PATCH)로 지정 — 기능 추가가 아니라 호환되는
+  UI 조정이므로 SemVer PATCH.
+
+### 조치
+- `release.ini`: `version` `1.5.0` → `1.5.1` (다른 키는 변경 없음).
+- `docs/CHANGELOG.md`에 `## [zone-v1.5.1] 2026-10-02` 섹션 추가: 7단계 스텝 인디케이터,
+  체크포인트 카드형+자동선택 배지, 편집 툴바를 캔버스 전용 헤더로 이동, 좌측 이미지
+  목록 상시 삭제 아이콘, 우측 존 비율 색상바, 레시피/결과분석/진행상황 팝업 스타일
+  정비를 정리 — 기능 변경 없음, 순수 UI/UX 조정임을 명시.
+- `build/venv/Scripts/python.exe scripts/generate_version_info.py` 실행 →
+  `Generated release metadata for 1.5.1` 성공 (release.ini/CHANGELOG 정합성 검증 통과).
+- `release.ini`, `docs/CHANGELOG.md` 2개 파일만 커밋(`b1d9ada`, `chore: zone 1.5.1 릴리즈
+  버전 갱신`) — 같은 워크트리의 기존 미추적 파일(`.codex/`, `AGENTS.md`,
+  `data/annotations/`, `graphify-out/`)은 배포 범위 밖이라 손대지 않음.
+- 태그 `zone-v1.5.1` (annotate, 커밋 `b1d9ada` 대상).
+- **push는 수행하지 않음** — 이번엔 리더가 사용자에게 push 여부를 별도로 확인한 뒤
+  처리하기로 함 (작업 지시에 명시).
+
+### 결과 요약
+- 버전: zone-v1.5.1
+- 커밋: `b1d9ada` (로컬에만 존재, origin/feature/zone-analysis-tab 대비 push 전)
+- 태그: `zone-v1.5.1` (로컬 annotated tag, push 전)
+- installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
+- push 대기: 리더가 사용자 확인 후 `git push origin feature/zone-analysis-tab` +
+  `git push origin zone-v1.5.1` 진행 필요.
