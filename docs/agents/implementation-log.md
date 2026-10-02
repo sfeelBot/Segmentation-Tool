@@ -5057,3 +5057,74 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   이미 저위험으로 확정해 그대로 따랐고 추가 확인 요청하지 않음.
 - 커밋 해시: `59e136b`, `cf337ad`, `46f3def`, `d099154`. push는 하지 않음(리더가
   검증 확인 후 처리 예정).
+
+## 2026-10-03 — 상/하부 분석 탭 실사용 피드백 8건 수정 (존 분석 탭 에디션 브랜치)
+
+- 상태: 구현 완료 — **검증 에이전트의 확인 필요**(아래는 구현자 자체 확인, 독립
+  재검증은 아직 이루어지지 않음).
+- 대상 브랜치/경로: `feature/zone-analysis-tab`, 워크트리 `D:\segmentation model-zone-analysis-tab`.
+- 스펙: `docs/specs/zone-tab-fixes-2026-10-03.md`(기획·디자인 확인 완료 상태로 전달받음,
+  "디자인 확인(2026-10-03)" 하위 절을 최종안으로 그대로 따름). 스펙의 "실행 순서 제안"
+  (1→2→6→5→3→7→4→8) 그대로 진행.
+- **1번(버그, 최우선)**: `_on_batch_image_inferred()`에 `self._results[path] = result`
+  한 줄 추가 — `_on_inference_result()`와 동일하게 캐시해야 배치 처리 후 다른 이미지로
+  전환해도 우측 존 비율 패널/AI 블랍 오버레이가 복원된다. 커밋 `0c56634`.
+- **2번**: `inference_image_list.py`를 2컬럼(+상시 × 아이콘)에서 1컬럼으로 원복,
+  `_attach_delete_icon()`과 호출부 4곳 제거. 우클릭 "목록에서 제거"/Delete 키는 그대로
+  유지(손대지 않음). 커밋 `c03f53d`.
+- **6번**: `zone_canvas.wheelEvent()`에 `AltModifier` 조건 추가 — Alt+휠만 지름 조절,
+  그 외(Shift 단독 포함)는 항상 화면 줌으로 동작을 뒤집었다. 캔버스 헤더에 조작법 안내
+  캡션("휠: 화면 줌 · Alt+휠: 선택한 원 지름 조절") 상시 표시 추가. 커밋 `fa3d4c9`.
+- **5번**: `zone_canvas._CircleItem`/`zone_metrics.Circle`에 `name: str | None = None`
+  필드 추가(역호환 `*rest` 언패킹 — 기존 3/4요소 호출부 전부 그대로 동작). 캔버스
+  우클릭 메뉴에 "이름 변경..." 추가(`_prompt_name_change`) — 레시피 다이얼로그와 메인
+  탭이 같은 `ZoneCanvas`를 임베딩하므로 한 곳 수정으로 양쪽 다 적용됨.
+  `zones_from_circles()`가 지정된 이름을 우선 사용("바깥쪽"은 커스터마이즈 범위 밖,
+  스펙 명시). 부수 수정: `pivot_wide_format()`/`zone_batch_result_dialog` 필터 바가
+  `set()`으로 존 이름을 모으던 부분을 순서보존 `dict` 기반으로 교체 — 동일 정렬 버킷
+  내 동점 처리가 해시 랜덤화에 흔들리던 비결정성 제거. `zone_metrics.py` self-check에
+  이름 오버라이드 검증 추가. `get_circles()` 등 튜플 형태가 3→4/4→5요소로 바뀌어
+  기존 zone 테스트 다수를 함께 갱신(아래 "테스트 변경" 참고). 커밋 `f48e552`.
+- **3번**: `_on_run()`/`_on_inference_result()`에 배치 경로(`_on_batch_progress()`)와
+  동일한 `QElapsedTimer` 기반 ETA 계산 패턴 적용 — 디자인 확인(A)안대로 바 폭(110px)은
+  그대로 유지하고 퍼센트만 `"%p%"` 포맷으로 상시 표시, 예상 남은 시간은 툴팁으로 노출
+  (폭 확장은 타겟클래스 콤보와 겹칠 때 줄바꿈/잘림 위험이 있어 기각됨, 스펙 명시). 커밋
+  `12fbe96`.
+- **7번**: `_circle_list`에 우클릭 "삭제" 컨텍스트 메뉴 추가 — 2번에서 되돌린 "상시
+  아이콘" 패턴을 반복하지 않도록 우클릭만 지원, 신규 삭제 로직 없이 기존
+  `ZoneCanvas.remove_selected()` 재사용(선택 동기화 후 호출). 커밋 `af77c53`.
+- **4번**: 우측 존 비율 패널에 최대 blob 픽셀수 표시 — 기존 `_compute_zone_blob_rows()`/
+  `max_blob_pixels_by_zone()` 재사용(신규 core 함수 없음). 디자인 확인대로 완전히 새
+  줄을 추가하지 않고 색상바와 같은 행에 배치, 행 높이 `QSize(0, 48)`. 커밋 `7820b72`.
+- **8번(마지막, 1·5번 의존)**: 우측 패널에 "전체 결과 보기" 버튼 신설
+  (`_btn_export_single`은 "현재 이미지 결과 보기"로 개명) — 이번 세션에서 추론을 실행한
+  이미지만 집계(AI 마스크는 세션 메모리 전용이라 과거 세션/미추론 이미지는 재추론 없이
+  복원 불가, 자동 재추론 트리거는 하지 않음 — YAGNI). 버튼 위치는 디자인 확인대로 좌측
+  그룹박스가 아니라 우측 패널(`_btn_export_single` 바로 아래)에 배치. `_on_batch_image_inferred()`의
+  zone/blob 계산 핵심을 순수 함수 `_compute_zone_rows()`(모듈 레벨)로 추출해 배치
+  처리/전체 보기가 공유하도록 리팩터(동작 변화 없음). `ZoneBatchResultDialog` Wide
+  탭에만 열 정렬 활성화(Long 탭은 이미지별 그룹화 목적과 상충해 비채택, 디자인 확인
+  명시) — 퍼센티지 열이 문자열 사전순이 아니라 크기순 정렬되도록
+  `_NumericTableWidgetItem`으로 `__lt__` 재정의. **구현 중 추가로 발견한 버그**: Wide
+  탭 정렬을 켜면 행 물리 순서가 바뀌는데 기존 필터 바(`_apply_filter()`)는 생성 시점의
+  고정 인덱스(`self._wide_images`)로 행을 숨겼다 — 정렬 후 필터가 엉뚱한 행을 가리킬
+  뻔한 문제라, 실제 셀 텍스트를 매번 읽도록 수정. `_compute_zone_rows()` 자체는
+  `tests/test_zone_batch_worker.py`에 순수 함수 단위 테스트 2개 추가. 커밋 `10ec15d`.
+- **테스트 변경(5번 데이터 모델 변경의 자연스러운 귀결)**: `get_circles()`/
+  `circles_with_ids()`/`dialog.result_circles()` 등의 튜플 길이가 늘어나(이름 필드
+  추가) 기존 zone 테스트 다수(`test_zone_github_13_14.py`, `test_zone_redesign_2026_10_01.py`,
+  `test_zone_state_persistence.py`, `test_zone_batch_worker.py`)의 언패킹/비교 구문을
+  갱신. 6번(Alt+휠) 동작 변경에 맞춰 `test_wheel_resizes_selected_circle_and_zooms_when_none_selected`도
+  `test_alt_wheel_resizes_selected_circle_plain_wheel_always_zooms`로 재작성(일반 휠=줌,
+  Alt+휠=지름 조절 양쪽 다 검증).
+- 검증: `QT_QPA_PLATFORM=offscreen build/venv/Scripts/python.exe -m pytest tests/`
+  157→159개 전부 통과(5번 커밋 시점 157개, 8번 커밋에서 자가진단 2개 추가해 159개).
+  각 커밋 전후로 `python main.py`(offscreen) 기동 확인 — 예외 없이 정상 기동
+  (cuDNN/CUDA 정보 로그의 cp949 인코딩 경고는 기존부터 있던 콘솔 인코딩 이슈로 이번
+  변경과 무관). 1번 버그의 실제 GUI 재현 체크리스트(이미지 2~3장 → 추론 → 레시피 →
+  일괄 처리 → 이미지 전환 → 패널 복원 확인)는 수행하지 않음 — **검증 에이전트가 골든
+  패스로 확인 필요**.
+- `release.ini` 버전은 건드리지 않음(배포는 이후 별도 라운드). push는 하지 않음
+  (리더가 검증 확인 후 처리 예정).
+- 커밋 해시(순서대로): `0c56634`, `c03f53d`, `fa3d4c9`, `f48e552`, `12fbe96`, `af77c53`,
+  `7820b72`, `10ec15d`.
