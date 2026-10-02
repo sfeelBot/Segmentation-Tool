@@ -6009,3 +6009,73 @@ patch=128px로 50 epoch 과적합 학습(CPU, 실 `TrainerWorker.run()` 동기 �
 준 ③/⑥ 구분)도 정확히 구현·테스트됨, `pytest` 157건 통과, `python main.py` offscreen 기동
 정상(cp949 로그 이슈는 범위 밖 기존 문제로 확정), 공유 위젯(`InferenceImageList`) 리팩터링도
 추론 탭 회귀 위험 낮음. push 여부는 리더가 사용자와 상의.
+
+## 2026-10-03 — 상/하부 분석 탭 8건 수정 검증 (스펙: zone-tab-fixes-2026-10-03.md)
+
+**검증 수준**: 리더 지시대로 "주요 기능 추가" 라운드 기준 — 정적 검토(스펙 8개 항목 ↔
+실제 코드 1:1 대조) + 상/하부 분석 탭 실 GUI 골든패스(QTest 합성 이벤트로 실 `ZoneAnalysisTab`
+인스턴스 조작, 과거 검증 세션과 동일 방법론). 작업 위치: `D:\segmentation model-zone-analysis-tab`
+워크트리(`feature/zone-analysis-tab`, 대상 커밋 `0c56634`~`dd4df10` 9개).
+
+### 사전 확인
+- `QT_QPA_PLATFORM=offscreen pytest tests/` — **159건 전부 통과**(구현자 보고와 일치).
+- `python main.py` offscreen 기동 — 이벤트 루프까지 정상 진입(타임아웃으로 종료). cp949
+  로그 인코딩 오류는 `device_info.py`의 기존 이슈로 이번 라운드 변경 범위 밖(과거
+  세션에서도 동일하게 확정됨).
+- `git status --porcelain` — 검증 세션 동안 코드 변경 없음(QA.md/본 로그만 갱신).
+
+### 골든패스 검증 방법
+실 체크포인트/실 라벨링 데이터 없이도 과거 세션과 동일한 방법론(engine.run_sliding_window/
+prepare_inference/prompt_gpu_availability 몽키패치 + QMessageBox 모달 무응답 방지)으로
+실제 `ZoneAnalysisTab()` 위젯을 띄워 QTest 기반 스크립트 1개로 8개 항목을 전부 순서대로
+조작·단언. 이미지 3장(합성 PNG) 로드 → 원 설정 → 기준 이미지 실제 `_on_run()` 호출(실
+워커 스레드 실행) → 원 이름 지정 → 배치 처리(`_on_batch_image_inferred` 3장) → 이미지 전환
+→ 전체 결과 보기 순으로 실제 코드 경로를 그대로 탔다.
+
+### 확인한 8개 항목
+
+1. **배치 처리 후 이미지 전환 시 우측 패널 복원(버그, 최우선)** — PASS. 배치 처리된 3장
+   전부 `_results`에 캐시됨 확인, 비활성 이미지로 전환(`_on_list_image_selected`) 후
+   `_last_result` 복원·`_zone_list`에 항목 표시·캔버스 blob 데이터 복원까지 실측 확인.
+2. **이미지 목록 상시 삭제(×) 아이콘 원복** — PASS. `InferenceImageList._tree.columnCount()
+   == 1` 확인, 상시 "×" `QLabel` 0개 확인, 우클릭 경로와 동일한 `_remove_selected()`
+   호출로 실제 삭제 동작(원본 파일은 보존) 확인.
+3. **추론 진행바 %+ETA** — PASS. 폭 110px 유지, 진행 중 `_on_inference_result()` 직접
+   호출로 포맷에 퍼센트(`%`) 포함·툴팁에 ETA 텍스트 존재 확인, 완료 후 "완료 N/N"
+   최종 포맷으로 정상 전환 확인.
+4. **존 비율 패널 최대 blob 픽셀수** — PASS. `_zone_list` 행 위젯에 "최대 N px" 라벨
+   존재, 행 높이 48(디자인 확정값) 확인.
+5. **존 이름 사용자 지정** — PASS. 캔버스 우클릭 메뉴 핸들러(`_prompt_name_change`)를
+   `QInputDialog.getText` 패치로 직접 호출해 이름 "상부" 반영 확인, `zones_from_circles`가
+   커스텀 이름을 쓰고 "바깥쪽"은 자동 이름을 유지함을 확인, 배치 처리로 다른 이미지에
+   전파된 뒤에도 사이드카를 통해 이름이 유지됨을 확인.
+6. **Alt+휠 지름 조절, 일반 휠은 항상 줌** — PASS. 안내 캡션
+   "휠: 화면 줌 · Alt+휠: 선택한 원 지름 조절" 정확한 문구로 캔버스 헤더에 상시 노출 확인.
+   합성 `QWheelEvent`로 일반 휠(모디파이어 없음)은 반지름 불변(→ 줌으로 넘어감), Alt+휠은
+   반지름 변경됨을 확인(조건이 뒤집혀 있던 기존 버그 수정 확인).
+7. **원 목록 패널(`_circle_list`) 우클릭 삭제** — PASS. `_on_circle_list_context_menu()`를
+   `QMenu.exec` 패치로 직접 호출해 "삭제" 선택 시 캔버스에서도 원이 실제로 제거됨을 확인.
+8. **결과 분석 — 전체 결과 보기 + Wide 탭 정렬** — **FAIL(P0 크래시 발견, QA.md BUG-036
+   등록)**. 버튼 라벨 변경("현재 이미지 결과 보기"/"전체 결과 보기" 신설)은 정상 확인.
+   `_NumericTableWidgetItem.__lt__` 숫자 비교(9.00 < 10.00, 문자열 사전순이었다면 반대)와
+   Wide 탭만 `setSortingEnabled(True)`/Long 탭은 비활성 유지도 코드 레벨 + 올바른 shape의
+   데이터로 별도 격리 구성한 `ZoneBatchResultDialog` 인스턴스로 정상 동작 확인. **그러나
+   실제 골든패스(2장 이상 추론 후 활성 이미지가 아닌 이미지를 포함해 "전체 결과 보기"
+   클릭)를 그대로 재현하면 `_on_view_all_results()`가 `TypeError`를 던지며 다이얼로그
+   생성 자체가 실패** — 상세 원인/재현/수정 방향은 QA.md BUG-036 참고. 요약: 사이드카가
+   저장하는 circles 포맷(`(id, cx, cy, r, name)`, `ZoneCanvas.get_state()`/`_flush_state()`
+   가 항상 이 포맷으로 저장)과 `_compute_zone_rows()`가 기대하는 입력 포맷(`get_circles()`와
+   동일한 `(cx, cy, r, name)`, id 없음)이 어긋나 비활성 이미지 전부의 원 기하가 깨지고
+   zone 이름 자리에 float가 들어가 `zone_name_sort_key()`에서 크래시한다. **활성 이미지
+   1장만 처리된 세션에서는 재현되지 않고(그런 경우는 `_compute_zone_rows`가 `circles =
+   self._canvas.get_circles()` 분기를 타 올바른 shape), 2장 이상이 되는 즉시 100%
+   결정적으로 재현**된다 — 이번 라운드의 핵심 사용 시나리오(여러 이미지 일괄 처리 후
+   전체 보기)와 정확히 일치해 단순 엣지케이스가 아니다.
+
+### 판정
+**블로커(FAIL)** — 1~7번 항목은 스펙과 정확히 일치하며 실 GUI 골든패스로 전부 확인했으나,
+8번 "전체 결과 보기"가 바로 그 기능의 핵심 사용 시나리오(2장 이상 처리 후 전체 보기)에서
+100% 결정적으로 크래시한다(QA.md **BUG-036, P0**). 이 라운드는 "완료"로 간주할 수 없음 —
+BUG-036 수정 후 8번 항목만 재검증(또는 리더 판단에 따라 재검증 범위 확대) 필요. 나머지
+7개 항목은 재검증 불필요(이미 실 GUI 골든패스로 통과 확인됨, 8번 수정이 1~7번 코드를
+건드리지 않는 한).
