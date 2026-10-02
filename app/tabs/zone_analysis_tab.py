@@ -49,6 +49,7 @@ from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import (
     Circle, zones_from_circles, zone_stats, compute_blob_labels,
     apply_manual_strokes, zone_blob_stats, ZoneBlobStat, scale_circles,
+    max_blob_pixels_by_zone,
 )
 from app.core import zone_state_store as zstate
 from app.core.i18n import t
@@ -1104,7 +1105,7 @@ class ZoneAnalysisTab(QWidget):
         stats = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
         return [(self._image_path.name, s) for s in stats]
 
-    def _make_zone_row_widget(self, zone_name: str, pct: float) -> QWidget:
+    def _make_zone_row_widget(self, zone_name: str, pct: float, max_px: int) -> QWidget:
         color = "#fbbf24" if pct >= 10.0 else "#34d399"   # 임계값은 시각 구분용 — 기존 판정 로직과 무관
         w = QWidget()
         v = QVBoxLayout(w)
@@ -1118,6 +1119,11 @@ class ZoneAnalysisTab(QWidget):
         top.addStretch()
         top.addWidget(lbl_pct)
         v.addLayout(top)
+        # 색상바 + "최대 blob" 텍스트를 같은 행에 배치(디자인 확인 2026-10-03#4) —
+        # 완전히 새 줄을 추가하면 우측 패널(폭 160~220px)의 세로 공간을 더 갉아먹는다.
+        bar_row = QHBoxLayout()
+        bar_row.setContentsMargins(0, 0, 0, 0)
+        bar_row.setSpacing(6)
         bar_bg = QWidget()
         bar_bg.setFixedHeight(6)
         bar_bg.setStyleSheet("background:#1a1d23;border-radius:3px;")
@@ -1129,7 +1135,11 @@ class ZoneAnalysisTab(QWidget):
         if pct < 100:
             spacer = QWidget()
             bar_layout.addWidget(spacer, stretch=max(1, round(100 - min(pct, 100))))
-        v.addWidget(bar_bg)
+        bar_row.addWidget(bar_bg, stretch=1)
+        lbl_max = QLabel(f"최대 {max_px:,}px")
+        lbl_max.setStyleSheet("color:#9ca3af;font-size:9.5px;")
+        bar_row.addWidget(lbl_max, alignment=Qt.AlignmentFlag.AlignVCenter)
+        v.addLayout(bar_row)
         return w
 
     def _recompute_zones(self) -> None:
@@ -1146,11 +1156,15 @@ class ZoneAnalysisTab(QWidget):
             self._zone_list.blockSignals(False)
             self._canvas.set_highlighted_zone(None)
             return
+        blob_rows = self._compute_zone_blob_rows()   # 기존 함수 재사용(R3 단일 이미지 Excel용)
+        max_blobs = max_blob_pixels_by_zone(blob_rows) if blob_rows else {}
+        image_name = self._image_path.name if self._image_path else ""
         for zone_name, pct in pct_rows:
             item = QListWidgetItem()
-            item.setSizeHint(QSize(0, 40))
+            item.setSizeHint(QSize(0, 48))
+            max_px = max_blobs.get((image_name, zone_name), 0)
             self._zone_list.addItem(item)
-            self._zone_list.setItemWidget(item, self._make_zone_row_widget(zone_name, pct))
+            self._zone_list.setItemWidget(item, self._make_zone_row_widget(zone_name, pct, max_px))
         if highlighted is not None and 0 <= highlighted < self._zone_list.count():
             self._zone_list.setCurrentRow(highlighted)
         else:
