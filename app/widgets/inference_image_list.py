@@ -145,10 +145,8 @@ class InferenceImageList(QWidget):
         layout.addLayout(sort_row)
 
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(2)
+        self._tree.setColumnCount(1)
         self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self._tree.header().resizeSection(1, 20)
         self._tree.setHeaderHidden(True)
         self._tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         self._tree.setRootIsDecorated(True)
@@ -420,15 +418,6 @@ class InferenceImageList(QWidget):
         item.setData(0, _PATH_ROLE, path)   # ← Path 를 아이템에 직접 저장
         return item
 
-    def _attach_delete_icon(self, item: QTreeWidgetItem, path: Path) -> None:
-        """상시 보이는 삭제 아이콘(컬럼1) — item이 트리에 추가된 *뒤*에 호출해야
-        한다(setItemWidget은 아이템이 이미 트리에 붙어 있어야 동작)."""
-        del_label = QLabel("×")
-        del_label.setStyleSheet("color:#6b7280;padding:0 3px;")
-        del_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        del_label.mousePressEvent = lambda _event, p=path: self._remove_paths({p})
-        self._tree.setItemWidget(item, 1, del_label)
-
     def _make_folder_item(self, folder_name: str, count: int) -> QTreeWidgetItem:
         item = QTreeWidgetItem()
         item.setText(0, f"  {folder_name}  ({count})")
@@ -476,7 +465,6 @@ class InferenceImageList(QWidget):
             else:
                 get_folder_item(parts[:-1]).addChild(leaf)
             self._path_to_item[p] = leaf
-            self._attach_delete_icon(leaf, p)
 
     def _build_flat_group_tree(self, paths: list[Path]) -> None:
         """공통 루트가 없는 개별 파일 선택 — 직속 부모 폴더명 1단계 그룹핑."""
@@ -489,7 +477,6 @@ class InferenceImageList(QWidget):
                 item = self._make_leaf_item(p, p.name)
                 self._tree.addTopLevelItem(item)
                 self._path_to_item[p] = item
-                self._attach_delete_icon(item, p)
             return
 
         for folder_name in sorted(groups.keys()):
@@ -501,7 +488,6 @@ class InferenceImageList(QWidget):
                 child = self._make_leaf_item(p, p.name)
                 folder_item.addChild(child)
                 self._path_to_item[p] = child
-                self._attach_delete_icon(child, p)
 
     def _apply_display(self) -> None:
         cur_idx = self.current_display_index()
@@ -542,7 +528,6 @@ class InferenceImageList(QWidget):
                 item = self._make_leaf_item(p, p.name)
                 self._tree.addTopLevelItem(item)
                 self._path_to_item[p] = item
-                self._attach_delete_icon(item, p)
 
         self._number_items()
 
