@@ -15,6 +15,7 @@ Long 탭), 클립보드 복사 버튼, Long 탭 이미지명 셀 그룹화(`setS
 """
 from pathlib import Path
 
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel,
     QHBoxLayout, QHeaderView, QFileDialog, QMessageBox, QTabWidget, QWidget,
@@ -43,7 +44,7 @@ class ZoneBatchResultDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("일괄 처리 결과")
-        self.resize(640, 520)
+        self.resize(1000, 700)
         self._rows = rows
         self._blob_rows = blob_rows
         self._zone_buttons: dict[str, QPushButton] = {}
@@ -52,13 +53,12 @@ class ZoneBatchResultDialog(QDialog):
 
     def _build_ui(self, rows: list[tuple[str, str, float]]) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"총 {len(rows)}개 행 (이미지 × 존)"))
 
         layout.addLayout(self._build_filter_bar(rows))
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_long_tab(rows, self._blob_rows), "목록별 (Long)")
-        tabs.addTab(self._build_wide_tab(rows), "이미지별 (Wide)")
+        tabs.addTab(self._build_long_tab(rows, self._blob_rows), "Long (이미지 × 존)")
+        tabs.addTab(self._build_wide_tab(rows), "Wide (피벗)")
         layout.addWidget(tabs, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -80,6 +80,9 @@ class ZoneBatchResultDialog(QDialog):
 
     def _build_filter_bar(self, rows: list[tuple[str, str, float]]) -> QHBoxLayout:
         bar = QHBoxLayout()
+        lbl_filter = QLabel("필터")
+        lbl_filter.setStyleSheet("color:#9ca3af;font-weight:bold;")
+        bar.addWidget(lbl_filter)
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("이미지명 검색...")
         self._search_edit.setClearButtonEnabled(True)
@@ -92,6 +95,12 @@ class ZoneBatchResultDialog(QDialog):
             btn = QPushButton(zone)
             btn.setCheckable(True)
             btn.setChecked(True)
+            btn.setStyleSheet("""
+                QPushButton { background:#2b313a; border:1px dashed #4b5563; border-radius:12px;
+                              padding:2px 10px; color:#9ca3af; }
+                QPushButton:checked { background:#1e3a5f; border:1px solid #60a5fa;
+                                      color:#93c5fd; }
+            """)
             btn.toggled.connect(self._apply_filter)
             bar.addWidget(btn)
             self._zone_buttons[zone] = btn
@@ -152,15 +161,35 @@ class ZoneBatchResultDialog(QDialog):
             table.setItem(r, 2, QTableWidgetItem(f"{pct:.2f}"))
             table.setItem(r, 3, QTableWidgetItem(str(max_blobs.get((img_name, zone_name), 0))))
 
+        group_colors = ["#111418", "#15181d"]
+        group_idx = 0
         start = 0
         for r in range(1, len(sorted_rows) + 1):
-            if r == len(sorted_rows) or sorted_rows[r][0] != sorted_rows[start][0]:
+            at_boundary = r == len(sorted_rows) or sorted_rows[r][0] != sorted_rows[start][0]
+            if at_boundary:
+                color = group_colors[group_idx % 2]
+                for rr in range(start, r):
+                    for cc in range(4):
+                        item = table.item(rr, cc)
+                        if item is not None:
+                            item.setBackground(QColor(color))
                 if r - start > 1:
                     table.setSpan(start, 0, r - start, 1)
+                group_idx += 1
                 start = r
 
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(table, stretch=1)
+        caption = QLabel(
+            "\"최대 blob 픽셀수\"는 해당 (이미지, 존) 안에서 가장 큰 연결 영역 1개의 "
+            "픽셀 수입니다 — 존재하지 않으면 0."
+        )
+        caption.setStyleSheet("color:#6b7280;font-size:10.5px;")
+        v.addWidget(caption)
         self._long_table = table
-        return table
+        return container
 
     # ── Wide 탭 ──────────────────────────────────────────────────────────────
 

@@ -10,7 +10,7 @@ import time
 import numpy as np
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider,
-    QComboBox, QLineEdit, QMessageBox,
+    QComboBox, QLineEdit, QMessageBox, QGroupBox,
 )
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt
@@ -19,6 +19,7 @@ from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import scale_circles
 from app.core import zone_recipe_store as recipe_store
 from app.widgets.zone_canvas import ZoneCanvas
+from app.widgets.icons import icon as svg_icon
 from app.core.logger import get_logger
 
 log = get_logger(__name__)
@@ -86,33 +87,54 @@ class ZoneRecipeDialog(QDialog):
         detect_row.addWidget(self._btn_detect)
         self._btn_align = QPushButton("정렬(중심 맞추기)")
         detect_row.addWidget(self._btn_align)
-        self._btn_undo = QPushButton("Undo")
+        detect_row.addStretch()
+        self._btn_undo = QPushButton(svg_icon("undo"), "")
+        self._btn_undo.setToolTip("실행 취소 (Ctrl+Z)")
+        self._btn_undo.setFixedSize(30, 26)
         detect_row.addWidget(self._btn_undo)
         root.addLayout(detect_row)
 
-        recipe_row = QHBoxLayout()
-        recipe_row.addWidget(QLabel("레시피:"))
+        recipe_box = QGroupBox("레시피")
+        recipe_box_layout = QVBoxLayout(recipe_box)
+        row1 = QHBoxLayout()
         self._recipe_combo = QComboBox()
         self._recipe_combo.setMinimumWidth(160)
-        recipe_row.addWidget(self._recipe_combo, stretch=1)
+        row1.addWidget(self._recipe_combo, stretch=1)
         self._btn_load_recipe = QPushButton("불러오기")
-        recipe_row.addWidget(self._btn_load_recipe)
+        row1.addWidget(self._btn_load_recipe)
+        recipe_box_layout.addLayout(row1)
+        row2 = QHBoxLayout()
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText("레시피 이름")
-        recipe_row.addWidget(self._name_edit, stretch=1)
+        row2.addWidget(self._name_edit, stretch=1)
         self._btn_save_recipe = QPushButton("저장")
-        recipe_row.addWidget(self._btn_save_recipe)
-        root.addLayout(recipe_row)
+        row2.addWidget(self._btn_save_recipe)
+        recipe_box_layout.addLayout(row2)
+        caption = QLabel("팝업을 열면 가장 최근 사용한 레시피가 자동으로 표시됩니다.")
+        caption.setStyleSheet("color:#6b7280;font-size:10.5px;")
+        recipe_box_layout.addWidget(caption)
+        root.addWidget(recipe_box)
 
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
         self._btn_cancel = QPushButton("취소")
         bottom_row.addWidget(self._btn_cancel)
         self._btn_apply = QPushButton("메인 탭에 적용")
-        self._btn_apply.setStyleSheet("font-weight:bold;")
+        self._btn_apply.setStyleSheet(
+            "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
+            "padding:7px 18px;color:#93c5fd;font-weight:bold;"
+        )
         self._btn_apply.setEnabled(False)
         bottom_row.addWidget(self._btn_apply)
         root.addLayout(bottom_row)
+
+        footer_caption = QLabel(
+            "\"메인 탭에 적용\"은 원이 1개 이상 있을 때만 활성화됩니다 — 영역 없이 "
+            "진행하는 경로를 이 팝업에서 차단합니다. \"취소\"는 항상 가능합니다."
+        )
+        footer_caption.setWordWrap(True)
+        footer_caption.setStyleSheet("color:#6b7280;font-size:10px;")
+        root.addWidget(footer_caption)
 
         self._sensitivity_slider.valueChanged.connect(
             lambda v: self._lbl_sensitivity.setText(f"{v}%")
