@@ -31,6 +31,18 @@ from app.core.zone_metrics import (
 log = get_logger(__name__)
 
 
+class _NumericTableWidgetItem(QTableWidgetItem):
+    """2026-10-03#8 — Wide 탭 정렬 시 숫자 열이 문자열 사전순("10.00" < "9.00")이
+    아니라 크기순으로 정렬되도록 `__lt__`를 직접 비교한다(Qt의 흔한 함정, 표시
+    텍스트는 그대로 유지하면서 비교만 재정의하는 게 가장 단순한 해법)."""
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        try:
+            return float(self.text()) < float(other.text())
+        except ValueError:
+            return super().__lt__(other)
+
+
 class ZoneBatchResultDialog(QDialog):
     """일괄 처리 결과 — (이미지, 존, 타겟 비율%, 최대 blob 픽셀수) long format +
     wide format(이미지×존 피벗) 탭. 검색/존 필터는 화면 표시용이고 내보내기는
@@ -136,7 +148,10 @@ class ZoneBatchResultDialog(QDialog):
                 visible += 1
         self._lbl_filter_count.setText(f"{visible} / {len(self._long_rows_sorted)}")
 
-        for r, img in enumerate(self._wide_images):
+        # 2026-10-03#8: Wide 탭에 정렬을 켜면 행 물리 순서가 바뀌므로 self._wide_images의
+        # 생성 시점 순서로 행 인덱스를 가정하면 안 된다 — 매번 실제 셀 텍스트를 읽는다.
+        for r in range(self._wide_table.rowCount()):
+            img = self._wide_table.item(r, 0).text()
             self._wide_table.setRowHidden(r, bool(text) and text not in img.lower())
         for c, zone_name in enumerate(self._wide_zone_cols, start=1):
             self._wide_table.setColumnHidden(c, zone_name not in active_zones)
@@ -204,7 +219,8 @@ class ZoneBatchResultDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         note = QLabel(
             "참고: 이미지마다 원(존) 개수가 다르면 같은 열이라도 다른 위치를 가리킬 "
-            "수 있습니다. 정확한 원본 데이터는 '목록별' 탭을 참고하세요."
+            "수 있습니다. 정확한 원본 데이터는 '목록별' 탭을 참고하세요.\n"
+            "열 헤더를 클릭하면 그 열 기준으로 정렬됩니다."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color:#9ca3af; font-size:11px;")
@@ -221,7 +237,10 @@ class ZoneBatchResultDialog(QDialog):
             table.setItem(r, 0, QTableWidgetItem(img))
             for c, zone_name in enumerate(zone_cols, start=1):
                 pct = values.get((img, zone_name))
-                table.setItem(r, c, QTableWidgetItem(f"{pct:.2f}" if pct is not None else ""))
+                table.setItem(r, c, _NumericTableWidgetItem(f"{pct:.2f}" if pct is not None else ""))
+        # Wide 탭만 정렬 지원(Long 탭은 이미지별 그룹화 목적과 상충해 비채택,
+        # 디자인 확인 2026-10-03#8) — 데이터를 다 채운 뒤에 켜야 삽입 순서가 안 꼬인다.
+        table.setSortingEnabled(True)
         layout.addWidget(table, stretch=1)
         self._wide_table = table
         return container

@@ -155,6 +155,32 @@ def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
     return QPixmap.fromImage(qimg.copy())
 
 
+def _compute_zone_rows(
+    path: Path, result: InferenceResult, target_cid: int,
+    circles: list[tuple], previous: dict | None,
+) -> tuple[list[tuple[str, str, float]], list[tuple[str, ZoneBlobStat]]] | None:
+    """(rows, blob_rows) — side effect 없음(저장은 호출부 책임).
+
+    `_on_batch_image_inferred()`의 계산 핵심을 순수 함수로 추출(2026-10-03#8) —
+    배치 처리/"전체 결과 보기"(`_on_view_all_results`) 둘 다 재사용한다."""
+    if not circles:
+        return None
+    h, w = result.raw_class_map.shape
+    ai_mask = result.class_map == target_cid
+    if previous is not None and previous["removed_blob_ids"]:
+        labels, _, _ = compute_blob_labels(ai_mask)
+        ai_mask = ai_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
+    final_mask = apply_manual_strokes(ai_mask, previous["manual_strokes"]) if previous else ai_mask
+    zones = zones_from_circles(
+        [Circle(idx, cx, cy, r, (rest[0] if rest else None))
+         for idx, (cx, cy, r, *rest) in enumerate(circles)], (h, w)
+    )
+    percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
+    rows = [(path.name, zone.name, pct) for zone, pct in zip(zones, percentages)]
+    blob_rows = [(path.name, s) for s in zone_blob_stats(zones, ai_mask, final_mask, result.confidence_map)]
+    return rows, blob_rows
+
+
 class ZoneAnalysisTab(QWidget):
     """이미지 파일 + 체크포인트 파일을 직접 열어 추론하는 독립 도구."""
 
@@ -499,13 +525,20 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_selected_blob.setWordWrap(True)
         self._lbl_selected_blob.setStyleSheet("color:#fbbf24; font-size:11px;")
         side_layout.addWidget(self._lbl_selected_blob)
-        self._btn_export_single = QPushButton("결과 분석 보기")
+        self._btn_export_single = QPushButton("현재 이미지 결과 보기")
         self._btn_export_single.setStyleSheet(
             "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
             "padding:7px 8px;color:#93c5fd;font-weight:bold;"
         )
         self._btn_export_single.setToolTip("현재 화면에 표시된 존 목록(이미지 1장)을 표로 보고 Excel/클립보드로 내보냅니다")
         side_layout.addWidget(self._btn_export_single)
+        self._btn_view_all = QPushButton("전체 결과 보기")
+        self._btn_view_all.setToolTip(
+            "이번 세션에서 추론을 실행한 모든 이미지를 모아서 봅니다.\n"
+            "(세션 메모리 기반 — 과거 세션 결과나 미추론 이미지는 제외됩니다.)"
+        )
+        self._btn_view_all.setEnabled(False)
+        side_layout.addWidget(self._btn_view_all)
         side.setMinimumWidth(160)
         side.setMaximumWidth(220)
         splitter.addWidget(side)
@@ -569,6 +602,7 @@ class ZoneAnalysisTab(QWidget):
         self._circle_list.currentRowChanged.connect(self._on_list_row_selected)
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
         self._btn_export_single.clicked.connect(self._on_export_single)
+        self._btn_view_all.clicked.connect(self._on_view_all_results)
         # 스텝 인디케이터 — 신규 시그널 없이 기존 호출부에 편승(주석 위 Undo 관례와 동일 패턴).
         self._canvas.circles_changed.connect(self._refresh_step_indicator)
         self._canvas.blob_deleted.connect(lambda _id: self._mark_step6_touched())
@@ -832,6 +866,7 @@ class ZoneAnalysisTab(QWidget):
 
         paths = self._img_list.paths() or [self._image_path]
         self._results.clear()
+        self._btn_view_all.setEnabled(bool(self._results))
         self._btn_run.setEnabled(False)
         self._btn_run.setText("추론 중…")
         self._infer_progress.setRange(0, len(paths))
@@ -855,6 +890,7 @@ class ZoneAnalysisTab(QWidget):
     def _on_inference_result(self, path: Path, result: InferenceResult,
                              done: int, total: int) -> None:
         self._results[path] = result
+        self._btn_view_all.setEnabled(bool(self._results))
         self._infer_progress.setValue(done)
         self._infer_progress.setFormat(f"{done}/{total} (%p%)")   # 폭(110px) 유지 — 바 안엔 퍼센트까지만
         if done > 0:
@@ -1229,6 +1265,45 @@ class ZoneAnalysisTab(QWidget):
         self._refresh_step_indicator()
         ZoneBatchResultDialog(excel_rows, blob_rows, self).exec()
 
+    def _on_view_all_results(self) -> None:
+        """2026-10-03#8 — 이번 세션에서 추론을 실행한 모든 이미지를 모아서 본다.
+        AI 마스크(InferenceResult)는 세션 메모리에만 있어 과거 세션/미추론 이미지는
+        집계할 수 없다(재추론 자동 트리거 없음, YAGNI) — 그런 이미지는 제외하고
+        안내 팝업 1회만 띄운다."""
+        if self._target_class_id is None:
+            QMessageBox.information(self, "준비 안 됨", "먼저 추론을 실행하고 타겟 클래스를 확정하세요.")
+            return
+        self._flush_state()   # 현재 이미지의 편집 상태를 사이드카에 먼저 반영(비교 대상 최신화)
+        all_rows: list[tuple[str, str, float]] = []
+        all_blob_rows: list[tuple[str, ZoneBlobStat]] = []
+        skipped: list[str] = []
+        for path in self._img_list.paths():
+            result = self._results.get(path)
+            if result is None:
+                skipped.append(path.name)
+                continue
+            previous = zstate.load_state(path)
+            circles = (self._canvas.get_circles() if path == self._image_path
+                       else (previous or {}).get("circles", []))
+            computed = _compute_zone_rows(path, result, self._target_class_id, circles, previous)
+            if computed is None:
+                continue
+            rows, blob_rows = computed
+            all_rows.extend(rows)
+            all_blob_rows.extend(blob_rows)
+        if not all_rows:
+            QMessageBox.information(self, "결과 없음", "이번 세션에서 추론을 실행한 이미지가 없습니다.")
+            return
+        if skipped:
+            QMessageBox.information(
+                self, "일부 제외됨",
+                f"이번 세션에서 추론하지 않은 {len(skipped)}장은 제외했습니다.\n"
+                "(과거 세션 결과는 재추론 전까지 복원할 수 없습니다 — 먼저 추론을 실행하세요.)",
+            )
+        self._result_viewed = True
+        self._refresh_step_indicator()
+        ZoneBatchResultDialog(all_rows, all_blob_rows, self).exec()
+
     # ── 슬롯 — 원(circle) 자동 검출 (라운드 2) ──────────────────────────────
 
     def _on_auto_detect(self) -> None:
@@ -1462,6 +1537,7 @@ class ZoneAnalysisTab(QWidget):
         try:
             self._results[path] = result   # BUG(2026-10-03#1): _on_inference_result()와 동일하게
                                             # 캐시해야 이미지 전환 시 우측 존 비율 패널이 복원된다.
+            self._btn_view_all.setEnabled(bool(self._results))
             h, w = result.raw_class_map.shape
             if self._batch_mode == "per_image":
                 with Image.open(str(path)) as im:
@@ -1473,37 +1549,27 @@ class ZoneAnalysisTab(QWidget):
                 self._on_batch_progress(path, "done", "원 없음", done, total)
                 return
 
-            ai_mask = result.class_map == self._batch_target_cid
             previous = zstate.load_state(path)
-            if previous is not None:
-                if previous["removed_blob_ids"]:
-                    labels, _, _ = compute_blob_labels(ai_mask)
-                    ai_mask = ai_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
-                final_mask = apply_manual_strokes(ai_mask, previous["manual_strokes"])
-            else:
-                final_mask = ai_mask
+            computed = _compute_zone_rows(path, result, self._batch_target_cid, circles, previous)
+            if computed is None:
+                self._on_batch_progress(path, "done", "원 없음", done, total)
+                return
+            rows, blob_rows = computed
+
+            # circles는 모드에 따라 (cx,cy,r)(장별 자동검출) 또는 (cx,cy,r,name)
+            # (기준 이미지 레시피 적용, *rest로 이름 보존)일 수 있다 — *rest로 흡수.
             state = previous or {
                 "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
             }
-            # circles는 모드에 따라 (cx,cy,r)(장별 자동검출) 또는 (cx,cy,r,name)
-            # (기준 이미지 레시피 적용, *rest로 이름 보존)일 수 있다 — *rest로 흡수.
-            indexed = [
+            state["circles"] = [
                 (idx, cx, cy, r, rest[0] if rest else None)
                 for idx, (cx, cy, r, *rest) in enumerate(circles)
             ]
-            state["circles"] = indexed
             zstate.save_state(path, state)
 
-            zones = zones_from_circles(
-                [Circle(idx, cx, cy, r, name) for idx, cx, cy, r, name in indexed], (h, w)
-            )
-            percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
-            self._batch_rows.extend(
-                (path.name, zone.name, pct) for zone, pct in zip(zones, percentages)
-            )
-            blob_stats = zone_blob_stats(zones, ai_mask, final_mask, result.confidence_map)
-            self._batch_blob_rows.extend((path.name, s) for s in blob_stats)
-            badge = f"{percentages[-1]:.1f}%" if percentages else None
+            self._batch_rows.extend(rows)
+            self._batch_blob_rows.extend(blob_rows)
+            badge = f"{rows[-1][2]:.1f}%" if rows else None
             self._on_batch_progress(path, "done", badge, done, total)
         except Exception as exc:
             log.exception(f"존 분석 일괄 처리(후처리) 실패 — image={path}")

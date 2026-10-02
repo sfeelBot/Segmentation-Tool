@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication
 from app.core import zone_state_store as zstate
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.tabs import zone_analysis_tab as module
-from app.tabs.zone_analysis_tab import ZoneAnalysisTab, _ZoneBatchWorker
+from app.tabs.zone_analysis_tab import ZoneAnalysisTab, _ZoneBatchWorker, _compute_zone_rows
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -252,3 +252,21 @@ def test_save_failure_warning_is_once_per_session():
     finally:
         module.zstate.save_state, module.QMessageBox.warning = old_save, old_warning
         tab.close()
+
+
+# ── _compute_zone_rows (2026-10-03#8) — 순수 함수 단위 테스트 ──────────────────
+
+def test_compute_zone_rows_returns_none_without_circles():
+    assert _compute_zone_rows(Path("x.png"), _result(), 1, [], None) is None
+
+
+def test_compute_zone_rows_matches_batch_path_output():
+    """배치 경로(`_on_batch_image_inferred`)와 "전체 결과 보기" 둘 다 이 순수
+    함수를 공유한다 — class_map이 전부 타겟(1)이면 모든 존이 100%여야 한다."""
+    path = Path("img.png")
+    result = _result(size=10)
+    rows, blob_rows = _compute_zone_rows(path, result, 1, [(5.0, 5.0, 2.0)], None)
+    assert [name for _, name, _pct in rows] == ["중심부", "바깥쪽"]
+    assert all(pct == 100.0 for _, _name, pct in rows)
+    assert all(img == "img.png" for img, _name, _pct in rows)
+    assert len(blob_rows) == 1   # 전체가 하나로 이어진 블랍 1개
