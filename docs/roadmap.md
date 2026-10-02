@@ -1267,6 +1267,21 @@ append/개별삭제 + 영역(zone) 레시피 저장·불러오기(팝업+최근�
   B 항목 참고. 상세 로그: `docs/agents/verification-log.md` 2026-10-01 항목.
 - 결정 대기 없음(레시피 저장위치/영문 탭명은 기획이 저위험 기본값으로 직접 결정,
   mm 환산은 사용자가 이미 방향을 정함 — `decisions-needed.md`에 참고 기록만 추가).
+- [x] Artifact 비주얼 조정(2026-10-02, 기능 변경 없는 순수 UI 조정) — 확정 Artifact
+  목업과 실제 코드 불일치 9개 항목 조정: 7단계 진행 안내 스텝 인디케이터 신설
+  (`zone_step_indicator.py`), 체크포인트 바/편집 툴바 위치/좌측 패널 헤더/우측 존
+  비율 바 카드형 Artifact 스타일 적용, 레시피·결과 분석 팝업 스타일 정비,
+  배치 진행 팝업 ETA 표시, `InferenceImageList` 상시 삭제(×) 아이콘 추가(추론 탭
+  공유). 스펙: `docs/specs/zone-tab-ui-reconciliation-2026-10-02.md`. 구현 커밋
+  `59e136b`~`69327ae`. **독립 검증 완료(2026-10-02, verifier)** — 스펙 9개 항목
+  전부 코드 대조로 일치 확인, 스텝 인디케이터 `_compute_step_state()`가 원 편집
+  (`circles_changed`)을 ③ 영역 설정에만 반영하고 ⑥ 결과 보정(`blob_deleted`/
+  `erase_changed`)과 분리돼 있음을 코드·신규 테스트 4건으로 확인, `pytest tests/`
+  157건 통과(offscreen), `python main.py` offscreen 기동 정상(시작 로그의 cp949
+  `Logging error`는 `app/core/device_info.py` 기존 이슈로 이번 커밋 범위 밖임을
+  diff로 확인), `InferenceImageList` 2컬럼 삭제 아이콘 리팩터링이 추론 탭에서도
+  회귀 없음(공유 위젯, `inference_tab.py`는 내부 구현에 의존하지 않음) 확인.
+  발견된 문제 없음. 상세 로그: `docs/agents/verification-log.md` 2026-10-02 항목.
 
 ## GitHub #35 "메모리 이슈" (2026-09-22 접수)
 

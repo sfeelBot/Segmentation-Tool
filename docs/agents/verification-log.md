@@ -5952,3 +5952,60 @@ patch=128px로 50 epoch 과적합 학습(CPU, 실 `TrainerWorker.run()` 동기 �
 제외하면 스펙과 구현이 정확히 일치하며, 기능 크래시·데이터 유실·회귀는 발견되지 않았다.
 `git status --porcelain`(저장소 루트) 확인 결과 이번 세션에서 코드 변경 없음 — `QA.md`/
 `docs/roadmap.md`/`docs/agents/verification-log.md` 문서 갱신만 발생.
+
+## 2026-10-02 — Zone 탭 Artifact 비주얼 조정 검증 (스펙: zone-tab-ui-reconciliation-2026-10-02.md)
+
+**검증 수준**: 리더 지시대로 "비주얼 조정 — 주요 기능 추가 아님" 분류에 맞춰 정적 검토(스펙 9개
+항목 ↔ 실제 코드 1:1 대조) + 실행 확인(`pytest`, `python main.py` offscreen 기동) 수준으로 진행.
+전체 골든패스 재실행은 하지 않음(리더 지시대로).
+
+### 확인 내용
+1. **스펙 9개 항목 전부 코드 대조 완료** — 신규 `app/widgets/zone_step_indicator.py`, 수정된
+   `app/tabs/zone_analysis_tab.py`(체크포인트 카드/배지, 편집 툴바+정렬 버튼의 캔버스 전용
+   헤더 이동, 좌측 이미지 헤더 "② 이미지 (N)" + 아이콘 버튼 2개, 레시피 버튼 아이콘+accent,
+   우측 존 비율 바 `_make_zone_row_widget`, 배치 ETA `QElapsedTimer`), `app/widgets/
+   zone_recipe_dialog.py`(레시피 `QGroupBox` 2행, Undo 아이콘 우측 정렬, 적용 버튼 accent,
+   하단 캡션), `app/widgets/zone_batch_result_dialog.py`(1000×700 리사이즈, 탭 라벨 변경,
+   중복 라벨 삭제, 필터 라벨+pill 토글 버튼, 그룹 배경색 교대, 테이블 하단 캡션),
+   `app/widgets/inference_image_list.py`(2컬럼 + 상시 삭제 아이콘) 모두 스펙 코드 블록과
+   문자 그대로 일치. 불일치 0건.
+2. **스텝 인디케이터 상태 판정 로직** — `_compute_step_state()`가 스펙 의도대로 구현됨을
+   확인: `circles_changed`는 `_refresh_step_indicator`에만 연결되고(③ 영역 설정 판정에만
+   영향), `blob_deleted`/`erase_changed`는 별도 `_mark_step6_touched()`로 연결돼 ⑥ 결과
+   보정 전용 플래그(`_step6_touched`)를 갱신 — 원 편집과 결과 보정이 혼동되지 않음을 코드로
+   직접 확인. 신규 `tests/test_zone_step_indicator.py` 4건도 의미 있는 검증으로 판단:
+   `test_steps_complete_in_order_as_ckpt_image_circles_are_set`가 원(circle) 설정 후
+   `current=4`(④ 추론 실행으로 전진)이 됨을 확인하되 `completed`에 6/7이 섞이지 않음을
+   검증하고, `test_running_worker_forces_step5`가 워커 실행 중 강제 5번 강조 분기를,
+   `test_indicator_widget_set_state_does_not_raise`가 위젯 레벨 extreme 상태(전부 완료)에서도
+   예외가 없음을 커버.
+3. **`QT_QPA_PLATFORM=offscreen pytest tests/`** 재실행 — **157건 전부 통과**(기존 153 +
+   신규 4), 구현자 보고와 일치.
+4. **`python main.py` offscreen 기동** 확인 — 창 생성/이벤트 루프까지 정상 진입(8초 타임아웃
+   SIGTERM으로 종료, 그 전까지 추가 예외 없음). 기동 로그에 `cp949` `UnicodeEncodeError`
+   기반 `Logging error`가 다수 출력되나, `git diff da25178..69327ae -- app/core/device_info.py
+   main.py`로 확인한 결과 이번 라운드 5개 커밋 범위에 두 파일 모두 포함되지 않음 — 기존
+   이슈(콘솔 인코딩, 이모지/em dash 로그 메시지 vs cp949) 확정, 이번 변경과 무관.
+5. **공유 위젯 회귀 확인(`InferenceImageList`)** — `_remove_selected()`가 선택된 아이템들의
+   경로 집합을 모아 공용 `_remove_paths()`로 위임하는 구조로 리팩터링됨을 확인. 상시 삭제
+   아이콘(`_attach_delete_icon`)은 `_build_nested_tree`/`_build_flat_group_tree`(단일 그룹·
+   다중 그룹 분기 모두) 전 leaf 아이템 생성 경로에서 호출돼 빠짐없이 적용됨. 아이콘 클릭은
+   `_remove_paths({p})`를 직접 호출해 선택 상태와 무관하게 단일 삭제가 되므로 다중 선택
+   중에도 의도대로 1건만 지워짐. `inference_tab.py`는 `InferenceImageList`를 생성만 하고
+   내부 삭제 구현에 의존하지 않아(코드상 `_remove_selected`/`_remove_paths` 직접 참조 없음)
+   추론 탭 쪽 회귀 가능성은 낮음 — 코드 기반 확인으로 충분하다고 판단.
+6. **Zone 탭 레이아웃 구조 확인** — `canvas_panel`(캔버스 전용 헤더+캔버스) splitter 추가가
+   기존 `splitter.addWidget(self._canvas)` 단일 호출을 대체했음을 확인(중복/누락 없음),
+   `_btn_align` 생성이 우측 사이드바 쪽에서 완전히 제거되고 캔버스 헤더 블록 한 곳으로만
+   합쳐짐을 확인. 위젯 생성 예외는 `tests/test_zone_step_indicator.py`가 실제
+   `ZoneAnalysisTab()` 인스턴스화를 포함하므로(offscreen) 간접적으로도 커버됨 — 157건 통과로
+   실제 예외 없음 재확인.
+
+### 발견한 이슈
+없음 — 스펙·코드 100% 일치, 테스트/기동 모두 정상.
+
+### 판정
+**통과(PASS)** — 9개 스펙 항목 전부 코드와 일치, 스텝 인디케이터 상태 판정(스펙이 특히 주의를
+준 ③/⑥ 구분)도 정확히 구현·테스트됨, `pytest` 157건 통과, `python main.py` offscreen 기동
+정상(cp949 로그 이슈는 범위 밖 기존 문제로 확정), 공유 위젯(`InferenceImageList`) 리팩터링도
+추론 탭 회귀 위험 낮음. push 여부는 리더가 사용자와 상의.
