@@ -32,9 +32,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
     QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem,
-    QProgressDialog, QProgressBar, QToolBar,
+    QProgressDialog, QProgressBar, QToolBar, QFrame,
 )
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize, QElapsedTimer
 from PyQt6.QtGui import QImage, QPixmap, QAction, QActionGroup
 import torch.nn as nn
 
@@ -189,6 +189,7 @@ class ZoneAnalysisTab(QWidget):
         self._save_timer.setInterval(500)
         self._save_timer.timeout.connect(self._flush_state)
         self._save_failed_once = False   # 세션당 1회만 저장 실패 팝업(판단 6)
+        self._ckpt_auto_selected = False
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -207,18 +208,29 @@ class ZoneAnalysisTab(QWidget):
         # 두 줄로 분리(BUG-021 수정) — 한 줄에 다 욱여넣으면 최소폭이 1588px까지
         # 벌어져 MainWindow 코딩된 기본 크기(1280x800)를 조용히 무시하고 더 넓게
         # 뜸(main_window.py의 resize() 호출과 실제 동작이 어긋나는 버그였음).
-        toolbar_row1 = QHBoxLayout()
+        ckpt_card = QFrame()
+        ckpt_card.setStyleSheet(
+            "background:#1f2329;border:1px solid #374151;border-radius:8px;"
+        )
+        toolbar_row1 = QHBoxLayout(ckpt_card)
+        toolbar_row1.setContentsMargins(14, 7, 14, 7)
         toolbar_row2 = QHBoxLayout()
 
         self._btn_ckpt = QPushButton("체크포인트 열기 (.pt)…")
         toolbar_row1.addWidget(self._btn_ckpt)
+        self._lbl_ckpt_dot = QLabel("●")
+        self._lbl_ckpt_dot.setStyleSheet("color:#34d399;font-size:15px;background:transparent;border:none;")
+        toolbar_row1.addWidget(self._lbl_ckpt_dot)
         self._lbl_ckpt = QLabel("선택된 체크포인트 없음")
         self._lbl_ckpt.setStyleSheet("color:#9ca3af;")
         toolbar_row1.addWidget(self._lbl_ckpt)
-
-        self._btn_run = QPushButton("▶  추론 실행")
-        self._btn_run.setStyleSheet("font-weight:bold; padding:4px 12px;")
-        toolbar_row1.addWidget(self._btn_run)
+        self._lbl_ckpt_badge = QLabel("자동 선택됨")
+        self._lbl_ckpt_badge.setStyleSheet(
+            "color:#34d399;font-size:11px;background:#0d2318;"
+            "border:1px solid #10b981;border-radius:4px;padding:1px 6px;"
+        )
+        self._lbl_ckpt_badge.hide()
+        toolbar_row1.addWidget(self._lbl_ckpt_badge)
 
         self._infer_progress = QProgressBar()
         self._infer_progress.setFixedWidth(110)
@@ -236,6 +248,15 @@ class ZoneAnalysisTab(QWidget):
         self._target_combo.hide()
         toolbar_row1.addWidget(self._target_combo)
         toolbar_row1.addStretch()
+        lbl_mode = QLabel("추론 방식: <b style='color:#cbd5e1'>sliding window</b> (고정)")
+        lbl_mode.setStyleSheet("color:#9ca3af;font-size:11px;background:transparent;border:none;")
+        toolbar_row1.addWidget(lbl_mode)
+        self._btn_run = QPushButton("▶  추론 실행")
+        self._btn_run.setStyleSheet(
+            "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
+            "padding:6px 18px;color:#93c5fd;font-weight:bold;font-size:13.5px;"
+        )
+        toolbar_row1.addWidget(self._btn_run)
 
         toolbar_row2.addWidget(QLabel("AI 신뢰도:"))
         self._conf_slider = QSlider(Qt.Orientation.Horizontal)
@@ -313,10 +334,9 @@ class ZoneAnalysisTab(QWidget):
         self._act_undo = self._edit_toolbar.addAction(svg_icon("undo"), "")
         self._act_undo.setEnabled(False)
         self._act_undo.setToolTip("원/그리기/지우기/블랍 삭제를 시간순으로 되돌립니다 (Ctrl+Z)")
-        toolbar_row2.addWidget(self._edit_toolbar)
 
         toolbar_row2.addStretch()
-        root.addLayout(toolbar_row1)
+        root.addWidget(ckpt_card)
         root.addLayout(toolbar_row2)
 
         self._lbl_model_info = QLabel("")
@@ -363,12 +383,20 @@ class ZoneAnalysisTab(QWidget):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 4, 0)
-        open_row = QHBoxLayout()
-        self._btn_image = QPushButton("이미지 열기…")
-        self._btn_folder = QPushButton("폴더 열기…")
-        open_row.addWidget(self._btn_image)
-        open_row.addWidget(self._btn_folder)
-        left_layout.addLayout(open_row)
+        header_row = QHBoxLayout()
+        self._lbl_images_header = QLabel("② 이미지")
+        self._lbl_images_header.setStyleSheet("color:#60a5fa;font-weight:bold;background:transparent;border:none;")
+        header_row.addWidget(self._lbl_images_header)
+        header_row.addStretch()
+        self._btn_image = QPushButton("+")
+        self._btn_image.setToolTip("이미지 추가")
+        self._btn_image.setFixedSize(26, 24)
+        self._btn_folder = QPushButton("⊞")
+        self._btn_folder.setToolTip("폴더 추가")
+        self._btn_folder.setFixedSize(26, 24)
+        header_row.addWidget(self._btn_image)
+        header_row.addWidget(self._btn_folder)
+        left_layout.addLayout(header_row)
         self._lbl_folder_path = QLabel("선택된 이미지 없음")
         self._lbl_folder_path.setStyleSheet("color:#9ca3af; font-size:11px;")
         self._lbl_folder_path.setWordWrap(True)
@@ -391,7 +419,11 @@ class ZoneAnalysisTab(QWidget):
             "장별 적용: 이미지마다 원을 개별 자동 검출(민감도 슬라이더 값 사용)"
         )
         batch_layout.addWidget(self._mode_combo)
-        self._btn_recipe = QPushButton("원(Zone) 설정...")
+        self._btn_recipe = QPushButton(svg_icon("tool_polygon"), "원(Zone) 설정...")
+        self._btn_recipe.setStyleSheet(
+            "background:#2b313a;border:1px solid #60a5fa;border-radius:5px;"
+            "padding:6px 8px;color:#93c5fd;"
+        )
         self._btn_recipe.setToolTip(
             "레시피(저장된 원 집합)를 불러오거나 새로 만들어 기준 이미지에 적용합니다.\n"
             "'장별 적용' 모드에서는 이미지마다 개별 자동 검출을 쓰므로 표시되지 않습니다."
@@ -415,9 +447,30 @@ class ZoneAnalysisTab(QWidget):
         left.setMaximumWidth(260)
         splitter.addWidget(left)
 
-        # 중앙 — 캔버스 (가능한 한 크게)
+        # 중앙 — 캔버스 전용 헤더(편집 툴바 + 정렬 버튼) + 캔버스 (가능한 한 크게)
         self._canvas = ZoneCanvas()
-        splitter.addWidget(self._canvas)
+
+        canvas_panel = QWidget()
+        canvas_layout = QVBoxLayout(canvas_panel)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(0)
+        canvas_panel.setStyleSheet(
+            "background:#1f2329;border:1px solid #374151;border-radius:8px;"
+        )
+
+        toolbar_header = QWidget()
+        toolbar_header.setStyleSheet("background:#1f2329;border:none;border-bottom:1px solid #374151;")
+        toolbar_header_layout = QHBoxLayout(toolbar_header)
+        toolbar_header_layout.setContentsMargins(8, 5, 8, 5)
+        toolbar_header_layout.addWidget(self._edit_toolbar)
+        toolbar_header_layout.addStretch()
+        self._btn_align = QPushButton("정렬(중심 맞추기)")
+        self._btn_align.setToolTip("모든 원의 중심을 평균 중심으로 맞춥니다(반지름은 그대로).")
+        toolbar_header_layout.addWidget(self._btn_align)
+        canvas_layout.addWidget(toolbar_header)
+        canvas_layout.addWidget(self._canvas, stretch=1)
+
+        splitter.addWidget(canvas_panel)
 
         # 우측 — 원/존 목록 (R2/R3 로직 그대로, 컨테이너 위치만 이동)
         side = QWidget()
@@ -426,9 +479,6 @@ class ZoneAnalysisTab(QWidget):
         side_layout.addWidget(QLabel("검출된 원 (반지름 오름차순)"))
         self._circle_list = QListWidget()
         side_layout.addWidget(self._circle_list, stretch=1)
-        self._btn_align = QPushButton("정렬(중심 맞추기)")
-        self._btn_align.setToolTip("모든 원의 중심을 평균 중심으로 맞춥니다(반지름은 그대로).")
-        side_layout.addWidget(self._btn_align)
         side_layout.addWidget(QLabel("존별 타겟 클래스 비율 (%)"))
         self._zone_list = QListWidget()
         self._zone_list.setToolTip("클릭하면 캔버스에서 해당 존이 하이라이트됩니다")
@@ -438,6 +488,10 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_selected_blob.setStyleSheet("color:#fbbf24; font-size:11px;")
         side_layout.addWidget(self._lbl_selected_blob)
         self._btn_export_single = QPushButton("결과 분석 보기")
+        self._btn_export_single.setStyleSheet(
+            "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
+            "padding:7px 8px;color:#93c5fd;font-weight:bold;"
+        )
         self._btn_export_single.setToolTip("현재 화면에 표시된 존 목록(이미지 1장)을 표로 보고 Excel/클립보드로 내보냅니다")
         side_layout.addWidget(self._btn_export_single)
         side.setMinimumWidth(160)
@@ -540,6 +594,8 @@ class ZoneAnalysisTab(QWidget):
         # 목록은 이미지가 2장 이상일 때만 표시 — 단일 이미지 워크플로우는 목록
         # 없이 그대로 동작(회귀 없음, 스펙 C-1 명시).
         self._img_list.setVisible(self._img_list.count() > 1)
+        self._lbl_images_header.setText(f"② 이미지 ({self._img_list.count()})")
+        self._refresh_step_indicator()
 
     def _on_images_removed(self, removed: list[Path]) -> None:
         """목록에서 이미지가 제거됐을 때 — 추론 결과 캐시를 정리하고, 현재
@@ -559,6 +615,8 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_blob_data(None, None)
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
+        self._lbl_images_header.setText(f"② 이미지 ({self._img_list.count()})")
+        self._refresh_step_indicator()
 
     def _on_list_image_selected(self, path: Path) -> None:
         """목록에서 이미지를 클릭(단일 선택 또는 load_folder/load_files 직후 자동
@@ -639,6 +697,7 @@ class ZoneAnalysisTab(QWidget):
         )
         if not path:
             return
+        self._ckpt_auto_selected = False
         self._apply_checkpoint(Path(path))
 
     def set_default_checkpoint(self, path: Path | None) -> None:
@@ -646,6 +705,7 @@ class ZoneAnalysisTab(QWidget):
         선택해둔 상태(self._ckpt_path is not None)면 아무 것도 하지 않는다."""
         if path is None or self._ckpt_path is not None:
             return
+        self._ckpt_auto_selected = True
         self._apply_checkpoint(path)
 
     def _apply_checkpoint(self, path: Path) -> None:
@@ -681,6 +741,9 @@ class ZoneAnalysisTab(QWidget):
                 "color:#fbbf24; font-size:11px; padding:2px 4px;"
             )
             self._code_box.show()
+
+        self._lbl_ckpt_badge.setVisible(self._ckpt_auto_selected)
+        self._refresh_step_indicator()
 
     # ── 슬롯 — 커스텀 모델 코드 (Validate → Load, save_user_code 호출 안 함) ──
 
@@ -988,6 +1051,34 @@ class ZoneAnalysisTab(QWidget):
         stats = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
         return [(self._image_path.name, s) for s in stats]
 
+    def _make_zone_row_widget(self, zone_name: str, pct: float) -> QWidget:
+        color = "#fbbf24" if pct >= 10.0 else "#34d399"   # 임계값은 시각 구분용 — 기존 판정 로직과 무관
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(6, 4, 6, 4)
+        v.setSpacing(3)
+        top = QHBoxLayout()
+        lbl_name = QLabel(zone_name)
+        lbl_pct = QLabel(f"{pct:.1f}%")
+        lbl_pct.setStyleSheet(f"color:{color};font-weight:bold;")
+        top.addWidget(lbl_name)
+        top.addStretch()
+        top.addWidget(lbl_pct)
+        v.addLayout(top)
+        bar_bg = QWidget()
+        bar_bg.setFixedHeight(6)
+        bar_bg.setStyleSheet("background:#1a1d23;border-radius:3px;")
+        bar_layout = QHBoxLayout(bar_bg)
+        bar_layout.setContentsMargins(0, 0, 0, 0)
+        fill = QWidget()
+        fill.setStyleSheet(f"background:{color};border-radius:3px;")
+        bar_layout.addWidget(fill, stretch=max(1, round(min(pct, 100))))
+        if pct < 100:
+            spacer = QWidget()
+            bar_layout.addWidget(spacer, stretch=max(1, round(100 - min(pct, 100))))
+        v.addWidget(bar_bg)
+        return w
+
     def _recompute_zones(self) -> None:
         # circles_changed 는 원 드래그 이동/반지름조절 중에도 mouseMoveEvent마다 emit된다
         # (BUG-018과 동일한 근본 원인) -- blockSignals 없이 clear()+재구성하면 QListWidget의
@@ -1003,7 +1094,10 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_highlighted_zone(None)
             return
         for zone_name, pct in pct_rows:
-            self._zone_list.addItem(f"{zone_name}  —  {pct:.2f}%")
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, 40))
+            self._zone_list.addItem(item)
+            self._zone_list.setItemWidget(item, self._make_zone_row_widget(zone_name, pct))
         if highlighted is not None and 0 <= highlighted < self._zone_list.count():
             self._zone_list.setCurrentRow(highlighted)
         else:
@@ -1233,8 +1327,11 @@ class ZoneAnalysisTab(QWidget):
         self._batch_progress = QProgressDialog(
             "존 분석 일괄 처리 중…", "취소", 0, len(targets), self
         )
+        self._batch_progress.setWindowTitle("일괄 처리 진행 중")
         self._batch_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._batch_progress.setMinimumDuration(0)
+        self._batch_elapsed = QElapsedTimer()
+        self._batch_elapsed.start()
         self._batch_worker = _ZoneBatchWorker(
             self._model, targets, self._ckpt_path, cached,
             target_classes, min_confidence, min_pixel_size,
@@ -1256,7 +1353,13 @@ class ZoneAnalysisTab(QWidget):
         if dlg is not None:
             dlg.setMaximum(total)
             dlg.setValue(done)
-            dlg.setLabelText(f"{done} / {total}  {path.name}")
+            eta_txt = ""
+            if done > 0:
+                avg_ms = self._batch_elapsed.elapsed() / done
+                remain_s = max(0, avg_ms * (total - done) / 1000.0)
+                m, s = divmod(int(remain_s), 60)
+                eta_txt = f"\n예상 남은 시간: 약 {m}분 {s}초" if m else f"\n예상 남은 시간: 약 {s}초"
+            dlg.setLabelText(f"{done} / {total}  {path.name}{eta_txt}")
         if status == "processing":
             self._img_list.set_item_status(path, "processing")
         elif status == "error":
