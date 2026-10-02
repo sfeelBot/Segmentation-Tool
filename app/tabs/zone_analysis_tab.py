@@ -1415,6 +1415,8 @@ class ZoneAnalysisTab(QWidget):
         (워커 스레드 안에서 실 CUDA 추론 직후 cv2 후처리를 이어서 하면 하드크래시,
         QA.md BUG-030). `_ZoneBatchWorker.run()`이 하던 후처리를 그대로 옮긴 것."""
         try:
+            self._results[path] = result   # BUG(2026-10-03#1): _on_inference_result()와 동일하게
+                                            # 캐시해야 이미지 전환 시 우측 존 비율 패널이 복원된다.
             h, w = result.raw_class_map.shape
             if self._batch_mode == "per_image":
                 with Image.open(str(path)) as im:
