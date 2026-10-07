@@ -42,6 +42,7 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        stdin=subprocess.DEVNULL,   # 일부 에이전트 셸 환경의 무효 stdin 핸들 복제 실패(OSError WinError 6) 방지
     )
 
 

@@ -53,7 +53,16 @@ Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
   퍼센티지/블랍 집계·오버레이·undo 스택 결과 전부 동일, 회귀 테스트 166건 통과).
   합성 5472×3648 입력(캐시 적중, cProfile) 계측: 재선택 소요시간 약 1795.7ms →
   약 749.8ms(약 58% 감소, `_recompute_zones` 중복 실행 제거 + `zones_from_circles`
-  호출 24회→6회(disk_mask 기준) 감소).
+  호출 24회→6회(disk_mask 기준) 감소). 실 GPU+실 체크포인트 독립 검증(2026-10-07):
+  5472px 선택 지연 921ms→462ms(약 50% 감소), 2048px도 171ms→100ms, 결과 정합성
+  골든 비교(대형 37건+소형 27건) diff 0건. 남은 ~0.46초는 체감 가능한 수준이라
+  BUG-040은 P3 Open으로 유지(추가 개선 방향은 QA.md 참고).
+
+### 기타
+- `scripts/generate_version_info.py`의 `_git()`이 `subprocess.run()`에 `stdin`을
+  지정하지 않아 일부 에이전트 셸 환경에서 `tests/test_build_release.py`가 간헐적으로
+  `OSError: WinError 6`로 실패하던 문제 수정(`stdin=subprocess.DEVNULL` 추가). 앱
+  동작과 무관, 테스트 환경 안정성만 개선.
 
 ---
 

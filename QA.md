@@ -1,5 +1,16 @@
 # QA — 버그 및 VOC 추적
 
+## 2026-10-07 — `generate_version_info._git()` subprocess stdin 플레이키 (Closed)
+
+- BUG-040 재검증 중 verifier가 `pytest tests/` 전체 실행 시 `tests/test_build_release.py`가
+  간헐적으로(5회 중 3~4회) `OSError: [WinError 6/50]`로 실패하는 것을 발견 — 이번
+  성능 수정과는 무관한 기존 문제임을 수정 전 커밋으로도 재현해 확인했다.
+- 근본 원인: `scripts/generate_version_info.py:_git()`의 `subprocess.run()`이 `stdin`을
+  지정하지 않아, 일부 에이전트 셸 환경에서 부모 프로세스의 무효한 stdin 핸들을
+  `DuplicateHandle`로 복제하려다 실패.
+- 해결: `stdin=subprocess.DEVNULL` 추가(리더가 직접 수정, 1줄). 5회 반복 실행
+  확인 — 전부 `40 passed`.
+
 ## 2026-10-07 — BUG-037/038/039 독립 재검증 (PASS, 신규 P3 2건)
 
 - 대상: `a736334`(fix)+`0a4b4d9`(docs). 실 GPU(RTX 5060)와 실 체크포인트(`manual_demo/학습1_best.pt`)로, 수정 전 코드(`git archive a736334^`)와 수정 후 코드에 같은 시나리오를 돌려 비교했다.
