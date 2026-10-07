@@ -6151,3 +6151,26 @@ BUG-041(P3, 취소 시 pending 리셋 범위 과다 — BUG-038 수정의 부작
 
 ### 상태
 **통과**. BUG-037/038/039 Closed 확인. roadmap R-PERF-2 `[x]`. 남은 리스크: P3 2건, 캐시 상한 20일 때 5472px 기준 약 1.7GB 상주(저사양 PC), `_results` dict는 여전히 상한 없음(범위 밖), 취소 직후 재시작 시 옛 CUDA 워커와 새 워커가 잠시 동시에 GPU를 사용(크래시는 관측되지 않음).
+
+
+## 2026-10-07 — BUG-040 추가 개선(`0f1e995`) 독립 재검증
+
+작업 위치: `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab`). 실 GPU RTX 5060, 실 체크포인트 `projects/manual_demo/checkpoints/학습1_best.pt`, 5472×3648 BMP 15장과 2048×1365 PNG 5장(scratch 사본)을 사용했다. 비교 기준선은 `git archive 0f1e995^` 코드다. 실제 `ZoneAnalysisTab`을 네이티브 창으로 띄우고 목록 ↓키, 결과 보기 버튼, 배치 버튼을 실제로 입력했다. 스크립트는 scratchpad의 `s_b040.py`(신규), `cmp_b040.py`(신규), `s_prof2.py`, `harness.py`(재사용)다.
+
+### 결과
+1. 체감 지연(↓키 연속 선택, 캐시 적중 3회 평균, 수정 전 → 후)
+   - 등록 당시와 같은 조건(원 2개): 5472px **921ms → 462ms**(-50%), 2048px 171ms → 100ms. 캐시 미스(첫 방문)는 5472px 1673ms → 1188ms, 2048px 352ms → 276ms.
+   - 원 3개, 블랍 삭제, 수동 스트로크가 있는 조건: 5472px 1194ms → 608ms, 2048px 217ms → 120ms.
+   - 1장당 `_recompute_zones` 실제 실행 2 → 1회, `zones_from_circles` 4 → 1회.
+   - 구현 측 합성 측정치(750ms)보다 실측이 더 좋았다.
+2. 골든 PASS: 선택할 때마다 존 목록 표시 텍스트, 퍼센티지/블랍 행 repr, 하이라이트와 currentRow, 최종 사이드카, 단일 Excel 행과 xlsx 실제 셀, 배치 결과 행, 전체 결과 행을 비교했다. 대형 37개, 소형 27개 스냅샷 모두 diff 0건이었다.
+3. `_suppress_recompute` 부작용 없음: 사이드카 없는 이미지는 빈 목록이었고, 원을 설정하면 목록이 채워졌다. 추론 결과 없는 이미지는 빈 목록(수정 전과 동일)이었다. 합성 2클래스에서 타겟 콤보를 전환하면 목록이 갱신됐고, 재선택도 정상이었다. 신뢰도 슬라이더 40%→0%, 배치 후 재선택, 전체 결과 보기, 존 하이라이트 유지 모두 수정 전과 동일했다. 코드로 보면 플래그는 `_on_list_image_selected()` 안의 `_setup_target_classes()` 호출 구간에서만 try/finally로 켜지고, 바로 뒤의 `set_state()`/`clear_circles()`가 항상 `circles_committed`를 emit해서 재계산이 반드시 1회 실행된다.
+4. 단일 Excel 내보내기 PASS: '현재 이미지 결과 보기' 버튼 → 실제 `ZoneBatchResultDialog._on_export()`로 xlsx 파일을 썼다(시트 zones/zones_wide/zone_blobs). 내용은 수정 전과 동일했다.
+5. `test_build_release.py` 플레이키: 5회 중 4회가 3~5건 실패했다(`OSError: [WinError 6]`, `subprocess._make_inheritable` → `DuplicateHandle`). **수정 전 커밋(`0f1e995^`) 임시 워크트리에서도 5회 중 3회 실패**해, 이번 변경과 무관한 기존 환경 이슈다. 원인: `scripts/generate_version_info.py:_git()`의 `subprocess.run`이 stdin을 지정하지 않아 부모의 (유효하지 않은) stdin 핸들을 복제하려다 실패한다. 이 에이전트 셸 환경에서만 보이며, `stdin=subprocess.DEVNULL`을 추가하면 해소될 것으로 보인다(제안, 미적용). 같은 시점 `pytest tests/ -q` 전체는 2회 모두 166 passed였다(플레이키라서).
+6. `pytest tests/ -k zone` 56 passed, 전체 166 passed(2회). `python main.py` 기동 정상(cp949 로깅 경고는 기존 것).
+
+### 남은 지연 내역 (cProfile, 캐시 적중 5472px 0.45초)
+`set_state()` → `_recompute_zones` 약 0.22초(`zone_blob_stats`/`zone_stats`/`disk_mask`), `np.unique(raw_class_map)` 약 0.09초(해시 기반), PIL 디코드와 썸네일 약 0.1초.
+
+### 상태
+**통과(부분 개선)**. 회귀 없음, 지연 절반 감소를 실측으로 확인했다. 다만 대형 이미지는 0.46초가 남아 BUG-040은 Open(P3)으로 두고 QA.md 수치를 갱신했다.
