@@ -5356,3 +5356,79 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 - **상태: 검증대기** — 재현 스크립트로 수정 전/후 비교는 직접 확인했으나, 독립
   검증 에이전트가 같은 재현 자산 또는 별도 시나리오로 다시 확인하기 전까지는
   완료로 보지 않는다.
+
+## 2026-10-07 — BUG-040 존 분석 탭 이미지 선택(캐시 적중) 잔여 지연 추가 개선
+
+- 상태: 구현 완료, **검증대기**(leader 요청 — `_target_cache` 적중 상태에서도 느린
+  잔여 지연을 verifier가 cProfile로 특정해둔 3가지 원인에 전부 조치).
+- 코드 변경 전, `app/tabs/zone_analysis_tab.py`에서 호출 흐름을 먼저 추적:
+  `_on_list_image_selected()` → `_setup_target_classes()`(결과 있으면) →
+  `_on_target_changed()`(캐시 적중 분기 포함) → `_recompute_zones()` 1회, 그 뒤
+  `zstate.load_state(path)`가 사이드카를 찾으면 `self._canvas.set_state(cached)`를
+  호출 — `ZoneCanvas.set_state()`가 `circles_changed`/`circles_committed`를 emit하고
+  `circles_committed`는 `_recompute_zones`에 connect돼 있어 **같은 선택 흐름에서
+  `_recompute_zones()`가 2회** 실행됨을 확인(1차는 복원 전 원 상태 기준이라 결과가
+  바로 버려짐). `clear_circles()`(사이드카 없는 경우)도 같은 시그널을 emit.
+- 조치 A(중복 호출 제거): `__init__`에 `self._suppress_recompute = False` 추가,
+  `_recompute_zones()` 맨 앞에 가드 추가. `_on_list_image_selected()`에서
+  `_setup_target_classes()` 호출을 `try/finally`로 감싸 호출 중엔 플래그를 True로
+  — 뒤따르는 `set_state()`/`clear_circles()`의 `circles_committed` emit이 트리거하는
+  마지막 1회만 실제로 계산된다(최종 표시 결과는 기존과 동일, 중간 1회만 스킵).
+- 조치 B(zones_from_circles 공유): 신규 헬퍼 `_current_zones()`(원/추론결과/
+  타겟클래스 전제조건 체크 + `zones_from_circles()` 1회 호출)를 추가하고
+  `_compute_zone_percentages()`/`_compute_zone_blob_rows()`에 선택적 `zones` 인자를
+  추가(기본값 `None`이면 내부에서 `_current_zones()` 호출 — 기존 단독 호출부는
+  그대로 동작, 하위호환). `_recompute_zones()`와 `_on_export_single()`(둘 다
+  두 함수를 연달아 호출하던 지점) 양쪽에서 `zones = self._current_zones()`를 먼저
+  계산해 두 함수에 전달 — 1회 재계산당 `zones_from_circles()` 호출이 2회(함수 2개)
+  × 중복 트리거 2회 = 4회였던 것이 1회로 줄어든다.
+- 조치 C: `_setup_target_classes()`의
+  `set(int(i) for i in result.raw_class_map.ravel().tolist() if i != 0)`를
+  `[int(i) for i in np.unique(result.raw_class_map) if i != 0]`로 교체(`np.unique`가
+  이미 정렬된 결과를 반환해 `sorted()`도 불필요해짐).
+- `_ZoneBatchPostWorker`/`_compute_zone_rows`(배치 처리 경로)는 이번 수정과
+  무관하게 그대로 — grep으로 확인한 결과 `_current_zones()`/시그니처가 바뀐
+  `_compute_zone_percentages()`/`_compute_zone_blob_rows()`를 호출하지 않고 별도
+  모듈 함수 `_compute_zone_rows()`가 `zones_from_circles()`를 직접(이미 1회만)
+  호출한다 — 영향 없음을 확인.
+- **계측**: 실 체크포인트가 이 워크트리에 없어(`projects/nok/checkpoints` 비어
+  있음), 실 GPU 환경에서 verifier가 쓴 것과 동일한 캐시 적중 분기를 합성
+  `InferenceResult`(5472×3648, `raw_class_map`/`confidence_map`/`class_map`
+  직접 구성)와 사이드카(원 6개)로 재현하는 프로파일링 스크립트를
+  (`C:\Users\Feel\AppData\Local\Temp\claude\...\scratchpad\profile_bug040.py`,
+  세션 스크래치패드)로 작성 — 1차 선택(cold, 캐시 채움) 후 2차 선택(캐시 적중)만
+  `cProfile`/`time.perf_counter`로 측정. `git stash`로 수정 전/후 코드를 전환해
+  같은 하드웨어·같은 합성 입력으로 비교:
+  - 수정 전: 2차 선택 평균 **1795.7ms**(`_recompute_zones` 2회 모두 실제 계산,
+    `zones_from_circles`→`disk_mask` 24회 호출, `_setup_target_classes` 0.939s).
+  - 수정 후: 2차 선택 평균 **749.8ms**(`_recompute_zones`는 ncalls=2이지만 실질
+    계산은 1회만, `disk_mask` 6회, `_setup_target_classes` 0.107s) — **약 58% 감소**.
+  - 남은 약 750ms 중 다수는 `disk_mask`(0.18s)/`zone_stats`+`zone_blob_stats`의
+    numpy sum 연산(0.15s대) 자체 비용과 원본 디코드+썸네일(~0.1s, 범위 밖 필수
+    비용)이다 — `zones_from_circles`/`zone_stats`/`zone_blob_stats` 내부 알고리즘
+    최적화는 이번 범위(공유 호출 제거) 밖이라 손대지 않음(YAGNI, 리더 지시 범위
+    준수). 실 GPU/실 체크포인트 기준 수치는 verifier 재검증 시 다시 확인 필요.
+- **회귀**: `pytest tests/ -k zone` 56 passed. 전체 `pytest tests/` 166 passed
+  (단 `test_build_release.py`는 이번 세션 Bash 환경에서 간헐적
+  `OSError: [WinError 6/50]`(subprocess handle 복제 실패)로 플레이키했음 — 재현
+  경로가 `git` 서브프로세스 호출(릴리스 메타데이터 검증)이라 이번 코드 변경과
+  무관한 환경 이슈로 판단, `--deselect tests/test_build_release.py` 기준으로는
+  126 passed 전부 통과 확인). 존 퍼센티지/블랍 집계 결과는 기존 테스트(사이드카
+  golden 비교 포함)가 그대로 통과하므로 수정 전/후 값 동일성을 간접 확인.
+- `tests/test_zone_redesign_2026_10_01.py`의
+  `test_export_single_reuses_batch_result_dialog`가 `_compute_zone_percentages`/
+  `_compute_zone_blob_rows`를 인자 없는 lambda로 monkeypatch하고 있어 새 선택적
+  `zones` 인자 추가로 깨짐 — `lambda zones=None: ...`로 수정(동작 검증 내용은
+  동일, 시그니처만 호환).
+- `release.ini`: `zone-v1.5.2`가 아직 태그되지 않은 미배포 버전이라 버전 유지,
+  `docs/CHANGELOG.md`의 기존 `[zone-v1.5.2]` 항목에 "### 성능" 절로 이번 수정
+  내역 append. `scripts/generate_version_info.py` 재실행해 메타데이터 검증(정상,
+  파일 변경 없음).
+- `QA.md` BUG-040 행을 "구현 조치(검증 대기)" 내용과 새 실측치로 갱신 — **Open
+  유지**(750ms도 여전히 체감 가능한 수준이라 "완전히 해소"로 보지 않음, 추가로
+  `zone_metrics.py` 내부 알고리즘을 건드려야 하는 영역은 이번 범위 밖).
+- 커밋: `perf: BUG-040 존 분석 탭 이미지 선택(캐시 적중) 잔여 지연 추가 개선`
+  (해시 `0f1e995`). push 안 함(리더가 사용자 확인 후 처리).
+- **상태: 검증대기** — 이번 세션엔 실 체크포인트가 없어 합성 입력으로 cProfile
+  비교를 했다. 실 GPU/실 체크포인트 기준 수치 재확인과 UI 조작(목록 클릭/↓키)
+  체감 확인은 검증 에이전트가 별도로 수행해야 완료로 간주할 수 있다.
