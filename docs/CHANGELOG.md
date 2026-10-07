@@ -5,6 +5,20 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.5.2] 2026-10-07
+
+Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
+
+### 수정
+- R-PERF-1: 상/하부 분석 탭에서 캐시된 이미지를 재선택할 때마다 `engine.refilter()`
+  (디스크 재디코딩 포함)와 `compute_blob_labels()`(cv2 connected-components)를
+  매번 처음부터 재계산하던 딜레이를 수정. `(target_cid, min_confidence,
+  min_pixel_size)` 키 기반 캐시(`_target_cache`)를 추가해 같은 조합으로 같은
+  이미지를 재방문하면 재계산을 스킵하도록 변경(기능 변경 없음, 캐시 미스 시 동작
+  동일). 전체 추론 재실행/이미지 삭제 시 캐시 무효화.
+
+---
+
 ## [zone-v1.5.1] 2026-10-02
 
 Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e

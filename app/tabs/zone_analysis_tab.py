@@ -193,6 +193,10 @@ class ZoneAnalysisTab(QWidget):
         self._original_pixmap: QPixmap | None = None
         self._overlay_visible = True
         self._results: dict[Path, InferenceResult] = {}
+        # R-PERF-1: (target_cid, min_confidence, min_pixel_size) 키로 refilter+
+        # compute_blob_labels 결과를 캐싱 — 같은 이미지를 같은 조합으로 재방문할 때
+        # 디스크 재디코딩+cv2 connected-components 중복 계산을 스킵한다.
+        self._target_cache: dict[Path, tuple[tuple, InferenceResult, np.ndarray, list]] = {}
         self._worker: _ZoneInferenceWorker | None = None
         self._batch_worker: _ZoneBatchWorker | None = None
         self._batch_progress: QProgressDialog | None = None
@@ -652,6 +656,7 @@ class ZoneAnalysisTab(QWidget):
         로드된 이미지가 삭제 대상이면 캔버스를 비운다(메모리/상태 누수 방지)."""
         for p in removed:
             self._results.pop(p, None)
+            self._target_cache.pop(p, None)
         if self._image_path in removed:
             self._image_path = None
             self._last_result = None
@@ -866,6 +871,7 @@ class ZoneAnalysisTab(QWidget):
 
         paths = self._img_list.paths() or [self._image_path]
         self._results.clear()
+        self._target_cache.clear()   # R-PERF-1: 새 추론 세션 — 이전 캐시는 전부 무의미
         self._btn_view_all.setEnabled(bool(self._results))
         self._btn_run.setEnabled(False)
         self._btn_run.setText("추론 중…")
@@ -978,27 +984,37 @@ class ZoneAnalysisTab(QWidget):
             ClassDef(cid, name, DEFAULT_PALETTE[cid % len(DEFAULT_PALETTE)]),
         ]
         self._target_classes = classes   # 일괄 처리(3b)가 모든 이미지에 고정으로 재사용
+        min_confidence = self._conf_slider.value() / 100.0
+        min_pixel_size = self._min_px_spin.value()
+        cache_key = (cid, min_confidence, min_pixel_size)
+        cached = self._target_cache.get(self._image_path)
         try:
-            result = engine.refilter(
-                self._last_result.raw_class_map,
-                self._last_result.confidence_map,
-                self._image_path,
-                min_confidence=self._conf_slider.value() / 100.0,
-                min_pixel_size=self._min_px_spin.value(),
-                opacity=0.5,
-                classes=classes,
-            )
+            if cached is not None and cached[0] == cache_key:
+                # R-PERF-1: 캐시 적중 — refilter(디스크 재디코딩 포함)/
+                # compute_blob_labels(cv2 connected-components) 재계산을 스킵한다.
+                _, result, labels, stats = cached
+            else:
+                result = engine.refilter(
+                    self._last_result.raw_class_map,
+                    self._last_result.confidence_map,
+                    self._image_path,
+                    min_confidence=min_confidence,
+                    min_pixel_size=min_pixel_size,
+                    opacity=0.5,
+                    classes=classes,
+                )
+                # 타겟 클래스가 (재)선택될 때마다 블랍 라벨맵을 새로 계산한다 — 라벨
+                # id는 마스크에 종속적이라 클래스가 바뀌면 이전 삭제 이력은 무의미
+                # (`ZoneCanvas.set_blob_data`가 삭제 이력도 함께 초기화).
+                # class_map(threshold 적용 후)을 기준으로 삼아야 한다 — raw_class_map을
+                # 쓰면 AI신뢰도/픽셀크기 threshold가 존 퍼센티지·블랍 계산에 전혀
+                # 반영되지 않는 버그가 된다(오버레이 화면만 바뀌고 숫자는 그대로).
+                target_mask = result.class_map == cid
+                labels, stats, _ = compute_blob_labels(target_mask)
+                self._target_cache[self._image_path] = (cache_key, result, labels, stats)
             self._last_result = result
             self._target_class_id = cid
             self._show_overlay_state()
-            # 타겟 클래스가 (재)선택될 때마다 블랍 라벨맵을 새로 계산한다 — 라벨
-            # id는 마스크에 종속적이라 클래스가 바뀌면 이전 삭제 이력은 무의미
-            # (`ZoneCanvas.set_blob_data`가 삭제 이력도 함께 초기화).
-            # class_map(threshold 적용 후)을 기준으로 삼아야 한다 — raw_class_map을
-            # 쓰면 AI신뢰도/픽셀크기 threshold가 존 퍼센티지·블랍 계산에 전혀
-            # 반영되지 않는 버그가 된다(오버레이 화면만 바뀌고 숫자는 그대로).
-            target_mask = result.class_map == cid
-            labels, stats, _ = compute_blob_labels(target_mask)
             self._canvas.set_blob_data(labels, stats)
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")

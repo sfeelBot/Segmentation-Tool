@@ -5170,4 +5170,54 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   확인(예외 없음).
 - `release.ini` 버전 미변경. push 안 함(리더 확인 후 처리). `QA.md` BUG-036을
   Open에서 Closed로 이동하고 근본원인/해결방법 기록 완료.
+
+## 2026-10-07 — R-PERF-1: 상/하부 분석 탭 이미지 선택 딜레이 캐시 (검증대기)
+
+- 작업 디렉토리: `D:\segmentation model-zone-analysis-tab`
+  (`feature/zone-analysis-tab` 전용 워크트리).
+- 스펙: `docs/specs/zone-batch-and-selection-responsiveness-2026-10-07.md` "문제 1 /
+  R-PERF-1" 절(R-PERF-2는 이번 라운드 범위 밖, 손대지 않음).
+- 원인: `_on_target_changed()`가 캐시된 이미지를 재선택할 때마다
+  `engine.refilter()`(디스크 재디코딩 포함)와 `compute_blob_labels()`(cv2
+  connected-components)를 매번 처음부터 재계산 — 같은 타겟 클래스/threshold로
+  같은 이미지를 재방문해도 동일 계산을 반복.
+- 수정(`app/tabs/zone_analysis_tab.py`, 스펙 "설계" 절 코드 스케치 그대로 적용):
+  - `__init__`에 `self._target_cache: dict[Path, tuple[tuple, InferenceResult,
+    np.ndarray, list]] = {}` 추가 — 키는 이미지 경로, 값은
+    `((target_cid, min_confidence, min_pixel_size), 리필터링된 InferenceResult,
+    blob_labels, blob_stats)`.
+  - `_on_target_changed()` — `cache_key = (cid, min_confidence, min_pixel_size)`
+    계산 후 `self._target_cache.get(self._image_path)`로 조회. 캐시 히트
+    (`cached[0] == cache_key`) 시 `engine.refilter`/`compute_blob_labels` 호출을
+    스킵하고 캐시된 `(result, labels, stats)`를 그대로 재사용, 미스 시 기존처럼
+    계산 후 `self._target_cache[self._image_path] = (cache_key, result, labels,
+    stats)`로 저장. 이후 `self._last_result = result`, `_show_overlay_state()`,
+    `set_blob_data(labels, stats)`, `_recompute_zones()` 등은 변경 없음.
+  - 캐시 무효화: `_on_run()`의 `self._results.clear()` 바로 옆에
+    `self._target_cache.clear()` 추가(새 추론 세션 시작 시 전체 캐시 폐기).
+    `_on_images_removed()`의 `self._results.pop(p, None)` 옆에
+    `self._target_cache.pop(p, None)` 추가(이미지 삭제 시 해당 캐시 제거).
+  - `self._last_result.raw_class_map`/`.confidence_map`은 캐시 로직이 건드리지
+    않음(`_on_list_image_selected()`가 `self._results.get(path)`로 이미 세팅해둔
+    raw 결과를 그대로 입력 소스로 사용) — 스펙이 명시한 제약 그대로 준수.
+- 검증: `C:\Users\Feel\AppData\Local\Python\bin\python.exe -c "import
+  app.tabs.zone_analysis_tab"` 임포트 오류 없음. 관련 zone 테스트 6개 파일
+  (`test_zone_batch_worker.py`, `test_zone_edit_toolbar.py`,
+  `test_zone_github_13_14.py`, `test_zone_redesign_2026_10_01.py`,
+  `test_zone_state_persistence.py`, `test_zone_step_indicator.py`) 전부 49개
+  통과(`pytest -q`). 캐시 로직에 대한 전용 단위 테스트는 신규 추가하지 않음 —
+  기존 49개 전체 통과로 회귀 없음을 확인했고, 캐시 히트/미스 자체는 스펙의
+  검증 시나리오(같은 이미지 재클릭, A→B→A 왕복 등)가 검증 에이전트 몫으로
+  명시돼 있어 중복 작성하지 않음(YAGNI) — 다만 비결정적(wall-clock) 체감
+  딜레이 측정은 구현 단계에서 확인하지 않았으므로 검증 에이전트가 실측해야 함.
+- `release.ini` zone 버전 1.5.1 → 1.5.2(PATCH, 1.5.1은 이미 태깅/릴리즈된 버전)로
+  올리고 `docs/CHANGELOG.md`에 `[zone-v1.5.2] 2026-10-07` 항목 추가.
+  `scripts/generate_version_info.py` 실행해 메타데이터 생성 확인("Generated
+  release metadata for 1.5.2", 오류 없음).
+- 커밋: `fix: 상/하부 분석 탭 이미지 재선택 시 refilter/blob 계산 캐싱 (R-PERF-1)`
+  (해시는 아래 참고). push 안 함(리더가 사용자 확인 후 처리).
+- **상태: 검증대기** — 기능적으로는 캐시 미스 시 동작이 수정 전과 100% 동일함을
+  코드 레벨로 확인했으나, 실제 체감 지연 개선 여부·BUG-028/F키 토글 회귀 여부는
+  검증 에이전트의 실행 확인이 필요함. R-PERF-2(배치 응답없음, 같은 파일의 다른
+  함수 영역)는 이번 라운드에서 전혀 건드리지 않았음.
 - 커밋 해시: `e4f4252`(코드+회귀 테스트), `9b87efa`(QA.md Closed 이동).
