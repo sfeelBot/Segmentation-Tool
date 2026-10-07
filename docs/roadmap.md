@@ -1382,7 +1382,7 @@ append/개별삭제 + 영역(zone) 레시피 저장·불러오기(팝업+최근�
       `_target_cache` 추가, 캐시 적중 시 refilter/compute_blob_labels 스킵. 영향:
       `__init__`/`_on_target_changed`/`_on_run`/`_on_images_removed`. 저위험(순수
       추가, 캐시 미스 시 기존 동작과 동일) — 먼저 진행.
-- [ ] **R-PERF-2 (배치 응답없음)** — 검증 부분 PASS(2026-10-07): 응답없음 해소를 실측으로 확인했다(최대 블로킹 575→124ms). BUG-030 재발 없음. 다만 취소 경로 회귀 BUG-037(P2)·BUG-038(P3)이 Open이라 미체크. — 원인: `_ZoneBatchWorker`는 이미 BUG-030
+- [x] **R-PERF-2 (배치 응답없음)** — 검증 PASS(2026-10-07): 응답없음 해소를 실측으로 확인했다(최대 블로킹 575→124ms). BUG-030 재발 없음. 취소 경로 회귀 BUG-037·BUG-038은 `a736334`로 수정됐고 독립 재검증에서 Closed를 확인했다. 남은 P3: BUG-041(취소 시 pending 리셋 범위 과다), BUG-042(진행 막대 역행). — 원인: `_ZoneBatchWorker`는 이미 BUG-030
       수정으로 CUDA 전용이나, 그 결과를 받는 메인 스레드 슬롯
       `_on_batch_image_inferred()`가 이미지 1장당 cv2 존·블랍 후처리(수백
       ms~1초+)를 동기로 수행해 그 구간만큼 메인 스레드가 블로킹됨. **방향:
