@@ -382,8 +382,10 @@ def test_export_single_reuses_batch_result_dialog(tmp_path: Path, monkeypatch) -
 
     import app.tabs.zone_analysis_tab as module
     monkeypatch.setattr(module, "ZoneBatchResultDialog", _Dlg)
-    monkeypatch.setattr(tab, "_compute_zone_percentages", lambda: [("중심부", 50.0)])
-    monkeypatch.setattr(tab, "_compute_zone_blob_rows", lambda: [])
+    # BUG-040 B: _compute_zone_percentages/_compute_zone_blob_rows가 _current_zones()로
+    # 공유 계산한 결과를 받는 선택적 zones 인자를 받도록 바뀌어 호출부가 위치 인자를 넘긴다.
+    monkeypatch.setattr(tab, "_compute_zone_percentages", lambda zones=None: [("중심부", 50.0)])
+    monkeypatch.setattr(tab, "_compute_zone_blob_rows", lambda zones=None: [])
     tab._image_path = img_path
 
     try:

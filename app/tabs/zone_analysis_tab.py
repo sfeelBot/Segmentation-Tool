@@ -49,7 +49,7 @@ from app.core.model_loader import load_from_code
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import (
-    Circle, zones_from_circles, zone_stats, compute_blob_labels,
+    Circle, Zone, zones_from_circles, zone_stats, compute_blob_labels,
     apply_manual_strokes, zone_blob_stats, ZoneBlobStat, scale_circles,
     max_blob_pixels_by_zone,
 )
@@ -301,6 +301,10 @@ class ZoneAnalysisTab(QWidget):
         self._save_timer.setInterval(500)
         self._save_timer.timeout.connect(self._flush_state)
         self._save_failed_once = False   # 세션당 1회만 저장 실패 팝업(판단 6)
+        # BUG-040: 이미지 전환 시 _setup_target_classes()(→_on_target_changed())가
+        # 1회, 뒤따르는 set_state()/clear_circles()의 circles_committed emit이 다시
+        # 1회 _recompute_zones()를 트리거해 중복 계산되던 것을 억제하는 플래그.
+        self._suppress_recompute = False
         self._ckpt_auto_selected = False
         self._step6_touched = False   # 브러시 그리기/지우기/블랍삭제를 1번이라도 했는가
         self._result_viewed = False   # 결과 분석 팝업을 1번이라도 열었는가
@@ -797,7 +801,14 @@ class ZoneAnalysisTab(QWidget):
             action.setEnabled(False)
         self._update_undo_button_state()   # set_blob_data가 undo 스택을 비웠으므로 즉시 반영
         if self._last_result is not None:
-            self._setup_target_classes(self._last_result)   # set_blob_data(labels,stats) 재호출
+            # BUG-040: 이 호출이 내부적으로 트리거하는 _recompute_zones()는 아래
+            # set_state()/clear_circles()가 복원 전 원(circle) 상태 기준으로 계산한
+            # 결과라 곧바로 버려진다 — 억제해서 최종 1회만 돌게 한다.
+            self._suppress_recompute = True
+            try:
+                self._setup_target_classes(self._last_result)   # set_blob_data(labels,stats) 재호출
+            finally:
+                self._suppress_recompute = False
         # R-ZONE-3: 사이드카 복원은 반드시 _setup_target_classes() 이후에 수행해야
         # 한다 — set_blob_data()가 manual_strokes/undo 스택을 초기화하므로, 순서가
         # 바뀌면 방금 복원한 상태를 다시 지워버리는 사고가 난다(스펙 "순서 주의").
@@ -1000,7 +1011,10 @@ class ZoneAnalysisTab(QWidget):
     # ── 타겟(녹) 클래스 즉석 구성 (판단 4) ────────────────────────────────────
 
     def _setup_target_classes(self, result: InferenceResult) -> None:
-        ids = sorted(int(i) for i in set(result.raw_class_map.ravel().tolist()) if i != 0)
+        # BUG-040 C: set()+ravel().tolist()는 numpy 배열 전체를 python list/set으로
+        # 변환해 느리다 — np.unique()는 순수 numpy 연산이라 훨씬 빠르고 이미 정렬된
+        # 결과를 반환한다(동작 동일, sorted() 불필요해짐).
+        ids = [int(i) for i in np.unique(result.raw_class_map) if i != 0]
         self._detected_ids = ids
         # 7-2: _btn_detect는 이미지 로드 시점에 이미 활성화돼 있다(추론 결과와
         # 무관) — 여기서 다시 건드리지 않는다.
@@ -1209,31 +1223,39 @@ class ZoneAnalysisTab(QWidget):
         self._step6_touched = True
         self._refresh_step_indicator()
 
-    def _compute_zone_percentages(self) -> list[tuple[str, float]]:
+    def _current_zones(self) -> list[Zone] | None:
+        """원/추론결과/타겟클래스 중 하나라도 없으면 None — 있으면
+        `zones_from_circles()`를 1회만 호출한 결과. `_compute_zone_percentages()`/
+        `_compute_zone_blob_rows()`가 이 결과를 공유해 중복 계산을 피한다(BUG-040 B)."""
+        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r, name)
+        if not circles_raw or self._last_result is None or self._target_class_id is None:
+            return None
+        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in circles_raw]
+        h, w = self._last_result.raw_class_map.shape
+        return zones_from_circles(circles, (h, w))
+
+    def _compute_zone_percentages(self, zones: list[Zone] | None = None) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
 
         `_recompute_zones()`(사이드 패널 표시)와 단일 이미지 Excel 내보내기(R3-1)가
-        공유하는 헬퍼(스펙 판단 3, 순수 추출 — 동작 변화 없음).
+        공유하는 헬퍼(스펙 판단 3, 순수 추출 — 동작 변화 없음). `zones`를 호출부가 이미
+        `_current_zones()`로 계산해 넘기면 재계산을 스킵한다(BUG-040 B).
         """
-        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r, name)
-        if not circles_raw or self._last_result is None or self._target_class_id is None:
+        if zones is None:
+            zones = self._current_zones()
+        if zones is None:
             return []
-        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in circles_raw]
-        h, w = self._last_result.raw_class_map.shape
-        zones = zones_from_circles(circles, (h, w))
         target_mask = self._current_target_mask()
         return [(zone.name, zone_stats(zone.mask, target_mask)) for zone in zones]
 
-    def _compute_zone_blob_rows(self) -> list[tuple[str, ZoneBlobStat]]:
+    def _compute_zone_blob_rows(self, zones: list[Zone] | None = None) -> list[tuple[str, ZoneBlobStat]]:
         """R3 — 단일 이미지 Excel 내보내기용 (이미지파일명, ZoneBlobStat) 목록."""
         if self._image_path is None:
             return []
-        circles_raw = self._canvas.circles_with_ids()
-        if not circles_raw or self._last_result is None or self._target_class_id is None:
+        if zones is None:
+            zones = self._current_zones()
+        if zones is None:
             return []
-        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in circles_raw]
-        h, w = self._last_result.raw_class_map.shape
-        zones = zones_from_circles(circles, (h, w))
         ai_mask, final_mask = self._ai_and_final_masks()
         if ai_mask is None:
             return []
@@ -1278,6 +1300,8 @@ class ZoneAnalysisTab(QWidget):
         return w
 
     def _recompute_zones(self) -> None:
+        if self._suppress_recompute:
+            return   # BUG-040: 이미지 전환 중 set_state() 복원 전의 중간 재계산을 스킵
         # circles_changed 는 원 드래그 이동/반지름조절 중에도 mouseMoveEvent마다 emit된다
         # (BUG-018과 동일한 근본 원인) -- blockSignals 없이 clear()+재구성하면 QListWidget의
         # currentRow가 -1로 리셋되며 그 currentRowChanged(-1)이 _on_zone_row_selected를 타고
@@ -1286,12 +1310,13 @@ class ZoneAnalysisTab(QWidget):
         highlighted = self._canvas.highlighted_zone()
         self._zone_list.blockSignals(True)
         self._zone_list.clear()
-        pct_rows = self._compute_zone_percentages()
+        zones = self._current_zones()   # BUG-040 B: zones_from_circles() 1회만 호출해 공유
+        pct_rows = self._compute_zone_percentages(zones)
         if not pct_rows:
             self._zone_list.blockSignals(False)
             self._canvas.set_highlighted_zone(None)
             return
-        blob_rows = self._compute_zone_blob_rows()   # 기존 함수 재사용(R3 단일 이미지 Excel용)
+        blob_rows = self._compute_zone_blob_rows(zones)   # 기존 함수 재사용(R3 단일 이미지 Excel용)
         max_blobs = max_blob_pixels_by_zone(blob_rows) if blob_rows else {}
         image_name = self._image_path.name if self._image_path else ""
         for zone_name, pct in pct_rows:
@@ -1352,14 +1377,15 @@ class ZoneAnalysisTab(QWidget):
         동일한 `ZoneBatchResultDialog`를 재사용(2026-10-01 재설계, 라운드 F)해
         화면에 먼저 표로 보여준 뒤, 다이얼로그 안에서 Excel/클립보드로 내보낸다
         (신규 core 함수 없음, 단일/배치 양쪽이 같은 코드 경로를 타 중복 로직 제거)."""
-        rows = self._compute_zone_percentages()
+        zones = self._current_zones()   # BUG-040 B: zones_from_circles() 1회만 호출해 공유
+        rows = self._compute_zone_percentages(zones)
         if not rows or self._image_path is None:
             QMessageBox.information(
                 self, "내보낼 결과 없음", "먼저 원을 정의하고 추론을 실행하세요."
             )
             return
         excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
-        blob_rows = self._compute_zone_blob_rows()
+        blob_rows = self._compute_zone_blob_rows(zones)
         self._result_viewed = True
         self._refresh_step_indicator()
         ZoneBatchResultDialog(excel_rows, blob_rows, self).exec()

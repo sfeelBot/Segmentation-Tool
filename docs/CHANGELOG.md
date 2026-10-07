@@ -37,6 +37,24 @@ Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
   훑으면 메모리가 수 GB까지 늘어날 수 있던 문제를 수정. `OrderedDict` 기반 LRU
   (상한 20, 적중 시 `move_to_end`)로 변경.
 
+### 성능
+- BUG-040(R-PERF-1 후속): `_target_cache` 적중 상태에서도 대형 이미지 선택이
+  여전히 느리던 잔여 지연을 수정. (1) 이미지 전환 시 `_setup_target_classes()`→
+  `_on_target_changed()`가 트리거하는 `_recompute_zones()`와, 곧바로 뒤따르는
+  `ZoneCanvas.set_state()`(사이드카 복원)가 다시 트리거하는 `_recompute_zones()`가
+  중복 실행되며 전자의 결과가 그대로 버려지던 것을 `_suppress_recompute` 플래그로
+  억제해 최종 1회만 계산하도록 변경. (2) `_compute_zone_percentages()`/
+  `_compute_zone_blob_rows()`가 각자 `zones_from_circles()`를 호출해 한 번의
+  재계산에 4회(2함수 × 중복 트리거 2회) 호출되던 것을, 신규 헬퍼 `_current_zones()`로
+  1회만 계산해 양쪽이 공유하도록 리팩터링(`_recompute_zones()`/`_on_export_single()`
+  양쪽 호출부 적용). (3) `_setup_target_classes()`의 `detected_ids` 계산을
+  `set(raw_class_map.ravel().tolist())`에서 `np.unique(raw_class_map)`로 교체해
+  numpy 배열 전체를 python list/set으로 변환하는 비용을 제거. 기능 변경 없음(존
+  퍼센티지/블랍 집계·오버레이·undo 스택 결과 전부 동일, 회귀 테스트 166건 통과).
+  합성 5472×3648 입력(캐시 적중, cProfile) 계측: 재선택 소요시간 약 1795.7ms →
+  약 749.8ms(약 58% 감소, `_recompute_zones` 중복 실행 제거 + `zones_from_circles`
+  호출 24회→6회(disk_mask 기준) 감소).
+
 ---
 
 ## [zone-v1.5.1] 2026-10-02
