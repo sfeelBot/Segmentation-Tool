@@ -5221,3 +5221,94 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   검증 에이전트의 실행 확인이 필요함. R-PERF-2(배치 응답없음, 같은 파일의 다른
   함수 영역)는 이번 라운드에서 전혀 건드리지 않았음.
 - 커밋 해시: `e4f4252`(코드+회귀 테스트), `9b87efa`(QA.md Closed 이동).
+
+## 2026-10-07 — R-PERF-2: 상/하부 분석 탭 일괄 처리 응답없음 — 후처리 전용 QThread 분리 (검증대기)
+
+- 작업 디렉토리: `D:\segmentation model-zone-analysis-tab`
+  (`feature/zone-analysis-tab` 전용 워크트리).
+- 스펙: `docs/specs/zone-batch-and-selection-responsiveness-2026-10-07.md` "문제 2 /
+  R-PERF-2" 절. R-PERF-1(이미지 선택 캐시, 커밋 `5c6d1f9`)은 이번 라운드에서
+  건드리지 않음 — `__init__`의 `self._target_cache` 및 관련 로직 무변경 확인.
+- 원인: `_ZoneBatchWorker`(QThread, CUDA 추론 전용 — BUG-030 수정으로 이미 격리됨)의
+  `image_inferred` 시그널을 받는 메인 스레드 슬롯 `_on_batch_image_inferred()`가
+  이미지 1장당 cv2/numpy 존·블랍 후처리(`_compute_zone_rows()` =
+  `compute_blob_labels`+`zones_from_circles`+`zone_stats`+`zone_blob_stats`)와
+  사이드카 저장을 동기(메인 스레드 블로킹)로 수행 — 대형 이미지·다수 블랍이 섞이면
+  단일 블로킹 구간이 수백 ms~1초 이상으로 길어져 Windows가 "응답 없음"으로 표시.
+- 수정(`app/tabs/zone_analysis_tab.py` 단독, 스펙 "설계" 절 그대로 적용):
+  - 신규 클래스 `_ZoneBatchPostWorker(QThread)` 추가(`_ZoneBatchWorker` 바로
+    아래) — `queue.Queue` 기반 producer-consumer. `enqueue(path, result, done,
+    total)`/`close()`(sentinel `None`)/`run()`(큐에서 꺼내 기존
+    `_on_batch_image_inferred()` 본문을 그대로 실행 — per_image 모드 재디코딩+
+    `detect_circles`, `zstate.load_state`, `_compute_zone_rows()`,
+    `zstate.save_state()`). CUDA(`engine.prepare_inference`/
+    `run_sliding_window`)를 절대 호출하지 않음 — BUG-030 트리거("다른 스레드의
+    실 CUDA 추론 직후 같은 스레드에서 cv2 후처리")가 성립하려면 같은 스레드에
+    CUDA와 cv2가 공존해야 하는데, 이 워커는 CUDA 호출 코드 자체가 없어 그 조합이
+    원천적으로 불가능.
+  - `_on_batch_process()` — `_ZoneBatchWorker`와 `_ZoneBatchPostWorker` 둘 다
+    생성해 둘 다 `.start()`. `_ZoneBatchWorker.image_inferred`는 무거운 계산 대신
+    가벼운 중계 슬롯 `_on_batch_image_ready()`(= `self._post_worker.enqueue(...)`
+    한 줄, 즉시 반환)에 연결. `_ZoneBatchWorker.finished`는
+    `self._post_worker.close`에 연결(CUDA 종료 알림, 큐에 남은 항목은 계속 처리).
+  - `_ZoneBatchPostWorker.row_computed`(path, result, rows, blob_rows, done,
+    total) → 메인 스레드의 축소판 슬롯 `_on_batch_row_computed()`(기존
+    `_on_batch_image_inferred()`에서 UI 갱신 부분만 남김 — `self._results[path]=
+    result`, `self._batch_rows.extend(rows)`, `self._img_list.set_item_status`,
+    진행률 다이얼로그 갱신). `_ZoneBatchPostWorker.progress`(에러/"원 없음")는
+    기존 `_on_batch_progress`를 그대로 재사용(시그니처 동일).
+  - `_on_batch_finished()` 트리거를 `_ZoneBatchWorker.finished`가 아니라
+    `_ZoneBatchPostWorker.finished`로 변경(CUDA가 먼저 끝나도 cv2 큐가 남아있을
+    수 있으므로, 더 늦게 끝나는 쪽 기준으로 최종 결과를 열어야 _batch_rows/
+    _batch_blob_rows 누락이 없음).
+  - 취소: `QProgressDialog.canceled`를 두 워커의 `requestInterruption` 모두에
+    연결(`self._post_worker.requestInterruption` 추가).
+  - `__init__`의 `_batch_mode`/`_batch_circles_ref`/`_batch_ref_size`/
+    `_batch_sensitivity`/`_batch_target_cid` 필드는 더 이상 메인 스레드 self에
+    보관할 필요가 없어졌음(생성자 인자로 `_ZoneBatchPostWorker`에 직접 전달) —
+    죽은 상태라 제거(YAGNI). `self._post_worker` 필드 신규 추가, 스텝 인디케이터
+    readiness 가드(`_compute_step_state`)에도 `self._post_worker is not None`
+    조건 추가.
+- BUG-030 재발 가능성 판단(코드 구조 검토 기준, 실측은 검증 에이전트 몫):
+  **재발 조건 불성립**. BUG-030의 결정적 트리거는 QA.md에 "다른 스레드의 실
+  CUDA 추론 직후 같은 스레드 안에서 cv2 후처리"로 명확히 좁혀져 있고, 이는 "CUDA
+  호출과 cv2 호출이 같은 스레드에 있는가"가 조건이다. `_ZoneBatchPostWorker`는
+  `engine.prepare_inference`/`run_sliding_window`를 import조차 호출하지 않고
+  오직 `detect_circles`/`_compute_zone_rows`/`zstate.*`(순수 cv2/numpy/디스크
+  I/O)만 수행하므로, 이 스레드 안에는 CUDA 호출이 전혀 존재하지 않아 트리거 조합
+  자체가 성립할 수 없다. 단위 테스트
+  `test_post_worker_never_calls_cuda_inference`에서 `engine.prepare_inference`/
+  `engine.run_sliding_window`를 호출 즉시 `AssertionError`를 던지도록 바꿔
+  `_ZoneBatchPostWorker.run()`을 실행해도 호출되지 않음을 직접 증명했다.
+- 테스트: `tests/test_zone_batch_worker.py`를 2-워커 구조에 맞게 전면 갱신 —
+  `_batch_tab()` 헬퍼를 `_post_worker()`(`_ZoneBatchPostWorker`를 `.start()` 없이
+  직접 생성해 `run()`을 동기 호출)로 교체, `_on_batch_image_inferred()`를 직접
+  호출하던 테스트 전부 `_ZoneBatchPostWorker.enqueue()+close()+run()` 패턴으로
+  이전. 신규: `test_post_worker_never_calls_cuda_inference`(BUG-030 안전성 증명),
+  `test_post_worker_persists_every_mode_and_computes_rows`,
+  `test_post_worker_stops_immediately_when_interruption_already_requested`
+  (`QThread.requestInterruption()`이 `.start()` 전에는 no-op이라는 Qt 동작을
+  확인하고 실제 `.start()`+큐 블로킹 상태에서 interruption을 검증하도록 설계).
+  `test_golden_path_button_click_reports_progress_error_and_opens_dialog`는
+  CUDA 워커 `wait()` 후 cv2 워커 종료(= `tab._post_worker is None`)를 이벤트
+  루프 펌핑(`QTest.qWait`)으로 기다리도록 수정(`post_worker.wait()`를 이벤트
+  루프 펌핑 없이 바로 부르면 `batch_worker.finished → post_worker.close()`의
+  큐드 크로스스레드 시그널이 전달되지 않아 교착될 수 있음을 확인하고 회피).
+  `pytest tests/test_zone_batch_worker.py` 12개 전부 통과. 추가로
+  `tests/test_zone_state_persistence.py`/`test_zone_edit_toolbar.py`/
+  `test_zone_github_13_14.py`/`test_zone_redesign_2026_10_01.py`/
+  `test_zone_step_indicator.py`까지 포함해 `pytest tests/ -k zone` 52개 전부
+  통과(deselected 110). `python -c "import app.tabs.zone_analysis_tab"` 임포트
+  오류 없음.
+- `release.ini` 버전: R-PERF-1이 이미 1.5.2로 올렸고 아직 태그(`zone-v1.5.2`)되지
+  않은 미배포 버전이라 같은 버전에 포함(추가 PATCH 상향 불필요) —
+  `docs/CHANGELOG.md`의 기존 `[zone-v1.5.2]` 항목에 R-PERF-2 수정 내역을
+  append로 추가. `scripts/generate_version_info.py` 실행 확인
+  ("Generated release metadata for 1.5.2", 오류 없음).
+- 커밋: `fix: 상/하부 분석 탭 일괄 처리 간헐적 응답없음 수정 (R-PERF-2)`
+  (해시 `243668e`). push 안 함(리더가 사용자 확인 후 처리).
+- **상태: 검증대기** — 코드 레벨로는 BUG-030 트리거 조건(CUDA·cv2 동일 스레드)이
+  성립하지 않음을 확인했으나, 실 GPU 환경에서의 크래시 미재현 확인(스펙 검증
+  시나리오 16번, `repro_batch_real_platform.py` 활용), 실제 대량(50장+) 배치에서
+  최대 블로킹 구간 200ms 이내 실측, 취소 버튼 실제 클릭 타이밍별 동작, 큐 깊이/
+  메모리 관찰 등은 검증 에이전트의 실행 확인이 필요함.
