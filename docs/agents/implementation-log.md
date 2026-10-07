@@ -5312,3 +5312,47 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   시나리오 16번, `repro_batch_real_platform.py` 활용), 실제 대량(50장+) 배치에서
   최대 블로킹 구간 200ms 이내 실측, 취소 버튼 실제 클릭 타이밍별 동작, 큐 깊이/
   메모리 관찰 등은 검증 에이전트의 실행 확인이 필요함.
+
+## 2026-10-07 — BUG-037/038(취소-재시작 레이스)/BUG-039(_target_cache 상한) 수정
+
+- 범위: 검증 에이전트가 R-PERF-2(`243668e`) 2-워커 분리 직후 실 GPU+실데이터로 발견한
+  회귀 2건(BUG-037/038) + R-PERF-1(`5c6d1f9`)이 남긴 메모리 이슈(BUG-039).
+- BUG-037: `_on_batch_image_ready()`/`_on_batch_row_computed()`/`_on_batch_progress()`에
+  `self.sender()`가 현재 활성 `self._batch_worker`/`self._post_worker`와 같은지 확인하는
+  가드를 추가 — 취소 직후 재시작으로 이미 새 워커 인스턴스로 교체됐는데, 아직 살아
+  있던 옛 CUDA 워커가 늦게 보내는 지연 신호를 더는 새 배치에 섞지 않는다.
+- BUG-038: `ZoneAnalysisTab`에 이번 배치의 대상 목록(`_batch_targets`)과 상태가
+  "done"/"error"로 확정된 경로 집합(`_batch_completed`)을 추가하고, `_on_batch_finished()`
+  에서 그 차집합(취소 시점까지 "processing"으로 남은 이미지)을 기존 상태값
+  `"pending"`으로 리셋 — 새 상태값은 만들지 않음(기존 `inference_image_list.py`
+  상태 종류 재사용).
+- BUG-039: `_target_cache`를 `dict`에서 `collections.OrderedDict`로 변경 — 캐시 적중
+  시 `move_to_end()`, 신규 삽입 시 상한(`_TARGET_CACHE_MAX=20`, 고정값) 초과하면
+  `popitem(last=False)`로 가장 오래된 항목 제거(진짜 LRU, 2~3줄 수준).
+- **재현→수정 확인**: 검증 에이전트가 scratchpad에 남긴 재현 자산(`harness.py`,
+  `s_race.py`, `s_cancel.py`)을 그대로 재사용. `git stash`로 수정을 되돌린 버그 있는
+  코드에서 실 GPU(RTX 5060)+실 체크포인트(`학습1_best.pt`)+5472×3648 BMP 15장으로
+  `s_race.py b big apply_all` 실행 → 보고된 것과 동일하게 `duplicate(image,zone)=3`
+  (이미지 `b_08.bmp` 중복) 재현 확인, `s_cancel.py b big apply_all`로 취소 후 상태를
+  조회해 `b_02`~`b_08` 7장이 `processing`으로 영구히 남는 것도 재현 확인. `git stash
+  pop`으로 수정 복원 후 동일 시나리오 재실행 → `duplicate=0`, 모든 미완료 대상이
+  `pending`으로 리셋됨을 확인. BUG-039는 신규 스크립트(`s_cache_cap.py`)로 60장을
+  순회한 뒤 `len(tab._target_cache) == 20`(상한 고정)이고 가장 최근 방문 이미지가
+  LRU 끝에 남아있음을 확인.
+- **회귀 테스트**: `tests/test_zone_batch_worker.py`에 4건 추가 —
+  `test_stale_batch_worker_image_inferred_signal_is_ignored`,
+  `test_stale_post_worker_row_computed_signal_is_ignored`,
+  `test_cancel_resets_lingering_processing_icons_to_pending`,
+  `test_target_cache_is_lru_capped`. `pytest tests/ -k zone` 56개, `pytest tests/`
+  전체 166개 전부 통과. `python -m py_compile app/tabs/zone_analysis_tab.py` 통과.
+- `release.ini`: `zone-v1.5.2`가 아직 태그되지 않은 미배포 버전이라 같은 버전에
+  포함(추가 PATCH 상향 불필요) — `docs/CHANGELOG.md`의 기존 `[zone-v1.5.2]` 항목에
+  이번 수정 내역을 append로 추가.
+- `QA.md`에서 BUG-037/038/039를 Closed Issues로 전환(근본원인/해결방법/재현 스크립트
+  기록), Open Issues 표에서 제거. BUG-040(이미지 선택 딜레이 잔여분)은 이번 범위
+  밖이라 Open 유지.
+- 커밋: `fix: 일괄 처리 취소/재시작 레이스(BUG-037/038) + _target_cache LRU 상한(BUG-039)`
+  (해시 `a736334`). push 안 함(리더가 사용자 확인 후 처리).
+- **상태: 검증대기** — 재현 스크립트로 수정 전/후 비교는 직접 확인했으나, 독립
+  검증 에이전트가 같은 재현 자산 또는 별도 시나리오로 다시 확인하기 전까지는
+  완료로 보지 않는다.
