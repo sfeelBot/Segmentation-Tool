@@ -1731,3 +1731,90 @@ Excel/클립보드), 체크포인트 파일명에 학습 시작 날짜 포함. �
 완료 — 다음: 리더가 7건 전체(1~4 + 5~8)를 한 번에 기획검증한 뒤 디자인
 에이전트로 넘길 예정(리더 지시 원문 그대로 — 실제로는 8건). 디자인 확인 지점은
 ②③④⑥⑧ 5건, 나머지(①⑤⑦)는 결정 대기 없이 바로 구현 가능.
+
+---
+
+## 2026-10-07 — 상/하부 분석 탭 일괄 적용 응답없음 + 이미지 선택 딜레이 기획
+
+### 배경
+사용자 VOC: "영역 지정 후 일괄 적용 시 응답없음 버그가 간헐적으로 발생하고,
+이미지 선택할 때마다 딜레이가 있다. 검증 에이전트는 여러 테스트를 마친 다음
+불편사항이 없도록 검증해달라." 리더가 사전 코드 조사로 원인을 1차 특정(이미지
+선택 딜레이 = `_on_target_changed()` 매번 재계산, 배치 응답없음 = cv2 후처리가
+메인 스레드에서 동기 실행)해 넘겨줬고, 이번 세션은 그 가설을 코드로 직접
+재확인하고 수정 방향(캐싱 vs 스레딩)을 확정하는 것.
+
+### 한 일
+- `app/tabs/zone_analysis_tab.py`의 `_on_list_image_selected()`/
+  `_setup_target_classes()`/`_on_target_changed()`/`_on_batch_process()`/
+  `_on_batch_image_inferred()`/`_on_batch_finished()`/`_ZoneBatchWorker` 전체를
+  직접 읽고, `app/core/inference_engine.py`의 `refilter()`/
+  `_compute_blobs_and_filter()`/`_colorize_and_blend()`, `app/core/zone_metrics.py`의
+  `compute_blob_labels()`/`zones_from_circles()`/`zone_stats()`까지 대조.
+- **문제1(선택 딜레이) 근본원인 보강**: 리더가 지목한 `_on_target_changed()`의
+  "매번 재계산"이 실제로는 세 겹이라는 걸 코드로 확인 — (1) `engine.refilter()`
+  내부에서 `Image.open().convert("RGB")`로 **원본 이미지를 디스크에서 매번
+  재디코딩**(GH#32 스펙 실측 105~120ms/5472×3648과 동일 해상도이므로 그대로
+  적용) + `_compute_blobs_and_filter()`의 cv2 connected-components, (2) 그 직후
+  `_on_target_changed()`가 **또** `compute_blob_labels()`로 같은 이미지에 cv2
+  connected-components를 한 번 더(중복) 호출, (3) `_recompute_zones()`가
+  `zones_from_circles()`를 2번(퍼센티지용/blob용 각각) 중복 호출(GH#32 실측 218ms
+  수준). 세 겹이 겹쳐 대형 이미지에서 체감 딜레이가 됨.
+- **문제1 방향 확정 — 캐싱(스레딩 아님)**: 리더의 "캐싱만으로 충분한지 먼저
+  판단" 요청에 "예"로 답함 — 계산 자체를 없애는 게 비동기로 미루는 것보다
+  근본적이고(YAGNI), 타겟 클래스/threshold는 일반 워크플로우에서 자주 안 바뀌어
+  캐시 적중률이 높을 것으로 판단. `(target_cid, min_confidence, min_pixel_size)`
+  키의 이미지경로별 캐시(`_target_cache`)로 `refilter`+`compute_blob_labels`
+  스킵, `_recompute_zones()`의 중복 `zones_from_circles` 호출은 "남는 비용"으로
+  명시하고 이번 라운드 범위 밖(YAGNI, 1차 효과 실측 후 필요하면 2차로 추가
+  가능하다고만 기록) — 과설계 방지.
+- **문제2(배치 응답없음) 근본원인 재확인**: `_ZoneBatchWorker`는 BUG-030
+  수정으로 이미 CUDA 전용이나, `image_inferred` 시그널을 받는 **메인 스레드**
+  슬롯 `_on_batch_image_inferred()`가 이미지 1장당 cv2 존·블랍 후처리(GH#32
+  실측 기준 수백ms~1초+)를 동기로 수행 — `QProgressDialog.setValue()`의
+  `processEvents()`는 이미지 "사이"에서만 펌핑 기회를 주고 이미지 "안"의
+  블로킹 구간 자체는 못 없앤다는 걸 코드로 확인.
+- **문제2 스레딩 안전성 판단 — QA.md BUG-030 전문 직접 재확인**: 격리된 트리거는
+  정확히 "CUDA와 cv2가 **같은 스레드** 안에서 연이어 실행"이고, "CUDA 호출
+  스레드와 cv2 호출 스레드가 서로 다른가"는 트리거와 무관함을 BUG-030 "근본
+  원인" 칸 원문으로 확정 — 현재 구조(워커=CUDA, 메인=cv2)가 이미 "다른 두
+  스레드" 조합이라는 점에서 이 가설이 실증돼 있음도 지목. 따라서 cv2 후처리를
+  메인 스레드가 아닌 **또 다른 전용 QThread**(CUDA를 전혀 호출하지 않는)로
+  옮기는 것은 BUG-030 트리거 조건을 만들지 않는다고 판단 — 스파이크 불필요
+  (라이브러리 선택 문제가 아니라 기존에 이미 실측으로 확정된 트리거 조건의
+  적용 범위를 코드로 재확인하는 문제).
+- **문제2 방향 확정 — 스레딩**(캐싱 아님, `QTimer.singleShot` 양보 방식도
+  기각): 이미지 1장의 cv2 계산 자체가 이미 단일 블로킹 단위(300ms~1초+)라
+  이벤트루프에 양보만 해서는 그 구간 내부를 비울 수 없음 — 실제로 다른
+  스레드로 옮겨야 GH#32 기존 수용 기준("GUI 무응답 구간 200ms 이내")을 지킬 수
+  있다고 판단. producer-consumer 큐 기반 신규 `_ZoneBatchPostWorker(QThread)`
+  설계(CUDA 워커가 raw 결과를 큐에 넣고, cv2 전용 워커가 순서대로 꺼내 후처리+
+  사이드카 저장, 완료 판정은 더 늦게 끝나는 cv2 워커의 `finished` 기준) — 취소는
+  두 워커 모두에 `requestInterruption` 연결, 순서 보존(FIFO 큐, 단일 소비자
+  스레드)까지 설계에 명시.
+- 두 수정 모두 같은 파일(`app/tabs/zone_analysis_tab.py`)이지만 서로 다른 함수
+  영역 — 진짜 동시 코드 작성은 병합 충돌 위험이 있어 **순차 진행 권장**(리뷰/
+  승인까지는 병렬 가능)으로 라운드 분할(R-PERF-1 캐싱 먼저 → R-PERF-2 스레딩).
+  R-PERF-1을 먼저 두는 이유는 더 작고 안전해서(순수 추가, 캐시 미스 시 기존
+  동작과 100% 동일).
+- 검증 시나리오 20개(R-PERF-1 9개 + R-PERF-2 11개) 구체화 — 사용자가 "여러
+  테스트를 마친 다음 불편사항이 없도록" 요청한 것을 반영해 소량/대량 이미지,
+  대/소 해상도, 배치 3모드 전부, 이미지 재선택 반복(캐시 적중/미스 양쪽), 취소
+  버튼 타이밍 2종(CUDA 중/cv2 큐 처리 중), **BUG-030 재발 여부 최우선 재확인**
+  (기존 재현 스크립트 재사용 제안), 사이드카 순서/내용 바이트 비교, 큐 깊이/RSS
+  메모리 관찰까지 나열.
+- 스펙 문서 신설: [docs/specs/zone-batch-and-selection-responsiveness-2026-10-07.md](../specs/zone-batch-and-selection-responsiveness-2026-10-07.md).
+- `docs/roadmap.md` "존(Zone) 분석 탭" 절에 신규 하위 절(R-PERF-1/R-PERF-2
+  체크박스, 실행 순서, 검증 체크리스트 요약) 추가.
+- `docs/decisions-needed.md` 갱신 없음 — 결정 대기 항목 없음(둘 다 코드 근거로
+  방향을 확정할 수 있었음).
+- 코드는 건드리지 않음. Write/Edit는 스펙 신설 1건 + `roadmap.md`/본 로그
+  갱신에만 사용. 작업 워크트리 동일(`D:\segmentation model-zone-analysis-tab`,
+  `feature/zone-analysis-tab`).
+
+### 상태
+완료 — 다음: 리더가 구현 에이전트에 R-PERF-1(선택 딜레이 캐싱)부터 위임 →
+검증(캐시 적중/미스 왕복 확인) → R-PERF-2(배치 2-워커 분리) 위임 → 검증(스펙
+"검증 시나리오 체크리스트" 20개, 특히 BUG-030 재발 여부 실 CUDA 환경에서
+최우선 재확인 — 사소한 버그 수정이 아니라 스레딩 구조 변경이므로 실행
+확인만이 아니라 골든패스 수준 검증 필요).

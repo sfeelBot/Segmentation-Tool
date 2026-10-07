@@ -1362,6 +1362,47 @@ append/개별삭제 + 영역(zone) 레시피 저장·불러오기(팝업+최근�
   높이)·6(휠 힌트 캡션 문구/위치, 저위험)·8(Long 탭 정렬 여부 재확인, 버튼
   위치) — 구현 전 디자인 에이전트 확인 권장(리더 판단).
 
+### 일괄 적용 응답없음 + 이미지 선택 딜레이 (2026-10-07 VOC)
+
+기획 완료: [docs/specs/zone-batch-and-selection-responsiveness-2026-10-07.md](specs/zone-batch-and-selection-responsiveness-2026-10-07.md).
+사용자 VOC: "영역 지정 후 일괄 적용 시 응답없음이 간헐적으로 발생하고, 이미지
+선택할 때마다 딜레이가 있다." 둘 다 `app/tabs/zone_analysis_tab.py` 안의 서로 다른
+함수 영역 문제. 코드(`engine.refilter`/`_compute_blobs_and_filter`/
+`compute_blob_labels`) + 기존 실측 스펙(GH#32, R-ZONE-3)을 대조해 근거 확정, 결정
+대기 없음(스레딩 안전성은 QA.md BUG-030 전문 재확인으로 직접 판단 — 스파이크
+불필요: 라이브러리 선택 문제가 아니라 기존에 이미 격리 실험으로 확정된 트리거
+조건의 적용 범위를 코드로 재확인하는 문제).
+
+- [x] **R-PERF-1 (선택 딜레이)** — 검증 PASS(2026-10-07): 캐시 적중 시 refilter와 blob 재계산이 0회로 확인됨. 선택 지연은 2048px 330→164ms, 5472px 1.7→0.92s로 줄었다. 잔여 지연은 QA BUG-040(P3), 캐시 메모리 상한 문제는 BUG-039(P2)로 등록. — 원인: 이미지 재클릭마다
+      `_on_target_changed()`가 `engine.refilter()`(내부에서 원본 이미지 디스크
+      재디코딩 + cv2 connected-components) + `compute_blob_labels()`(cv2
+      connected-components 중복 호출)를 캐시 없이 매번 재계산. **방향: 캐싱**
+      (스레딩 아님 — "계산 자체를 없애는 것"이 "비동기로 미루는 것"보다 근본적).
+      `(target_cid, min_confidence, min_pixel_size)` 키로 이미지 경로별
+      `_target_cache` 추가, 캐시 적중 시 refilter/compute_blob_labels 스킵. 영향:
+      `__init__`/`_on_target_changed`/`_on_run`/`_on_images_removed`. 저위험(순수
+      추가, 캐시 미스 시 기존 동작과 동일) — 먼저 진행.
+- [ ] **R-PERF-2 (배치 응답없음)** — 검증 부분 PASS(2026-10-07): 응답없음 해소를 실측으로 확인했다(최대 블로킹 575→124ms). BUG-030 재발 없음. 다만 취소 경로 회귀 BUG-037(P2)·BUG-038(P3)이 Open이라 미체크. — 원인: `_ZoneBatchWorker`는 이미 BUG-030
+      수정으로 CUDA 전용이나, 그 결과를 받는 메인 스레드 슬롯
+      `_on_batch_image_inferred()`가 이미지 1장당 cv2 존·블랍 후처리(수백
+      ms~1초+)를 동기로 수행해 그 구간만큼 메인 스레드가 블로킹됨. **방향:
+      스레딩**(`QTimer.singleShot` 양보 방식은 기각 — 이미지 1장의 cv2 계산
+      자체가 이미 단일 블로킹 단위라 사이에서만 양보해도 안의 블로킹은 그대로
+      남음). QA.md BUG-030 전문 재확인 결과 트리거는 "CUDA와 cv2가 같은 스레드"일
+      때만 발생 — cv2 전용 신규 QThread(`_ZoneBatchPostWorker`, 큐 기반
+      producer-consumer)로 분리해도 BUG-030 트리거 조건을 만들지 않음(코드 근거로
+      확정). GH#32 수용 기준("GUI 무응답 구간 200ms 이내")을 그대로 승계. 영향:
+      신규 `_ZoneBatchPostWorker` 클래스, `_on_batch_process`/
+      `_on_batch_image_inferred`→`_on_batch_row_computed`/`_on_batch_finished`.
+      중간 위험(스레드 생명주기/취소/순서 보존 신규 검증 필요, BUG-030 재발 여부가
+      핵심) — R-PERF-1 완료 후 착수(같은 파일, 병합 편의).
+- 같은 파일(`zone_analysis_tab.py`)이라 실제 코드 병렬 작성은 비권장(diff
+  충돌 위험) — 순차 진행(R-PERF-1 → R-PERF-2), 리뷰/승인까지는 병렬 가능.
+- 검증: 스펙 문서 "검증 시나리오 체크리스트" 20개 항목(소량/대량 이미지,
+  대/소 해상도, 배치 3모드 전부, 이미지 재선택 반복, 취소 버튼 타이밍 2종,
+  **BUG-030 재발 여부 최우선 재확인**, 사이드카 순서/내용, 메모리 큐 깊이 관찰 등)
+  — "여러 가지 테스트를 마친 다음 불편사항이 없도록" 사용자 요청 반영.
+
 ## GitHub #35 "메모리 이슈" (2026-09-22 접수)
 
 기획 완료: [docs/specs/github-35-memory-issue-2026-09-22.md](specs/github-35-memory-issue-2026-09-22.md).

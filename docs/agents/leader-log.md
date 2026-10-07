@@ -5,7 +5,27 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-08-31] push 상태 재확인 완료 + zone 사용자 매뉴얼 작업 진행 중(세션
+> **[최신, 2026-10-07] 사용자 VOC — 상/하부 분석 탭 일괄 적용 간헐적 응답없음 +
+> 이미지 선택 딜레이. 원인 조사 완료 → planner 위임.** 사용자가 "영역 지정 후 일괄
+> 적용 시 응답없음이 간헐적으로 발생하고, 이미지 선택할 때마다 딜레이가 있다"고 보고,
+> 검증은 "여러 테스트를 마친 뒤 사용자 불편 없도록" 확인해달라고 명시. 리더가 코드
+> 직접 확인(위임 전 필수 요약·확인 절차): `zone_analysis_tab.py:_on_list_image_selected()`
+> →`_setup_target_classes`→`_on_target_changed()`가 캐시된 추론 결과가 있는 이미지를
+> 선택할 때마다 `engine.refilter()` + `compute_blob_labels()`(`cv2.connectedComponentsWithStats`,
+> 원본 해상도)를 **메인 스레드에서 동기 재계산** — 이미지 선택 딜레이의 원인으로 추정.
+> `_on_batch_image_inferred()`도 BUG-030 제약(CUDA 추론과 같은 스레드에서 cv2 금지)
+> 때문에 같은 cv2/numpy 존·블랍 후처리를 **메인 스레드**에서 돌리는데, 배치 중 이미지별
+> 처리가 끝날 때마다 메인 스레드가 묶여 이미지 수/해상도/블랍 복잡도에 따라 블로킹
+> 구간이 길어지면 Windows가 "응답 없음"으로 표시 — "간헐적" 증상과 일치.
+> 사용자에게 원인 추정 + 작업 범위(planner→implementer→verifier, 워크트리
+> `D:\segmentation model-zone-analysis-tab`, `feature/zone-analysis-tab` 커밋, push는
+> 별도 확인) 요약 후 확인받음("진행해줘"). **다음 단계**: planner 서브에이전트에
+> 위 두 지점(파일/라인/원인 포함)을 전달해 스레딩 설계(두 블로킹 지점 모두 CUDA
+> 호출이 끝난 뒤의 순수 cv2/numpy라 BUG-030과 별개 워커 스레드로 옮겨도 안전할
+> 것으로 추정됨 — planner가 확인) + 스펙 작성 위임. 완료되면 구현(+필요시 디자인
+> 병행)→검증(사용자가 명시적으로 요청한 "여러 시나리오 반복 테스트" 포함) 순서로 진행.
+>
+> **[2026-08-31] push 상태 재확인 완료 + zone 사용자 매뉴얼 작업 진행 중(세션
 > 인계 메모).** 사용자가 "zone/main 변경점 전부 push 됐는지" 질의 → 재확인 결과 **main은
 > `origin/main`과 완전 동기화, zone(`feature/zone-analysis-tab`)도 `origin/feature/
 > zone-analysis-tab`과 완전 동기화**(둘 다 ahead/behind 0, `ba8bf5e` 기준 PR #33 반영분까지
@@ -745,3 +765,41 @@ zone verifier: 실제 zone 빌드(`SegmentationModelUIZone-Setup-1.4.0.exe`)로 
 GitHub 이슈 #22에 수정 완료 코멘트+close. 오늘 세션 요약: GitHub #35(메모리, BUG-033/
 032)·#32(zone 병목)·#23(학습·추론)·#22(installer 버전체크+BUG-016) 전부 종료, #5(모델탭
 변경)는 기존 보류 결정 유지, main/zone 양쪽 모두 push 완료.
+
+## 2026-10-07 — 상/하부 분석 탭 일괄 적용 응답없음 + 이미지 선택 딜레이 조사·위임
+
+사용자 VOC: "상/하부 분석탭에서 영역 지정 후 일괄 적용 시 응답없음 버그가 간헐적으로
+발생하고, 이미지 선택할 때마다 딜레이가 있다. 검증 에이전트는 조금 더 여러가지 테스트를
+마친 다음 사용자가 불편사항이 없도록 검증할 수 있도록 해달라."
+
+리더가 위임 전 직접 코드 확인(CLAUDE.md 1번 규칙 — 요약·확인 선행): `D:\segmentation
+model-zone-analysis-tab`(브랜치 `feature/zone-analysis-tab`, 기존 전용 워크트리) 기준.
+
+- **이미지 선택 딜레이**: `app/tabs/zone_analysis_tab.py:_on_list_image_selected()`
+  (671행대)가 캐시된 추론 결과(`self._results.get(path)`)가 있는 이미지를 선택할
+  때마다 `_setup_target_classes()`(917행대)→`_on_target_changed()`(962행대)를 호출,
+  여기서 `engine.refilter()` + `compute_blob_labels()`(`zone_metrics.py:112`,
+  `cv2.connectedComponentsWithStats` 원본 해상도)를 **메인 스레드에서 매번 동기
+  재계산**.
+- **일괄 적용 간헐적 응답없음**: `_on_batch_image_inferred()`(1537행대)는 BUG-030
+  제약(CUDA 추론 직후 같은 스레드에서 cv2 후처리 시 하드크래시, `QA.md` 참고) 때문에
+  `_ZoneBatchWorker`(워커 스레드, CUDA 추론만)가 아니라 **메인 스레드**에서 존·블랍
+  cv2/numpy 후처리(`_compute_zone_rows`→`compute_blob_labels`/`zones_from_circles`/
+  `zone_blob_stats`) + 사이드카 저장을 수행. 배치 중 이미지 하나가 끝날 때마다 메인
+  스레드가 그 계산 동안 묶이고, 이미지 수·해상도·블랍 복잡도에 따라 블로킹 구간
+  길이가 달라져 길어지면 Windows가 "응답 없음"으로 표시 — "간헐적" 증상과 일치하는
+  가설.
+- 두 블로킹 지점 모두 **CUDA 호출이 끝난 뒤의 순수 cv2/numpy 연산**이라 BUG-030이
+  막는 것("CUDA와 같은 스레드에서 cv2")과는 다른 스레드로 옮기면 제약을 어기지 않고
+  메인 스레드 블로킹을 없앨 수 있을 것으로 추정(정확한 스레딩 설계는 planner 위임).
+
+사용자에게 위 원인 추정 + 작업 범위(planner→implementer(+필요시 designer 병행)→
+verifier, 워크트리 `D:\segmentation model-zone-analysis-tab`에서 `feature/
+zone-analysis-tab`에 커밋, push는 별도 확인 후)를 요약해 확인받음("진행해줘").
+
+**다음 액션**: planner 서브에이전트에 위 두 지점(파일/라인/BUG-030 제약/스레딩 가설)을
+그대로 전달해 스레딩 설계 + 수정 범위 스펙 작성 위임(`docs/specs/`). 완료되면
+implementer 착수, 이어서 verifier에게 **사용자가 명시적으로 요청한 대로 단일 시나리오
+확인을 넘어 여러 이미지 수/해상도/모드(일괄 적용/일괄 적용 후 수정/장별 자동검출) 조합
+반복 테스트**를 지시할 것 — 이번 라운드는 "완료"로 간주하기 전에 검증 범위를 평소보다
+넓게 요구받았다는 점을 verifier 프롬프트에 명시해야 함.
