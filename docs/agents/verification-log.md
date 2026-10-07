@@ -6109,3 +6109,27 @@ BUG-036 수정 후 8번 항목만 재검증(또는 리더 판단에 따라 재�
 **PASS** — BUG-036 해결 확인. `docs/roadmap.md` 8번 체크박스 `[x]`로 갱신, QA.md BUG-036
 항목에 "독립 재검증 완료" 기록. 이로써 `docs/specs/zone-tab-fixes-2026-10-03.md` 8건 라운드
 전체(1~8) 완료.
+
+## 2026-10-07 — 상/하부 분석 탭 R-PERF-1(선택 딜레이 캐시) / R-PERF-2(배치 cv2 후처리 워커 분리) 검증
+
+작업 위치: `D:\segmentation model-zone-analysis-tab`(worktree, `feature/zone-analysis-tab`). 대상 커밋:
+`5c6d1f9`, `243668e`, `0b86732`. 사용자가 평소보다 넓은 검증 범위를 요청한 라운드.
+
+### 환경 / 방법
+- 실 GPU RTX 5060(CUDA 사용 가능, torch 2.11.0+cu128), 실 체크포인트 `projects/manual_demo/checkpoints/학습1_best.pt`(preset simple_unet).
+- 데이터: 2048×1365 PNG 5장, 같은 이미지를 복제한 60장, 5472×3648 BMP(`nok`) 15장. 모두 scratch 사본을 사용해 프로젝트 데이터는 건드리지 않음.
+- 실제 `ZoneAnalysisTab`을 네이티브 Qt 창(보이는 창)으로 띄우고 목록 클릭과 ↓/Delete/F 키를 `QTest`로 입력했다. 진행 다이얼로그 드래그는 OS 마우스 입력(`SetCursorPos`/`mouse_event`)으로 수행했다.
+- 계측: 메인 스레드 5ms 하트비트 간격, 백그라운드 스레드에서 `SendMessageTimeout(WM_NULL)` 왕복 시간과 `IsHungAppWindow`, RSS, post 워커 큐 깊이. 스레드 스파이로 CUDA 호출 스레드와 cv2 호출 스레드가 겹치는지 추적.
+- 기준선: `git archive 8ff5580`(수정 전) 코드로 같은 시나리오를 실행해 결과를 비교.
+- `python main.py`로 기동 확인 완료(콘솔 리다이렉트 시 cp949 로깅 인코딩 경고는 기존부터 있던 것이며 GUI와 무관).
+
+### 결과 (1~20)
+1/2 PASS(첫 방문만 refilter/blob 1회, 재방문 0회, 존 값 동일) · 3 PASS(합성 2클래스, cid별 결과 일관. 캐시가 경로당 1슬롯이라 A→B→A 전환 시 재계산되지만 정확성 문제 없음) · 4 PASS · 5 PASS(재추론 클릭 즉시 캐시 0) · 6 PASS(Delete 키 제거 후 재추가 시 캐시·결과 없음) · 7/8 PASS(2048px 338→164ms, 5472px 1645→915ms. 잔여분은 BUG-040) · 9 PASS(F 토글, 오버레이 유지) · 10 PASS(3모드 + 사전 편집 사이드카 케이스에서 수정 전과 행·블랍 행 동일) · 11 PASS(OS 드래그로 240px 이동, 드래그 중 최대 70ms, hung 0) · 12 PASS(5472px 15장 기준 수정 전 최대 575ms/200ms 초과 15회 → 수정 후 최대 124ms/0회. 60장 기준 수정 전 128ms → 수정 후 30ms) · 13 부분(취소는 동작하지만 BUG-037/BUG-038 회귀 발견) · 14 PASS(추론 예외와 후처리 예외가 각각 해당 이미지만 '오류'로 표시) · 15 PASS(선택지 3종) · 16 PASS(실 CUDA 배치 30회 이상, 종료 코드 모두 0, CUDA∩cv2 스레드 겹침 0) · 17 PASS(사이드카 바이트 단위 동일) · 18 PASS(활성/비활성 혼재, 크래시 없음, '일부 제외됨' 안내 표시) · 19 PASS(`CUDA_VISIBLE_DEVICES=-1`, GPU 불가 다이얼로그 → 'CPU 로 진행' 후 배치 정상) · 20 PASS(캐시된 60장은 큐 깊이 60이어도 RSS 변화 없음. 미캐시 배치는 큐 깊이 최대 1. 배치 반복 시 RSS 누적 증가 없음).
+- 자동화: `pytest tests/ -k zone` 52 passed, 전체 162 passed.
+
+### 신규 이슈
+BUG-037(P2), BUG-038(P3), BUG-039(P2), BUG-040(P3). 상세는 QA.md 참고.
+- 참고: 리더가 전달한 '이미지 목록이 비어 보임'은 검증 하네스가 `_img_list.load_files()`를 직접 호출하면서 `_after_list_load()`(목록 표시) 단계를 건너뛰어 생긴 현상이다. 실제 '파일'/'폴더' 버튼 경로에서는 2장 이상일 때 목록이 정상 표시됨을 확인했다(1장일 때 숨김은 스펙 C-1 설계). 앱 버그가 아니다. 하네스를 수정한 뒤 핵심 시나리오를 재실행했다.
+
+### 상태
+**부분 PASS**. R-PERF-1은 PASS(roadmap `[x]`). R-PERF-2는 응답없음 해소와 BUG-030 미재발을 확인했지만 취소 경로 회귀(BUG-037/038)가 Open이라 roadmap을 미체크로 둠. 블로커 여부는 리더가 판단.
