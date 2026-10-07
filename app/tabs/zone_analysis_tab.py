@@ -25,6 +25,7 @@
 docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md "요청 A" 참고).
 """
 import queue
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -69,6 +70,8 @@ log = get_logger(__name__)
 _DEFAULT_MIN_CONFIDENCE = 0.0
 _DEFAULT_MIN_PIXEL_SIZE = 0
 _PREVIEW_MAX_DIM = 2048
+# BUG-039: _target_cache LRU 상한(장당 약 240MB — 적당히 넉넉한 고정값, 설정 불필요)
+_TARGET_CACHE_MAX = 20
 
 
 class _ZoneInferenceWorker(QThread):
@@ -269,7 +272,10 @@ class ZoneAnalysisTab(QWidget):
         # R-PERF-1: (target_cid, min_confidence, min_pixel_size) 키로 refilter+
         # compute_blob_labels 결과를 캐싱 — 같은 이미지를 같은 조합으로 재방문할 때
         # 디스크 재디코딩+cv2 connected-components 중복 계산을 스킵한다.
-        self._target_cache: dict[Path, tuple[tuple, InferenceResult, np.ndarray, list]] = {}
+        # BUG-039: 대형 이미지 1장당 약 240MB라 상한 없이 쌓이면 메모리가 무한정
+        # 늘어남 — OrderedDict로 LRU 흉내(적중 시 move_to_end, 초과 시 가장 오래된
+        # 항목 제거), 상한은 적당히 넉넉한 고정값.
+        self._target_cache: OrderedDict[Path, tuple[tuple, InferenceResult, np.ndarray, list]] = OrderedDict()
         self._worker: _ZoneInferenceWorker | None = None
         self._batch_worker: _ZoneBatchWorker | None = None
         self._post_worker: _ZoneBatchPostWorker | None = None   # R-PERF-2: cv2 후처리 전용 QThread
@@ -277,6 +283,10 @@ class ZoneAnalysisTab(QWidget):
         # R-PERF-2: cv2/numpy 존·블랍 후처리 결과(메인 스레드에서 누적, _post_worker가 채움)
         self._batch_rows: list[tuple[str, str, float]] = []
         self._batch_blob_rows: list[tuple[str, ZoneBlobStat]] = []
+        # BUG-038: 이번 배치의 대상 목록 + 상태가 "done"/"error"로 확정된 경로 —
+        # 취소 시 둘의 차집합(아직 processing 아이콘이 남은 이미지)을 pending으로 리셋.
+        self._batch_targets: list[Path] = []
+        self._batch_completed: set[Path] = set()
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
@@ -1062,6 +1072,7 @@ class ZoneAnalysisTab(QWidget):
                 # R-PERF-1: 캐시 적중 — refilter(디스크 재디코딩 포함)/
                 # compute_blob_labels(cv2 connected-components) 재계산을 스킵한다.
                 _, result, labels, stats = cached
+                self._target_cache.move_to_end(self._image_path)   # BUG-039: LRU 갱신
             else:
                 result = engine.refilter(
                     self._last_result.raw_class_map,
@@ -1081,6 +1092,9 @@ class ZoneAnalysisTab(QWidget):
                 target_mask = result.class_map == cid
                 labels, stats, _ = compute_blob_labels(target_mask)
                 self._target_cache[self._image_path] = (cache_key, result, labels, stats)
+                self._target_cache.move_to_end(self._image_path)
+                if len(self._target_cache) > _TARGET_CACHE_MAX:
+                    self._target_cache.popitem(last=False)   # BUG-039: 가장 오래된 항목 제거
             self._last_result = result
             self._target_class_id = cid
             self._show_overlay_state()
@@ -1570,6 +1584,8 @@ class ZoneAnalysisTab(QWidget):
         # 생성자 인자로 직접 넘긴다(메인 스레드 self에 보관할 필요 없음).
         self._batch_rows = []
         self._batch_blob_rows = []
+        self._batch_targets = targets
+        self._batch_completed = set()
         self._batch_progress = QProgressDialog(
             "존 분석 일괄 처리 중…", "취소", 0, len(targets), self
         )
@@ -1601,6 +1617,11 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_batch_progress(self, path: Path, status: str, detail,
                            done: int, total: int) -> None:
+        # BUG-037/038: 취소 직후 재시작하면 옛 배치의 워커가 여전히 살아 있다가
+        # 지연 신호를 보낼 수 있다 — 발신자가 "현재 활성" 워커가 아니면 옛 배치의
+        # 신호이므로 조용히 버린다(새 배치 진행률/상태에 섞여 들어가지 않게).
+        if self.sender() not in (self._batch_worker, self._post_worker):
+            return
         # `QProgressDialog.setValue()`는 내부적으로 `processEvents()`를 호출해
         # 이미 큐에 쌓인 `finished` 시그널을 재진입(reentrant)으로 먼저 처리할 수
         # 있다 — 그 핸들러(`_on_batch_finished`)가 `self._batch_progress`를
@@ -1622,16 +1643,23 @@ class ZoneAnalysisTab(QWidget):
         elif status == "error":
             log.error(f"존 분석 일괄 처리 실패 — {path}: {detail}")
             self._img_list.set_item_status(path, "done", badge="오류")
+            self._batch_completed.add(path)   # BUG-038: 확정 상태 — 취소 리셋 대상 아님
         else:
             self._img_list.set_item_status(path, "done", badge=detail)
+            self._batch_completed.add(path)
 
     def _on_batch_image_ready(self, path: Path, result: InferenceResult,
                               done: int, total: int) -> None:
         """R-PERF-2: `_ZoneBatchWorker.image_inferred`의 가벼운 중계 슬롯 —
         무거운 cv2 후처리는 절대 여기서 하지 않고 `_post_worker`(전용 QThread)에
         큐잉만 하고 즉시 반환한다(메인 스레드 블로킹 없음)."""
-        if self._post_worker is not None:
-            self._post_worker.enqueue(path, result, done, total)
+        # BUG-037: 발신자가 현재 활성 _batch_worker가 아니면(=취소 뒤 재시작으로
+        # 이미 새 워커로 교체됐는데, 늦게 끝난 옛 CUDA 워커가 보낸 지연 신호) 버린다
+        # — 그대로 enqueue하면 옛 배치의 결과가 새 배치(새 _post_worker)에 섞여
+        # 같은 이미지가 중복 처리된다.
+        if self.sender() is not self._batch_worker or self._post_worker is None:
+            return
+        self._post_worker.enqueue(path, result, done, total)
 
     def _on_batch_row_computed(self, path: Path, result: InferenceResult,
                                rows: list[tuple[str, str, float]],
@@ -1641,6 +1669,8 @@ class ZoneAnalysisTab(QWidget):
         누적 + Qt 위젯 호출만 담당(기존 `_on_batch_image_inferred()`에서 cv2 계산을
         떼어내고 남은 UI 갱신 부분). cv2 후처리 자체는 이미 `_post_worker`(cv2 전용
         QThread)에서 끝난 뒤이므로 메인 스레드에서 해도 안전하다."""
+        if self.sender() is not self._post_worker:   # BUG-037: 옛 배치의 지연 신호 무시
+            return
         self._results[path] = result   # BUG(2026-10-03#1): _on_inference_result()와 동일하게
                                         # 캐시해야 이미지 전환 시 우측 존 비율 패널이 복원된다.
         self._btn_view_all.setEnabled(bool(self._results))
@@ -1654,6 +1684,14 @@ class ZoneAnalysisTab(QWidget):
         # — CUDA 워커(_batch_worker)가 먼저 끝나도 cv2 후처리 큐에 항목이 남아있을
         # 수 있으므로, 더 늦게 끝나는 쪽을 기준으로 삼아야 _batch_rows/_batch_blob_rows가
         # 누락 없이 전부 채워진 상태로 결과 다이얼로그를 연다.
+        # BUG-038: 취소 시 아직 "processing"(또는 그 이전) 상태로 남은 대상들은
+        # 결과에서 빠지는 것(취소니까 중단)과 별개로, 목록 아이콘은 다음 배치 전까지
+        # "처리 중"으로 영구히 남으면 안 된다 — 중립 상태(pending)로 되돌린다.
+        for p in self._batch_targets:
+            if p not in self._batch_completed:
+                self._img_list.set_item_status(p, "pending")
+        self._batch_targets = []
+        self._batch_completed = set()
         if self._batch_progress is not None:
             self._batch_progress.close()
             self._batch_progress = None
