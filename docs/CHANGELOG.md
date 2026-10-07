@@ -16,6 +16,17 @@ Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
   min_pixel_size)` 키 기반 캐시(`_target_cache`)를 추가해 같은 조합으로 같은
   이미지를 재방문하면 재계산을 스킵하도록 변경(기능 변경 없음, 캐시 미스 시 동작
   동일). 전체 추론 재실행/이미지 삭제 시 캐시 무효화.
+- R-PERF-2: 상/하부 분석 탭 일괄 처리 중 간헐적 "응답없음"을 수정. 배치 cv2/numpy
+  존·블랍 후처리(`compute_blob_labels`+`zones_from_circles`+`zone_stats`+
+  `zone_blob_stats`)와 사이드카 저장을 메인 스레드에서 동기 실행하던 것을, 전용
+  QThread `_ZoneBatchPostWorker`(producer-consumer 큐 기반, CUDA 비호출)로 분리.
+  `_ZoneBatchWorker`(CUDA 추론 전용)는 결과를 가벼운 중계 슬롯으로 큐에 넘기기만
+  하고 즉시 반환, 무거운 계산은 두 번째 워커가 전담해 메인 스레드 블로킹을 없앰.
+  최종 완료 판정은 더 늦게 끝나는 `_ZoneBatchPostWorker.finished` 기준으로 변경,
+  취소 시 두 워커 모두 `requestInterruption`. BUG-030(다른 스레드의 실 CUDA
+  추론 직후 같은 스레드 cv2 후처리가 트리거) 재발 조건 불성립 확인(두 번째 워커는
+  CUDA를 전혀 호출하지 않음). 기능 변경 없음(배치 모드 3종/사이드카 자동 저장/
+  진행률/결과 다이얼로그 전부 동일).
 
 ---
 

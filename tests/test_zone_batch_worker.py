@@ -14,7 +14,9 @@ from PyQt6.QtWidgets import QApplication
 from app.core import zone_state_store as zstate
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.tabs import zone_analysis_tab as module
-from app.tabs.zone_analysis_tab import ZoneAnalysisTab, _ZoneBatchWorker, _compute_zone_rows
+from app.tabs.zone_analysis_tab import (
+    ZoneAnalysisTab, _ZoneBatchWorker, _ZoneBatchPostWorker, _compute_zone_rows,
+)
 from app.widgets.zone_batch_result_dialog import ZoneBatchResultDialog
 
 _APP = QApplication.instance() or QApplication([])
@@ -33,19 +35,12 @@ def _classes():
             ClassDef(1, "target", DEFAULT_PALETTE[1])]
 
 
-def _batch_tab(circles_ref, ref_size, sensitivity, mode, target_cid):
-    """BUG-030 수정 이후: 존/블랍 후처리는 `_ZoneBatchWorker`가 아니라
-    `ZoneAnalysisTab._on_batch_image_inferred`(메인 스레드)가 수행한다 —
-    `_on_batch_process()`가 워커 실행 직전에 채우는 `_batch_*` 컨텍스트를 그대로 흉내낸다."""
-    tab = ZoneAnalysisTab()
-    tab._batch_mode = mode
-    tab._batch_circles_ref = circles_ref
-    tab._batch_ref_size = ref_size
-    tab._batch_sensitivity = sensitivity
-    tab._batch_target_cid = target_cid
-    tab._batch_rows = []
-    tab._batch_blob_rows = []
-    return tab
+def _post_worker(circles_ref, ref_size, sensitivity, mode, target_cid):
+    """R-PERF-2(2026-10-07) 수정 이후: 존/블랍 cv2 후처리 + 사이드카 저장은
+    `_ZoneBatchWorker`(CUDA 전용)가 아니라 `_ZoneBatchPostWorker`(cv2 전용 QThread)가
+    수행한다. 기존 `_ZoneBatchWorker.run()` 단위 테스트와 같은 패턴으로 실제
+    `.start()` 없이 `run()`을 직접(동기) 호출해 단위 테스트한다."""
+    return _ZoneBatchPostWorker(mode, circles_ref, ref_size, sensitivity, target_cid)
 
 
 def test_worker_run_only_infers_and_never_touches_cv2_or_sidecars():
@@ -80,20 +75,49 @@ def test_worker_run_only_infers_and_never_touches_cv2_or_sidecars():
             module.engine.run_sliding_window = old_run_sw
 
 
-def test_main_thread_postprocessing_persists_every_mode_and_computes_rows():
+def test_post_worker_never_calls_cuda_inference():
+    """R-PERF-2 BUG-030 안전성의 핵심 — `_ZoneBatchPostWorker`는 cv2/numpy 후처리와
+    사이드카 저장만 하고 `engine.prepare_inference`/`engine.run_sliding_window`(CUDA
+    추론)는 절대 호출하지 않는다. BUG-030 트리거는 "다른 스레드의 실 CUDA 추론 직후
+    같은 스레드에서 cv2 후처리"뿐이므로, 이 워커가 CUDA를 호출하지 않으면 그 조합
+    자체가 성립하지 않는다 — 두 함수를 호출 즉시 실패하도록 바꿔 증명한다."""
+    def _forbidden(*_a, **_k):
+        raise AssertionError("_ZoneBatchPostWorker가 CUDA 추론 함수를 호출함 — BUG-030 재발 위험")
+    old_prepare, old_run = module.engine.prepare_inference, module.engine.run_sliding_window
+    module.engine.prepare_inference = _forbidden
+    module.engine.run_sliding_window = _forbidden
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.png"
+            Image.new("RGB", (20, 20)).save(path)
+            worker = _post_worker([(5.0, 5.0, 2.0)], (20, 20), .5, "apply_all", 1)
+            rows_emitted = []
+            worker.row_computed.connect(lambda *a: rows_emitted.append(a))
+            worker.enqueue(path, _result(20), 1, 1)
+            worker.close()
+            worker.run()
+            assert len(rows_emitted) == 1
+    finally:
+        module.engine.prepare_inference, module.engine.run_sliding_window = old_prepare, old_run
+
+
+def test_post_worker_persists_every_mode_and_computes_rows():
     with tempfile.TemporaryDirectory() as tmp:
         paths = [Path(tmp) / f"{i}.png" for i in range(3)]
         for path in paths:
             Image.new("RGB", (20, 20)).save(path)
-        tab = _batch_tab([(5.0, 5.0, 2.0)], (20, 20), .5, "apply_all", 1)
-        try:
-            for done, path in enumerate(paths, 1):
-                tab._on_batch_image_inferred(path, _result(), done, len(paths))
-            assert len(tab._batch_rows) == 6   # 3장 x (1원 -> 2존)
-            for path in paths:
-                assert zstate.load_state(path)["circles"]
-        finally:
-            tab.close()
+        worker = _post_worker([(5.0, 5.0, 2.0)], (20, 20), .5, "apply_all", 1)
+        rows_total: list = []
+        worker.row_computed.connect(
+            lambda path, result, rows, blob_rows, done, total: rows_total.extend(rows)
+        )
+        for done, path in enumerate(paths, 1):
+            worker.enqueue(path, _result(), done, len(paths))
+        worker.close()
+        worker.run()
+        assert len(rows_total) == 6   # 3장 x (1원 -> 2존)
+        for path in paths:
+            assert zstate.load_state(path)["circles"]
 
 
 def test_existing_edits_survive_circle_replacement_and_skip_leaves_bytes_untouched():
@@ -105,23 +129,22 @@ def test_existing_edits_survive_circle_replacement_and_skip_leaves_bytes_untouch
             "erase_strokes": [], "manual_strokes": [(True, [(2.0, 2.0, 1.0)])],
         })
         before = zstate.sidecar_path(path).read_bytes()
-        tab = _batch_tab([(5.0, 5.0, 2.0)], (20, 20), .5, "apply_all", 1)
-        try:
-            tab._on_batch_image_inferred(path, _result(), 1, 1)
-            saved = zstate.load_state(path)
-            assert saved["removed_blob_ids"] == {3}
-            assert saved["manual_strokes"] == [(True, [(2.0, 2.0, 1.0)])]
-            assert saved["circles"][0][1:] == (5.0, 5.0, 2.0, None)
-            assert zstate.sidecar_path(path).read_bytes() != before
+        worker = _post_worker([(5.0, 5.0, 2.0)], (20, 20), .5, "apply_all", 1)
+        worker.enqueue(path, _result(), 1, 1)
+        worker.close()
+        worker.run()
+        saved = zstate.load_state(path)
+        assert saved["removed_blob_ids"] == {3}
+        assert saved["manual_strokes"] == [(True, [(2.0, 2.0, 1.0)])]
+        assert saved["circles"][0][1:] == (5.0, 5.0, 2.0, None)
+        assert zstate.sidecar_path(path).read_bytes() != before
 
-            untouched = zstate.sidecar_path(path).read_bytes()
-            worker = _ZoneBatchWorker(
-                object(), [], Path(tmp) / "model.pt", {}, _classes(), 0, 0,
-            )
-            worker.run()   # 빈 target 리스트 -- 추론도 후처리도 전혀 일어나지 않아야 함
-            assert zstate.sidecar_path(path).read_bytes() == untouched
-        finally:
-            tab.close()
+        untouched = zstate.sidecar_path(path).read_bytes()
+        cuda_worker = _ZoneBatchWorker(
+            object(), [], Path(tmp) / "model.pt", {}, _classes(), 0, 0,
+        )
+        cuda_worker.run()   # 빈 target 리스트 -- 추론도 후처리도 전혀 일어나지 않아야 함
+        assert zstate.sidecar_path(path).read_bytes() == untouched
 
 
 def test_per_image_mode_uses_detected_circles():
@@ -130,13 +153,14 @@ def test_per_image_mode_uses_detected_circles():
         Image.new("RGB", (20, 20)).save(path)
         old_detect = module.detect_circles
         module.detect_circles = lambda *args, **kwargs: [(9.0, 8.0, 3.0)]
-        tab = _batch_tab([(5.0, 5.0, 2.0)], (20, 20), .5, "per_image", 1)
         try:
-            tab._on_batch_image_inferred(path, _result(), 1, 1)
+            worker = _post_worker([(5.0, 5.0, 2.0)], (20, 20), .5, "per_image", 1)
+            worker.enqueue(path, _result(), 1, 1)
+            worker.close()
+            worker.run()
             assert zstate.load_state(path)["circles"][0][1:] == (9.0, 8.0, 3.0, None)
         finally:
             module.detect_circles = old_detect
-            tab.close()
 
 
 def test_worker_stops_immediately_when_interruption_already_requested():
@@ -157,6 +181,26 @@ def test_worker_stops_immediately_when_interruption_already_requested():
         finally:
             module.engine.prepare_inference = old_prepare
         assert inferred == []
+
+
+def test_post_worker_stops_immediately_when_interruption_already_requested():
+    """`QThread.requestInterruption()`은 스레드가 실제로 `.start()`된 상태가 아니면
+    아무 효과가 없다(Qt 동작) — `_ZoneBatchWorker`의 동급 테스트처럼 `run()`을 직접
+    호출하면 이 플래그를 검증할 수 없으므로, 여기서는 실제로 `.start()`해 큐가
+    비어 `queue.get()`에서 대기 중일 때 interruption을 건 뒤 항목을 넣어 sentinel로
+    깨운다 — 그래도 처리 없이 즉시 멈추는지 확인."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "x.png"
+        Image.new("RGB", (10, 10)).save(path)
+        worker = _post_worker([(5.0, 5.0, 2.0)], (10, 10), .5, "apply_all", 1)
+        rows = []
+        worker.row_computed.connect(lambda *a: rows.append(a))
+        worker.start()
+        worker.requestInterruption()   # 아직 큐가 비어 있어 queue.get()에서 대기 중
+        worker.enqueue(path, _result(10), 1, 1)
+        worker.close()
+        assert worker.wait(5000)
+        assert rows == []
 
 
 def test_golden_path_button_click_reports_progress_error_and_opens_dialog():
@@ -211,12 +255,23 @@ def test_golden_path_button_click_reports_progress_error_and_opens_dialog():
             assert tab._btn_batch.isEnabled()
 
             QTest.mouseClick(tab._btn_batch, Qt.MouseButton.LeftButton)
-            worker = tab._batch_worker
-            assert worker is not None
-            assert worker.wait(10000)
-            QTest.qWait(200)
+            batch_worker = tab._batch_worker
+            post_worker = tab._post_worker
+            assert batch_worker is not None and post_worker is not None
+            assert batch_worker.wait(10000)   # CUDA 워커 — 바로 wait() 가능
+            # post_worker.close()는 batch_worker.finished의 큐드 시그널로 메인 스레드
+            # 이벤트 루프를 거쳐 호출되므로, 여기서 post_worker.wait()를 바로 부르면
+            # (이벤트 루프를 펌핑하지 않아) close()가 전달되지 않아 교착될 수 있다 —
+            # 이벤트 루프를 펌핑하며 종료(_on_batch_finished가 None으로 비움)를 기다린다.
+            for _ in range(200):
+                if tab._post_worker is None:
+                    break
+                QTest.qWait(20)
+            else:
+                raise AssertionError("post_worker가 제한 시간 내에 종료되지 않음")
 
             assert tab._batch_worker is None
+            assert tab._post_worker is None
             assert tab._batch_progress is None
             assert len(dialogs) == 1
             rows, blob_rows = dialogs[0]
@@ -262,7 +317,7 @@ def test_compute_zone_rows_returns_none_without_circles():
 
 
 def test_compute_zone_rows_matches_batch_path_output():
-    """배치 경로(`_on_batch_image_inferred`)와 "전체 결과 보기" 둘 다 이 순수
+    """배치 경로(`_ZoneBatchPostWorker.run()`)와 "전체 결과 보기" 둘 다 이 순수
     함수를 공유한다 — class_map이 전부 타겟(1)이면 모든 존이 100%여야 한다."""
     path = Path("img.png")
     result = _result(size=10)
@@ -277,7 +332,7 @@ def test_compute_zone_rows_matches_batch_path_output():
 
 def test_view_all_results_with_inactive_image_sidecar_does_not_crash():
     """BUG-036: 사이드카 "circles"는 (id, cx, cy, r, name) 5-튜플(ZoneCanvas.get_state()/
-    _on_batch_image_inferred() 둘 다 id를 맨 앞에 저장)인데, `_on_view_all_results()`가
+    `_ZoneBatchPostWorker.run()` 둘 다 id를 맨 앞에 저장)인데, `_on_view_all_results()`가
     비활성 이미지에 대해 이를 자르지 않고 그대로 `_compute_zone_rows()`에 넘기면
     cx 자리에 id가, 존 이름 자리에 float(반지름)가 들어간다. 실제 크래시는 그 틀어진
     결과가 `ZoneBatchResultDialog` 생성 중 `_build_filter_bar()`의

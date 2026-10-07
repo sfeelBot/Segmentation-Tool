@@ -24,6 +24,7 @@
 이미지 전환 시 사이드카가 있으면 복원, 없으면 빈 캔버스로 시작(자세한 설계는
 docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md "요청 A" 참고).
 """
+import queue
 from pathlib import Path
 
 import numpy as np
@@ -100,8 +101,9 @@ class _ZoneBatchWorker(QThread):
     후처리(`compute_blob_labels`/`zones_from_circles`/`detect_circles` 등)는 절대
     이 스레드 안에서 실행하면 안 된다("다른 스레드의 실 CUDA 추론 직후 같은 스레드에서
     cv2 후처리"가 `STATUS_STACK_BUFFER_OVERRUN` 하드크래시의 결정적 트리거로 격리됨,
-    QA.md BUG-030). 후처리는 `image_inferred` 시그널을 받는 메인 스레드
-    (`ZoneAnalysisTab._on_batch_image_inferred`)에서 수행한다."""
+    QA.md BUG-030). 후처리는 `image_inferred` 시그널을 받는 가벼운 중계 슬롯
+    (`ZoneAnalysisTab._on_batch_image_ready`)을 거쳐 `_ZoneBatchPostWorker`(별도
+    QThread, CUDA 비호출)로 넘어간다 — R-PERF-2(2026-10-07), 응답없음 완화."""
     progress = pyqtSignal(object, str, object, int, int)
     image_inferred = pyqtSignal(object, object, int, int)   # path, InferenceResult, done, total
 
@@ -144,6 +146,77 @@ class _ZoneBatchWorker(QThread):
                 self.image_inferred.emit(path, result, done, total)
             except Exception as exc:
                 log.exception(f"존 분석 일괄 처리(추론) 실패 — image={path}")
+                self.progress.emit(path, "error", str(exc), done, total)
+
+
+class _ZoneBatchPostWorker(QThread):
+    """R-PERF-2(2026-10-07): `_ZoneBatchWorker`가 CUDA 추론을 마친 결과를 큐로
+    받아 cv2/numpy 존·블랍 후처리(`_compute_zone_rows`)와 사이드카 저장을 전담하는
+    두 번째 워커. CUDA를 절대 호출하지 않는다 — BUG-030 트리거는 "다른 스레드의 실
+    CUDA 추론 직후 같은 스레드에서 cv2 후처리"뿐이므로, 이 스레드는 애초에 CUDA를
+    호출하지 않아 그 조합 자체가 성립하지 않는다(QA.md BUG-030).
+
+    `enqueue()`로 들어온 항목을 FIFO로 하나씩 처리하므로 처리 순서(결과/사이드카
+    기록 순서)는 `_ZoneBatchWorker`가 넣은 순서(이미지 리스트 순서)와 동일하게
+    보존된다 — 단일 스레드가 큐를 하나씩 소비하므로 레이스 없음."""
+    row_computed = pyqtSignal(object, object, object, object, int, int)  # path, result, rows, blob_rows, done, total
+    progress = pyqtSignal(object, str, object, int, int)   # path, status, detail, done, total
+
+    def __init__(self, mode: str, circles_ref: list[tuple], ref_size: tuple[int, int],
+                 sensitivity: float, target_cid: int) -> None:
+        super().__init__()
+        self._queue: queue.Queue = queue.Queue()
+        self._mode = mode
+        self._circles_ref = circles_ref
+        self._ref_size = ref_size
+        self._sensitivity = sensitivity
+        self._target_cid = target_cid
+
+    def enqueue(self, path: Path, result: InferenceResult, done: int, total: int) -> None:
+        self._queue.put((path, result, done, total))
+
+    def close(self) -> None:
+        self._queue.put(None)   # sentinel — CUDA 워커가 끝났고 더 들어올 항목이 없음을 알림
+
+    def run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None or self.isInterruptionRequested():
+                break
+            path, result, done, total = item
+            try:
+                h, w = result.raw_class_map.shape
+                if self._mode == "per_image":
+                    with Image.open(str(path)) as im:
+                        rgb = np.array(im.convert("RGB"))
+                    circles = detect_circles(rgb[:, :, ::-1].copy(), sensitivity=self._sensitivity)
+                else:
+                    circles = scale_circles(self._circles_ref, self._ref_size, (w, h))
+                if not circles:
+                    self.progress.emit(path, "done", "원 없음", done, total)
+                    continue
+
+                previous = zstate.load_state(path)
+                computed = _compute_zone_rows(path, result, self._target_cid, circles, previous)
+                if computed is None:
+                    self.progress.emit(path, "done", "원 없음", done, total)
+                    continue
+                rows, blob_rows = computed
+
+                # circles는 모드에 따라 (cx,cy,r)(장별 자동검출) 또는 (cx,cy,r,name)
+                # (기준 이미지 레시피 적용, *rest로 이름 보존)일 수 있다 — *rest로 흡수.
+                state = previous or {
+                    "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
+                }
+                state["circles"] = [
+                    (idx, cx, cy, r, rest[0] if rest else None)
+                    for idx, (cx, cy, r, *rest) in enumerate(circles)
+                ]
+                zstate.save_state(path, state)
+
+                self.row_computed.emit(path, result, rows, blob_rows, done, total)
+            except Exception as exc:
+                log.exception(f"존 분석 일괄 처리(후처리) 실패 — image={path}")
                 self.progress.emit(path, "error", str(exc), done, total)
 
 
@@ -199,15 +272,11 @@ class ZoneAnalysisTab(QWidget):
         self._target_cache: dict[Path, tuple[tuple, InferenceResult, np.ndarray, list]] = {}
         self._worker: _ZoneInferenceWorker | None = None
         self._batch_worker: _ZoneBatchWorker | None = None
+        self._post_worker: _ZoneBatchPostWorker | None = None   # R-PERF-2: cv2 후처리 전용 QThread
         self._batch_progress: QProgressDialog | None = None
-        # BUG-030: cv2/numpy 존·블랍 후처리 결과(메인 스레드에서 누적) + 배치 컨텍스트
+        # R-PERF-2: cv2/numpy 존·블랍 후처리 결과(메인 스레드에서 누적, _post_worker가 채움)
         self._batch_rows: list[tuple[str, str, float]] = []
         self._batch_blob_rows: list[tuple[str, ZoneBlobStat]] = []
-        self._batch_mode: str = "apply_all"
-        self._batch_circles_ref: list[tuple[float, float, float]] = []
-        self._batch_ref_size: tuple[int, int] = (0, 0)
-        self._batch_sensitivity: float = 0.5
-        self._batch_target_cid: int | None = None
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
@@ -1112,7 +1181,7 @@ class ZoneAnalysisTab(QWidget):
         done[5] = done[4]   # "진행상황"은 결과가 있으면 이미 끝난 것으로 간주(아래 러닝 중 예외)
         done[6] = self._step6_touched
         done[7] = self._result_viewed
-        if self._worker is not None or self._batch_worker is not None:
+        if self._worker is not None or self._batch_worker is not None or self._post_worker is not None:
             return 5, {k for k in (1, 2, 3, 4) if done[k]}   # 추론 진행 중엔 강제로 5번 강조
         completed = {k for k, v in done.items() if v}
         current = next((k for k in range(1, 8) if k not in completed), 7)
@@ -1300,7 +1369,7 @@ class ZoneAnalysisTab(QWidget):
                 continue
             previous = zstate.load_state(path)
             # BUG-036: 사이드카의 "circles"는 (id, cx, cy, r, name) — ZoneCanvas.get_state()/
-            # _on_batch_image_inferred()가 항상 id를 맨 앞에 저장한다(get_circles()와 다른
+            # _ZoneBatchPostWorker.run()이 항상 id를 맨 앞에 저장한다(get_circles()와 다른
             # 스키마). id를 자르지 않고 그대로 넘기면 _compute_zone_rows()가 cx 자리에
             # id를, name 자리에 실제 반지름(float)을 받아 zone_name_sort_key()에서
             # TypeError로 크래시한다(QA.md BUG-036).
@@ -1496,15 +1565,11 @@ class ZoneAnalysisTab(QWidget):
         if self._image_path in targets and self._last_result is not None:
             cached[self._image_path] = self._last_result
         self._btn_batch.setEnabled(False)
-        # BUG-030: 존/블랍 후처리는 워커 스레드가 아니라 메인 스레드
-        # (_on_batch_image_inferred)에서 수행 — 그 계산에 필요한 컨텍스트를 여기 보관한다.
+        # R-PERF-2: 존/블랍 후처리는 CUDA 워커(_batch_worker)가 아니라 전용 cv2
+        # 워커(_post_worker)에서 수행 — 모드/기준 원/민감도/타겟 cid는 그 워커의
+        # 생성자 인자로 직접 넘긴다(메인 스레드 self에 보관할 필요 없음).
         self._batch_rows = []
         self._batch_blob_rows = []
-        self._batch_mode = mode
-        self._batch_circles_ref = circles_ref
-        self._batch_ref_size = (ref_w, ref_h)
-        self._batch_sensitivity = sensitivity
-        self._batch_target_cid = target_cid
         self._batch_progress = QProgressDialog(
             "존 분석 일괄 처리 중…", "취소", 0, len(targets), self
         )
@@ -1517,11 +1582,21 @@ class ZoneAnalysisTab(QWidget):
             self._model, targets, self._ckpt_path, cached,
             target_classes, min_confidence, min_pixel_size,
         )
+        self._post_worker = _ZoneBatchPostWorker(
+            mode, circles_ref, (ref_w, ref_h), sensitivity, target_cid,
+        )
         self._batch_progress.canceled.connect(self._batch_worker.requestInterruption)
+        self._batch_progress.canceled.connect(self._post_worker.requestInterruption)
         self._batch_worker.progress.connect(self._on_batch_progress)
-        self._batch_worker.image_inferred.connect(self._on_batch_image_inferred)
-        self._batch_worker.finished.connect(self._on_batch_finished)
+        self._batch_worker.image_inferred.connect(self._on_batch_image_ready)
+        # CUDA 워커가 끝나면 cv2 워커에 "더 들어올 항목 없음"을 알린다(큐에 남은
+        # 항목은 계속 처리됨) — 최종 완료 판정은 _post_worker.finished 기준(아래).
+        self._batch_worker.finished.connect(self._post_worker.close)
+        self._post_worker.progress.connect(self._on_batch_progress)
+        self._post_worker.row_computed.connect(self._on_batch_row_computed)
+        self._post_worker.finished.connect(self._on_batch_finished)
         self._batch_worker.start()
+        self._post_worker.start()
         self._refresh_step_indicator()
 
     def _on_batch_progress(self, path: Path, status: str, detail,
@@ -1550,62 +1625,41 @@ class ZoneAnalysisTab(QWidget):
         else:
             self._img_list.set_item_status(path, "done", badge=detail)
 
-    def _on_batch_image_inferred(self, path: Path, result: InferenceResult,
-                                 done: int, total: int) -> None:
-        """BUG-030: cv2/numpy 존·블랍 후처리 — 반드시 메인 스레드에서 실행해야 한다
-        (워커 스레드 안에서 실 CUDA 추론 직후 cv2 후처리를 이어서 하면 하드크래시,
-        QA.md BUG-030). `_ZoneBatchWorker.run()`이 하던 후처리를 그대로 옮긴 것."""
-        try:
-            self._results[path] = result   # BUG(2026-10-03#1): _on_inference_result()와 동일하게
-                                            # 캐시해야 이미지 전환 시 우측 존 비율 패널이 복원된다.
-            self._btn_view_all.setEnabled(bool(self._results))
-            h, w = result.raw_class_map.shape
-            if self._batch_mode == "per_image":
-                with Image.open(str(path)) as im:
-                    rgb = np.array(im.convert("RGB"))
-                circles = detect_circles(rgb[:, :, ::-1].copy(), sensitivity=self._batch_sensitivity)
-            else:
-                circles = scale_circles(self._batch_circles_ref, self._batch_ref_size, (w, h))
-            if not circles:
-                self._on_batch_progress(path, "done", "원 없음", done, total)
-                return
+    def _on_batch_image_ready(self, path: Path, result: InferenceResult,
+                              done: int, total: int) -> None:
+        """R-PERF-2: `_ZoneBatchWorker.image_inferred`의 가벼운 중계 슬롯 —
+        무거운 cv2 후처리는 절대 여기서 하지 않고 `_post_worker`(전용 QThread)에
+        큐잉만 하고 즉시 반환한다(메인 스레드 블로킹 없음)."""
+        if self._post_worker is not None:
+            self._post_worker.enqueue(path, result, done, total)
 
-            previous = zstate.load_state(path)
-            computed = _compute_zone_rows(path, result, self._batch_target_cid, circles, previous)
-            if computed is None:
-                self._on_batch_progress(path, "done", "원 없음", done, total)
-                return
-            rows, blob_rows = computed
-
-            # circles는 모드에 따라 (cx,cy,r)(장별 자동검출) 또는 (cx,cy,r,name)
-            # (기준 이미지 레시피 적용, *rest로 이름 보존)일 수 있다 — *rest로 흡수.
-            state = previous or {
-                "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
-            }
-            state["circles"] = [
-                (idx, cx, cy, r, rest[0] if rest else None)
-                for idx, (cx, cy, r, *rest) in enumerate(circles)
-            ]
-            zstate.save_state(path, state)
-
-            self._batch_rows.extend(rows)
-            self._batch_blob_rows.extend(blob_rows)
-            badge = f"{rows[-1][2]:.1f}%" if rows else None
-            self._on_batch_progress(path, "done", badge, done, total)
-        except Exception as exc:
-            log.exception(f"존 분석 일괄 처리(후처리) 실패 — image={path}")
-            self._on_batch_progress(path, "error", str(exc), done, total)
+    def _on_batch_row_computed(self, path: Path, result: InferenceResult,
+                               rows: list[tuple[str, str, float]],
+                               blob_rows: list[tuple[str, ZoneBlobStat]],
+                               done: int, total: int) -> None:
+        """R-PERF-2: `_ZoneBatchPostWorker.row_computed` 수신 — 가벼운 dict/list
+        누적 + Qt 위젯 호출만 담당(기존 `_on_batch_image_inferred()`에서 cv2 계산을
+        떼어내고 남은 UI 갱신 부분). cv2 후처리 자체는 이미 `_post_worker`(cv2 전용
+        QThread)에서 끝난 뒤이므로 메인 스레드에서 해도 안전하다."""
+        self._results[path] = result   # BUG(2026-10-03#1): _on_inference_result()와 동일하게
+                                        # 캐시해야 이미지 전환 시 우측 존 비율 패널이 복원된다.
+        self._btn_view_all.setEnabled(bool(self._results))
+        self._batch_rows.extend(rows)
+        self._batch_blob_rows.extend(blob_rows)
+        badge = f"{rows[-1][2]:.1f}%" if rows else None
+        self._on_batch_progress(path, "done", badge, done, total)
 
     def _on_batch_finished(self) -> None:
-        # QThread.finished는 같은 스레드에서 순서대로 큐잉된 image_inferred 시그널이
-        # 모두 메인 스레드에서 처리된 뒤에 도착한다(Qt 크로스스레드 큐드 시그널은
-        # emit 순서를 보존) — 그래서 여기서 _batch_rows/_batch_blob_rows를 그대로
-        # 최종 결과로 써도 안전하다.
+        # R-PERF-2: 최종 완료 판정은 _post_worker.finished(cv2 큐가 다 빈 뒤) 기준
+        # — CUDA 워커(_batch_worker)가 먼저 끝나도 cv2 후처리 큐에 항목이 남아있을
+        # 수 있으므로, 더 늦게 끝나는 쪽을 기준으로 삼아야 _batch_rows/_batch_blob_rows가
+        # 누락 없이 전부 채워진 상태로 결과 다이얼로그를 연다.
         if self._batch_progress is not None:
             self._batch_progress.close()
             self._batch_progress = None
         rows, blob_rows = self._batch_rows, self._batch_blob_rows
         self._batch_worker = None
+        self._post_worker = None
         self._update_batch_button_state()
         self._refresh_step_indicator()
         if not rows:
