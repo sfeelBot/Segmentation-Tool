@@ -5588,3 +5588,30 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
   app/tabs/r_analysis_tab.py app/widgets/r_roi_canvas.py` 통과.
 - `QA.md`의 BUG-043/BUG-044 상태를 "수정 완료 — 재검증 대기"로 갱신, 수정 내역 추가.
 - git commit은 하지 않았다(리더 지시 — 검증 통과 후 리더가 커밋).
+
+## 2026-10-26 — BUG-045(P1) R 분석 탭 배치 검출 재진입 크래시 수정
+
+- 상태: 수정 완료, 재검증 대기(git commit 보류 — 리더 지시, 검증 통과 후 리더가 커밋).
+- 대상: `app/tabs/r_analysis_tab.py`.
+- 원인: `_run_batch_detect()`에 재진입 가드가 전혀 없어, `_RDetectWorker`가
+  `isRunning()==True`인 상태에서 같은(또는 다른) 배치 버튼(현재 이미지/선택 셀 전체/
+  전체 셀 분석, 모두 공용 `_run_batch_detect()` 경유)을 다시 누르면 `self._detect_worker`/
+  `self._progress`가 새 인스턴스로 덮어써져 기존 워커 참조가 끊기고, 끊긴 워커가 백그라운드에서
+  계속 돌아 두 `_RDetectWorker` 스레드가 동시에 같은 이미지들을 처리 — 트레이스백 없는
+  크래시가 결정적으로 재현됐다.
+- 수정: `_run_batch_detect()` 시작부에
+  `if self._detect_worker is not None and self._detect_worker.isRunning(): return` 가드를
+  추가해 진행 중일 때는 새 워커를 만들지 않고 즉시 return. 더불어 검출 관련 버튼 3개
+  (`_btn_detect_current`/`_btn_detect_cell`/`_btn_detect_all`, 기존엔 지역 변수였던 것을
+  인스턴스 속성으로 승격)를 배치 시작 시 `_set_detect_buttons_enabled(False)`로 비활성화하고
+  `_on_batch_detect_finished()`에서 다시 활성화 — Zone 분석 탭의 `_btn_batch.setEnabled(False)`
+  → 완료 시 재활성화 패턴을 그대로 따랐다.
+- 검증 스크립트 재실행: 검증 에이전트가 남긴 `verify_r_race2.py`(단독 탭)/
+  `verify_r_race_mw.py`(MainWindow 임베드)는 "재진입 클릭 시 새 워커로 교체됨"을 버그
+  증거로 단언하던 체크 1개만 FAIL로 뒤집혔다(가드가 막아 교체가 안 일어나므로 — 수정이
+  의도대로 동작한다는 뜻이며 회귀가 아니다). 크래시/행 없음, 두 워커 모두 정상 종료,
+  결과값 일관성 등 나머지 체크는 전부 PASS. 대조군 `verify_r_race3.py`(순차 2회 클릭,
+  정상 플로우)는 TOTAL 1 PASS 1 FAIL 0 — 회귀 없음.
+- `build/venv/Scripts/python.exe -m py_compile app/tabs/r_analysis_tab.py` 통과.
+- `QA.md`의 BUG-045 상태를 "수정 완료 — 재검증 대기"로 갱신, 수정 내역 추가.
+- git commit은 하지 않았다(리더 지시 — 검증 통과 후 리더가 커밋).

@@ -278,10 +278,12 @@ class RAnalysisTab(QWidget):
         btn_current = QPushButton("현재 이미지 검출")
         btn_current.clicked.connect(self._on_detect_current)
         layout.addWidget(btn_current)
+        self._btn_detect_current = btn_current
 
         btn_cell = QPushButton("선택 셀 전체 일괄 검출")
         btn_cell.clicked.connect(self._on_detect_cell)
         layout.addWidget(btn_cell)
+        self._btn_detect_cell = btn_cell
 
         btn_all = QPushButton("▶ 전체 셀 분석")
         btn_all.setStyleSheet(
@@ -290,6 +292,7 @@ class RAnalysisTab(QWidget):
         )
         btn_all.clicked.connect(self._on_detect_all)
         layout.addWidget(btn_all)
+        self._btn_detect_all = btn_all
 
         self._run_cluster = cluster
 
@@ -714,6 +717,11 @@ class RAnalysisTab(QWidget):
         self._run_batch_detect(all_paths)
 
     def _run_batch_detect(self, paths: list[Path]) -> None:
+        # BUG-045: 배치 검출이 진행 중일 때 같은(또는 다른) 배치 버튼을 다시 누르면
+        # self._detect_worker/self._progress가 새 인스턴스로 덮어써지고 기존 워커의
+        # 참조가 끊긴 채 백그라운드에서 계속 돌아 두 워커가 동시에 실행됐다 — 재진입 가드.
+        if self._detect_worker is not None and self._detect_worker.isRunning():
+            return
         if not paths:
             QMessageBox.information(self, "이미지 없음", "검출할 이미지가 없습니다.")
             return
@@ -726,6 +734,7 @@ class RAnalysisTab(QWidget):
             QMessageBox.information(self, "ROI 없음", "ROI가 지정된 이미지가 없습니다.")
             return
 
+        self._set_detect_buttons_enabled(False)
         self._progress = QProgressDialog("검출 중...", "취소", 0, len(jobs), self)
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._detect_worker = _RDetectWorker(jobs, self._settings_dialog.threshold())
@@ -736,6 +745,11 @@ class RAnalysisTab(QWidget):
         self._detect_worker.start()
         self._progress.show()
 
+    def _set_detect_buttons_enabled(self, enabled: bool) -> None:
+        self._btn_detect_current.setEnabled(enabled)
+        self._btn_detect_cell.setEnabled(enabled)
+        self._btn_detect_all.setEnabled(enabled)
+
     def _on_detect_image_done(self, path_str: str, area: int) -> None:
         self._image_data_map.setdefault(path_str, _default_image_data())["area"] = area
 
@@ -743,6 +757,7 @@ class RAnalysisTab(QWidget):
         if self._progress is not None:
             self._progress.close()
             self._progress = None
+        self._set_detect_buttons_enabled(True)
         if self._current_image_path is not None:
             self._run_and_display_detection(self._current_image_path)
         self._refresh_right_panel()
