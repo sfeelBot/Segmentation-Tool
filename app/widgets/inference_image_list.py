@@ -212,6 +212,13 @@ class InferenceImageList(QWidget):
     def current_path(self) -> Path | None:
         return self._get_item_path(self._tree.currentItem())
 
+    def select_path(self, path: Path) -> None:
+        """외부(R 분석 탭의 썸네일 스트립/◀▶ 네비게이션 등)에서 현재 선택을
+        특정 경로로 맞출 때 사용 — path가 목록에 없으면 조용히 무시한다."""
+        item = self._path_to_item.get(path)
+        if item is not None:
+            self._tree.setCurrentItem(item)
+
     def current_display_index(self) -> int:
         path = self.current_path()
         if path is None:

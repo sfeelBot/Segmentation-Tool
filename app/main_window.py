@@ -12,6 +12,7 @@ from app.tabs.labeling_tab import LabelingTab
 from app.tabs.training_tab import TrainingTab
 from app.tabs.inference_tab import InferenceTab
 from app.tabs.zone_analysis_tab import ZoneAnalysisTab
+from app.tabs.r_analysis_tab import RAnalysisTab
 from app.widgets.settings_dialog import SettingsDialog
 from app.widgets.export_dialog import ExportDialog
 from app.widgets.import_dialog import ImportAnnotationDialog
@@ -38,8 +39,10 @@ class MainWindow(QMainWindow):
         self._labeling_tab.set_mutation_guard(self._guard_training_mutation)
         self._training_tab.set_start_guard(self._labeling_tab.prepare_for_training)
         self._zone_tab       = ZoneAnalysisTab()
+        self._r_tab          = RAnalysisTab()
 
         self._tabs.addTab(self._zone_tab,      t("tab.zone_analysis"))
+        self._tabs.addTab(self._r_tab,         t("tab.r_analysis"))
         self._tabs.addTab(self._labeling_tab,  t("tab.labeling"))
         self._tabs.addTab(self._training_tab,  t("tab.training"))
         self._tabs.addTab(self._inference_tab, t("tab.inference"))

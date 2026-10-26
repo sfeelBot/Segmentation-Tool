@@ -5432,3 +5432,159 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 - **상태: 검증대기** — 이번 세션엔 실 체크포인트가 없어 합성 입력으로 cProfile
   비교를 했다. 실 GPU/실 체크포인트 기준 수치 재확인과 UI 조작(목록 클릭/↓키)
   체감 확인은 검증 에이전트가 별도로 수행해야 완료로 간주할 수 있다.
+
+## 2026-10-26 — R 분석 탭 라운드1: core + widgets 구현 (존 분석 에디션 브랜치)
+
+- 상태: **진행중 — 라운드1 완료, 탭 조립(라운드2) 대기**. 이번 라운드는
+  `docs/specs/r-analysis-tab-2026-10-26.md` 확정 스펙에 따라 신규 core 모듈 2개 +
+  widgets 5개만 구현했다 — `app/tabs/r_analysis_tab.py` 조립과
+  `main_window.py`/`i18n.py` 등록은 다음 라운드(별도 지시) 몫, 이번에는 건드리지 않음.
+  대상 브랜치/경로: `feature/zone-analysis-tab`, 워크트리
+  `D:\segmentation model-zone-analysis-tab`.
+- **`app/core/r_analysis_metrics.py`**: `detect_contour_mask(img, roi, threshold)`(임계값
+  이진화 -> `cv2.findContours(RETR_EXTERNAL)` -> 노이즈 최소면적(4px²) 이상 contour 전부를
+  합쳐 원본 크기 bool 마스크로 반환 — 단일 최대 contour만 쓰지 않음, 함수 위에 AI 교체
+  지점 ponytail 주석) + `contour_area`/`compute_cell_ratio`/`pass_fail`/`cell_rollup`(셀당
+  1회 ratio·판정, 요구사항 6)/`export_r_results_to_excel`(openpyxl, "cells"+"images" 시트
+  2개). `zone_metrics.disk_mask`/`apply_manual_strokes`는 재구현 없이 그대로 re-export.
+  `__main__` self-check(assert 기반) — 합성 사각형 면적(300px) 검출, ROI 밖 무시, 1px
+  노이즈 제외, 떨어진 블롭 2개 합산(75px), ratio/판정 산술, Excel 왕복(시트/행 수) 확인.
+- **`app/core/r_cell_store.py`**: 단일 세션 JSON 읽기·쓰기(사이드카 아님, 스펙 데이터
+  모델 그대로) — `app/core/file_io.atomic_write`(tempfile+os.replace, 재시도 포함) 재사용,
+  `annotation_store.py`와 동일 "단일 JSON" 컨벤션. 파일 없음/손상 시 기본 세션으로 안전
+  폴백. self-check로 저장/로드/손상 폴백 확인.
+- **`app/widgets/r_roi_canvas.py`**(`RRoiCanvas(OverlayViewer)`): `zone_canvas.py`를
+  **상속이 아니라 복사 포팅** — 원 특화 기하만 ROI 사각형 1개의 8-handle(모서리4+변4)
+  생성/이동/리사이즈 상태머신으로 교체(고정변/이동변 딕셔너리 `_HANDLE_FIXED_MOVABLE`로
+  일반화, create는 "se" 핸들 리사이즈로 통일 구현). 브러시 그리기/지우기 스탬프·경량
+  undo 스택(`_push_undo`/`undo`/`can_undo`/`get_state`/`set_state`)은 zone_canvas 그대로
+  포팅(블랍삭제 모드는 R엔 없는 개념이라 제외). 검출된 마스크(`set_detected_mask`) +
+  수동 스트로크를 합친 `effective_mask()`를 numpy->QImage(RGBA8888, `.copy()`로 버퍼 분리)
+  변환해 반투명 오버레이로 렌더링 — 임의 블롭 모양 렌더링은 zone_canvas에 없던 신규 로직.
+  시그널 `roi_changed`/`roi_committed`/`erase_changed`/`mask_changed` 4종. self-check는
+  Qt 위젯 생성 없이 좌표 수학(edges 정규화/뒤집힌 드래그/핸들 고정-이동 매핑)만 검증.
+- **`app/widgets/r_cell_panel.py`**(`RCellPanel`): 셀 목록(QListWidget, 판정 dot =
+  `icons.status_dot` 색상) + 선택 셀 이미지 목록은 `InferenceImageList` 재사용(검색/정렬/
+  Delete 키 제거를 재구현하지 않음). 폴더 일괄 가져오기(바로 아래 하위폴더명=셀 ID,
+  `QFileDialog.getExistingDirectory`) + 파일로 셀에 추가(`getOpenFileNames` +
+  `QInputDialog.getItem(editable=True)`) 버튼 2개. 시그널 `cell_selected`/`cells_changed`/
+  `image_selected`. self-check(offscreen Qt) — set_cells/get_cells 왕복, 셀 선택, 판정
+  dot 갱신, 이미지 제거 반영.
+- **`app/widgets/r_settings_panel.py`**(`RSettingsPanel(QDialog)`): threshold 슬라이더
+  (0-255, `zone_analysis_tab.py`의 confidence 슬라이더와 동일한 150ms singleShot QTimer
+  디바운스) + 분모/스펙 상하한 `QDoubleSpinBox` 3개 + ROI "전역 지정"/"이 이미지만 보정"
+  버튼 2개(캔버스 접근은 다이얼로그가 하지 않고 `roi_global_requested`/
+  `roi_override_requested` 시그널로 탭에 위임). self-check — getter/setter 왕복, 슬라이더
+  변경 시 디바운스 타이머 시작(즉시 미발화) 확인, 버튼 클릭 시그널 확인.
+- **`app/widgets/r_step_indicator.py`**(`RStepIndicator`): `zone_step_indicator.py`
+  구조를 라벨 5개(①이미지/셀 업로드~⑤셀별 결과 확인)로 복제. self-check로 완료/현재/
+  대기 3가지 상태 렌더링 분기 확인.
+- **`app/widgets/r_batch_result_dialog.py`**(`RBatchResultDialog(QDialog)`):
+  `zone_batch_result_dialog.py`의 탭+Excel export 구조를 셀 기준으로 재구성 — "셀"
+  탭(cell_id/image_count/sum_area/ratio/pass_fail, PASS/FAIL 배경색 배지) + "이미지별
+  (참고)" 탭(cell_id/image_name/area, 이미지별 개별 판정 없음을 캡션으로 명시). self-check
+  — 샘플 3셀(PASS/FAIL/미검사)로 행 수·배지 색·Excel 왕복 확인.
+- 아이콘: 그리기/지우기/pan 3종은 이미 `app/resources/icons/`에
+  `tool_brush`/`tool_eraser`/`tool_pan`으로 존재해 신규 추가 없음(기존 재사용).
+- 전 파일 `python -m py_compile` 통과 + 각 파일 `__main__` self-check 전부 통과
+  (`build/venv`의 프로젝트 venv, cv2 5.0.0/numpy 2.5.2로 실행 확인). 단, 이 라운드는
+  core/widgets 단위 검증까지만이다 — 탭 조립 전이라 `python main.py` 전체 구동이나
+  라벨링/학습/추론 탭처럼 실 UI 골든 패스 확인은 **다음 라운드(탭 조립) 이후** 검증
+  에이전트가 수행해야 한다.
+- git commit은 하지 않았다(리더 지시 — 라운드2까지 끝난 뒤 리더가 한 번에 커밋).
+
+## 2026-10-26 — R 분석 탭 조립(라운드2): `RAnalysisTab` + main_window/i18n 등록
+
+- 상태: 완료 — 검증 대기(리더/검증 에이전트 확인 필요).
+- 신규 `app/tabs/r_analysis_tab.py`(`RAnalysisTab`) — 라운드1에서 구현된 core 2개
+  (`r_analysis_metrics`/`r_cell_store`) + widgets 5개(`RRoiCanvas`/`RCellPanel`/
+  `RSettingsPanel`/`RStepIndicator`/`RBatchResultDialog`)를 조립. 스펙 문서
+  (`docs/specs/r-analysis-tab-2026-10-26.md`)의 확정 레이아웃(상단 스텝 배너 + 좌1:중3:우1
+  3-way `QSplitter` + 캔버스 위 플로팅 오버레이 3클러스터)을 그대로 구현.
+- **레이아웃**: 좌측 `RCellPanel` + "검사 설정 요약" 카드 + "검사 설정 열기/조정..."
+  버튼(→ `RSettingsPanel.exec()`). 중앙 `RRoiCanvas` + 하단 썸네일 스트립(`QListWidget`
+  IconMode) + 캔버스 자식으로 떠 있는 3클러스터(편집 도구/실행 3버튼/◀파일명▶ 네비게이션,
+  `installEventFilter`로 캔버스 Resize 이벤트를 잡아 `move()`로 재배치 — 레이아웃 매니저
+  없이 절대 위치). 우측 전체 셀 요약 카드 + 현재 셀 PASS/FAIL 큰 배지 + 이미지별 면적
+  (참고) 테이블 + "전체 결과 보기(Excel)" 버튼(→ `RBatchResultDialog`).
+- **핵심 동작**:
+  - 현재 이미지 상태는 좌측 이미지 목록 클릭/하단 썸네일 클릭/◀▶ 네비게이션 3곳이
+    `_set_current_image()` 단일 진입점을 공유하도록 통합. 이를 위해 `RCellPanel`에
+    `select_image(path)`, `InferenceImageList`에 `select_path(path)`를 작게 추가했다
+    (기존 7개 파일 중 2개에 대한 최소 확장 — 외부에서 "현재 선택"을 맞출 공개 API가
+    없어서 3곳 동기화가 불가능했음).
+  - ROI는 전역 1개 + 이미지별 override — 사용자가 캔버스에서 자유롭게 드래그한 뒤
+    `RSettingsPanel`의 "전역 지정"/"이 이미지만 보정" 버튼을 눌러야만 세션에 커밋된다
+    (버튼을 안 누른 드래그는 이미지 전환 시 사라짐 — 스펙 "ROI 버튼은 전용 시그널로
+    탭에 위임" 문구를 "커밋 없는 드래그는 비영속"으로 해석, 의도적 단순화).
+  - 검출 3단계: 현재 이미지 1장은 동기 함수(`_run_and_display_detection`)로 즉시 캔버스
+    반영. 선택 셀 전체/전체 셀은 신규 `_RDetectWorker(QThread)`(cv2 순차 처리, run()
+    안에서만 연산 후 `image_done`/`progress` Signal만 전달) + `QProgressDialog`로 처리 —
+    스펙 명시대로 Zone 탭의 2-워커 CUDA 분리 구조는 적용하지 않음(AI 추론이 없어 해당
+    리스크 자체가 없음).
+  - 셀 R·판정은 `cell_rollup()`을 셀당 1번만 호출(이미지별 개별 배지 없음, 요구사항 6
+    그대로 유지) — 다만 "이미지 0장" 셀을 core 함수가 ratio=0으로 오판정(스펙 하한이
+    0이면 합격 오판)하는 것을 탭에서 `image_count==0 → pass_fail=None("미검사")`로 보정.
+    "이미지는 있으나 아직 검출 안 함"까지는 구분 못 함 — 데이터 모델에 `detected` 플래그가
+    없어서다(ponytail 주석으로 남김, 필요해지면 추가).
+  - 세션 자동저장은 Zone 탭과 동일한 500ms debounce `QTimer`. per-image `manual_strokes`
+    만 영속화하고 `erase_strokes`(캔버스의 `erase_mask()` getter 전용 레거시 필드, 현재
+    화면 렌더링/면적 계산 어디에도 안 쓰임)는 저장하지 않음 — 의도적 범위 축소.
+- main_window.py: import 추가 + `self._r_tab = RAnalysisTab()` + Zone 탭 바로 다음
+  탭으로 `addTab(self._r_tab, t("tab.r_analysis"))`.
+- i18n.py: ko `"tab.r_analysis": "R 분석"`, en `"tab.r_analysis": "R Analysis"` 추가
+  (`tab.zone_analysis` 바로 옆).
+- 검증: `python -m py_compile`로 변경된 5개 파일 모두 통과. `QT_QPA_PLATFORM=offscreen`
+  으로 (1) `r_cell_panel`/`r_analysis_tab` 자체 self-check, (2) `MainWindow()` 생성 —
+  탭 6개(상/하부 분석·R 분석·라벨링·학습·추론·모델) 정상 등록 확인, (3) 합성 PNG 2장으로
+  스크래치패드에 작성한 골든 패스 스크립트 — 셀 등록→자동 캔버스 로드→ROI 전역 지정
+  커밋→threshold/분모/스펙 설정→선택 셀 QThread 일괄 검출(대기 후 결과 확인)→셀 rollup
+  PASS 판정→편집 도구 모드 전환→우측 패널 갱신→◀▶ 네비게이션→세션 저장·재로드 왕복까지
+  전부 통과. (스크립트는 스크래치패드 임시 파일이라 저장소에는 없음 — 검증 에이전트가
+  필요하면 재현 가능하도록 이 로그에 흐름을 남김.)
+- git commit은 하지 않았다(리더 지시 — 검증 통과 후 리더가 커밋).
+
+## 2026-10-26 — BUG-043/BUG-044 수정 (R 분석 탭, feature/zone-analysis-tab)
+
+- 상태: 수정 완료 — 검증 에이전트 재검증 대기 (git commit은 리더가 재검증 통과 후 수행).
+- 대상 파일: `app/tabs/r_analysis_tab.py` (두 버그 모두 이 파일, `r_roi_canvas.py`는
+  수정 불필요 — 오버레이 클러스터는 탭 쪽에 구현돼 있었음).
+
+### BUG-043 (P0, 데이터 손실)
+
+- 원인: `_on_open_session()`이 `QFileDialog.getSaveFileName()`으로 받은 경로를 파일
+  존재 여부와 무관하게 무조건 `_load_session()`에 넘겨, "새로 만들기" 의도로 고른
+  아직 없는 경로도 `r_cell_store.load()`의 빈 기본 세션으로 메모리 상태를 덮어썼다.
+- 수정: `_on_open_session()`에서 `path.exists()`로 분기. 존재하면 기존대로
+  `_load_session(path)`(불러오기). 존재하지 않으면 `self._session_path`만 갱신하고
+  라벨 텍스트를 갱신한 뒤 `_do_save()`를 호출해 현재 메모리 상태(셀/ROI/threshold/
+  분모/스펙)를 그 새 경로에 즉시 저장 — 메모리를 비우지 않음.
+- 검증: `verify_r_tab.py`(검증 에이전트가 남긴 QTest 스크립트) 재실행 — 52건 전부
+  PASS. 특히 세션 저장/복원 왕복 구간에서 셀 2개·global_roi·override가 모두 보존됨을
+  확인(이전에는 이 경로가 버그를 그대로 재현했을 구간).
+
+### BUG-044 (P1, 클릭 불가)
+
+- 원인: `_position_overlays()`가 세 플로팅 클러스터(편집 도구/실행/네비게이션)를
+  `adjustSize()`로만 자연 폭을 구해 배치해, 디자인 스펙 v4("각 클러스터 max-width
+  42%/46%")의 폭 제약이 구현에 없었다. 자연 폭 합(~945px)이 캔버스 폭을 넘는 모든
+  창 크기(기본 1280×800 포함)에서 편집 도구 클러스터의 Undo 버튼이 실행 클러스터에
+  완전히 가려져 마우스로 클릭할 수 없었다.
+- 수정: `_position_overlays()`에서 `edit_cluster.setMaximumWidth(w*0.42)`,
+  `nav_cluster.setMaximumWidth(w*0.46)`을 먼저 적용해 `adjustSize()`하고, 그 결과로
+  남은 폭(캔버스 폭 - edit폭 - nav폭 - margin*4)을 `run_cluster.setMaximumWidth()`로
+  제한한 뒤 좌(edit)→중앙 근처(run, edit/nav 사이로 클램프)→우(nav) 순서로 배치해
+  어떤 창 크기에서도 세 클러스터의 바운딩 박스가 겹치지 않도록 했다. 캔버스가 아주
+  좁아지면 클러스터 내부 버튼이 프레임 경계에 클리핑될 수 있으나(디자인 스펙이
+  허용하는 범위), 서로 겹쳐 클릭이 막히는 상태는 더 이상 발생하지 않는다.
+- 검증: `verify_r_tab.py`의 1300×850/700×500/500×400 겹침·바운드 체크 전부 PASS.
+  검증 에이전트가 남긴 `verify_r_overlay2.py`(실제 `canvas.childAt()` hit-test)로
+  1400×900 창에서 edit&run/run&nav 겹침 영역이 없고, Undo 버튼과 "전체 셀 분석"
+  버튼 중심점 클릭이 각각 자기 자신에게 정확히 히트함을 재확인.
+
+### 공통
+
+- `D:/segmentation model/build/venv/Scripts/python.exe -m py_compile
+  app/tabs/r_analysis_tab.py app/widgets/r_roi_canvas.py` 통과.
+- `QA.md`의 BUG-043/BUG-044 상태를 "수정 완료 — 재검증 대기"로 갱신, 수정 내역 추가.
+- git commit은 하지 않았다(리더 지시 — 검증 통과 후 리더가 커밋).

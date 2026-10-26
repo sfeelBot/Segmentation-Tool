@@ -5,6 +5,30 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.6.0] 2026-10-26
+
+### 추가
+- "R 분석" 신규 탭 — 존(Zone) 분석 탭과 나란히 쓰이는 사각형 ROI+threshold 기반
+  contour 면적 측정 도구. 핵심은 여러 이미지를 "셀(cell)" 단위로 묶어 관리하고,
+  셀 내 이미지 면적 합계를 분자로 `R_cell = sum(area)/분모`를 셀당 1회만 계산해
+  스펙 상/하한과 비교한 합/불 판정을 낸다(이미지별 개별 판정 없음).
+  - 폴더 일괄 업로드(하위폴더명=셀 ID) / 파일 단위로 특정 셀에 추가, 셀 선택 후
+    이미지 삭제·추가.
+  - 검사 설정 팝업: 사각형 ROI(전역 1회 지정 + 이미지별 보정), threshold 슬라이더,
+    분모·스펙 상/하한 입력.
+  - Contour 자동 검출(현재 이미지 / 선택 셀 전체 / 전체 셀 일괄), 브러시 그리기·
+    지우기 + undo로 마스크 수동 보정.
+  - 좌1:중3:우1 레이아웃, 캔버스 위 역할별 플로팅 오버레이(편집 도구/검출 실행/
+    이미지 탐색), 선택된 셀에 종속된 결과 블록 + 전체 셀 요약 + Excel 내보내기.
+  - 신규: `app/tabs/r_analysis_tab.py`, `app/core/r_analysis_metrics.py`,
+    `app/core/r_cell_store.py`, `app/widgets/r_roi_canvas.py`,
+    `app/widgets/r_cell_panel.py`, `app/widgets/r_settings_panel.py`,
+    `app/widgets/r_step_indicator.py`, `app/widgets/r_batch_result_dialog.py`.
+  - 기획: [docs/specs/r-analysis-tab-2026-10-26.md](specs/r-analysis-tab-2026-10-26.md).
+    디자인 Artifact 4라운드 반복 후 사용자 최종 승인, 구현 2라운드(core+widgets →
+    탭 조립/등록) + 검증 과정에서 BUG-043(P0, 세션 "새로 만들기" 시 데이터 손실)/
+    BUG-044(P1, 캔버스 오버레이 겹침으로 Undo 클릭 불가) 발견·수정·재검증 Closed.
+
 ## [zone-v1.5.2] 2026-10-07
 
 Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e

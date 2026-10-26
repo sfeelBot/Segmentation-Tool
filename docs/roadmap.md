@@ -1424,6 +1424,32 @@ QA.md BUG-033(P1) 참고. 순수 로그 덤프로 접수된 반복 크래시(`nu
       정상 로드(BUG-014와 동일 완화 패턴). `export_dialog.py`는 공유 함수 수정만으로 자동
       보호되어 별도 코드 변경 불필요(스펙 Part 3-B 확인 완료). 구현 대기.
 
+## R 분석(R Analysis) 탭 — 신규 탭 추가 (2026-10-26 요청)
+
+존 분석 탭과 나란히 쓰일 새 탭. 핵심 차이는 여러 이미지를 하나의 "셀(cell)" 단위로 묶어
+관리하고, 셀 내 이미지 면적 합계를 분자로 한 번만 `R_cell = sum(area)/분모`를 계산해
+셀 단위로 합/불 판정을 내는 것 — 이 "셀" 개념은 코드베이스에 전혀 없던 신규 데이터 모델.
+기획 완료: [docs/specs/r-analysis-tab-2026-10-26.md](specs/r-analysis-tab-2026-10-26.md).
+디자인 완료(Artifact v1~v4 반복, 사용자 최종 승인): 상세는
+[design-log.md](agents/design-log.md) 2026-10-26 항목 참고.
+
+- [x] 기획 — Plan 서브에이전트가 재사용 패턴(Zone의 `OverlayViewer`/`ZoneCanvas` 드래그
+      state machine/브러시 undo/`zone_batch_result_dialog`/`zone_metrics`)과 신규
+      파일 목록·데이터 모델(단일 세션 JSON) 정리, 사용자가 핵심 결정 2건(ROI 일괄 적용
+      범위=전역, 셀 합/불 판정=면적 합계 기준 1회 계산) 확정.
+- [x] 디자인 — Artifact 4라운드 반복 후 최종 승인: 좌1:중3:우1 비율, 검사 설정은 좌측
+      요약 카드+별도 팝업으로 분리, 중앙은 이미지 뷰어+마스크 보정(캔버스 위 역할별
+      플로팅 오버레이 3클러스터: 편집도구/검출실행/이미지탐색), 우측은 전체 셀 요약(고정)
+      + 선택 셀 종속 결과 블록("셀 R·판정" + "이미지별 면적(참고, 개별 판정 없음)").
+- [ ] 구현 — `app/core/r_analysis_metrics.py`/`r_cell_store.py` → `app/widgets/`
+      5개 신규 위젯(`r_roi_canvas`/`r_cell_panel`/`r_settings_panel`/`r_step_indicator`/
+      `r_batch_result_dialog`) → `app/tabs/r_analysis_tab.py` → `main_window.py`/
+      `i18n.py` 등록 순서로 착수 예정. 신규 아이콘(그리기/지우기/pan) 3종 `icons.py`
+      추가 필요.
+- [ ] 검증 — 골든 패스(폴더 일괄 업로드→셀 생성, ROI 전역 적용+개별 보정, threshold
+      조정, 자동 검출(현재 이미지/선택 셀/전체 셀), 마스크 보정, 셀별 결과+Excel export,
+      세션 JSON 저장/복원) 실제 `python main.py` 구동 확인 예정.
+
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
   그리기/지우기/연결 블랍 삭제/팬/Undo), 수동 스트로크 last-write-wins와 혼합 LIFO Undo.

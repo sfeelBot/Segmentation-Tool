@@ -12,6 +12,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tab.training":  "학습",
         "tab.inference": "추론",
         "tab.zone_analysis": "상/하부 분석",
+        "tab.r_analysis": "R 분석",
 
         # ── 공통 ──────────────────────────────────────────────────────────
         "common.ok":     "확인",
@@ -311,6 +312,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tab.training":  "Training",
         "tab.inference": "Inference",
         "tab.zone_analysis": "Top/Bottom Analysis",
+        "tab.r_analysis": "R Analysis",
 
         # ── Common ────────────────────────────────────────────────────────
         "common.ok":     "OK",
