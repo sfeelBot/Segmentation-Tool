@@ -5,7 +5,25 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-07] BUG-040 추가 개선(perf `0f1e995`) 독립검증 PASS(부분 개선,
+> **[최신, 2026-10-26] "R 분석" 신규 탭 — 기획→디자인→구현→검증 전부 완료, 커밋+태그
+> 완료(`zone-v1.6.0`), push는 사용자 확인 필요.** 사용자 요청: 존 분석 탭과 나란히
+> 쓰일 신규 탭, 핵심은 여러 이미지를 "셀" 단위로 묶어 셀 내 면적 합계를 분자로
+> `R_cell = sum(area)/분모`를 셀당 1회만 계산해 스펙 상/하한과 비교한 합/불 판정.
+> Plan 서브에이전트로 재사용 패턴·데이터모델·파일목록 설계 → 핵심 결정 2건(ROI
+> 일괄적용 범위=전역, 셀 판정=면적합계 기준 1회계산) 사용자 확인 → designer가 Artifact
+> 목업 4라운드 반복(검사설정 팝업 분리, 중앙 이미지뷰어 확대+좌1:중3:우1, 캔버스 위
+> 역할별 플로팅 오버레이 3클러스터, 선택 셀 종속 결과블록) 후 사용자 최종 승인 →
+> planner가 `docs/specs/r-analysis-tab-2026-10-26.md` 작성 → implementer 2라운드
+> (①core+widgets 7개 파일 ②탭 조립+`main_window.py`/`i18n.py` 등록) → verifier
+> 독립검증에서 BUG-043(P0, 세션 "새로 만들기" 시 메모리 상태가 빈 세션으로 덮어써져
+> 자동저장까지 되는 데이터손실)/BUG-044(P1, 캔버스 플로팅 오버레이 겹침으로 Undo
+> 버튼 클릭 불가) 발견 → implementer 수정 → verifier 독립 재검증 PASS, `QA.md`
+> Closed. `docs/roadmap.md`에 신규 절 추가, `docs/CHANGELOG.md` zone-v1.6.0 항목
+> 작성, `release.ini` 1.5.2→1.6.0 MINOR 버프(신규 탭=기능추가) +
+> `generate_version_info.py` 검증 통과 후 리더가 직접 커밋(`a559695`)+태그
+> (`zone-v1.6.0`). **push는 아직 안 함 — 사용자 명시적 요청 대기.**
+
+> **[2026-10-07, 이전] BUG-040 추가 개선(perf `0f1e995`) 독립검증 PASS(부분 개선,
 > Open 유지) — 이번 VOC 라운드 실질 종료, push는 사용자 재확인 필요.** verifier가
 > 실 GPU+실데이터로 재확인: 캐시 적중 상태 5472px 선택 지연 921ms→**462ms(-50%)**,
 > 2048px도 171→100ms로 회귀 없이 개선. `_recompute_zones`/`zones_from_circles`
@@ -864,3 +882,37 @@ implementer 착수, 이어서 verifier에게 **사용자가 명시적으로 요�
 확인을 넘어 여러 이미지 수/해상도/모드(일괄 적용/일괄 적용 후 수정/장별 자동검출) 조합
 반복 테스트**를 지시할 것 — 이번 라운드는 "완료"로 간주하기 전에 검증 범위를 평소보다
 넓게 요구받았다는 점을 verifier 프롬프트에 명시해야 함.
+
+## 2026-10-26 — "R 분석" 신규 탭 전체 사이클(기획→디자인→구현→검증→커밋)
+
+사용자 요청: `feature/zone-analysis-tab` 에디션 브랜치에 "R 분석" 탭 신규 추가.
+존 분석처럼 contour 면적 측정이지만, 여러 이미지를 "셀" 단위로 묶어 관리하고
+검사 설정(ROI 사각형/threshold)을 따로 둘 것. **디자인 스킬로 Artifact 목업을
+먼저 만들어 확인받은 뒤에만 개발 착수**하라는 사용자 명시적 요청.
+
+1. **기획(Plan 모드)** — Explore 서브에이전트로 Zone 분석 탭 코드(contour/circle
+   검출, ROI 캔버스 부재 확인, 셀 그룹핑 개념 전무 확인) 조사 → AskUserQuestion으로
+   측정방식/ROI 적용범위/셀 결과 집계/합격판정 4건 확인 → Plan 서브에이전트로
+   파일 목록·데이터모델·실행순서 설계 → 추가 결정 2건(ROI 전역적용, 셀 판정=면적
+   합계 1회계산) AskUserQuestion으로 재확인 → 계획 파일 작성 → 사용자 승인(ExitPlanMode).
+2. **디자인** — designer 서브에이전트가 Artifact 목업 발행
+   (https://claude.ai/artifact/BfMMsfues4EAt3xF64y1er). 사용자 피드백 3라운드
+   (검사설정 팝업 분리/중앙 이미지뷰어 확대+좌1:중3:우1/좌측리스트↔뷰어 연동+플로팅
+   오버레이 분리+전체셀분석 버튼)를 받아 SendMessage로 같은 에이전트를 재개해 v2→v3→v4
+   갱신, 사용자 최종 승인("이렇게 진행하고 구현 시작해").
+3. **기획 문서화** — planner 서브에이전트가 `docs/specs/r-analysis-tab-2026-10-26.md`
+   작성(병렬로 디자인 마지막 라운드와 동시 진행).
+4. **구현** — implementer 2라운드: ①`app/core/r_analysis_metrics.py`/
+   `r_cell_store.py` + widgets 5개(`r_roi_canvas`/`r_cell_panel`/`r_settings_panel`/
+   `r_step_indicator`/`r_batch_result_dialog`) ②`app/tabs/r_analysis_tab.py` 조립 +
+   `main_window.py`/`i18n.py` 등록.
+5. **검증** — verifier가 QTest 실제 UI 조작으로 골든 패스 재현, BUG-043(P0, 데이터
+   손실)/BUG-044(P1, Undo 클릭불가) 발견 → `QA.md` 등록. implementer에게 두 버그
+   수정 위임(1차 Agent 호출은 서버측 safety classifier 일시 오류로 실패, 동일 호출
+   재시도로 성공) → 수정 완료 → verifier 독립 재검증(구현자 스크립트 재사용이 아니라
+   신규 스크립트로 재확인) PASS, `QA.md` Closed.
+6. **문서/버전/커밋** — 리더가 직접: `docs/roadmap.md`에 신규 절 추가, `release.ini`
+   1.5.2→1.6.0(MINOR, 신규 탭=기능추가), `docs/CHANGELOG.md` zone-v1.6.0 항목 작성,
+   `scripts/generate_version_info.py` 검증 통과 확인 후 커밋(`a559695`, 20개 파일)
+   + 태그(`zone-v1.6.0`).
+7. **push 보류** — AGENTS.md 규칙대로 push는 사용자 명시적 요청 전까지 하지 않음.
