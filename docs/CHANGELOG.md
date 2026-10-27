@@ -5,6 +5,24 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.6.3] 2026-10-27
+
+사용자 요청: main v1.11.0(공유 위젯 추출: view_transform/brush_toolbar/
+inference_image_list)을 sync 브랜치+PR로 반영하고, Zone/R분석 탭의 편집
+툴바(브러시/지우개/영역삭제/pan/undo/브러시크기)를 공유 `BrushToolbar`로
+교체.
+
+### 변경
+- main sync 반영(`view_transform.py` 공용 좌표변환, `inference_image_list.py`
+  통합, `image_browser.py` 제거) — "양쪽 다 살리기"로 append-only 문서 충돌
+  해결, 기능 동작 변경 없음.
+- Zone/R분석 탭 편집 툴바를 `app/widgets/brush_toolbar.py` 공용
+  컨트롤러로 교체. 아이콘 순서·단축키·동작은 그대로 유지, R분석 탭
+  undo가 버튼에서 액션(단축키 대응)으로 UI 위치 소폭 변경.
+- `main_base_tag`를 `v1.11.0`, `main_base_commit`을 `7bd280e3`로 갱신.
+
+---
+
 ## [zone-v1.6.2] 2026-10-27
 
 ### 성능
