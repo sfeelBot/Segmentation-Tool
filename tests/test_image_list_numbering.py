@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import QApplication
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core import project
-from app.widgets.image_browser import ImageBrowser
 from app.widgets.inference_image_list import InferenceImageList
 
 _APP = QApplication.instance() or QApplication(sys.argv)
@@ -39,8 +38,15 @@ def _make_image(path: Path) -> None:
     assert QImage(4, 4, QImage.Format.Format_RGB32).save(str(path))
 
 
+def _labeling_list(sample_project) -> InferenceImageList:
+    """editable/show_status_icons=True 구성 — 구 ImageBrowser 가 쓰이던 라벨링 탭 경로."""
+    browser = InferenceImageList(show_status_icons=True, editable=True)
+    browser.load_folder(project.images_dir())
+    return browser
+
+
 def test_image_browser_numbers_display_order(sample_project) -> None:
-    browser = ImageBrowser()  # name_asc default -> a, b, c
+    browser = _labeling_list(sample_project)  # name_asc default -> a, b, c
     a, b, c = sample_project[1], sample_project[0], sample_project[2]
     assert browser._path_to_item[a].text(0) == "1. a.png"
     assert browser._path_to_item[b].text(0) == "2. b.png"
@@ -48,7 +54,7 @@ def test_image_browser_numbers_display_order(sample_project) -> None:
 
 
 def test_image_browser_refresh_item_preserves_number(sample_project) -> None:
-    browser = ImageBrowser()
+    browser = _labeling_list(sample_project)
     b = sample_project[0]
     assert browser._path_to_item[b].text(0) == "2. b.png"
 
@@ -62,7 +68,7 @@ def test_image_browser_refresh_item_preserves_number(sample_project) -> None:
 
 
 def test_image_browser_filter_renumbers_from_one(sample_project) -> None:
-    browser = ImageBrowser()
+    browser = _labeling_list(sample_project)
     browser._filter_text = "c.png"
     browser._apply_display()
     c = sample_project[2]

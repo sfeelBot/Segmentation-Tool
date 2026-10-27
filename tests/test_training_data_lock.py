@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from app.tabs.labeling_tab import LabelingTab
 from app.widgets.annotation_canvas import AnnotationCanvas
 from app.widgets.class_panel import ClassPanel
-from app.widgets.image_browser import ImageBrowser
+from app.widgets.inference_image_list import InferenceImageList
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -21,9 +21,9 @@ def qapp():
 @pytest.mark.parametrize(
     ("factory", "method"),
     [
-        (ImageBrowser, "_on_add"),
-        (ImageBrowser, "_on_add_folder"),
-        (ImageBrowser, "_on_delete"),
+        (lambda: InferenceImageList(editable=True), "_on_add"),
+        (lambda: InferenceImageList(editable=True), "_on_add_folder"),
+        (lambda: InferenceImageList(editable=True), "delete_selected"),
         (ClassPanel, "_on_add"),
         (ClassPanel, "_on_delete"),
         (ClassPanel, "_on_change_color"),

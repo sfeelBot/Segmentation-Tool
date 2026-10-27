@@ -15,10 +15,11 @@ from app.widgets.annotation_canvas import (
     TOOL_SELECT, TOOL_PAN,
 )
 from app.widgets.class_panel import ClassPanel
-from app.widgets.image_browser import ImageBrowser
+from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.auto_label_dialog import AutoLabelDialog
 from app.widgets.log_panel import LogPanel
 from app.widgets.icons import icon as svg_icon
+from app.core import project as _project
 from app.core.i18n import t
 from app.core.logger import get_logger
 
@@ -32,23 +33,23 @@ class LabelingTab(QWidget):
         self._mutation_guard = lambda: True
         self._build_ui()
         self._connect_signals()
-        # ImageBrowser는 생성 시점(_build_ui 내부, 시그널 연결 전)에 프로젝트에
-        # 이미지가 있으면 첫 항목을 이미 자동 선택하고 image_selected를 발행한다.
-        # 그 시점엔 아직 리스너가 연결되지 않아 신호가 유실되므로(BUG-017),
-        # 연결 완료 후 현재 선택 상태를 캔버스에 명시적으로 동기화한다.
-        initial_path = self._image_browser.current_path()
+        # InferenceImageList.load_folder()는 _build_ui() 내부(시그널 연결 전)에
+        # 이미 호출됐다 — 프로젝트에 이미지가 있으면 그 시점에 첫 항목을 이미
+        # 자동 선택하고 image_selected를 발행한다. 그 시점엔 아직 리스너가
+        # 연결되지 않아 신호가 유실되므로(BUG-017), 연결 완료 후 현재 선택
+        # 상태를 캔버스에 명시적으로 동기화한다.
+        initial_path = self._image_list.current_path()
         if initial_path is not None:
             self._on_image_selected(initial_path)
 
     def set_mutation_guard(self, guard) -> None:
         self._mutation_guard = guard
         self._canvas.set_mutation_guard(guard)
-        self._image_browser.set_mutation_guard(guard)
+        self._image_list.set_mutation_guard(guard)
         self._class_panel.set_mutation_guard(guard)
 
     def prepare_for_training(self) -> bool:
-        worker = self._image_browser._import_worker
-        if worker is not None and worker.isRunning():
+        if self._image_list.is_importing():
             QMessageBox.warning(self, "이미지 가져오기 진행 중",
                                 "이미지 가져오기가 끝난 뒤 학습을 시작해 주세요.")
             return False
@@ -91,12 +92,13 @@ class LabelingTab(QWidget):
             "QSplitter::handle:hover { background:#60a5fa; }"
         )
 
-        self._image_browser = ImageBrowser()
+        self._image_list = InferenceImageList(show_status_icons=True, editable=True)
+        self._image_list.load_folder(_project.images_dir())
         self._class_panel = ClassPanel()
-        self._image_browser.setMinimumHeight(80)
+        self._image_list.setMinimumHeight(80)
         self._class_panel.setMinimumHeight(80)
 
-        self._left_splitter.addWidget(self._image_browser)
+        self._left_splitter.addWidget(self._image_list)
         self._left_splitter.addWidget(self._class_panel)
         self._left_splitter.setSizes([300, 200])  # 기존 stretch 3:2 재현
         self._left_splitter.setStretchFactor(0, 3)
@@ -325,8 +327,8 @@ class LabelingTab(QWidget):
     # ── 시그널 연결 ───────────────────────────────────────────────────────────
 
     def _connect_signals(self) -> None:
-        self._image_browser.image_selected.connect(self._on_image_selected)
-        self._image_browser.image_deleted.connect(self._on_image_deleted)
+        self._image_list.image_selected.connect(self._on_image_selected)
+        self._image_list.image_deleted.connect(self._on_image_deleted)
         self._class_panel.class_selected.connect(self._on_class_selected)
         self._canvas.annotation_saved.connect(self._on_annotation_saved)
         self._canvas.selection_changed.connect(self._on_canvas_selection_changed)
@@ -388,8 +390,8 @@ class LabelingTab(QWidget):
         · 이미지 목록에 포커스 → 선택된 이미지 일괄 삭제
         · 그 외(캔버스, 어노테이션 목록 등) → 선택된 어노테이션 삭제"""
         try:
-            if self._image_browser.has_list_focus():
-                self._image_browser._on_delete()
+            if self._image_list.has_list_focus():
+                self._image_list.delete_selected()
                 return
         except Exception:
             pass
@@ -429,7 +431,7 @@ class LabelingTab(QWidget):
         path = self._canvas._image_path
         if path:
             log.info(f"{path.name}  — 어노테이션 {n}개 저장")
-            self._image_browser.refresh_item(path)
+            self._image_list.refresh_item(path)
             from app.core.annotation_store import get_ok
             self._act_ok.setChecked(get_ok(path))
         self._refresh_ann_list()
@@ -479,7 +481,7 @@ class LabelingTab(QWidget):
         if self._canvas._image_path is None:
             self._act_ok.setChecked(False)
             return
-        selected_paths = self._image_browser.selected_paths()
+        selected_paths = self._image_list.selected_paths()
         if len(selected_paths) >= 2:
             self._mark_selected_ok(selected_paths)
             return
@@ -546,7 +548,7 @@ class LabelingTab(QWidget):
                 failed.append((path, exc))
 
         if succeeded:
-            self._image_browser.refresh_items(succeeded)
+            self._image_list.refresh_items(succeeded)
 
         if current in succeeded:
             self._canvas.load_image(current)
@@ -568,7 +570,7 @@ class LabelingTab(QWidget):
         """어노테이션 가져오기(Import) 완료 후 이미지 목록·현재 캔버스 갱신."""
         if self._canvas._image_path:
             self._canvas.load_image(self._canvas._image_path)
-        self._image_browser.reload()
+        self._image_list.reload()
 
     def _on_auto_label(self) -> None:
         if not self._mutation_guard():
@@ -579,18 +581,18 @@ class LabelingTab(QWidget):
         if dlg.exec():
             if self._canvas._image_path:
                 self._canvas.load_image(self._canvas._image_path)
-            self._image_browser.reload()
+            self._image_list.reload()
             log.info("오토 라벨링 완료 — 이미지를 선택해 결과를 확인하세요.")
 
     def _copy_prev_annotations(self) -> None:
         """이전 이미지의 어노테이션을 현재 이미지에 복사 (Ctrl+Shift+C)."""
         if not self._mutation_guard() or self._canvas._image_path is None:
             return
-        idx = self._image_browser.current_display_index()
+        idx = self._image_list.current_display_index()
         if idx <= 0:
             log.warning("이전 이미지가 없어 복사를 건너뜁니다.")
             return
-        prev_path = self._image_browser._paths[idx - 1]
+        prev_path = self._image_list.paths()[idx - 1]
         from app.core import annotation_store as store
         prev_anns = store.load(prev_path)
         if not prev_anns:
@@ -726,4 +728,4 @@ class LabelingTab(QWidget):
 
     def _go_image(self, step: int) -> None:
         """이미지 브라우저에서 step 만큼 상대 이동 (−1: 이전, +1: 다음)."""
-        self._image_browser.navigate(step)
+        self._image_list.navigate(step)

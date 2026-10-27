@@ -15,7 +15,7 @@ from app.core import annotation_store as store
 from app.core.annotation_store import AnnotationItem
 from app.core import project
 from app.tabs.labeling_tab import LabelingTab
-from app.widgets.image_browser import ImageBrowser
+from app.widgets.inference_image_list import InferenceImageList
 
 _APP = QApplication.instance() or QApplication(sys.argv)
 
@@ -49,7 +49,7 @@ def _write(path: Path, annotations: list[dict] | None = None, ok: bool = False) 
     )
 
 
-def _select(browser: ImageBrowser, paths: list[Path], current: Path) -> None:
+def _select(browser: InferenceImageList, paths: list[Path], current: Path) -> None:
     browser._tree.clearSelection()
     browser._tree.setCurrentItem(browser._path_to_item[current])
     for path in paths:
@@ -85,7 +85,8 @@ def test_store_rejects_existing_invalid_document(sample_project, content: str) -
 
 
 def test_selected_paths_are_display_ordered_and_fall_back_to_current(sample_project) -> None:
-    browser = ImageBrowser()
+    browser = InferenceImageList(show_status_icons=True, editable=True)
+    browser.load_folder(project.images_dir())
     a, b = sample_project[1], sample_project[0]
     _select(browser, [a, b], current=b)
     assert browser.selected_paths() == [a, b]
@@ -104,7 +105,7 @@ def test_multi_ok_confirms_once_skips_existing_ok_and_preserves_selection(
     _write(a, label)
     _write(c, ok=True)
     tab = LabelingTab()
-    _select(tab._image_browser, [a, b, c], current=b)
+    _select(tab._image_list, [a, b, c], current=b)
     questions = []
     monkeypatch.setattr(QMessageBox, "question", lambda *args: questions.append(args) or QMessageBox.StandardButton.Yes)
 
@@ -115,7 +116,7 @@ def test_multi_ok_confirms_once_skips_existing_ok_and_preserves_selection(
     assert not store.has_annotations(a)
     assert tab._canvas._image_path == b
     assert tab._canvas._annotations == []
-    assert set(tab._image_browser.selected_paths()) == {a, b, c}
+    assert set(tab._image_list.selected_paths()) == {a, b, c}
 
 
 def test_multi_ok_cancel_and_partial_failure_keep_prior_success(
@@ -125,7 +126,7 @@ def test_multi_ok_cancel_and_partial_failure_keep_prior_success(
               "points": [[0, 0], [1, 0], [1, 1]], "order": 0}]
     _write(a, label)
     tab = LabelingTab()
-    _select(tab._image_browser, [a, b], current=b)
+    _select(tab._image_list, [a, b], current=b)
     monkeypatch.setattr(QMessageBox, "question", lambda *_args: QMessageBox.StandardButton.No)
     tab._act_ok.trigger()
     assert not store.get_ok(a) and not store.get_ok(b)
@@ -149,7 +150,7 @@ def test_current_unsaved_labels_are_confirmed_and_flushed_before_batch_clear(
         sample_project, monkeypatch) -> None:
     b, a, _c = sample_project
     tab = LabelingTab()
-    _select(tab._image_browser, [a, b], current=b)
+    _select(tab._image_list, [a, b], current=b)
     tab._canvas._annotations = [AnnotationItem(
         annotation_id="pending", class_id=1, type="polygon",
         points=[(0, 0), (1, 0), (1, 1)],
@@ -169,7 +170,7 @@ def test_current_batch_helper_failure_preserves_flushed_labels_and_canvas(
         sample_project, monkeypatch) -> None:
     b, a, _c = sample_project
     tab = LabelingTab()
-    _select(tab._image_browser, [a, b], current=b)
+    _select(tab._image_list, [a, b], current=b)
     pending = AnnotationItem(
         annotation_id="pending", class_id=1, type="polygon",
         points=[(0, 0), (1, 0), (1, 1)],
@@ -194,7 +195,8 @@ def test_current_batch_helper_failure_preserves_flushed_labels_and_canvas(
 def test_status_sort_refresh_preserves_visible_selection_without_reload(
         sample_project, monkeypatch) -> None:
     b, a, _c = sample_project
-    browser = ImageBrowser()
+    browser = InferenceImageList(show_status_icons=True, editable=True)
+    browser.load_folder(project.images_dir())
     browser._sort_mode = "status_done"
     _select(browser, [a, b], current=b)
     _write(a, ok=True)
@@ -209,7 +211,8 @@ def test_status_sort_refresh_preserves_visible_selection_without_reload(
 
 def test_filter_rebuild_keeps_visible_current_and_selected_items(sample_project) -> None:
     b, a, _c = sample_project
-    browser = ImageBrowser()
+    browser = InferenceImageList(show_status_icons=True, editable=True)
+    browser.load_folder(project.images_dir())
     _select(browser, [a, b], current=b)
 
     browser._filter_text = ".png"
@@ -222,13 +225,14 @@ def test_filter_rebuild_keeps_visible_current_and_selected_items(sample_project)
 def test_name_sort_refresh_updates_only_targets_without_rebuilding(
         sample_project, monkeypatch) -> None:
     b, a, _c = sample_project
-    browser = ImageBrowser()
+    browser = InferenceImageList(show_status_icons=True, editable=True)
+    browser.load_folder(project.images_dir())
     browser._sort_mode = "name_asc"
     _write(a, ok=True)
     calls = []
     real_status = store.get_label_status
     monkeypatch.setattr(
-        "app.widgets.image_browser.get_label_status",
+        "app.widgets.inference_image_list.get_label_status",
         lambda path: calls.append(path) or real_status(path),
     )
     monkeypatch.setattr(browser, "_apply_display", lambda: pytest.fail("tree rebuilt"))
