@@ -5,6 +5,36 @@
 
 ---
 
+## [v1.11.0] 2026-10-27
+
+사용자 요청: 라벨링 탭의 툴바/뷰어(pan·zoom)/이미지 리스트를 재사용 가능한
+공유 위젯으로 추출해 추론 탭(+차후 존분석/R분석 탭)에도 적용(`docs/specs/
+shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`, main 브랜치 1단계).
+
+### 추가
+- `app/widgets/view_transform.py` 신규 — `AnnotationCanvas`/`OverlayViewer`의
+  wheel-zoom·fit-view·pan-drag·canvas→image 좌표변환 공식을 상태 없는 공용
+  함수로 추출(완전 동일했던 복붙 중복 제거). GitHub #9 드래그 중 휠 줌 보강
+  블록은 그대로 보존.
+- `app/widgets/brush_toolbar.py` 신규 — 브러시/지우개/영역삭제/pan/undo/
+  브러시크기를 라벨링 탭(+차후 존분석/R분석 탭) 공용 컨트롤러로 추출. 기존
+  툴바 아이콘 순서(폴리곤/브러시/채움/지우개/영역삭제/select/pan, 단축키
+  Q/W/E/R/D/A/S 1:1 공간 대응)는 완전히 그대로 유지.
+- `app/widgets/inference_image_list.py`에 `show_status_icons`/`editable`
+  생성자 플래그 추가 — 라벨링 탭 이미지 리스트가 상태 아이콘(●/✓/○)·범례·
+  파일/폴더 추가·다중삭제·mutation guard·Ctrl+C 파일명 복사를 모두 지원하게
+  됨(추론 탭은 기존 기본값 경로라 동작 무변경). 정렬 모드가 `status_done`/
+  `status_todo` 포함 총 7종으로 확장.
+
+### 변경
+- 라벨링 탭 이미지 리스트가 `images/` 하위 폴더를 재귀 스캔한다(이전엔 최상위
+  1단계만 스캔 — BUG-005로 죽어있던 폴더 그룹핑의 개선, 데이터 손실 없음).
+
+### 제거
+- `app/widgets/image_browser.py` 제거(`inference_image_list.py`로 완전 통합).
+
+---
+
 ## [v1.10.5] 2026-08-28
 
 ### 수정
