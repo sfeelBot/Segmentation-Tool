@@ -3447,3 +3447,61 @@ GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
 객체만 생성해 노출 — 호스트가 기존 아이콘 좌→우 순서(폴리곤/브러시/채움/지우개/
 영역삭제/select/pan)를 그대로 유지한 채 인터리빙 삽입하도록 설계 예정(Q/W/E/R/D/A/S
 단축키 공간 대응 보존).
+
+---
+
+## 2026-10-27 — 공유 위젯 추출: brush_toolbar (3단계, 완료) + v1.11.0
+
+3단계(`app/widgets/brush_toolbar.py` 신규 + `labeling_tab.py` 툴바 치환)로 스펙
+`docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`의 main 브랜치
+1단계 구현을 마무리.
+
+- `app/widgets/brush_toolbar.py` 신규: `BrushToolbar(QObject)` — `TOOL_BRUSH`/
+  `TOOL_ERASER`/`TOOL_ERASER_FLOOD`/`TOOL_PAN` 상수 + `act_brush`/`act_eraser`/
+  `act_delete_region`(옵션)/`act_pan`/`act_undo`/`spin_brush_size` 노출,
+  `tool_changed`/`brush_size_changed`/`undo_requested` 시그널, `current_tool()`/
+  `set_tool()`/`set_brush_size()`.
+  **설계상 스펙과 다르게 판단한 지점(디자인 리뷰 피드백 반영, 리더 중간 지시)**:
+  스펙 1.2절 문서상으론 생성자가 `toolbar`에 액션을 스스로 꽂아주는 것처럼
+  읽히고 1.3절은 "공유 클러스터를 한 덩어리로 묶어 삽입하는 정도의 재배치는
+  허용"이라 했지만, 디자인 서브에이전트 피드백이 "기존 아이콘 좌→우 순서
+  (폴리곤/브러시/채움/지우개/영역삭제/select/pan)가 Q/W/E/R/D/A/S 단축키와
+  1:1 공간 대응이라 절대 바꾸면 안 된다"고 명시해 이 둘이 충돌했다. 기능
+  요구사항(순서 불변)이 더 명확하고 우선순위가 높다고 판단해, `BrushToolbar`가
+  `toolbar.addAction()`을 자체 호출하지 않고 QAction/QSpinBox 객체만 만들어
+  노출하도록 구현 — 호스트(`labeling_tab._build_toolbar()`)가 로컬 액션(폴리곤/
+  select/brush_fill)과 정확히 기존 순서로 인터리빙해 `tb.addAction()` 호출.
+  `show_delete_region=False`면 `act_delete_region`을 만들지 않음(숨기지 않음,
+  2단계 존/R분석 혼동 방지 — 디자인 피드백 3번).
+- `app/tabs/labeling_tab.py`: `_build_toolbar()`가 `BrushToolbar(tb,
+  show_delete_region=True)`를 생성 직후 로컬 액션 3개(`_act_polygon`/
+  `_act_brush_fill`/`_act_select`)와 정확히 기존 시각 순서로 인터리빙해
+  `tb.addAction()`. `_set_tool()`은 로컬 3개만 체크 루프 돌고
+  `self._brush_tools.set_tool(tool)`로 클러스터 동기화. 양방향 연결:
+  `tool_changed→_set_tool`, `undo_requested→canvas.undo`,
+  `spin_brush_size.valueChanged→canvas.set_brush_size`,
+  `canvas.brush_size_changed→brush_tools.set_brush_size`. 더블클릭 브러시크기
+  조절(#3b)은 캔버스 쪽 로직이라 무관, 스핀박스 `setMinimumWidth(76)`(#3a)는
+  `BrushToolbar.__init__`에 그대로 유지.
+- `app/widgets/annotation_canvas.py`: `TOOL_BRUSH`/`TOOL_ERASER`/
+  `TOOL_ERASER_FLOOD`/`TOOL_PAN` 4개 상수를 `brush_toolbar.py`에서 import하도록
+  변경(값 불변, `TOOL_POLYGON`/`TOOL_BRUSH_FILL`/`TOOL_SELECT` 3개는 자기
+  모듈에 유지) — `labeling_tab.py`의 기존 `from app.widgets.annotation_canvas
+  import (... TOOL_BRUSH ...)` 재노출(re-export)으로 계속 동작, import 라인
+  변경 불필요.
+- 검증: `pytest tests/` 97개 전체 통과. 전용 스모크 스크립트로 (1) 초기 상태
+  (폴리곤 체크/클러스터 전체 unchecked), (2) 공유 액션 클릭→로컬 unchecked+
+  캔버스 도구 동기화, (3) 로컬 도구 전환→클러스터 unchecked, (4) 브러시크기
+  스핀↔캔버스 양방향 동기화(`setMinimumWidth`=76 확인), (5) undo_requested
+  와이어링, (6) `show_delete_region` 툴팁 호스트 오버라이드 — 전부 통과.
+  `MainWindow()` 전체 생성 스모크도 재확인.
+- 커밋:
+  - `1aae2c7` refactor: 공유 브러시 툴바 추출 — app/widgets/brush_toolbar.py 신규
+  - `2f78444` docs: v1.11.0 — 공유 위젯 추출 릴리즈 노트 (release.ini 1.10.5→1.11.0,
+    docs/CHANGELOG.md 갱신, `scripts/generate_version_info.py` 검증 통과)
+
+이번 라운드(main 1단계, 스펙 전체) 구현 완료. 스펙 4절 "2단계"(에디션 브랜치
+`feature/zone-analysis-tab` 반영)는 사용자/리더 지시 전까지 착수하지 않음.
+**검증 에이전트의 실제 확인(라벨링/추론 탭 골든 패스 — 특히 도구 상호배타
+양방향, pan/zoom, 이미지 리스트 상태 아이콘/정렬/추가·삭제/Ctrl+C) 전까지는
+완료로 간주하지 않음.**
