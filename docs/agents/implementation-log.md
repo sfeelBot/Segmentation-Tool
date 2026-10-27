@@ -3378,3 +3378,28 @@ GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
 **커밋 미수행** — 지시에 따라 커밋하지 않음. 검증 통과 후 리더가 커밋 예정.
 **검증 서브에이전트 확인 필요** — 실제 GUI 조작(검색/정렬 전환, 폴더 그룹핑 모드,
 `refresh_item()` 트리거 경로인 라벨링 OK 토글/저장)으로 번호 표시를 눈으로 재확인 필요.
+
+---
+
+## 2026-10-27 — 공유 위젯 추출: view_transform / inference_image_list / brush_toolbar (시작)
+
+스펙 `docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`를 리더 지시대로
+순차 구현 시작(1단계: `view_transform.py` 추출).
+
+- `app/widgets/view_transform.py` 신규: `canvas_to_content`/`wheel_zoom`/`fit_view`/
+  `pan_drag` — 상태 없는(stateless) 좌표계산 함수. `MIN_ZOOM=0.05`/`MAX_ZOOM=20.0`.
+- `app/widgets/annotation_canvas.py`: `_c2i()`/`wheelEvent()`의 zoom·pan 재계산/
+  `_fit_view()`/`mouseMoveEvent()`의 pan 드래그 1줄만 교체, 로컬 `MIN_ZOOM`/`MAX_ZOOM`
+  제거 후 import로 대체. GitHub #9 드래그 중 휠 줌 재동기화 블록(`if self._pan_active:
+  ...`)은 교체하지 않고 그대로 보존 — `wheel_zoom()` 호출 다음에 이어지는 호스트 쪽
+  후처리로 남김.
+- `app/widgets/overlay_viewer.py`: 동일 패턴으로 `wheelEvent()`/`mousePressEvent()`+
+  `mouseMoveEvent()`의 pan 드래그/`_fit_view()` 교체. 스펙 2.3절의 "드래그 중 휠 줌"
+  보강은 선택사항이라 이번 라운드에서는 추가하지 않음(범위 확장 금지).
+- 검증: `tests/test_canvas_zoom_pan.py` 통과, `MainWindow()` 생성 스모크(임시 프로젝트로
+  `project.set_current()` 후 구성) 성공 — import 에러 없음.
+- 커밋: `90a124f` refactor: 캔버스/오버레이뷰어 pan·zoom 좌표계산을 view_transform.py로 추출
+
+다음: 2단계(`inference_image_list.py` 확장 + `image_browser.py` 제거 + `labeling_tab.py`
+리스트 호출부 치환), 3단계(`brush_toolbar.py` 신규 + `labeling_tab.py` 툴바 치환) 예정.
+검증 에이전트 확인 전까지는 완료로 간주하지 않음.
