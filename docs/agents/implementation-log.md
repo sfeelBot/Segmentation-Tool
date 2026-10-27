@@ -5921,3 +5921,100 @@ GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
 **검증 에이전트의 실제 확인(라벨링/추론 탭 골든 패스 — 특히 도구 상호배타
 양방향, pan/zoom, 이미지 리스트 상태 아이콘/정렬/추가·삭제/Ctrl+C) 전까지는
 완료로 간주하지 않음.**
+
+---
+
+## 2026-10-27 — sync 머지(공유 위젯 리팩토링) + Zone/R분석 탭 2단계 반영 (에디션 브랜치)
+
+리더가 만든 로컬 전용 sync 브랜치(`sync/main-into-zone-analysis-tab-20261027`,
+main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들)를
+`feature/zone-analysis-tab`에 `--no-ff` 머지하는 작업과, 스펙
+`docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md` "4. 2단계 —
+에디션 브랜치 반영"을 이어서 위임받음. 작업 위치: 전용 워크트리
+`D:\segmentation model-zone-analysis-tab`(main 워크트리는 건드리지 않음).
+
+### 1. 머지 충돌 해결(8개 파일)
+
+- **append-only 문서(`QA.md`/`docs/roadmap.md`/`docs/agents/implementation-log.md`
+  /`leader-log.md`/`verification-log.md`)**: AGENTS.md 기존 규칙대로 "양쪽 다 살리기"
+  — 두 브랜치 항목 모두 보존, 충돌 마커만 제거. `docs/roadmap.md`의 GitHub #22
+  항목은 예외 — zone(HEAD) 쪽이 main의 상태(v1.10.5 출시·BUG-029/030/031/016)까지
+  이미 요약해 포함한 상위집합이라 실제로 정보 손실 없이 sync 쪽 중복 문단만
+  제거(최종 내용이 머지 전 zone HEAD와 바이트 단위로 동일 — 의도된 결과).
+- **`release.ini`**: zone 고유 버전/태그 체계(`version=1.6.2`, `tag_prefix=zone-v`,
+  product_name 등) 그대로 유지, `main_base_commit`만 sync 브랜치 최신 커밋
+  (`7bd280e3...`)으로 갱신. main 쪽 버전(1.11.0)/product_name은 반영하지 않음
+  (AGENTS.md: main/zone 독립 버전 체계).
+- **`app/widgets/inference_image_list.py`(실제 코드 충돌, 핵심)**: main의
+  `show_status_icons`/`editable` 생성자 플래그(ImageBrowser 흡수, 라벨링 탭용)와
+  zone이 독자적으로 쌓아온 기능(통번호 매김 `_path_to_number`/`_numbered_text`,
+  배치 처리 상태 아이콘 `set_item_status`/`clear_status`, `set_multi_select`로
+  전환하는 다중선택 "0/1개 선택=전체" 관례, 목록 전용 제거 Delete키/우클릭
+  메뉴(`_remove_selected`/`_remove_paths`/`images_removed`), `load_folder`/
+  `load_files`의 `append` 파라미터, 헤더 stretch) 양쪽을 모두 코드에 살렸다
+  (`git show HEAD:...`/`git show sync/...:...`로 양쪽 전체 파일을 먼저 떠서
+  diff 비교 후 병합). 두 가지 실제 동작 충돌은 다음처럼 해소:
+  - `selected_paths()`: zone은 "0/1개 선택 시 전체 반환"(배치 처리용, BUG-022),
+    main은 "정확히 선택된 항목만, 없으면 현재 항목 폴백"(라벨링 탭
+    `_mark_selected_ok`가 `len(selected_paths) >= 2`로 판단해야 하므로 zone
+    관례를 쓰면 단일 선택 시 전체 이미지가 "선택됨"으로 오판됨 — 실제 회귀
+    위험 확인). `self._multi_select`(zone이 `set_multi_select(True)`로만
+    켜는 플래그, zone_analysis_tab 전용) 여부로 분기해 두 호출부 모두 기존
+    동작 그대로 유지.
+  - Delete/Backspace "목록에서만 제거" + 우클릭 메뉴: `_remove_paths`의
+    기존 주석("Zone/추론 탭 둘 다 외부 파일을 직접 참조하므로 삭제는 위험")이
+    명시하듯 라벨링 탭(`editable=True`)은 이미 확인 다이얼로그가 있는
+    `delete_selected()`(실제 파일 삭제)를 쓰므로, 새 기능을 `not self._editable`
+    가드로 한정 — 라벨링 탭 동작 변경 없음, zone_analysis_tab/inference_tab은
+    기존 그대로.
+  - `_apply_display()`: zone의 상태 재적용(`_apply_item_status`)과 main의
+    선택 항목 복원(`editable`일 때만) 블록을 순서 무관하게 모두 유지.
+- **`tests/test_image_list_numbering.py`**: main이 이미 `ImageBrowser`(삭제됨)
+  사용 테스트 3건을 `InferenceImageList(show_status_icons=True, editable=True)`
+  기준으로 동등하게 포팅해뒀어서(zone의 구버전과 커버리지 중복) main 버전을
+  베이스로 쓰고, zone 고유 테스트 2건(`set_item_status` 번호 유지,
+  `_SORT_MODES` 기반 폴더 통번호)을 추가로 유지.
+- 해결 커밋: `f7529a3` (`merge: main 공유 위젯 리팩토링(...) 반영`).
+- 머지 중 `git add -A`로 이 워크트리에 있던 무관한 untracked 항목
+  (`.codex/`, `AGENTS.md`, `data/annotations/`, `graphify-out/` — 어느 브랜치
+  에도 없는 순수 로컬 잔존물, `git show <branch>:<path>`로 확인)이 같이 잡혀
+  즉시 `git restore --staged`로 제외함(실수 방지 기록).
+
+### 2. 2단계 — Zone/R분석 탭에 공유 BrushToolbar 반영
+
+별도 커밋 `acb7277`. 자세한 내용은 같은 날짜 커밋 메시지 참고(요약):
+- `zone_analysis_tab.py`: `QActionGroup` 기반 5-way(원/브러시그리기/브러시지우기/
+  블랍삭제/이동)를 `BrushToolbar(show_delete_region=True)` + 호스트 로컬
+  `_set_tool()`로 교체(라벨링 탭과 동일한 수동 양방향 동기화 패턴). 원(circle)만
+  로컬 유지. `TOOL_ERASER_FLOOD`를 기존 `set_blob_delete_mode()`에 연결해
+  flood-eraser/blob-delete 동작 계약 통합 완성(알고리즘 불변). "요청5"(활성
+  도구 재클릭→원편집 복귀) 동작 보존 확인.
+- `r_analysis_tab.py`: `QActionGroup` 기반 4-way(ROI/브러시그리기/브러시지우기/
+  이동)를 `BrushToolbar(show_delete_region=False)` + 동일 패턴으로 교체. ROI만
+  로컬 유지. undo를 `QPushButton`에서 공유 `act_undo`(QAction)로 전환.
+- `ZoneCanvas`/`RRoiCanvas`는 이미 `OverlayViewer` 상속이라 머지만으로
+  `view_transform.py` 추출 이득을 이미 받았음을 확인(추가 작업 불필요).
+- 기존 단위 테스트 2개 파일(`test_zone_edit_toolbar.py`/
+  `test_zone_redesign_2026_10_01.py`)이 제거된 내부 속성(`_tool_group`,
+  `_act_brush_draw` 등)을 참조해 실패 → `_brush_tools.act_*` 참조로 갱신.
+  `r_analysis_tab.py`를 대상으로 하는 기존 단위 테스트는 없었음(회귀 테스트
+  신설 범위 밖 — 리더 지시에 스크린샷/UI 조작 검증은 별도 검증 에이전트 몫으로
+  명시됨).
+
+### 3. 검증(구현자 자체 확인)
+
+- `python -m py_compile`: 머지로 staged된 모든 `.py` + `zone_analysis_tab.py`/
+  `r_analysis_tab.py` 전부 통과.
+- `pytest tests/ -q`: 머지 커밋 전 168개 중 5개 실패(모두
+  `test_build_release.py`의 `main_base_commit must be an ancestor of HEAD` —
+  머지 커밋 전 HEAD가 아직 옛 커밋이라 발생하는 일시적 상태임을 확인) → 머지
+  커밋 후 재실행 **168 passed**. 툴바 교체 후 재실행도 **168 passed**(회귀 없음).
+- 오프스크린 스모크(`QT_QPA_PLATFORM=offscreen`): `MainWindow()` 전체 생성(4탭+
+  Zone+R분석) 성공, `ZoneAnalysisTab()`/`RAnalysisTab()` 개별 생성 + `_set_tool()`
+  수동 호출로 도구 전환(브러시→pan→undo 등)·요청5(재클릭→circle/roi 복귀) 동작
+  확인.
+- **push 금지(지시대로 로컬 커밋만), 버전 태깅 안 함(이번 라운드는 배포 단계
+  없음).**
+- **검증 에이전트의 독립 확인 전까지는 완료로 간주하지 않음** — 특히 이번
+  라운드는 리더 지시에 따라 화면 캡처/실제 UI 조작 검증을 구현자가 하지 않았음
+  (별도 검증 에이전트가 main/zone 두 워크트리를 함께 돌며 확인할 몫).
