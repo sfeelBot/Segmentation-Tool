@@ -3403,3 +3403,47 @@ GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
 다음: 2단계(`inference_image_list.py` 확장 + `image_browser.py` 제거 + `labeling_tab.py`
 리스트 호출부 치환), 3단계(`brush_toolbar.py` 신규 + `labeling_tab.py` 툴바 치환) 예정.
 검증 에이전트 확인 전까지는 완료로 간주하지 않음.
+
+---
+
+## 2026-10-27 — 공유 위젯 추출: 이미지 리스트 통합 (2단계)
+
+리더 중간 지시(디자인 서브에이전트 피드백)를 반영해 2단계 진행.
+
+- `app/widgets/inference_image_list.py`: `show_status_icons`/`editable` 생성자 플래그
+  추가. `editable=True`일 때 `_FolderImportWorker`(포팅), 파일/폴더 추가·삭제 버튼,
+  mutation guard, `image_deleted` 시그널 실제 발행. `show_status_icons=True`일 때
+  상태 아이콘(●/✓/○)·범례·`status_done`/`status_todo` 정렬모드(총 7종) 추가. 신규
+  공개 메서드: `set_mutation_guard`/`has_list_focus`/`selected_paths`/`refresh_item`/
+  `refresh_items`/`reload`/`delete_selected`/`is_importing`. Ctrl+C 파일명 복사
+  eventFilter는 플래그 무관 항상 설치(추론 탭에도 부작용 없이 적용).
+  - 디자인 피드백 반영: (a) 제목 레이블 + 추가/삭제 버튼을 `ImageBrowser`처럼 한 줄에
+    병합(기존엔 별도 줄 구상이었음) — 라벨링 탭 좌측 패널(최소폭 150px) 세로 공간
+    절약, 제목도 `t("ui.image_browser")` i18n 키 사용(editable=True일 때만;
+    기본 추론 탭 경로는 하드코딩 "이미지 목록" 그대로 — 무변경 원칙 유지).
+    (b) 트리 아이콘 14px(`_STATUS_ICON_SIZE`)과 범례 아이콘 12px(`_LEGEND_ICON_SIZE`)
+    치수를 구분해서 포팅 — 하나로 통일하면 범례가 커 보이는 회귀가 생길 뻔했음.
+- `app/widgets/image_browser.py` 삭제. `app/tabs/labeling_tab.py`의
+  `self._image_browser.*` 호출부 전체(13곳)를 `self._image_list.*`로 치환하며
+  특수 매핑 적용: `_on_delete()`→`delete_selected()`, `_import_worker` 직접 참조→
+  `is_importing()`, `_paths[idx-1]`→`paths()[idx-1]`. `InferenceImageList`는
+  `__init__`에서 자동 reload하지 않으므로 `_build_ui()` 내부에서 `load_folder(
+  _project.images_dir())`를 시그널 연결 전에 명시 호출(BUG-017과 동일한 타이밍
+  주의 — 기존 initial_path 동기화 블록 유지).
+- `app/widgets/project_export_dialog.py`: 주석의 `image_browser.py` 경로 참조를
+  `inference_image_list.py`로 정정(코드 동작 변경 없음).
+- `image_browser.py`를 직접 import하던 테스트 3개(`test_image_list_numbering.py`/
+  `test_labeling_multi_ok.py`/`test_training_data_lock.py`) — 스펙의 grep 확인은
+  app/ 소스만 대상이었고 tests/는 누락돼 있었음(실제로 3개 파일에서 참조 중) —
+  `InferenceImageList(show_status_icons=True, editable=True)` 기준으로 갱신.
+- 검증: `pytest tests/` 97개 전체 통과. `MainWindow()` + 샘플 이미지 2장으로 라벨링
+  탭 이미지 리스트(load_folder/selected_paths/has_list_focus/is_importing) +
+  추론 탭 리스트 생성 스모크 성공.
+- 커밋: `dc2b987` refactor: 이미지 리스트 라벨링/추론 공용화 — InferenceImageList 확장,
+  ImageBrowser 제거
+
+다음: 3단계(`brush_toolbar.py` 신규 + `labeling_tab.py` 툴바 치환). 디자인 피드백에
+따라 BrushToolbar는 toolbar.addAction()을 자체 호출하지 않고 QAction/QSpinBox
+객체만 생성해 노출 — 호스트가 기존 아이콘 좌→우 순서(폴리곤/브러시/채움/지우개/
+영역삭제/select/pan)를 그대로 유지한 채 인터리빙 삽입하도록 설계 예정(Q/W/E/R/D/A/S
+단축키 공간 대응 보존).
