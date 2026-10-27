@@ -19,6 +19,7 @@ from app.core.annotation_store import AnnotationItem
 from app.core.i18n import t
 from app.core.perf_logger import profiler as _perf
 from app.widgets.view_transform import MIN_ZOOM, MAX_ZOOM, canvas_to_content, wheel_zoom, fit_view, pan_drag
+from app.widgets.brush_toolbar import TOOL_BRUSH, TOOL_ERASER, TOOL_ERASER_FLOOD, TOOL_PAN
 
 
 class _OverlayWorker(QThread):
@@ -141,12 +142,8 @@ class _SmoothScaleWorker(QThread):
         self.done.emit(scaled, self._bucket)
 
 TOOL_POLYGON      = "polygon"
-TOOL_BRUSH        = "brush"
 TOOL_BRUSH_FILL   = "brush_fill"
-TOOL_ERASER       = "eraser"
-TOOL_ERASER_FLOOD = "eraser_flood"
 TOOL_SELECT       = "select"
-TOOL_PAN          = "pan"
 
 OVERLAY_ALPHA     = 140   # 일반 어노테이션 투명도
 OVERLAY_SEL_ALPHA = 210   # 선택된 어노테이션 투명도

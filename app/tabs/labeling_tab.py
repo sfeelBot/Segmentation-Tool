@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
-    QToolBar, QLabel, QSpinBox, QMessageBox,
+    QToolBar, QLabel, QMessageBox,
     QListWidget, QListWidgetItem, QGroupBox,
     QPushButton, QButtonGroup, QSplitter, QApplication,
 )
@@ -16,6 +16,7 @@ from app.widgets.annotation_canvas import (
 )
 from app.widgets.class_panel import ClassPanel
 from app.widgets.inference_image_list import InferenceImageList
+from app.widgets.brush_toolbar import BrushToolbar
 from app.widgets.auto_label_dialog import AutoLabelDialog
 from app.widgets.log_panel import LogPanel
 from app.widgets.icons import icon as svg_icon
@@ -243,18 +244,25 @@ class LabelingTab(QWidget):
             act.triggered.connect(lambda: self._set_tool(tool))
             return act
 
-        self._act_polygon      = tool_action("tool_polygon",      TOOL_POLYGON,      "tool.polygon.tip")
-        self._act_brush        = tool_action("tool_brush",        TOOL_BRUSH,        "tool.brush.tip")
-        self._act_brush_fill   = tool_action("tool_bucket",       TOOL_BRUSH_FILL,   "tool.brush_fill.tip")
-        self._act_eraser       = tool_action("tool_eraser",       TOOL_ERASER,       "tool.eraser.tip")
-        self._act_eraser_flood = tool_action("tool_eraser_flood", TOOL_ERASER_FLOOD, "tool.eraser_flood.tip")
-        self._act_select       = tool_action("tool_select",       TOOL_SELECT,       "tool.select.tip")
-        self._act_pan          = tool_action("tool_pan",          TOOL_PAN,          "tool.pan.tip")
+        # 공유 클러스터(브러시/지우개/영역삭제/pan/undo/브러시크기) — BrushToolbar가
+        # QAction/QSpinBox만 만들어 노출하고 toolbar에는 스스로 넣지 않는다. 기존
+        # 아이콘 좌→우 순서(폴리곤/브러시/채움/지우개/영역삭제/select/pan)가 키보드
+        # 단축키 Q/W/E/R/D/A/S 와 1:1 공간 대응이라, 아래에서 로컬 액션과 정확히
+        # 같은 순서로 인터리빙해 addAction() 한다(디자인 리뷰 피드백, 2026-10-27).
+        self._brush_tools = BrushToolbar(tb, show_delete_region=True)
+        self._brush_tools.act_delete_region.setToolTip(t("tool.eraser_flood.tip"))
 
-        for act in (self._act_polygon, self._act_brush, self._act_brush_fill,
-                    self._act_eraser, self._act_eraser_flood,
-                    self._act_select, self._act_pan):
-            tb.addAction(act)
+        self._act_polygon    = tool_action("tool_polygon", TOOL_POLYGON,    "tool.polygon.tip")
+        self._act_brush_fill = tool_action("tool_bucket",  TOOL_BRUSH_FILL, "tool.brush_fill.tip")
+        self._act_select     = tool_action("tool_select",  TOOL_SELECT,    "tool.select.tip")
+
+        tb.addAction(self._act_polygon)
+        tb.addAction(self._brush_tools.act_brush)
+        tb.addAction(self._act_brush_fill)
+        tb.addAction(self._brush_tools.act_eraser)
+        tb.addAction(self._brush_tools.act_delete_region)
+        tb.addAction(self._act_select)
+        tb.addAction(self._brush_tools.act_pan)
         self._act_polygon.setChecked(True)
 
         # 툴바 버튼 스타일 — SVG 아이콘 크기 통일
@@ -266,21 +274,11 @@ class LabelingTab(QWidget):
         tb.addSeparator()
 
         tb.addWidget(QLabel(t("tool.brush_size")))
-        self._spin_brush = QSpinBox()
-        self._spin_brush.setRange(1, 200)
-        self._spin_brush.setValue(20)
-        self._spin_brush.setMinimumWidth(76)
-        self._spin_brush.valueChanged.connect(self._canvas.set_brush_size)
-        self._canvas.brush_size_changed.connect(self._spin_brush.setValue)
-        tb.addWidget(self._spin_brush)
+        tb.addWidget(self._brush_tools.spin_brush_size)
 
         tb.addSeparator()
 
-        act_undo = QAction(svg_icon("undo"), "", self)
-        act_undo.setToolTip(t("tool.undo.tip"))
-        act_undo.setShortcut("Ctrl+Z")
-        act_undo.triggered.connect(self._canvas.undo)
-        tb.addAction(act_undo)
+        tb.addAction(self._brush_tools.act_undo)
 
         act_clear = QAction(svg_icon("trash"), "", self)
         act_clear.setToolTip(t("tool.clear.tip"))
@@ -322,6 +320,11 @@ class LabelingTab(QWidget):
         tb.addAction(self._act_fullscreen)
         self.addAction(self._act_fullscreen)
 
+        self._brush_tools.tool_changed.connect(self._set_tool)
+        self._brush_tools.undo_requested.connect(self._canvas.undo)
+        self._brush_tools.spin_brush_size.valueChanged.connect(self._canvas.set_brush_size)
+        self._canvas.brush_size_changed.connect(self._brush_tools.set_brush_size)
+
         return tb
 
     # ── 시그널 연결 ───────────────────────────────────────────────────────────
@@ -355,15 +358,12 @@ class LabelingTab(QWidget):
     def _set_tool(self, tool: str) -> None:
         # 루프 변수를 _t 로 명명 — 모듈 레벨 i18n t() 함수와의 이름 충돌 방지
         for act, _t in [
-            (self._act_polygon,      TOOL_POLYGON),
-            (self._act_brush,        TOOL_BRUSH),
-            (self._act_brush_fill,   TOOL_BRUSH_FILL),
-            (self._act_eraser,       TOOL_ERASER),
-            (self._act_eraser_flood, TOOL_ERASER_FLOOD),
-            (self._act_select,       TOOL_SELECT),
-            (self._act_pan,          TOOL_PAN),
+            (self._act_polygon,    TOOL_POLYGON),
+            (self._act_brush_fill, TOOL_BRUSH_FILL),
+            (self._act_select,     TOOL_SELECT),
         ]:
             act.setChecked(_t == tool)
+        self._brush_tools.set_tool(tool)   # 클러스터 소속 아니면(위 로컬 도구) 전체 unchecked
         self._canvas.set_tool(tool)
         self._lbl_sel_hint.setVisible(tool == TOOL_SELECT)
 
