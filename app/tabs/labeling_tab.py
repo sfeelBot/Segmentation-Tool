@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
-    QToolBar, QLabel, QSpinBox, QMessageBox,
+    QToolBar, QLabel, QMessageBox,
     QListWidget, QListWidgetItem, QGroupBox,
     QPushButton, QButtonGroup, QSplitter, QApplication,
 )
@@ -15,10 +15,12 @@ from app.widgets.annotation_canvas import (
     TOOL_SELECT, TOOL_PAN,
 )
 from app.widgets.class_panel import ClassPanel
-from app.widgets.image_browser import ImageBrowser
+from app.widgets.inference_image_list import InferenceImageList
+from app.widgets.brush_toolbar import BrushToolbar
 from app.widgets.auto_label_dialog import AutoLabelDialog
 from app.widgets.log_panel import LogPanel
 from app.widgets.icons import icon as svg_icon
+from app.core import project as _project
 from app.core.i18n import t
 from app.core.logger import get_logger
 
@@ -32,23 +34,23 @@ class LabelingTab(QWidget):
         self._mutation_guard = lambda: True
         self._build_ui()
         self._connect_signals()
-        # ImageBrowser는 생성 시점(_build_ui 내부, 시그널 연결 전)에 프로젝트에
-        # 이미지가 있으면 첫 항목을 이미 자동 선택하고 image_selected를 발행한다.
-        # 그 시점엔 아직 리스너가 연결되지 않아 신호가 유실되므로(BUG-017),
-        # 연결 완료 후 현재 선택 상태를 캔버스에 명시적으로 동기화한다.
-        initial_path = self._image_browser.current_path()
+        # InferenceImageList.load_folder()는 _build_ui() 내부(시그널 연결 전)에
+        # 이미 호출됐다 — 프로젝트에 이미지가 있으면 그 시점에 첫 항목을 이미
+        # 자동 선택하고 image_selected를 발행한다. 그 시점엔 아직 리스너가
+        # 연결되지 않아 신호가 유실되므로(BUG-017), 연결 완료 후 현재 선택
+        # 상태를 캔버스에 명시적으로 동기화한다.
+        initial_path = self._image_list.current_path()
         if initial_path is not None:
             self._on_image_selected(initial_path)
 
     def set_mutation_guard(self, guard) -> None:
         self._mutation_guard = guard
         self._canvas.set_mutation_guard(guard)
-        self._image_browser.set_mutation_guard(guard)
+        self._image_list.set_mutation_guard(guard)
         self._class_panel.set_mutation_guard(guard)
 
     def prepare_for_training(self) -> bool:
-        worker = self._image_browser._import_worker
-        if worker is not None and worker.isRunning():
+        if self._image_list.is_importing():
             QMessageBox.warning(self, "이미지 가져오기 진행 중",
                                 "이미지 가져오기가 끝난 뒤 학습을 시작해 주세요.")
             return False
@@ -91,12 +93,13 @@ class LabelingTab(QWidget):
             "QSplitter::handle:hover { background:#60a5fa; }"
         )
 
-        self._image_browser = ImageBrowser()
+        self._image_list = InferenceImageList(show_status_icons=True, editable=True)
+        self._image_list.load_folder(_project.images_dir())
         self._class_panel = ClassPanel()
-        self._image_browser.setMinimumHeight(80)
+        self._image_list.setMinimumHeight(80)
         self._class_panel.setMinimumHeight(80)
 
-        self._left_splitter.addWidget(self._image_browser)
+        self._left_splitter.addWidget(self._image_list)
         self._left_splitter.addWidget(self._class_panel)
         self._left_splitter.setSizes([300, 200])  # 기존 stretch 3:2 재현
         self._left_splitter.setStretchFactor(0, 3)
@@ -241,18 +244,25 @@ class LabelingTab(QWidget):
             act.triggered.connect(lambda: self._set_tool(tool))
             return act
 
-        self._act_polygon      = tool_action("tool_polygon",      TOOL_POLYGON,      "tool.polygon.tip")
-        self._act_brush        = tool_action("tool_brush",        TOOL_BRUSH,        "tool.brush.tip")
-        self._act_brush_fill   = tool_action("tool_bucket",       TOOL_BRUSH_FILL,   "tool.brush_fill.tip")
-        self._act_eraser       = tool_action("tool_eraser",       TOOL_ERASER,       "tool.eraser.tip")
-        self._act_eraser_flood = tool_action("tool_eraser_flood", TOOL_ERASER_FLOOD, "tool.eraser_flood.tip")
-        self._act_select       = tool_action("tool_select",       TOOL_SELECT,       "tool.select.tip")
-        self._act_pan          = tool_action("tool_pan",          TOOL_PAN,          "tool.pan.tip")
+        # 공유 클러스터(브러시/지우개/영역삭제/pan/undo/브러시크기) — BrushToolbar가
+        # QAction/QSpinBox만 만들어 노출하고 toolbar에는 스스로 넣지 않는다. 기존
+        # 아이콘 좌→우 순서(폴리곤/브러시/채움/지우개/영역삭제/select/pan)가 키보드
+        # 단축키 Q/W/E/R/D/A/S 와 1:1 공간 대응이라, 아래에서 로컬 액션과 정확히
+        # 같은 순서로 인터리빙해 addAction() 한다(디자인 리뷰 피드백, 2026-10-27).
+        self._brush_tools = BrushToolbar(tb, show_delete_region=True)
+        self._brush_tools.act_delete_region.setToolTip(t("tool.eraser_flood.tip"))
 
-        for act in (self._act_polygon, self._act_brush, self._act_brush_fill,
-                    self._act_eraser, self._act_eraser_flood,
-                    self._act_select, self._act_pan):
-            tb.addAction(act)
+        self._act_polygon    = tool_action("tool_polygon", TOOL_POLYGON,    "tool.polygon.tip")
+        self._act_brush_fill = tool_action("tool_bucket",  TOOL_BRUSH_FILL, "tool.brush_fill.tip")
+        self._act_select     = tool_action("tool_select",  TOOL_SELECT,    "tool.select.tip")
+
+        tb.addAction(self._act_polygon)
+        tb.addAction(self._brush_tools.act_brush)
+        tb.addAction(self._act_brush_fill)
+        tb.addAction(self._brush_tools.act_eraser)
+        tb.addAction(self._brush_tools.act_delete_region)
+        tb.addAction(self._act_select)
+        tb.addAction(self._brush_tools.act_pan)
         self._act_polygon.setChecked(True)
 
         # 툴바 버튼 스타일 — SVG 아이콘 크기 통일
@@ -264,21 +274,11 @@ class LabelingTab(QWidget):
         tb.addSeparator()
 
         tb.addWidget(QLabel(t("tool.brush_size")))
-        self._spin_brush = QSpinBox()
-        self._spin_brush.setRange(1, 200)
-        self._spin_brush.setValue(20)
-        self._spin_brush.setMinimumWidth(76)
-        self._spin_brush.valueChanged.connect(self._canvas.set_brush_size)
-        self._canvas.brush_size_changed.connect(self._spin_brush.setValue)
-        tb.addWidget(self._spin_brush)
+        tb.addWidget(self._brush_tools.spin_brush_size)
 
         tb.addSeparator()
 
-        act_undo = QAction(svg_icon("undo"), "", self)
-        act_undo.setToolTip(t("tool.undo.tip"))
-        act_undo.setShortcut("Ctrl+Z")
-        act_undo.triggered.connect(self._canvas.undo)
-        tb.addAction(act_undo)
+        tb.addAction(self._brush_tools.act_undo)
 
         act_clear = QAction(svg_icon("trash"), "", self)
         act_clear.setToolTip(t("tool.clear.tip"))
@@ -320,13 +320,18 @@ class LabelingTab(QWidget):
         tb.addAction(self._act_fullscreen)
         self.addAction(self._act_fullscreen)
 
+        self._brush_tools.tool_changed.connect(self._set_tool)
+        self._brush_tools.undo_requested.connect(self._canvas.undo)
+        self._brush_tools.spin_brush_size.valueChanged.connect(self._canvas.set_brush_size)
+        self._canvas.brush_size_changed.connect(self._brush_tools.set_brush_size)
+
         return tb
 
     # ── 시그널 연결 ───────────────────────────────────────────────────────────
 
     def _connect_signals(self) -> None:
-        self._image_browser.image_selected.connect(self._on_image_selected)
-        self._image_browser.image_deleted.connect(self._on_image_deleted)
+        self._image_list.image_selected.connect(self._on_image_selected)
+        self._image_list.image_deleted.connect(self._on_image_deleted)
         self._class_panel.class_selected.connect(self._on_class_selected)
         self._canvas.annotation_saved.connect(self._on_annotation_saved)
         self._canvas.selection_changed.connect(self._on_canvas_selection_changed)
@@ -353,15 +358,12 @@ class LabelingTab(QWidget):
     def _set_tool(self, tool: str) -> None:
         # 루프 변수를 _t 로 명명 — 모듈 레벨 i18n t() 함수와의 이름 충돌 방지
         for act, _t in [
-            (self._act_polygon,      TOOL_POLYGON),
-            (self._act_brush,        TOOL_BRUSH),
-            (self._act_brush_fill,   TOOL_BRUSH_FILL),
-            (self._act_eraser,       TOOL_ERASER),
-            (self._act_eraser_flood, TOOL_ERASER_FLOOD),
-            (self._act_select,       TOOL_SELECT),
-            (self._act_pan,          TOOL_PAN),
+            (self._act_polygon,    TOOL_POLYGON),
+            (self._act_brush_fill, TOOL_BRUSH_FILL),
+            (self._act_select,     TOOL_SELECT),
         ]:
             act.setChecked(_t == tool)
+        self._brush_tools.set_tool(tool)   # 클러스터 소속 아니면(위 로컬 도구) 전체 unchecked
         self._canvas.set_tool(tool)
         self._lbl_sel_hint.setVisible(tool == TOOL_SELECT)
 
@@ -388,8 +390,8 @@ class LabelingTab(QWidget):
         · 이미지 목록에 포커스 → 선택된 이미지 일괄 삭제
         · 그 외(캔버스, 어노테이션 목록 등) → 선택된 어노테이션 삭제"""
         try:
-            if self._image_browser.has_list_focus():
-                self._image_browser._on_delete()
+            if self._image_list.has_list_focus():
+                self._image_list.delete_selected()
                 return
         except Exception:
             pass
@@ -429,7 +431,7 @@ class LabelingTab(QWidget):
         path = self._canvas._image_path
         if path:
             log.info(f"{path.name}  — 어노테이션 {n}개 저장")
-            self._image_browser.refresh_item(path)
+            self._image_list.refresh_item(path)
             from app.core.annotation_store import get_ok
             self._act_ok.setChecked(get_ok(path))
         self._refresh_ann_list()
@@ -479,7 +481,7 @@ class LabelingTab(QWidget):
         if self._canvas._image_path is None:
             self._act_ok.setChecked(False)
             return
-        selected_paths = self._image_browser.selected_paths()
+        selected_paths = self._image_list.selected_paths()
         if len(selected_paths) >= 2:
             self._mark_selected_ok(selected_paths)
             return
@@ -546,7 +548,7 @@ class LabelingTab(QWidget):
                 failed.append((path, exc))
 
         if succeeded:
-            self._image_browser.refresh_items(succeeded)
+            self._image_list.refresh_items(succeeded)
 
         if current in succeeded:
             self._canvas.load_image(current)
@@ -568,7 +570,7 @@ class LabelingTab(QWidget):
         """어노테이션 가져오기(Import) 완료 후 이미지 목록·현재 캔버스 갱신."""
         if self._canvas._image_path:
             self._canvas.load_image(self._canvas._image_path)
-        self._image_browser.reload()
+        self._image_list.reload()
 
     def _on_auto_label(self) -> None:
         if not self._mutation_guard():
@@ -579,18 +581,18 @@ class LabelingTab(QWidget):
         if dlg.exec():
             if self._canvas._image_path:
                 self._canvas.load_image(self._canvas._image_path)
-            self._image_browser.reload()
+            self._image_list.reload()
             log.info("오토 라벨링 완료 — 이미지를 선택해 결과를 확인하세요.")
 
     def _copy_prev_annotations(self) -> None:
         """이전 이미지의 어노테이션을 현재 이미지에 복사 (Ctrl+Shift+C)."""
         if not self._mutation_guard() or self._canvas._image_path is None:
             return
-        idx = self._image_browser.current_display_index()
+        idx = self._image_list.current_display_index()
         if idx <= 0:
             log.warning("이전 이미지가 없어 복사를 건너뜁니다.")
             return
-        prev_path = self._image_browser._paths[idx - 1]
+        prev_path = self._image_list.paths()[idx - 1]
         from app.core import annotation_store as store
         prev_anns = store.load(prev_path)
         if not prev_anns:
@@ -726,4 +728,4 @@ class LabelingTab(QWidget):
 
     def _go_image(self, step: int) -> None:
         """이미지 브라우저에서 step 만큼 상대 이동 (−1: 이전, +1: 다음)."""
-        self._image_browser.navigate(step)
+        self._image_list.navigate(step)

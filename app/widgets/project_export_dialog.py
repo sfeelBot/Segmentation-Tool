@@ -26,7 +26,7 @@ log = get_logger(__name__)
 
 
 class _ProjectExportWorker(QThread):
-    """`_FolderImportWorker`(image_browser.py)와 동일한 패턴 — 진행률 시그널 +
+    """`_FolderImportWorker`(inference_image_list.py)와 동일한 패턴 — 진행률 시그널 +
     완료/에러를 하나의 finished 시그널(성공 여부 포함)로 전달."""
 
     progress = pyqtSignal(int, int, str)   # done, total, filename

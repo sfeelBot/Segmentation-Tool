@@ -86,6 +86,69 @@
   한 번 더 QTest로 확인, (3) BUG-029(Open, 원 id 충돌) 등 이번 작업과 무관한 기존 이슈는
   범위 밖임을 인지.
 
+## 2026-09-22 — BUG-032(GitHub #35) 메모리 이슈 수정 — main 독립 적용
+
+`feature/zone-analysis-tab` 브랜치에서 이미 수정·검증 완료한 동일 이슈(그쪽 BUG-033,
+`docs/specs/github-35-memory-issue-2026-09-22.md`)를 main에도 적용해달라는 리더 지시.
+`app/widgets/annotation_canvas.py`/`app/core/annotation_store.py`/`app/widgets/export_dialog.py`
+3개 파일이 두 브랜치에서 완전히 동일함을 `diff`로 먼저 확인한 뒤, 정책(에디션 브랜치 →
+main 역병합/cherry-pick 금지)에 따라 `D:\segmentation model`(main 워크트리)에서 **처음부터
+다시 구현**하고 별도로 커밋했다(zone 브랜치 커밋 `775b083`과 코드 내용은 동일하나 커밋 자체는
+독립).
+
+### 원인
+- `AnnotationCanvas._undo_stack`이 이미지별로 스코프되지 않고 앱 세션 내내 누적됨 — 여러
+  이미지를 오가며 편집하면 서로 다른 이미지의 전체 해상도 brush_mask 스냅샷이 undo 스택
+  하나에 계속 쌓여 메모리가 단조 증가. `undo()`가 다른 이미지의 스냅샷을 현재 이미지 파일에
+  잘못 저장할 잠재적 데이터 손상 위험도 있었음.
+- `annotation_store.load()`의 `brush_mask` 분기가 `rle_decode()` 실패(MemoryError)를 방어하지
+  않아, 손상/과대 RLE 데이터 항목 하나 때문에 해당 이미지의 정상 항목까지 전부 로드 실패.
+
+### 변경
+- `app/widgets/annotation_canvas.py`
+  - `__init__`에 `_prev_image_path: Path | None`, `_prev_undo_stack: list[list[AnnotationItem]]`
+    필드 추가 — "현재 이미지 + 바로 직전 이미지" 1개까지만 undo 스택을 스코프.
+  - `load_image(path)`에서 `self._image_path = path` 대입 직전에 스코핑 블록 삽입: 새로
+    여는 이미지가 직전 슬롯과 일치하면 그 스택을 복원(A→B→A 왕복 정확 복원), 아니면 새
+    스택으로 시작. 순서가 핵심 — 비교를 먼저 하고 그다음 직전 슬롯을 덮어쓴다(A→B→C→A는
+    C 진입 시 직전 슬롯이 B로 덮여 A 이력 소실 — 사양, 버그 아님).
+  - `clear()`에 `_prev_image_path = None`, `_prev_undo_stack = []` 추가.
+  - 모듈 상수 `_MAX_UNDO_STEPS = 30`, `_MAX_UNDO_BYTES = 200 * 1024 * 1024`(200MB) 신설,
+    모듈 헬퍼 `_annotations_mask_bytes()` 신설(brush_mask만 `.nbytes` 합산, polygon은 0).
+  - `_push_undo()`의 기존 개수 캡(30)을 개수+바이트 이중 조건 `while` 루프로 교체,
+    `len() > 1` 가드로 최소 1개(가장 최근 스냅샷)는 예산 초과 시에도 항상 보존. 기존
+    `MemoryError` try/except(BUG-014 대응, 스냅샷 생성 자체 실패 시 이번 undo만 건너뜀)는
+    그대로 유지.
+- `app/core/annotation_store.py`
+  - `get_logger`/모듈 로거 `log` 추가.
+  - `load()`의 `rle_decode()` 호출을 `try/except MemoryError`로 감싸 실패한 항목만
+    `continue`로 건너뛰고 경고 로그(annotation_id/image/크기) 남긴 뒤 나머지 항목은 정상
+    로드 계속. `export_dialog.py`는 이 함수를 그대로 재사용하므로 코드 변경 없이 자동 보호.
+- `release.ini` 버전은 건드리지 않음 — 기존 관례(BUG-029/030/031 등)상 installer 버전은
+  배포 시점에 별도 chore 커밋으로 일괄 처리하므로 이번 라운드에서는 손대지 않았다.
+
+### 검증 (구현자 자체 확인 — scratchpad, 프로젝트에 스크립트 미추가)
+- `python -m py_compile app/widgets/annotation_canvas.py app/core/annotation_store.py` 통과.
+- `diff`로 두 워크트리 파일 바이트 비교 — annotation_canvas.py는 완전 동일, annotation_store.py는
+  줄바꿈(main=LF, zone=CRLF)만 다르고 정규화 후 내용 100% 동일함을 확인.
+- scratchpad 스크립트로 로직 단위 검증 4종 모두 통과:
+  1. A→B→A 왕복 시 A의 undo 스택 정확히 복원.
+  2. A→B→C→A는 A 이력 소실(사양대로).
+  3. `clear()` 후 직전 슬롯도 초기화됨.
+  4. `_push_undo()` 개수 캡 30개로 정상 트리밍.
+  5. 바이트 캡 — 30MB짜리 스냅샷 20개 push 시 200MB 예산 내로 트리밍(6개, 180MB 유지).
+  6. 단일 스냅샷이 예산(250MB > 200MB)을 초과해도 최소 1개는 보존(`len()>1` 가드).
+  7. `annotation_store.load()`에서 `rle_decode()`가 MemoryError를 던지면 해당 항목만
+     건너뛰고 나머지(polygon) 항목은 정상 로드됨을 monkeypatch로 확인.
+- 실제 GUI(`python main.py`) 골든 패스 구동 확인은 구현자 범위 밖 — **검증 서브에이전트의
+  실행 확인이 필요**.
+
+### 관련
+- `QA.md` BUG-032(main 넘버링, Open — 검증 대기)로 등록. GitHub #35.
+- zone 브랜치 동일 이슈: BUG-033(그쪽 `QA.md`), 커밋 `775b083`/`8cb6d0d`/`24b5aa8`.
+
+---
+
 ## 2026-08-28 — GitHub #23 학습·추론 개선
 
 - `QThread` 기반 전체 이미지 추론과 진행률·결과 캐시·원본 선표시·`F` 토글 구현.
@@ -5681,3 +5744,180 @@ P0/P1 두 건을 수정. 커밋은 하지 않음(리더가 재검증 통과 후 
 
 **상태: 완료 — 검증 에이전트의 독립 재검증 대기.** git commit은 하지 않음(리더가 재검증
 통과 후 커밋 예정, 사용자 지시).
+
+**커밋 미수행** — 지시에 따라 커밋하지 않음. 검증 통과 후 리더가 커밋 예정.
+**검증 서브에이전트 확인 필요** — 골든패스(폴더 생성→리네임→최근목록/타이틀바 확인,
+GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
+
+---
+
+## 2026-08-31 — 이미지 리스트 순번 표시 (요청 2)
+
+### 변경
+- `app/widgets/image_browser.py` — 단일 평탄 목록에 "N. 파일명" 순번 접두 표시.
+  `_path_to_number: dict[Path, int]` 을 신설해 `_apply_display()`가 `filtered`(현재
+  검색·정렬 반영 순서)로 재구축할 때마다 1부터 다시 채움. 신규 헬퍼 `_numbered_label()`이
+  번호+`_rel_name()`을 조합. `_make_tree_item()`의 기본 라벨, `refresh_item()`/
+  `refresh_items()`의 단건 텍스트 갱신 경로(R6 `_status_cache` 최적화, 전체 재구성 없음)
+  3곳 모두 이 헬퍼로 교체 — 단건 갱신 시에도 `_path_to_number`에 남아있는 기존 번호를
+  그대로 재사용하므로 다른 항목 번호가 밀리거나 사라지지 않는다.
+- `app/widgets/inference_image_list.py` — 검색+정렬+폴더 트리 그룹핑을 지원하는 위젯이라
+  평탄 리스트 인덱스를 그대로 쓸 수 없어(폴더 헤더가 화면 순서에 끼어듦), 신규
+  `_number_items()`가 트리 완성 후 `QTreeWidgetItemIterator`로 실제 화면 렌더링 순서를
+  순회하며 leaf 항목(UserRole에 Path가 있는 항목)에만 전체 통번호를 접두. 폴더 그룹핑
+  모드에서도 폴더별로 다시 시작하지 않고 전체 통번호(스펙 확정 사항). `_apply_display()`의
+  트리 재구성 분기 직후, 선택 복원 이전에 1줄 호출 추가. `QTreeWidgetItemIterator` import
+  1줄 추가.
+- 두 파일 모두 `docs/specs/project-name-and-image-numbering-2026-08-31.md`의 "요청 2"
+  설계를 그대로 구현 — 결정 대기 없음.
+
+### 검증
+- 신규 `tests/test_image_list_numbering.py`(5 케이스, headless `QApplication`):
+  - `ImageBrowser` 기본 정렬(name_asc)에서 a/b/c 3개 이미지가 1/2/3으로 번호 매겨짐.
+  - `refresh_item()` 단건 갱신 후에도 대상 항목과 형제 항목 번호가 그대로 유지됨.
+  - 검색 필터 적용 시 필터링된 결과가 1부터 다시 번호 매겨짐.
+  - `InferenceImageList.load_files()`(평탄 모드) 정렬 순서대로 1/2부터 번호 매겨짐.
+  - `InferenceImageList` 폴더 그룹핑 모드(정렬 "폴더")에서 서로 다른 하위 폴더의 leaf
+    2개가 폴더별로 재시작하지 않고 전체 통번호(1, 2)를 받고, 폴더 헤더 아이템 텍스트는
+    숫자로 시작하지 않음을 확인.
+- `build/venv/Scripts/python.exe -m pytest tests/ -q` — 97 passed (신규 5건 포함, 기존
+  회귀 없음). 환경 특이사항: 기본 pytest 임시 디렉터리(`%TEMP%/pytest-of-Feel`)에 대한
+  `PermissionError`가 있어 `--basetemp`를 스크래치패드 경로로 지정해 실행함(환경 문제,
+  코드와 무관).
+
+### 참고
+같은 작업 디렉토리에 "요청 1"(프로젝트 이름 자동 동기화)의 uncommitted 변경
+(`app/core/project.py`, `app/widgets/project_start_dialog.py`, `tests/test_project_recent.py`,
+`docs/roadmap.md`, `docs/agents/planning-log.md`)이 이미 존재했으나 이번 작업 범위가 아니라
+건드리지 않음.
+
+**커밋 미수행** — 지시에 따라 커밋하지 않음. 검증 통과 후 리더가 커밋 예정.
+**검증 서브에이전트 확인 필요** — 실제 GUI 조작(검색/정렬 전환, 폴더 그룹핑 모드,
+`refresh_item()` 트리거 경로인 라벨링 OK 토글/저장)으로 번호 표시를 눈으로 재확인 필요.
+
+---
+
+## 2026-10-27 — 공유 위젯 추출: view_transform / inference_image_list / brush_toolbar (시작)
+
+스펙 `docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`를 리더 지시대로
+순차 구현 시작(1단계: `view_transform.py` 추출).
+
+- `app/widgets/view_transform.py` 신규: `canvas_to_content`/`wheel_zoom`/`fit_view`/
+  `pan_drag` — 상태 없는(stateless) 좌표계산 함수. `MIN_ZOOM=0.05`/`MAX_ZOOM=20.0`.
+- `app/widgets/annotation_canvas.py`: `_c2i()`/`wheelEvent()`의 zoom·pan 재계산/
+  `_fit_view()`/`mouseMoveEvent()`의 pan 드래그 1줄만 교체, 로컬 `MIN_ZOOM`/`MAX_ZOOM`
+  제거 후 import로 대체. GitHub #9 드래그 중 휠 줌 재동기화 블록(`if self._pan_active:
+  ...`)은 교체하지 않고 그대로 보존 — `wheel_zoom()` 호출 다음에 이어지는 호스트 쪽
+  후처리로 남김.
+- `app/widgets/overlay_viewer.py`: 동일 패턴으로 `wheelEvent()`/`mousePressEvent()`+
+  `mouseMoveEvent()`의 pan 드래그/`_fit_view()` 교체. 스펙 2.3절의 "드래그 중 휠 줌"
+  보강은 선택사항이라 이번 라운드에서는 추가하지 않음(범위 확장 금지).
+- 검증: `tests/test_canvas_zoom_pan.py` 통과, `MainWindow()` 생성 스모크(임시 프로젝트로
+  `project.set_current()` 후 구성) 성공 — import 에러 없음.
+- 커밋: `90a124f` refactor: 캔버스/오버레이뷰어 pan·zoom 좌표계산을 view_transform.py로 추출
+
+다음: 2단계(`inference_image_list.py` 확장 + `image_browser.py` 제거 + `labeling_tab.py`
+리스트 호출부 치환), 3단계(`brush_toolbar.py` 신규 + `labeling_tab.py` 툴바 치환) 예정.
+검증 에이전트 확인 전까지는 완료로 간주하지 않음.
+
+---
+
+## 2026-10-27 — 공유 위젯 추출: 이미지 리스트 통합 (2단계)
+
+리더 중간 지시(디자인 서브에이전트 피드백)를 반영해 2단계 진행.
+
+- `app/widgets/inference_image_list.py`: `show_status_icons`/`editable` 생성자 플래그
+  추가. `editable=True`일 때 `_FolderImportWorker`(포팅), 파일/폴더 추가·삭제 버튼,
+  mutation guard, `image_deleted` 시그널 실제 발행. `show_status_icons=True`일 때
+  상태 아이콘(●/✓/○)·범례·`status_done`/`status_todo` 정렬모드(총 7종) 추가. 신규
+  공개 메서드: `set_mutation_guard`/`has_list_focus`/`selected_paths`/`refresh_item`/
+  `refresh_items`/`reload`/`delete_selected`/`is_importing`. Ctrl+C 파일명 복사
+  eventFilter는 플래그 무관 항상 설치(추론 탭에도 부작용 없이 적용).
+  - 디자인 피드백 반영: (a) 제목 레이블 + 추가/삭제 버튼을 `ImageBrowser`처럼 한 줄에
+    병합(기존엔 별도 줄 구상이었음) — 라벨링 탭 좌측 패널(최소폭 150px) 세로 공간
+    절약, 제목도 `t("ui.image_browser")` i18n 키 사용(editable=True일 때만;
+    기본 추론 탭 경로는 하드코딩 "이미지 목록" 그대로 — 무변경 원칙 유지).
+    (b) 트리 아이콘 14px(`_STATUS_ICON_SIZE`)과 범례 아이콘 12px(`_LEGEND_ICON_SIZE`)
+    치수를 구분해서 포팅 — 하나로 통일하면 범례가 커 보이는 회귀가 생길 뻔했음.
+- `app/widgets/image_browser.py` 삭제. `app/tabs/labeling_tab.py`의
+  `self._image_browser.*` 호출부 전체(13곳)를 `self._image_list.*`로 치환하며
+  특수 매핑 적용: `_on_delete()`→`delete_selected()`, `_import_worker` 직접 참조→
+  `is_importing()`, `_paths[idx-1]`→`paths()[idx-1]`. `InferenceImageList`는
+  `__init__`에서 자동 reload하지 않으므로 `_build_ui()` 내부에서 `load_folder(
+  _project.images_dir())`를 시그널 연결 전에 명시 호출(BUG-017과 동일한 타이밍
+  주의 — 기존 initial_path 동기화 블록 유지).
+- `app/widgets/project_export_dialog.py`: 주석의 `image_browser.py` 경로 참조를
+  `inference_image_list.py`로 정정(코드 동작 변경 없음).
+- `image_browser.py`를 직접 import하던 테스트 3개(`test_image_list_numbering.py`/
+  `test_labeling_multi_ok.py`/`test_training_data_lock.py`) — 스펙의 grep 확인은
+  app/ 소스만 대상이었고 tests/는 누락돼 있었음(실제로 3개 파일에서 참조 중) —
+  `InferenceImageList(show_status_icons=True, editable=True)` 기준으로 갱신.
+- 검증: `pytest tests/` 97개 전체 통과. `MainWindow()` + 샘플 이미지 2장으로 라벨링
+  탭 이미지 리스트(load_folder/selected_paths/has_list_focus/is_importing) +
+  추론 탭 리스트 생성 스모크 성공.
+- 커밋: `dc2b987` refactor: 이미지 리스트 라벨링/추론 공용화 — InferenceImageList 확장,
+  ImageBrowser 제거
+
+다음: 3단계(`brush_toolbar.py` 신규 + `labeling_tab.py` 툴바 치환). 디자인 피드백에
+따라 BrushToolbar는 toolbar.addAction()을 자체 호출하지 않고 QAction/QSpinBox
+객체만 생성해 노출 — 호스트가 기존 아이콘 좌→우 순서(폴리곤/브러시/채움/지우개/
+영역삭제/select/pan)를 그대로 유지한 채 인터리빙 삽입하도록 설계 예정(Q/W/E/R/D/A/S
+단축키 공간 대응 보존).
+
+---
+
+## 2026-10-27 — 공유 위젯 추출: brush_toolbar (3단계, 완료) + v1.11.0
+
+3단계(`app/widgets/brush_toolbar.py` 신규 + `labeling_tab.py` 툴바 치환)로 스펙
+`docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`의 main 브랜치
+1단계 구현을 마무리.
+
+- `app/widgets/brush_toolbar.py` 신규: `BrushToolbar(QObject)` — `TOOL_BRUSH`/
+  `TOOL_ERASER`/`TOOL_ERASER_FLOOD`/`TOOL_PAN` 상수 + `act_brush`/`act_eraser`/
+  `act_delete_region`(옵션)/`act_pan`/`act_undo`/`spin_brush_size` 노출,
+  `tool_changed`/`brush_size_changed`/`undo_requested` 시그널, `current_tool()`/
+  `set_tool()`/`set_brush_size()`.
+  **설계상 스펙과 다르게 판단한 지점(디자인 리뷰 피드백 반영, 리더 중간 지시)**:
+  스펙 1.2절 문서상으론 생성자가 `toolbar`에 액션을 스스로 꽂아주는 것처럼
+  읽히고 1.3절은 "공유 클러스터를 한 덩어리로 묶어 삽입하는 정도의 재배치는
+  허용"이라 했지만, 디자인 서브에이전트 피드백이 "기존 아이콘 좌→우 순서
+  (폴리곤/브러시/채움/지우개/영역삭제/select/pan)가 Q/W/E/R/D/A/S 단축키와
+  1:1 공간 대응이라 절대 바꾸면 안 된다"고 명시해 이 둘이 충돌했다. 기능
+  요구사항(순서 불변)이 더 명확하고 우선순위가 높다고 판단해, `BrushToolbar`가
+  `toolbar.addAction()`을 자체 호출하지 않고 QAction/QSpinBox 객체만 만들어
+  노출하도록 구현 — 호스트(`labeling_tab._build_toolbar()`)가 로컬 액션(폴리곤/
+  select/brush_fill)과 정확히 기존 순서로 인터리빙해 `tb.addAction()` 호출.
+  `show_delete_region=False`면 `act_delete_region`을 만들지 않음(숨기지 않음,
+  2단계 존/R분석 혼동 방지 — 디자인 피드백 3번).
+- `app/tabs/labeling_tab.py`: `_build_toolbar()`가 `BrushToolbar(tb,
+  show_delete_region=True)`를 생성 직후 로컬 액션 3개(`_act_polygon`/
+  `_act_brush_fill`/`_act_select`)와 정확히 기존 시각 순서로 인터리빙해
+  `tb.addAction()`. `_set_tool()`은 로컬 3개만 체크 루프 돌고
+  `self._brush_tools.set_tool(tool)`로 클러스터 동기화. 양방향 연결:
+  `tool_changed→_set_tool`, `undo_requested→canvas.undo`,
+  `spin_brush_size.valueChanged→canvas.set_brush_size`,
+  `canvas.brush_size_changed→brush_tools.set_brush_size`. 더블클릭 브러시크기
+  조절(#3b)은 캔버스 쪽 로직이라 무관, 스핀박스 `setMinimumWidth(76)`(#3a)는
+  `BrushToolbar.__init__`에 그대로 유지.
+- `app/widgets/annotation_canvas.py`: `TOOL_BRUSH`/`TOOL_ERASER`/
+  `TOOL_ERASER_FLOOD`/`TOOL_PAN` 4개 상수를 `brush_toolbar.py`에서 import하도록
+  변경(값 불변, `TOOL_POLYGON`/`TOOL_BRUSH_FILL`/`TOOL_SELECT` 3개는 자기
+  모듈에 유지) — `labeling_tab.py`의 기존 `from app.widgets.annotation_canvas
+  import (... TOOL_BRUSH ...)` 재노출(re-export)으로 계속 동작, import 라인
+  변경 불필요.
+- 검증: `pytest tests/` 97개 전체 통과. 전용 스모크 스크립트로 (1) 초기 상태
+  (폴리곤 체크/클러스터 전체 unchecked), (2) 공유 액션 클릭→로컬 unchecked+
+  캔버스 도구 동기화, (3) 로컬 도구 전환→클러스터 unchecked, (4) 브러시크기
+  스핀↔캔버스 양방향 동기화(`setMinimumWidth`=76 확인), (5) undo_requested
+  와이어링, (6) `show_delete_region` 툴팁 호스트 오버라이드 — 전부 통과.
+  `MainWindow()` 전체 생성 스모크도 재확인.
+- 커밋:
+  - `1aae2c7` refactor: 공유 브러시 툴바 추출 — app/widgets/brush_toolbar.py 신규
+  - `2f78444` docs: v1.11.0 — 공유 위젯 추출 릴리즈 노트 (release.ini 1.10.5→1.11.0,
+    docs/CHANGELOG.md 갱신, `scripts/generate_version_info.py` 검증 통과)
+
+이번 라운드(main 1단계, 스펙 전체) 구현 완료. 스펙 4절 "2단계"(에디션 브랜치
+`feature/zone-analysis-tab` 반영)는 사용자/리더 지시 전까지 착수하지 않음.
+**검증 에이전트의 실제 확인(라벨링/추론 탭 골든 패스 — 특히 도구 상호배타
+양방향, pan/zoom, 이미지 리스트 상태 아이콘/정렬/추가·삭제/Ctrl+C) 전까지는
+완료로 간주하지 않음.**
