@@ -5,7 +5,99 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-08-31] GitHub #31(build error) 원인규명+수정+검증+push+클로즈
+> **[최신, 2026-10-27] "브러시 도구/이미지 뷰어/이미지 리스트 공통 위젯화" —
+> 기획+구현(main 1단계) 완료, 검증 대기.** 기획(planner)이
+> `docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`로 스펙 확정 →
+> designer(레이아웃·아이콘 검토, 코드 변경 없음)와 implementer를 병행 호출 →
+> designer가 "툴바 아이콘 좌→우 순서는 Q/W/E/R/D/A/S 단축키 공간 대응이라 절대
+> 유지" 등 피드백 4건을 중간에 리더가 implementer에 전달 → implementer가 반영해
+> 완료. **구현 결과**: `app/widgets/view_transform.py`(신규, pan/zoom 순수함수),
+> `app/widgets/brush_toolbar.py`(신규, `BrushToolbar` — 호스트가 `QAction`/
+> `QSpinBox`를 직접 `addAction()`해 기존 아이콘 순서 보존하도록 설계, 스펙
+> 1.2/1.3절을 디자인 피드백 기준으로 리더가 오버라이드), `app/widgets/
+> inference_image_list.py` 확장(`show_status_icons`/`editable` 플래그)으로
+> `app/widgets/image_browser.py` 완전 대체(삭제). `app/tabs/inference_tab.py`는
+> diff 0(무변경) 확인됨. 커밋 7개(`90a124f`~`7bd280e`, 전부 main, **push 안 함**).
+> `release.ini` 1.10.5→1.11.0(MINOR, 정렬모드 5→7종·재귀스캔·Ctrl+C 복사 등 체감
+> 기능변화 있어 PATCH 아님) + CHANGELOG 갱신 완료. pytest 97개 통과·그래픽 신호
+> 수준 스모크는 구현 에이전트가 확인했으나 **실제 마우스 조작 골든 패스는 미확인**
+> — 검증 에이전트 호출 필요(AGENTS.md: 주요 기능 추가 라운드는 골든패스 명시 요청).
+> 테스트 실행 중 생성된 `data/annotations/b.json` 잔재(4x4 테스트 픽스처,
+> `.gitignore`가 `data/annotations`를 안 덮는 pre-existing 갭, 실제 이미지 없음
+> 확인 후 리더가 직접 삭제)는 정리됨. **검증 완료(66개 실제 QTest 이벤트 주입
+> 체크 전부 PASS)** — 라벨링 7종 도구+상호배타+단축키+툴바 아이콘 순서(디자인
+> 리뷰 요구사항대로 유지 확인)+undo+브러시크기(#3a/#3b)+eye/OK/clear/auto/
+> 전체화면, 이미지 리스트 전체 기능, **GitHub #9 pan+휠줌 재동기화 블록 보존 및
+> 실측 재확인(가장 중요한 회귀 포인트, 끊김 없음)**, 추론 탭 완전 무변경 전부
+> 확인됨. 블로커 없음. 검증 중 무관한 **BUG-034(P3) 신규 등록**(pytest 전체
+> 스위트 실행 시 `data/annotations/b.json` 잔류 — 기존 테스트 인프라 이슈, 실제
+> 앱 사용엔 영향 없음, 이번 리팩토링과 무관). **이번 라운드(main 1단계) 기획→
+> 구현→디자인검토→검증 전부 완료.** **2단계도 완료.** 사용자가 "2단계까지
+> 진행하고 각 탭 이미지 캡쳐해줘" 지시 → 리더가 로컬 전용
+> `sync/main-into-zone-analysis-tab-20261027` 브랜치(main에서 분기, **push 안
+> 함**)를 만들어 에디션 워크트리(`D:/segmentation model-zone-analysis-tab`)에
+> 로컬 merge(`--no-ff`) → 8개 파일 충돌(실제 코드 충돌은
+> `app/widgets/inference_image_list.py`/`tests/test_image_list_numbering.py`뿐,
+> 나머지는 append-only 문서+release.ini) → implementer가 "양쪽 다 살리기"
+> 원칙으로 해결(zone 고유 기능 — 통번호매김/다중선택 "0·1개=전체"/배치상태아이콘/
+> 목록전용 Delete·우클릭메뉴 — 전부 보존하면서 main의 `show_status_icons`/
+> `editable` 플래그도 유지, `selected_paths()` 다중선택 관례 충돌은
+> `self._multi_select` 플래그로 분기해 양쪽 다 보존) → 커밋 `f7529a3`(merge).
+> 이어서 스펙 4절대로 `zone_analysis_tab.py`(원편집만 로컬, 나머지 5개
+> `BrushToolbar`로, blob-delete를 `TOOL_ERASER_FLOOD` 공유 시그널에 연결해
+> flood-eraser/blob-delete 통합 완성)·`r_analysis_tab.py`(ROI만 로컬, 나머지
+> `BrushToolbar(show_delete_region=False)`)를 교체 → 커밋 `acb7277`+`73b369d`.
+> pytest 168개 통과, 오프스크린 스모크 확인. **구현 에이전트 자체 확인 수준
+> (화면 캡처·실제 UI 조작 검증은 리더 지시로 보류)** — 검증 에이전트가 main+
+> zone 워크트리 양쪽의 실제 골든 패스 확인과 4탭(라벨링/추론/존분석/R분석)
+> 스크린샷 캡처를 진행 → **전부 PASS(54개 체크 0 FAIL), 버그 없음.** 존분석
+> 블랍삭제가 공유 `TOOL_ERASER_FLOOD`를 통해 실제로 블랍을 지우는 것까지
+> end-to-end 확인, R분석 영역삭제 버튼 부재(의도대로) 확인, `selected_paths()`
+> 다중선택 관례 분기(존분석="0·1개=전체" vs 라벨링="정확히 선택된 것만")
+> 혼선 없음 확인, pytest main 97개+에디션 168개 재확인 통과. 스크린샷 4장을
+> `SendUserFile`로 사용자에게 전달 완료(헤드리스 캡처라 한글이 □로 보이는 건
+> 렌더링 artifact, 실제 앱은 정상). **main 1단계+2단계(존/R분석) 전체 라운드
+> 완료.** 사용자가 "전부 push 하고 사용성(버벅임 등) 오류 검토해줘" 지시 →
+> deployer 호출: main `v1.11.0`(`7bd280e3`) 태깅+push, sync 브랜치 push→PR #37
+> 생성→존분석 브랜치 push 즉시 **자동 MERGED**, 존분석은 `release.ini`
+> 1.6.2→1.6.3(PATCH) 갱신+CHANGELOG+커밋 `82340d7`+태그 `zone-v1.6.3`+push,
+> `docs/agents/deployment-log.md` 기록(`7b088d8`)까지 전부 완료. **main/존분석
+> 둘 다 origin과 동기화 완료.** 동시에 성능/사용성 검토(verifier,
+> BrushToolbar 양방향동기화 호출횟수·이미지리스트 재귀스캔 속도·R분석
+> zone-v1.6.2 성능개선 재회귀여부·pan/zoom 오버헤드 정량측정)를 병행 호출 →
+> **5개 의심 지점 전부 정량 측정 결과 PASS, 버그 없음**: BrushToolbar
+> 양방향동기화는 클릭당 호출 2회 고정(루프 구조적으로 불가능, 300회에
+> 0.835ms), 이미지리스트 rglob 재귀스캔(800장, 상태아이콘 포함)은 폴더 열기
+> 1회당 65~105ms(1회성 사용자 액션이라 문제없음, "직후 재읽기" 시 1회 튄
+> 사례는 디스크 과도기 현상으로 코드 회귀 아님 확인), R분석 탭의 기존 428배
+> 성능개선(`0eb148a`, zone-v1.6.2)은 2단계가 캔버스/메트릭 코드를 건드리지
+> 않아 그대로 보존, view_transform.py 추출은 수식 1:1 치환뿐이라 오버헤드
+> 없음, 추론 탭 신규 Ctrl+C 이벤트필터는 20000회 비매칭 입력에 16ms(무시
+> 가능). **이번 라운드(1단계+2단계+push+성능검토) 전체 완료, 블로커 없음.**
+
+> **[2026-10-27, 하위] 기획 확정 범위 상세** — 사용자 요청: 라벨링 탭의
+> 툴바·뷰어·이미지 리스트를 위젯으로 뽑아 존분석·R분석·추론 탭에도 동일 적용,
+> 탭별 차이는 확인 후 진행. 리더가 직접 코드 조사(라벨링/추론 tabs, Zone/R 탭은
+> 에디션 브랜치 `feature/zone-analysis-tab` 워크트리
+> `D:/segmentation model-zone-analysis-tab`에서 읽음) 후 AskUserQuestion 3라운드로
+> 세부 범위 확정:
+> - **툴바**: 라벨링·존·R 3탭만 공유 위젯 적용(추론 탭은 읽기전용 설계라 제외).
+>   브러시그리기/지우개/undo/pan/브러시크기는 동작까지 통일, 블랍삭제(존)=
+>   영역지우개(라벨링 eraser_flood)로 동작 통합. OK 토글은 공유 위젯에서 빼고
+>   라벨링 탭에만 유지. 1차 도형 도구(폴리곤/원/ROI)는 버튼 모양·동작 모두
+>   탭별 고유 구현 유지(공유 대상 아님) — 구조적 위험이 가장 큰 부분이라 사용자가
+>   명시적으로 제외 결정.
+> - **뷰어**: 완전 통합 아님. 패닝/줌/오버레이 합성 등 공통 로직만 믹스인·유틸로
+>   추출. AnnotationCanvas(라벨링)·OverlayViewer(추론, Zone/R의 부모 클래스이미
+>   공유 중)는 별도 클래스 구조 유지.
+> - **이미지 리스트**: InferenceImageList에 "라벨 상태 아이콘" 옵션을 추가해
+>   ImageBrowser를 완전 대체(라벨링 탭도 교체). R분석 탭은 셀 단위 UI라 대상 제외.
+> - **작업 순서**: main(라벨링+추론+공유 위젯 신설) 먼저 → 완료·커밋 후 기존
+>   sync 브랜치+PR 절차로 `feature/zone-analysis-tab`에 반영 → 에디션 워크트리에서
+>   Zone/R 탭을 공유 위젯으로 교체(별도 라운드).
+> 사용자 "시작해" 승인 후 planner 서브에이전트에 착수 지시. **진행 중.**
+
+> **[2026-08-31] GitHub #31(build error) 원인규명+수정+검증+push+클로즈
 > 완료.** 사용자 제보로 이슈 확인 → 로그의 `UnicodeDecodeError: 'cp949' codec
 > can't decode byte 0xec` 를 근본원인으로 특정(`requirements.txt`가 인코딩
 > 선언/BOM 없는 순수 UTF-8인데 한글 주석 4곳이 있어, 한국어 로케일 Windows
