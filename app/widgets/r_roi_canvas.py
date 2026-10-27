@@ -71,6 +71,16 @@ class RRoiCanvas(OverlayViewer):
         self._detected_mask: np.ndarray | None = None
         self._mask_image: QImage | None = None
 
+        # ── effective_mask() 증분 캐시(P0 성능) ──────────────────────────────
+        # 스트로크를 1개 커밋할 때마다 누적된 manual_strokes 전체를 처음부터
+        # 재생하면 O(누적 포인트 수) 비용이 매 커밋마다 커진다(검증 2026-10-27).
+        # 대신 "마지막으로 계산한 결과"를 들고 있다가 새로 추가된 스트로크만
+        # 그 결과 위에 덧적용한다 — apply_manual_strokes()가 스트로크를 순서대로
+        # last-write-wins로 적용하는 구조라 수학적으로 전체 재생과 동일한 결과.
+        self._mask_cache_base: np.ndarray | None = None   # 캐시가 유효한 detected_mask(identity 비교)
+        self._mask_cache_n_strokes = 0                     # 캐시에 이미 반영된 manual_strokes 개수
+        self._mask_cache_result: np.ndarray | None = None
+
         # ── 브러시 그리기/지우기(zone_canvas R3-3 포팅) ──────────────────────────
         self._manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]] = []
         self._erase_strokes: list[list[tuple[float, float, float]]] = []   # erase_mask() 전용 레거시 합집합
@@ -141,10 +151,36 @@ class RRoiCanvas(OverlayViewer):
         return self._erase_mask_np
 
     def effective_mask(self) -> np.ndarray | None:
-        """검출 마스크 + 수동 그리기/지우기 반영 최종 마스크(면적 계산용)."""
+        """검출 마스크 + 수동 그리기/지우기 반영 최종 마스크(면적 계산용).
+
+        P0 성능: `_mask_cache_base`가 지금 `_detected_mask`와 같은 배열이고(식별
+        비교 — `set_detected_mask()`가 재검출마다 새 배열을 넘기므로 충분) 지금까지
+        캐시에 반영된 스트로크 수가 현재 `_manual_strokes` 길이 이하면, 새로 추가된
+        스트로크만 캐시 결과 위에 덧적용한다(전체 재생 금지). 그 외(검출 마스크가
+        바뀜, undo/세션 로드로 스트로크 수가 줄어듬)는 처음부터 전체 재계산한다
+        — 이 경우도 O(그 시점 전체 스트로크 수) 1회일 뿐, 매 커밋마다 커지진 않는다.
+        """
         if self._detected_mask is None:
+            self._invalidate_mask_cache()
             return None
-        return self.apply_manual_strokes(self._detected_mask)
+        if (self._mask_cache_base is self._detected_mask
+                and self._mask_cache_n_strokes <= len(self._manual_strokes)):
+            new_strokes = self._manual_strokes[self._mask_cache_n_strokes:]
+            if new_strokes:
+                self._mask_cache_result = zone_metrics.apply_manual_strokes(
+                    self._mask_cache_result, new_strokes
+                )
+                self._mask_cache_n_strokes = len(self._manual_strokes)
+            return self._mask_cache_result
+        self._mask_cache_result = self.apply_manual_strokes(self._detected_mask)
+        self._mask_cache_base = self._detected_mask
+        self._mask_cache_n_strokes = len(self._manual_strokes)
+        return self._mask_cache_result
+
+    def _invalidate_mask_cache(self) -> None:
+        self._mask_cache_base = None
+        self._mask_cache_n_strokes = 0
+        self._mask_cache_result = None
 
     def apply_manual_strokes(self, mask: np.ndarray) -> np.ndarray:
         """zone_canvas.apply_manual_strokes()와 동일한 얇은 래퍼 —
@@ -177,6 +213,8 @@ class RRoiCanvas(OverlayViewer):
         self._roi_edges = self._edges_from_tuple(tuple(roi)) if roi else None
         self._erase_strokes = list(state.get("erase_strokes", []))
         self._manual_strokes = list(state.get("manual_strokes", []))
+        self._invalidate_mask_cache()   # undo/세션 로드 — 스트로크 리스트가 통째로
+        # 교체되므로 개수만 보는 캐시 휴리스틱을 믿지 않고 안전하게 전체 재계산한다.
         self._replay_erase_strokes()
         self._rebuild_stroke_overlay()
         self._rebuild_mask_image()

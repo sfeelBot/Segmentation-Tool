@@ -18,11 +18,13 @@
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 
 import cv2
+import numpy as np
 from PyQt6.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QPixmap
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QListWidget,
     QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QSpinBox,
@@ -56,6 +58,19 @@ _BADGE_NONE = (
     "background:#1a1d23;border:1px solid #4b5563;border-radius:6px;"
     "color:#9ca3af;font-weight:bold;font-size:13px;"
 )
+
+_IMAGE_CACHE_SIZE = 8   # 이미지 전환/재방문 시 cv2.imread 중복 디코드를 줄이는 LRU 상한
+                        # (zone_analysis_tab의 R-PERF-1과 동일한 OrderedDict LRU 관례)
+
+
+def _bgr_to_qpixmap(img: np.ndarray) -> QPixmap:
+    """cv2(BGR) numpy 배열을 QPixmap으로 변환 — RGB 재정렬 없이 Format_BGR888을
+    그대로 써서 `cv2.imread()`로 읽은 같은 파일을 `QPixmap()`으로 또 디코드하지
+    않기 위함(P1 성능, 대형 이미지에서 전환당 이중 디코드 비용 제거)."""
+    img = np.ascontiguousarray(img)
+    h, w = img.shape[:2]
+    qimg = QImage(img.data, w, h, img.strides[0], QImage.Format.Format_BGR888)
+    return QPixmap.fromImage(qimg.copy())
 
 
 def _default_session() -> dict:
@@ -112,6 +127,7 @@ class RAnalysisTab(QWidget):
         self._current_image_path: Path | None = None
         self._detect_worker: _RDetectWorker | None = None
         self._progress: QProgressDialog | None = None
+        self._image_cache: OrderedDict[str, np.ndarray] = OrderedDict()   # P1 성능(LRU)
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -518,6 +534,21 @@ class RAnalysisTab(QWidget):
     def _image_data(self, path: Path) -> dict:
         return self._image_data_map.setdefault(str(path), _default_image_data())
 
+    def _cv2_imread_cached(self, path: Path) -> np.ndarray | None:
+        """`cv2.imread()` 결과를 LRU로 캐싱 — 이미지 전환/threshold 재검출 때마다
+        같은 대형 이미지를 반복 디코드하지 않는다(P1 성능)."""
+        key = str(path)
+        cached = self._image_cache.get(key)
+        if cached is not None:
+            self._image_cache.move_to_end(key)
+            return cached
+        img = cv2.imread(key)
+        if img is not None:
+            self._image_cache[key] = img
+            if len(self._image_cache) > _IMAGE_CACHE_SIZE:
+                self._image_cache.popitem(last=False)
+        return img
+
     def _effective_roi(self, path: Path) -> tuple[int, int, int, int] | None:
         data = self._image_data(path)
         if data.get("roi_override"):
@@ -552,11 +583,12 @@ class RAnalysisTab(QWidget):
     def _load_image(self, path: Path) -> None:
         self._sync_canvas_state_to_data()
         self._current_image_path = path
-        img = cv2.imread(str(path))
-        pixmap = QPixmap(str(path))
+        img = self._cv2_imread_cached(path)
         if img is not None:
             h, w = img.shape[:2]
+            pixmap = _bgr_to_qpixmap(img)
         else:
+            pixmap = QPixmap(str(path))
             w, h = pixmap.width(), pixmap.height()
         data = self._image_data(path)
         roi = self._effective_roi(path)
@@ -687,7 +719,7 @@ class RAnalysisTab(QWidget):
     # ── 검출 실행(3단계) ─────────────────────────────────────────────────────
 
     def _run_and_display_detection(self, path: Path) -> None:
-        img = cv2.imread(str(path))
+        img = self._cv2_imread_cached(path)
         roi = self._effective_roi(path)
         if img is None or roi is None:
             self._canvas.set_detected_mask(None)

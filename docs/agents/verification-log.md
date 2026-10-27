@@ -6399,3 +6399,176 @@ PASS한 골든 패스(2026-10-26, BUG-043/044 Closed 확인 포함)는 재반복
   3개를 인스턴스 속성으로 저장하는 변경뿐, 범위를 벗어난 수정 없음.
 - 결론: **PASS**. BUG-045를 QA.md에서 Closed로 변경(검증 근거 한 줄 append, 기존 설명
   삭제하지 않음). 새 회귀 없음.
+
+## 2026-10-27 — R 분석 탭 성능/응답성 실측 (기능 검증 아님, 순수 프로파일링)
+
+리더 지시(버그 수정·기능검증 아님, 실측 전용)로 `build/venv/Scripts/python.exe`에서
+`time.perf_counter()` 기반 벤치마크 스크립트 2개를 작성해 실행(수정 없음 — 측정만).
+스크립트 위치(참고용, 영구 보관 아님):
+`C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\5743860f-d686-42a7-936d-d15f2ad179ba\scratchpad\bench_r_analysis.py`,
+`...\bench_strokes_realistic.py`.
+
+### P0 — 브러시 보정 누적 시 메인스레드 블로킹이 초단위로 폭증(신규 발견, QA 미등록)
+
+- **원인**: `app/widgets/r_roi_canvas.py` `mouseReleaseEvent()`(브러시 그리기/지우기
+  분기, 507행)가 스트로크 1개를 커밋할 때마다 `_rebuild_mask_image()` → `effective_mask()`
+  → `zone_metrics.apply_manual_strokes()`(`app/core/zone_metrics.py:84-100`)를 호출하는데,
+  이 함수는 **지금까지 누적된 모든 manual_strokes를 처음부터 다시 전부 재생**한다. 각
+  스트로크의 각 포인트마다 `disk_mask()`(`zone_metrics.py:36-44`)가 ROI나 포인트 주변으로
+  자르지 않고 **이미지 전체 크기(H×W)의 `np.ogrid` 배열을 매번 새로 할당**한다. 즉 스트로크
+  N개(포인트 합계 P개)를 다 그린 뒤 N+1번째 스트로크를 커밋하면 비용이 `O(누적 P × H × W)`로
+  **매 커밋마다 커지는 구조**(zone 탭의 R-ZONE-1이 고친 것은 "화면 렌더링"(`paintEvent`)
+  경로였고, 여기서 발견된 건 "면적 계산용 마스크 재생" 경로 — r_roi_canvas는 화면
+  렌더링은 이미 rasterize-on-commit(`_stroke_overlay` QImage)로 올바르게 포팅했지만,
+  면적 계산 경로엔 그 최적화가 없음).
+- **실측**(4000×3000 상당 이미지, `mouseReleaseEvent`가 실제로 호출하는 `apply_manual_strokes`를
+  그대로 호출, 반경 15px 브러시로 스트로크당 20포인트 — 300px 드래그 1회에 해당하는
+  현실적 포인트 수):
+  | 스트로크 번호(누적 포인트) | 그 스트로크 release 1회 비용 |
+  |---|---|
+  | #1 (20pt) | 369ms |
+  | #5 (100pt) | 1,916ms |
+  | #10 (200pt) | 3,779ms |
+  | #15 (300pt) | 5,690ms |
+  | #20 (400pt) | 9,311ms |
+  | #25 (500pt) | 9,837ms |
+  | #30 (600pt) | **14,465ms** (release 1회가 14.5초 응답없음) |
+  - 이미지 하나를 30개 스트로크로 꼼꼼히 보정하는 동안 release마다 블로킹된 시간의
+    합계 = **191.45초**(약 3분 11초, UI 스레드 블로킹 — `QThread` 아님, 응답없음 다이얼로그
+    뜰 수준).
+  - 판단 기준(200ms 초과 = 체감 가능) 대비 압도적으로 초과, BUG-030/040 당시 최대
+    575ms보다도 훨씬 심각 — 이번 R 분석 탭에서 실측된 가장 심각한 병목.
+- **체감 조건**: 브러시 *드래그 중*(`mouseMoveEvent`)은 영향 없음(그 경로는 bounded
+  `_erase_stamp()` + 프리뷰만 그려 가볍다, 확인함) — 지연은 **스트로크를 놓는(release)
+  순간**마다, 그리고 보정을 많이 할수록 점점 더 심하게 체감된다. 같은 재생 경로가
+  이미지 전환(`_load_image` → `set_state` → `_rebuild_mask_image`), threshold 변경/ROI
+  커밋(`_run_and_display_detection` → `effective_mask()`), 세션 로드 때도 전부 걸리므로,
+  manual_strokes가 많이 쌓인 이미지는 **단순히 그 이미지로 돌아가기만 해도** 같은 비용이
+  든다.
+
+### P1 — 대형 이미지 전환 시 중복 디코드로 200ms 기준 초과(캐시 없음)
+
+- **원인**: `app/tabs/r_analysis_tab.py` `_load_image()`(552행)가 같은 파일을
+  `cv2.imread(str(path))`와 `QPixmap(str(path))` **두 번 독립적으로 디코드**하고,
+  이미지 전환 간 캐시가 전혀 없다(zone 탭 R-PERF-1이 캐시로 해결한 것과 동일 패턴의
+  재발 — 다만 이번엔 캐시 자체가 없음).
+- **실측**(합성 이미지, 디스크 캐시 안정화 후 steady-state 기준):
+  - 4000×3000: `cv2.imread` 131~143ms + `QPixmap` 137~369ms + `detect_contour_mask`
+    10~19ms = **TOTAL 286~538ms**(판단 기준 200ms 초과).
+  - 2048×1536: TOTAL 77~82ms(기준 이내, 문제 없음) — 즉 체감 가능한 지연은 4000×3000급
+    이상의 대형 이미지에서만 나타남(사용자가 명시한 "대형 이미지" 조건과 일치).
+  - 참고: `_run_and_display_detection()`(689행, threshold 변경/ROI 커밋 때마다 호출)도
+    `cv2.imread`를 매번 다시 하므로 같은 비용이 반복된다.
+- 위 P0와 결합하면(manual_strokes 있는 대형 이미지로 전환) 체감 지연이 더 커진다.
+
+### 조치 불필요로 판단한 항목(실측 결과 기준)
+
+- **threshold 슬라이더 디바운스**: `app/widgets/r_settings_panel.py`에 150ms
+  `QTimer.singleShot` 디바운스가 이미 적용돼 있음(zone 탭 confidence 슬라이더와 동일
+  패턴, 자체 self-check로도 확인됨) — 드래그 중 매 프레임 재검출 없음. 정상.
+- **배치 검출(`_RDetectWorker`)**: `QThread`로 분리돼 메인 스레드를 막지 않음(설계상
+  의도대로) — 이번 라운드에서 별도 실측은 하지 않았으나 BUG-045 검증 때 이미 정상
+  동작 확인됨(hang 없음).
+- **세션 저장/로드(`r_cell_store.save/load`)**: 요청한 스케일(셀 10개×이미지 20장)과
+  그보다 5배 큰 셀 50개×이미지 20장 모두에서 저장 17~85ms, 로드 0.3~13ms, 파일 크기
+  최대 3.3MB 수준(스트로크 20개/이미지 포함) — 전부 100ms 안쪽, 선형 스케일(지수적
+  증가 없음), 메인 스레드 블로킹이지만(QThread 아님) 수치상 체감 불가능. 단,
+  `manual_strokes`가 이미지당 수백 개로 불어나는 극단적 사례는 측정 범위 밖(현재
+  스펙상 그 정도 규모는 비현실적으로 판단).
+- **플로팅 오버레이 재배치(`_position_overlays`)**: `resizeEvent`마다 호출되지만
+  `setMaximumWidth`/`adjustSize`뿐 numpy/cv2 연산 없음 — 코드 검토상 체감 지연
+  가능성 낮음(실측은 수동 드래그 특성상 자동화하지 않았음, 코드 근거로만 판단).
+
+### 처리
+수정은 검증 에이전트 범위 밖이라 수행하지 않음. P0/P1 모두 QA.md에 미등록 신규
+발견이므로 리더 보고로 넘김(BUG 번호 부여는 리더/다음 라운드 판단에 위임).
+
+## 2026-10-27 — R 분석 탭 성능 병목 2건 수정 독립 재검증 (PASS)
+
+리더 지시로 전날(2026-10-27) 실측한 P0(브러시 보정 기하급수적 블로킹)/P1(대형 이미지
+이중 디코드) 수정분을 독립적으로 재검증. 작업 디렉토리 `D:/segmentation model-zone-analysis-tab`
+(수정은 아직 커밋되지 않은 working tree 상태). 구현 로그 2026-10-27 항목(`disk_mask()`
+바운딩박스 최적화, `RRoiCanvas.effective_mask()` 증분 캐시, `_cv2_imread_cached` LRU +
+`_bgr_to_qpixmap`) 대상.
+
+### 1. 최우선 리스크 — `zone_metrics.disk_mask()` 바운딩박스 최적화 회귀 확인
+
+- `git show HEAD:app/core/zone_metrics.py`로 꺼낸 구버전 `disk_mask()`(전체 H×W `np.ogrid`
+  비교)와 현재 working tree의 신버전(바운딩박스로 축소)을 같은 프로세스에 모두 로드해
+  12가지 좌표/반경 조합(중심 좌표 정수/소수, 이미지 모서리, 음수 중심, 반지름 0, 반지름이
+  이미지 전체를 덮는 경우, Zone 탭 규모(4000x3000, 반지름 1500)와 R 탭 브러시 규모
+  (반지름 15) 포함)에 대해 `np.array_equal`로 직접 비교 — **전부 True, 12/12 완전 일치**
+  (스크립트: 스크래치패드 `verify_disk_mask.py`).
+  - 유일한 이론적 차이: 신버전은 `r < 0`일 때 명시적으로 빈 마스크를 반환하지만 구버전은
+    `r**2`가 항상 양수라 `|r|` 반지름의 원을 그린다. 코드 전체에서 `disk_mask`에 음수
+    반지름이 전달되는 경로는 없음을 grep으로 확인(원/브러시 반지름은 전부 UI에서 양수로만
+    생성됨) — 실질적 회귀 아님, 단 이론적 차이로 기록.
+- Zone 분석 탭 전용 테스트 6개 파일(`test_zone_batch_worker.py`, `test_zone_edit_toolbar.py`
+  — QTest 마우스 드래그로 원 생성/이동/리사이즈/브러시/undo 포함, `test_zone_github_13_14.py`,
+  `test_zone_redesign_2026_10_01.py`, `test_zone_state_persistence.py`,
+  `test_zone_step_indicator.py`) 전부 `build/venv/Scripts/python.exe -m pytest`로 재실행
+  — **55/55 통과**, 수정 전/후 difference 없음. disk_mask 변경이 Zone 탭 원 편집/브러시/
+  존 계산에 회귀를 일으키지 않음을 확인.
+
+### 2. P0 — 독립 재현/해소 확인 (PASS)
+
+- 독립 스크립트(`verify_p0_cache.py`, implementer의 `bench_p0_after.py`는 참고만 하고
+  별도 작성) — `RRoiCanvas` 공개 API만 사용, `mouseReleaseEvent`와 동일하게 스트로크
+  커밋마다 `effective_mask()` 1회 호출하는 패턴으로 4000x3000 마스크·반경15px·
+  스트로크당 20pt·30스트로크 누적 조건을 재현.
+  - 실측: 스트로크 #1=34.7ms, #10=34.1ms, #30=33.8ms — **전부 플랫, 수십ms대 확인**
+    (수정 전 14,465ms였던 #30이 33.8ms로, 약 428배 개선. implementer 보고치 34.6ms와
+    유사). 30개 합계 1,035ms(수정 전 191.45s).
+  - **정합성(캐싱 버그 패턴 집중 확인)**: 매 스트로크 커밋마다 증분 캐시 결과를
+    `zone_metrics.apply_manual_strokes(detected_mask, 그시점까지_전체_스트로크)`(캐시를
+    전혀 쓰지 않는 독립적 전체 재생 — ground truth)와 `np.array_equal`로 비교 —
+    **30/30 스트로크 전부 완전 일치, 불일치 0건**.
+  - **캐시 무효화 경로 확인**: (a) undo — 5스트로크 커밋 후 undo 스택을 거슬러 2단계
+    되돌리며 매 단계 `effective_mask()`가 그 시점 스트로크 목록으로의 전체 재생
+    ground truth와 일치하는지 확인 — 일치. (b) 재검출(`set_detected_mask()`에 새
+    배열 전달, threshold/ROI 변경 재현) — 기존 스트로크 유지한 채 detected_mask만
+    교체 후 `effective_mask()`가 새 마스크 기준 전체 재생과 일치 — 일치. 틀린 마스크가
+    표시되는 캐싱 버그 **발견되지 않음**.
+
+### 3. P1 — 독립 재현/해소 확인 (PASS)
+
+- 독립 스크립트(`verify_p1_cache.py`) — 실제 `RAnalysisTab._load_image()` 경로를 4000x3000
+  합성 PNG로 호출.
+  - 실측: cold(최초 로드) 69.8ms, warm(재방문, LRU 캐시 적중) 11.6ms/10.9ms — 수정 전
+    cold 286~538ms 대비 대폭 개선, warm도 implementer 보고치(27~30ms)보다 더 빠름(환경
+    차이, 기준선인 "200ms 체감 임계" 대비 압도적으로 양호한 점은 동일).
+  - `_bgr_to_qpixmap()`의 `Format_BGR888` 변환이 R/B 채널 반전 없이 정확한지 3개 샘플
+    좌표(모서리 2곳 + 중앙)에서 `cv2.imread()` BGR 값과 `QPixmap.toImage().pixelColor()`
+    RGB 값을 직접 비교 — **완전 일치**(흔한 채널 스왑 버그 없음).
+  - 캐시된 numpy 배열(`self._image_cache`)이 이후 다른 코드에서 in-place로 변형되는
+    경로가 있는지 호출부 2곳(`_load_image`, `_run_and_display_detection`) + 그 아래
+    `detect_contour_mask()`를 코드 추적 — `cv2.cvtColor`/`threshold`/`findContours`/
+    `drawContours`는 모두 별도 배열(`gray`/`binary`/`local`)에 쓰고 캐시된 `img`/그 view인
+    `crop`을 변형하지 않음을 확인 — 캐시 오염 경로 없음.
+
+### 4. R 분석 탭 전체 골든 패스 재확인 (PASS, 단 리그레션 없음을 별도 재확인)
+
+- 스크래치패드 `golden_path_r.py`(이전 검증 라운드 산출물, 재사용)를 신선한 테스트
+  이미지(`make_images.py`로 새로 생성 — 기존 `r_test_images/CELL-A`의 이미지가 다른
+  스크립트에 의해 덮어써져 내용이 바뀌어 있어 面적 기대값이 더 이상 맞지 않음, 코드
+  문제 아니라 스크래치패드 픽스처 drift임을 `git stash`로 수정 전 코드에서도 동일하게
+  재현 실패함을 확인해 검증함 — 이번 라운드와 무관).
+  - 셀 등록 → 자동 선택/첫 이미지 로드 → ROI 전역 지정 → 설정 변경 시 재검출(20x20=400) →
+    `_on_detect_cell()` QThread 배치 검출(area0=400, area1=100, BUG-045 재진입 가드
+    `_detect_worker.isRunning()` 코드 확인상 그대로 유지) → 셀 rollup(R=1.0, PASS) →
+    브러시 모드 전환 → 우측 패널 요약 → 네비게이션 → 세션 저장/재로드 왕복까지 전부
+    `GOLDEN PATH OK`.
+  - Excel export(`export_zone_percentages_to_excel`)는 이번 diff의 변경 대상이 아니고
+    (3개 변경 파일에 포함 안 됨) 코드 추적상 영향 경로 없음 — 별도 재실행 생략.
+
+### 5. py_compile
+
+- `build/venv/Scripts/python.exe -m py_compile app/core/zone_metrics.py
+  app/tabs/r_analysis_tab.py app/widgets/r_roi_canvas.py` — 통과.
+
+### 결론
+
+**PASS.** Zone 탭 회귀 없음(disk_mask 바운딩박스 최적화 수학적으로 완전 동일, 55개
+테스트 통과), P0/P1 모두 독립 실측으로 개선 확인(P0 #30=33.8ms, P1 cold=69.8ms/
+warm=11.6ms), 캐싱 버그(틀린 마스크 표시) 미발견, R 탭 골든 패스 리그레션 없음.
+QA.md 신규 등록 불필요(새 버그 없음). 리더는 커밋+push 진행 가능.

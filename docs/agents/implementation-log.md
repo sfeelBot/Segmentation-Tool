@@ -5615,3 +5615,69 @@ main과 달리 이 위젯은 `set_item_status()`(존 분석 탭 일괄 처리 �
 - `build/venv/Scripts/python.exe -m py_compile app/tabs/r_analysis_tab.py` 통과.
 - `QA.md`의 BUG-045 상태를 "수정 완료 — 재검증 대기"로 갱신, 수정 내역 추가.
 - git commit은 하지 않았다(리더 지시 — 검증 통과 후 리더가 커밋).
+
+## 2026-10-27 — R 분석 탭 성능 병목 2건 수정(P0 브러시 보정 기하급수적 블로킹, P1 대형 이미지 이중 디코드)
+
+리더 지시(검증 2026-10-27 R 분석 탭 실측 결과, `docs/agents/verification-log.md` 참고)로
+브랜치 `feature/zone-analysis-tab`(작업 디렉토리 `D:/segmentation model-zone-analysis-tab`)에서
+P0/P1 두 건을 수정. 커밋은 하지 않음(리더가 재검증 통과 후 커밋) — 아래는 작업 디렉토리
+변경 내역.
+
+### P0 — 브러시 보정 누적 시 메인스레드 블로킹 기하급수적 증가
+
+- `app/widgets/r_roi_canvas.py` `RRoiCanvas.effective_mask()`: "지금까지 계산된 결과"를
+  캐시(`_mask_cache_base`/`_mask_cache_n_strokes`/`_mask_cache_result`)해두고, 새로 커밋된
+  스트로크만 그 결과 위에 증분 적용(`zone_metrics.apply_manual_strokes(캐시결과, 신규스트로크만)`).
+  캐시 유효성은 `_detected_mask` identity(재검출마다 새 배열이라 식별 비교로 충분) +
+  스트로크 개수 비교로 판단, undo/`set_state()`(세션 로드)는 `_invalidate_mask_cache()`로
+  무조건 전체 재계산(개수만 보는 휴리스틱을 undo에 믿지 않음 — 안전 우선).
+  `zone_metrics.py`의 `apply_manual_strokes()` 시그니처/동작은 변경 없음(순수 호출 패턴만
+  캔버스 쪽에서 바꿈).
+- 추가로 `app/core/zone_metrics.py` `disk_mask()` 내부를 이미지 전체(H×W) 비교에서 원의
+  바운딩박스로 좁혀 계산하도록 최적화(반환 마스크는 수학적으로 동일 — 바운딩박스 밖은
+  항상 조건 불만족). 캐싱만으로는 스트로크 1개 커밋당 비용이 350~600ms로 200ms 기준을
+  여전히 초과해(브러시 반경 15px인데 포인트마다 4000×3000 전체 배열을 할당하던 기존
+  구현 탓) 추가로 적용. 시그니처 불변, Zone 탭(`zone_canvas.py`, `r_analysis_metrics.py`도
+  `disk_mask` 재사용)에 영향 없음을 self-check + `ZoneAnalysisTab()` 생성 smoke test로 확인.
+- **실측**(4000×3000, 반경15px 브러시, 스트로크당 20pt, 30스트로크 누적 — 검증 때와 동일
+  조건, `RRoiCanvas.effective_mask()`를 mouseReleaseEvent와 동일하게 호출):
+  | | 수정 전(검증 실측) | 수정 후 |
+  |---|---|---|
+  | 스트로크 #1 | 369ms | 39.9ms |
+  | 스트로크 #10 | 3,779ms | 33.8ms |
+  | 스트로크 #30 | 14,465ms | 34.6ms |
+  | 30개 누적 총합 | 191.45s | **1.05s** (약 182배 개선, 더 이상 누적될수록 느려지지 않음) |
+  - 정합성: 증분 캐시 결과가 `zone_metrics.apply_manual_strokes()` 전체 재생 결과와
+    `np.array_equal`로 동일함을 스크립트로 직접 검증(둘 다 일치).
+
+### P1 — 대형 이미지 전환 시 이중 디코드 + 캐시 없음
+
+- `app/tabs/r_analysis_tab.py`: `_load_image()`/`_run_and_display_detection()`이 각자
+  `cv2.imread()`를 다시 부르던 것을 `_cv2_imread_cached()`(`OrderedDict` 기반 LRU, 상한
+  8장 — `zone_analysis_tab.py`의 R-PERF-1과 동일 관례)로 통일. `_load_image()`는 그
+  cv2 결과(BGR numpy)를 `QPixmap(str(path))`로 또 디코드하지 않고 `_bgr_to_qpixmap()`
+  (새 함수, `QImage.Format.Format_BGR888`로 RGB 재정렬 없이 1회 변환)으로 재사용.
+- **실측**(4000×3000 합성 이미지, 검증 때와 동일 조건):
+  | | 수정 전(검증 실측) | 수정 후 |
+  |---|---|---|
+  | 최초 전환(cold) | 286~538ms(cv2.imread+QPixmap 이중 디코드) | 168.8ms(단일 디코드) |
+  | 같은 이미지 재방문(warm) | 동일(캐시 없음, 매번 재디코드) | 27~30ms(LRU 캐시 적중) |
+- `_RDetectWorker`(배치, QThread)는 범위 밖으로 판단해 캐시 미적용(메인 스레드 캐시를
+  별도 스레드와 공유하는 건 과한 변경, ponytail) — 배치 검출은 이미 QThread라 메인
+  스레드 블로킹과 무관.
+
+### 검증
+
+- `build/venv/Scripts/python.exe -m py_compile app/widgets/r_roi_canvas.py
+  app/tabs/r_analysis_tab.py app/core/zone_metrics.py` 통과.
+- 각 파일 자체 self-check(`python -m app.widgets.r_roi_canvas`,
+  `python -m app.tabs.r_analysis_tab`, `python app/core/zone_metrics.py`,
+  `python -m app.core.r_analysis_metrics`) 전부 통과.
+- Zone 탭 회귀 확인: `ZoneAnalysisTab()` 생성 smoke test 통과(disk_mask 변경 영향 없음).
+- R 탭 통합 스모크(스크래치패드 `smoke_r_tab_integration.py`): 이미지 2장 전환 + 브러시
+  스트로크 5개 커밋 + 스트로크 있는 이미지로 복귀 시 상태 보존까지 공개 API로 재현 — 통과.
+- 벤치마크 스크립트(스크래치패드, 리더 지시대로 기존 스크립트 참고해 실제 수정 경로를
+  재현하는 신규 스크립트로 측정): `bench_p0_after.py`, `bench_p1_after.py`.
+
+**상태: 완료 — 검증 에이전트의 독립 재검증 대기.** git commit은 하지 않음(리더가 재검증
+통과 후 커밋 예정, 사용자 지시).

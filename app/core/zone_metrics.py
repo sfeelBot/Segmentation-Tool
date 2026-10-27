@@ -10,6 +10,7 @@ Qt 의존성 없음(core 규칙) — 순수 numpy 함수.
 전제: 원들이 대략 nested(중첩)돼 있다 — 배터리 캡 실제 구조상 항상 성립. 수동 편집으로
 원을 교차시키는 비정상 입력은 v1에서 방지하지 않는다(스펙 명시, YAGNI).
 """
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,10 +39,26 @@ def disk_mask(cx: float, cy: float, r: float, img_shape: tuple[int, int]) -> np.
 
     R3-2에서 공개 전환(언더스코어 제거) — `zone_canvas.py`의 브러시 지우기 undo
     복원(전체 재생)이 이 함수를 그대로 재사용한다(스펙 판단 2).
+
+    2026-10-27(P0 성능): 비교를 이미지 전체(H×W) 대신 원의 바운딩박스로만 수행
+    — 반환값은 이전과 수학적으로 동일(바운딩박스 밖은 항상 조건을 만족할 수
+    없으므로 False)하지만, 반지름이 작은 브러시 스트로크(R 분석 탭 등)에서
+    대형 이미지일수록 비용이 크게 줄어든다(Zone 탭의 큰 반지름 원은 바운딩박스가
+    이미지 대부분을 덮어 기존과 비슷한 비용 — 회귀 아님, 검증 완료).
     """
     h, w = img_shape
-    yy, xx = np.ogrid[:h, :w]
-    return (xx - cx) ** 2 + (yy - cy) ** 2 <= r ** 2
+    mask = np.zeros((h, w), dtype=bool)
+    if r < 0 or h <= 0 or w <= 0:
+        return mask
+    x0 = max(0, int(math.floor(cx - r)))
+    x1 = min(w, int(math.ceil(cx + r)) + 1)
+    y0 = max(0, int(math.floor(cy - r)))
+    y1 = min(h, int(math.ceil(cy + r)) + 1)
+    if x0 >= x1 or y0 >= y1:
+        return mask
+    yy, xx = np.ogrid[y0:y1, x0:x1]
+    mask[y0:y1, x0:x1] = (xx - cx) ** 2 + (yy - cy) ** 2 <= r ** 2
+    return mask
 
 
 def scale_circles(
