@@ -3,8 +3,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSlider, QLabel
 from PyQt6.QtGui import QPainter, QPixmap, QColor, QCursor
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 
-MIN_ZOOM = 0.05
-MAX_ZOOM = 20.0
+from app.widgets.view_transform import MIN_ZOOM, MAX_ZOOM, wheel_zoom, fit_view, pan_drag
 
 
 class OverlayViewer(QWidget):
@@ -52,15 +51,9 @@ class OverlayViewer(QWidget):
     # ── 마우스 / 휠 ──────────────────────────────────────────────────────────
 
     def wheelEvent(self, event) -> None:
-        delta  = event.angleDelta().y()
-        factor = 1.15 if delta > 0 else 1 / 1.15
-        mc     = QPointF(event.position())
-        mi     = QPointF(
-            (mc.x() - self._pan.x()) / self._zoom,
-            (mc.y() - self._pan.y()) / self._zoom,
-        )
-        self._zoom = max(MIN_ZOOM, min(MAX_ZOOM, self._zoom * factor))
-        self._pan  = mc - QPointF(mi.x() * self._zoom, mi.y() * self._zoom)
+        delta = event.angleDelta().y()
+        mc    = QPointF(event.position())
+        self._zoom, self._pan = wheel_zoom(mc, self._pan, self._zoom, delta, MIN_ZOOM, MAX_ZOOM)
         self.update()
 
     def mousePressEvent(self, event) -> None:
@@ -72,8 +65,7 @@ class OverlayViewer(QWidget):
 
     def mouseMoveEvent(self, event) -> None:
         if self._pan_active:
-            delta      = QPointF(event.position()) - self._pan_start_mouse
-            self._pan  = self._pan_start_offset + delta
+            self._pan = pan_drag(self._pan_start_offset, self._pan_start_mouse, QPointF(event.position()))
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:
@@ -92,11 +84,7 @@ class OverlayViewer(QWidget):
             return
         w = self.width()  or 800
         h = self.height() or 600
-        self._zoom = min(w / self._pixmap.width(), h / self._pixmap.height()) * 0.95
-        self._pan  = QPointF(
-            (w - self._pixmap.width()  * self._zoom) / 2,
-            (h - self._pixmap.height() * self._zoom) / 2,
-        )
+        self._zoom, self._pan = fit_view(w, h, self._pixmap.width(), self._pixmap.height())
 
 
 # ── 뷰어 + 슬라이더를 묶은 복합 위젯 ─────────────────────────────────────────

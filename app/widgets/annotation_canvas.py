@@ -18,6 +18,7 @@ from app.core import annotation_store as store
 from app.core.annotation_store import AnnotationItem
 from app.core.i18n import t
 from app.core.perf_logger import profiler as _perf
+from app.widgets.view_transform import MIN_ZOOM, MAX_ZOOM, canvas_to_content, wheel_zoom, fit_view, pan_drag
 
 
 class _OverlayWorker(QThread):
@@ -150,8 +151,6 @@ TOOL_PAN          = "pan"
 OVERLAY_ALPHA     = 140   # 일반 어노테이션 투명도
 OVERLAY_SEL_ALPHA = 210   # 선택된 어노테이션 투명도
 VERTEX_RADIUS = 5
-MIN_ZOOM = 0.05
-MAX_ZOOM = 20.0
 _SNAP_PX  = 15            # 스냅-투-클로즈 판정 거리 (화면 픽셀)
 
 _IMAGE_CACHE_SIZE = 2      # 최근 방문 이미지 LRU 캐시 최대 장수 (대형 원본 메모리 고려, 확장 금지)
@@ -646,13 +645,9 @@ class AnnotationCanvas(QWidget):
 
     def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y()
-        factor = 1.15 if delta > 0 else 1 / 1.15
         mouse_canvas = QPointF(event.position())
-        mouse_img = self._c2i(mouse_canvas)
-        self._zoom = max(MIN_ZOOM, min(MAX_ZOOM, self._zoom * factor))
-        self._pan = mouse_canvas - QPointF(
-            mouse_img.x() * self._zoom,
-            mouse_img.y() * self._zoom,
+        self._zoom, self._pan = wheel_zoom(
+            mouse_canvas, self._pan, self._zoom, delta, MIN_ZOOM, MAX_ZOOM
         )
         if self._pan_active:
             # 드래그 중 휠 줌: mouseMoveEvent가 절대 오프셋 기준으로
@@ -778,8 +773,7 @@ class AnnotationCanvas(QWidget):
             self._poly_snap = False
 
         if self._pan_active:
-            delta = pos - self._pan_start_mouse
-            self._pan = self._pan_start_offset + delta
+            self._pan = pan_drag(self._pan_start_offset, self._pan_start_mouse, pos)
             self._schedule_repaint()
             return
 
@@ -1928,20 +1922,13 @@ class AnnotationCanvas(QWidget):
         self._smooth_timer.start()
 
     def _c2i(self, canvas_pt: QPointF) -> QPointF:
-        return QPointF(
-            (canvas_pt.x() - self._pan.x()) / self._zoom,
-            (canvas_pt.y() - self._pan.y()) / self._zoom,
-        )
+        return canvas_to_content(canvas_pt, self._pan, self._zoom)
 
     def _fit_view(self) -> None:
         if self._img_w == 0 or self._img_h == 0:
             return
         w, h = self.width() or 800, self.height() or 600
-        self._zoom = min(w / self._img_w, h / self._img_h) * 0.95
-        self._pan = QPointF(
-            (w - self._img_w * self._zoom) / 2,
-            (h - self._img_h * self._zoom) / 2,
-        )
+        self._zoom, self._pan = fit_view(w, h, self._img_w, self._img_h)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
