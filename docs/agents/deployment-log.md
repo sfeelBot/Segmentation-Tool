@@ -114,3 +114,56 @@
 - 내용: 일반 PowerShell/CMD에서 Python 3.12 빌드 venv를 자동 준비하고, 손상되었거나 다른 Python 버전인 기존 venv를 자동 재생성.
 - 검증: main build/release 테스트 24 passed.
 - 제외: 실제 PyInstaller/Inno Setup installer 생성 및 GitHub Release 업로드는 수행하지 않음.
+
+---
+
+## 2026-10-27 — v1.11.0(main) + zone-v1.6.3(존분석 에디션) push, sync PR #37 자동머지
+
+### 배경
+- 사용자가 "검증 통과한 두 브랜치 작업을 전부 push" 하라고 명시적으로 확인.
+- 범위: main 태깅+push, main→존분석 에디션 브랜치 sync PR, 존분석 에디션 브랜치
+  자체 버전 점검+태깅+push. installer/exe 패키징·배포는 범위 밖(별도 논의).
+
+### 조치 — main (`d:/segmentation model`)
+- `git fetch origin` 후 `merge-base HEAD origin/main` == `origin/main` 현재 tip(`b9dd6be`)
+  확인 → 로컬이 origin/main보다 7커밋 앞섬, divergence 없음 → push 안전 판단.
+- `release.ini`/`docs/CHANGELOG.md`는 구현 에이전트가 이미 1.11.0으로 갱신해둔 상태
+  (내용 확인만, 추가 변경 없음).
+- `git tag -a v1.11.0`(대상 커밋 `7bd280e`) — CHANGELOG `[v1.11.0]` 섹션 요약을 태그
+  메시지로 사용.
+- `git push origin main` (`b9dd6be..7bd280e`) + `git push origin v1.11.0` 완료.
+
+### 조치 — sync 브랜치 + PR (main → 존분석 에디션)
+- 기존 로컬 브랜치 `sync/main-into-zone-analysis-tab-20261027`(main에서 분기, 미push
+  상태)를 `git push -u origin`으로 push.
+- `gh pr create --base feature/zone-analysis-tab --head sync/main-into-zone-analysis-tab-20261027`
+  로 PR #37 생성(본문에 v1.11.0 변경 요약 + sync 필요 이유 기재).
+
+### 조치 — 존분석 에디션 브랜치 (`D:/segmentation model-zone-analysis-tab`)
+- `git fetch origin` 후 `merge-base --is-ancestor origin/feature/zone-analysis-tab HEAD`
+  확인 → origin이 그 사이 움직이지 않음, divergence 없음 → push 안전 판단(1차: push
+  전, 2차: 커밋/태그 생성 후 재확인 — 두 번 모두 안전 확인).
+- 버전 점검: `release.ini` `version = 1.6.2`(이미 `zone-v1.6.2`로 릴리즈됨 확인) →
+  이번 변경(main sync 반영 + Zone/R분석 탭 편집 툴바를 공유 `BrushToolbar`로 교체,
+  기능 동작 보존·R분석 undo UI 위치만 버튼→액션으로 소폭 변경)은 호환 리팩토링 →
+  PATCH 판단, `1.6.3`로 갱신. `main_base_tag`도 `v1.10.4` → `v1.11.0`로 갱신
+  (`main_base_commit`은 이미 `7bd280e3`로 main의 v1.11.0 태그 대상과 일치해 변경 불필요).
+- `docs/CHANGELOG.md`에 `[zone-v1.6.3] 2026-10-27` 섹션 추가(main sync 반영 + BrushToolbar
+  교체 요약).
+- 커밋 `82340d7` (`docs: zone-v1.6.3 — main sync 반영 + BrushToolbar 교체 릴리즈 노트`).
+- `git tag -a zone-v1.6.3`(대상 커밋 `82340d7`).
+- `git push origin feature/zone-analysis-tab`(`daba05e..82340d7`) + `git push origin zone-v1.6.3` 완료.
+- 존분석 브랜치 push에 sync 커밋들이 조상으로 포함되면서 GitHub이 PR #37을 자동으로
+  `MERGED` 처리함(머지 커밋 `f7529a3`, 추가 조치 불필요).
+
+### 결과 요약
+- main: 태그 `v1.11.0`(커밋 `7bd280e3fa98a64cc146a7dce37ad3d90abf521d`), origin/main에
+  push 완료(`b9dd6be..7bd280e`).
+- sync PR: https://github.com/sfeelBot/Segmentation-Tool/pull/37 — `MERGED`
+  (머지 커밋 `f7529a3`).
+- 존분석 에디션: 태그 `zone-v1.6.3`(커밋 `82340d79491e221204b67723badaa21b4108518a`),
+  origin/feature/zone-analysis-tab에 push 완료(`daba05e..82340d7`).
+- GitHub Release: 생성하지 않음(요청 범위 밖, installer 패키징 미포함).
+- 두 저장소 모두 작업 디렉토리에 이번 작업과 무관한 기존 미추적/수정 파일
+  (`AGENTS.md`, `.codex/`, `data/annotations/`, `docs/agents/*-log.md` 등)이 남아있으나
+  배포 범위 밖이라 건드리지 않음.
