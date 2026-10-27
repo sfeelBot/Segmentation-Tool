@@ -36,6 +36,23 @@
 > 1.6.0→1.6.1(PATCH, 버그수정) + `docs/CHANGELOG.md` 항목 + `generate_version_info.py`
 > 검증 후 커밋(`6ca3ab5`)+태그(`zone-v1.6.1`)+push 완료.
 
+> **[갱신, 2026-10-27] 사용자가 "딜레이/버벅임 확인 및 조치" 요청 → 실측 프로파일링으로
+> 심각한 성능 병목 2건 발견·수정·재검증·커밋+태그+push 완료.** verifier에게 느낌이
+> 아니라 실측 수치로 병목을 찾도록 지시 → **P0**: 브러시 스트로크를 커밋할 때마다
+> 누적된 모든 manual_strokes를 처음부터 재생 + 포인트마다 이미지 전체크기 배열 재할당
+> → 4000×3000 이미지 기준 스트로크 #30에서 단일 release가 14.5초 멈춤, 30개 누적
+> 191초. **P1**: 대형 이미지 전환 시 cv2/QPixmap 이중 디코드+캐시 없음(286~538ms/전환).
+> implementer가 `RRoiCanvas.effective_mask()`에 증분 캐시(전체 재생 금지, 새 스트로크
+> 1개만 추가 적용) + 공유 모듈 `zone_metrics.disk_mask()`를 바운딩박스 기반으로
+> 최적화(반환값 수학적으로 동일) + `_cv2_imread_cached` LRU(Zone R-PERF-1과 동일 관례)로
+> 수정. **공유 모듈을 건드렸으므로 Zone 탭 회귀가 최우선 리스크** — verifier가 신/구
+> `disk_mask()`를 12가지 좌표/반경 조합으로 직접 `np.array_equal` 비교(전부 일치) +
+> Zone 탭 QTest 55개 재실행(전부 통과)으로 독립 확인. 결과: 스트로크#30 14.5초→34ms
+> (428배), 누적 191.5초→1.0초, 이미지 전환 286~538ms→69.8ms(cold)/11ms(warm).
+> 캐시 무효화(undo/재검출) 경로의 "틀린 마스크 표시" 버그도 없음 확인. `release.ini`
+> 1.6.1→1.6.2(PATCH, 성능개선) + `docs/CHANGELOG.md` 항목 + `generate_version_info.py`
+> 검증 후 커밋(`0eb148a`)+태그(`zone-v1.6.2`)+push 완료.
+
 > **[2026-10-07, 이전] BUG-040 추가 개선(perf `0f1e995`) 독립검증 PASS(부분 개선,
 > Open 유지) — 이번 VOC 라운드 실질 종료, push는 사용자 재확인 필요.** verifier가
 > 실 GPU+실데이터로 재확인: 캐시 적중 상태 5472px 선택 지연 921ms→**462ms(-50%)**,
