@@ -266,7 +266,8 @@ def test_detect_button_enabled_right_after_image_load_before_inference(tmp_path:
 
         assert tab._btn_detect.isEnabled()   # 추론 없이도 바로 활성화(7-2)
         assert tab._act_circle.isEnabled()
-        for action in (tab._act_brush_draw, tab._act_brush_erase, tab._act_blob_delete):
+        for action in (tab._brush_tools.act_brush, tab._brush_tools.act_eraser,
+                       tab._brush_tools.act_delete_region):
             assert not action.isEnabled()   # 블랍 기반 편집은 여전히 추론 후에만
     finally:
         tab.close()

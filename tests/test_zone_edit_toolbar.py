@@ -45,8 +45,15 @@ def test_zone_toolbar_is_exclusive_and_defaults_are_patch_based() -> None:
     inference = InferenceTab()
     training = ConfigForm()
 
-    assert zone._tool_group.isExclusive()
+    # 2026-10-27: QActionGroup → BrushToolbar(공유) + 호스트 로컬 _set_tool() 수동
+    # 상호배제로 교체(라벨링 탭과 동일 패턴) — 원편집이 기본이고 공유 클러스터는
+    # 전부 unchecked.
+    assert zone._active_tool == "circle"
     assert zone._act_circle.isChecked()
+    assert not zone._brush_tools.act_brush.isChecked()
+    assert not zone._brush_tools.act_eraser.isChecked()
+    assert not zone._brush_tools.act_delete_region.isChecked()
+    assert not zone._brush_tools.act_pan.isChecked()
     # 2026-10-01 재설계: Zone 탭은 추론 방식 선택 UI 자체가 제거되고 sliding
     # window로 고정됐다(_ZoneInferenceWorker/_ZoneBatchWorker가 항상
     # run_sliding_window()만 호출) — 선택 콤보(_infer_mode)는 더 이상 존재하지 않음.

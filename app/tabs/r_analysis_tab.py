@@ -24,7 +24,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PyQt6.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QImage, QPixmap
+from PyQt6.QtGui import QAction, QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QListWidget,
     QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QSpinBox,
@@ -35,6 +35,7 @@ from app.core import r_cell_store as r_store
 from app.core.logger import get_logger
 from app.core.r_analysis_metrics import cell_rollup, contour_area, detect_contour_mask
 from app.core.zone_metrics import apply_manual_strokes
+from app.widgets.brush_toolbar import BrushToolbar, TOOL_BRUSH, TOOL_ERASER, TOOL_PAN
 from app.widgets.icons import icon as svg_icon
 from app.widgets.r_batch_result_dialog import RBatchResultDialog
 from app.widgets.r_cell_panel import RCellPanel
@@ -43,6 +44,8 @@ from app.widgets.r_settings_panel import RSettingsPanel
 from app.widgets.r_step_indicator import RStepIndicator
 
 log = get_logger(__name__)
+
+_TOOL_ROI = "roi"   # ROI 편집 — 호스트 로컬 도구, BrushToolbar 클러스터 소속 아님
 
 _THUMB_PX = 56
 
@@ -245,41 +248,44 @@ class RAnalysisTab(QWidget):
 
         toolbar = QToolBar()
         toolbar.setIconSize(QSize(18, 18))
-        self._tool_group = QActionGroup(self)
-        self._tool_group.setExclusive(True)
 
-        def tool_action(icon_name: str, tip: str, mode: str) -> QAction:
-            action = QAction(svg_icon(icon_name), "", self)
-            action.setToolTip(tip)
-            action.setCheckable(True)
-            action.setData(mode)
-            self._tool_group.addAction(action)
-            toolbar.addAction(action)
-            return action
+        # 공유 클러스터(브러시그리기/브러시지우기/이동/브러시크기/undo)는
+        # app/widgets/brush_toolbar.py 의 BrushToolbar(show_delete_region=False)에서
+        # 가져온다 — ROI 편집만 호스트 로컬로 유지(R분석 전용 도구, 영역삭제 개념
+        # 없음). 라벨링/Zone 탭과 동일한 "양방향 set_tool()/tool_changed 수동
+        # 동기화" 패턴(QActionGroup 대신).
+        self._act_roi = QAction(svg_icon("tool_select"), "", self)
+        self._act_roi.setToolTip("ROI 편집(사각형 생성/이동/리사이즈)")
+        self._act_roi.setCheckable(True)
+        self._act_roi.setChecked(True)
+        self._act_roi.triggered.connect(lambda: self._set_tool(_TOOL_ROI))
 
-        act_roi = tool_action("tool_select", "ROI 편집(사각형 생성/이동/리사이즈)", "roi")
-        tool_action("tool_brush", "브러시로 영역 그리기", "brush_draw")
-        tool_action("tool_eraser", "브러시로 영역 지우기", "brush_erase")
-        tool_action("tool_pan", "화면 이동", "pan")
-        act_roi.setChecked(True)
-        self._tool_group.triggered.connect(self._on_tool_changed)
+        self._brush_tools = BrushToolbar(toolbar, show_delete_region=False)
+        self._brush_tools.act_brush.setToolTip("브러시로 영역 그리기")
+        self._brush_tools.act_eraser.setToolTip("브러시로 영역 지우기")
+        self._brush_tools.act_pan.setToolTip("화면 이동")
+        self._brush_tools.spin_brush_size.setValue(30)
+        self._brush_tools.spin_brush_size.setSuffix(" px")
+        self._brush_tools.spin_brush_size.setFixedWidth(80)
+
+        toolbar.addAction(self._act_roi)
+        toolbar.addAction(self._brush_tools.act_brush)
+        toolbar.addAction(self._brush_tools.act_eraser)
+        toolbar.addAction(self._brush_tools.act_pan)
+        toolbar.addSeparator()
+        self._act_undo = self._brush_tools.act_undo
+        self._act_undo.setToolTip("실행 취소 (Ctrl+Z)")
+        self._act_undo.setEnabled(False)
+        toolbar.addAction(self._act_undo)
+        self._active_tool: str = _TOOL_ROI
         layout.addWidget(toolbar)
 
         layout.addWidget(QLabel("브러시:"))
-        brush_spin = QSpinBox()
-        brush_spin.setRange(1, 200)
-        brush_spin.setValue(30)
-        brush_spin.setSuffix(" px")
-        brush_spin.setFixedWidth(80)
-        brush_spin.valueChanged.connect(self._canvas.set_erase_brush_size)
-        layout.addWidget(brush_spin)
+        layout.addWidget(self._brush_tools.spin_brush_size)
 
-        self._btn_undo = QPushButton()
-        self._btn_undo.setIcon(svg_icon("undo"))
-        self._btn_undo.setToolTip("실행 취소 (Ctrl+Z)")
-        self._btn_undo.setEnabled(False)
-        self._btn_undo.clicked.connect(self._canvas.undo)
-        layout.addWidget(self._btn_undo)
+        self._brush_tools.tool_changed.connect(self._set_tool)
+        self._brush_tools.undo_requested.connect(self._canvas.undo)
+        self._brush_tools.spin_brush_size.valueChanged.connect(self._canvas.set_erase_brush_size)
 
         self._edit_cluster = cluster
 
@@ -411,13 +417,15 @@ class RAnalysisTab(QWidget):
 
     # ── 편집 도구 ────────────────────────────────────────────────────────────
 
-    def _on_tool_changed(self, action: QAction) -> None:
-        mode = action.data()
-        if mode == "brush_draw":
+    def _set_tool(self, tool: str) -> None:
+        self._active_tool = tool
+        self._act_roi.setChecked(tool == _TOOL_ROI)
+        self._brush_tools.set_tool(tool)   # 클러스터 소속 아니면(ROI) 전체 unchecked
+        if tool == TOOL_BRUSH:
             self._canvas.set_brush_draw_mode(True)
-        elif mode == "brush_erase":
+        elif tool == TOOL_ERASER:
             self._canvas.set_brush_erase_mode(True)
-        elif mode == "pan":
+        elif tool == TOOL_PAN:
             self._canvas.set_pan_mode(True)
         else:
             # ponytail: RRoiCanvas엔 "roi 모드" 전용 setter가 없다 — set_X_mode(False)를
@@ -426,7 +434,7 @@ class RAnalysisTab(QWidget):
             self._canvas.set_pan_mode(False)
 
     def _update_undo_button_state(self) -> None:
-        self._btn_undo.setEnabled(self._canvas.can_undo())
+        self._act_undo.setEnabled(self._canvas.can_undo())
 
     def _on_canvas_edited(self) -> None:
         """브러시 그리기/지우기 스트로크가 끝났을 때(erase_changed) — 수동 보정을
