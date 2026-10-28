@@ -6213,3 +6213,117 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   탭에서 실제 검출 실행 후 눈 아이콘 클릭/F키로 마스크가 화면에서만
   사라지고 ROI·브러시 편집·셀 면적 계산에는 영향이 없는지 골든패스로
   확인 필요(이번 세션은 self-check로 로직만 검증).
+
+## 2026-10-28 — 브러시 보정이 검출 결과와 다른 색으로 덧칠되던 버그 수정 (R분석/존분석)
+
+- 배경: 사용자 핵심 지적 — "결국 검출된 결과물에 브러시로 그 결과물을 수정할 수
+  있도록 해주는거야." 브러시는 검출과 별개 레이어가 아니라 같은 객체를 고치는
+  도구이므로, 커밋 후 화면은 검출 결과와 완전히 동일해야 한다(별도 색 덧칠 금지).
+  데이터(계산) 경로는 전혀 건드리지 않고 화면 표시(렌더링)만 고쳤다.
+
+### R분석 (`app/widgets/r_roi_canvas.py`)
+- `_paint_stroke_preview()`를 `_paint_committed_strokes()`(커밋된 전체
+  `_stroke_overlay` 래스터)와 `_paint_current_stroke()`(드래그 중인
+  `_current_stroke`만)로 분리. `paintEvent()`는 새 헬퍼 `_paint_strokes()`로
+  디스패치 로직을 캡슐화해 `_mask_image is None`(검출 전)일 때만 committed
+  래스터를 그리고, current stroke는 항상 그린다.
+- `_paint_strokes()`를 self-check에서 QPainter 없이 검증 가능하도록 분리한 것 —
+  `if __name__ == "__main__"` 블록에 fake-canvas 기반 단위 검증 2케이스 추가
+  (마스크 없음→committed+current 둘 다, 마스크 있음→current만).
+- `QT_QPA_PLATFORM=offscreen py -m app.widgets.r_roi_canvas` self-check 통과.
+
+### 존분석 (`app/core/inference_engine.py` + `app/widgets/zone_canvas.py` + `app/tabs/zone_analysis_tab.py`)
+- `inference_engine.py`: `reblend()` 옆에 신규 공개 함수
+  `colorize_class_map(class_map, image_path_or_pil, opacity)` 추가 — 임의의
+  class_map 배열을 `InferenceResult` 없이 직접 컬러화(`_colorize_and_blend()`
+  재사용, 내부 구현 변경 없음).
+- `zone_canvas.py`: `_paint_erase_preview()`를 `_paint_current_stroke()`로
+  대체(커밋된 `_stroke_overlay` 그리기는 완전히 제거, 드래그 중 스트로크만
+  유지). `_stroke_overlay`/`_rasterize_stroke`/`_rebuild_stroke_overlay`
+  캐시 메커니즘 자체는 다른 참조(undo `set_state()`가 호출)가 있어 그대로
+  남김. `paintEvent()`의 호출 조건도 `_current_stroke`만 보도록 단순화.
+- `zone_analysis_tab.py`:
+  - `_reblend_overlay()`를 `_ai_and_final_masks()`로 ai_mask/final_mask를
+    구해 둘 다 있으면 `self._last_result.class_map.copy()`(사본!)에
+    `corrected[ai_mask & ~final_mask] = 0`(수동 지우기→배경),
+    `corrected[final_mask & ~ai_mask] = self._target_class_id`(수동 그리기→
+    타겟 색)를 적용한 뒤 `engine.colorize_class_map()`으로 재합성하도록
+    변경. 타겟 클래스가 없으면(= `_ai_and_final_masks()`가 `(None, None)`)
+    기존 `engine.reblend()` 경로로 그대로 떨어짐(회귀 없음).
+  - `_recompute_zones()`(브러시 커밋 `erase_changed`/Undo(`circles_committed`
+    경유)/블랍삭제(`_on_blob_deleted`) 공유 funnel) 맨 앞에 `_show_overlay_state()`
+    호출을 추가해 세 가지 커밋 경로 모두 overlay 재합성을 자동으로 받도록 함
+    (개별 시그널 배선 추가 없이 기존 공유 지점 1곳만 수정 — ponytail 원칙).
+  - **중요 순서 버그 발견·수정**: `_on_target_changed()`에서 기존 코드는
+    `self._show_overlay_state()`를 `self._canvas.set_blob_data(labels, stats)`
+    *이전*에 호출했다. `set_blob_data()`가 `_manual_strokes`/`_removed_blob_ids`를
+    리셋하므로, 순서를 안 바꿨다면 새 타겟 클래스로 전환하는 순간
+    `_ai_and_final_masks()`가 **이전 타겟 클래스의 stale 수동 스트로크**를
+    새 class_map에 잘못 적용해 엉뚱한 위치에 보정 색이 찍히는 신규 버그가
+    생길 뻔했다 — `set_blob_data()`를 `_show_overlay_state()` 앞으로 옮겨
+    해결. `_setup_target_classes()`의 "검출 클래스 없음" 분기도 동일한 이유로
+    `self._target_class_id = None` + `self._canvas.set_blob_data(None, None)`을
+    `_show_overlay_state()` 앞으로 옮김(target_class_id=None이면
+    `_ai_and_final_masks()`가 즉시 `(None, None)`을 반환해 plain reblend로
+    떨어지므로 더 안전).
+
+### `_target_cache` 공유 참조 확인 (지시사항 요구)
+- 캐시(`OrderedDict[image_path] = (cache_key, result, labels, stats)`)는
+  `cache_key = (cid, min_confidence, min_pixel_size)`별로 **별도의 `result`
+  객체**를 만들어 저장한다(캐시 히트가 아닌 최초 `refilter()` 호출 시점마다
+  새 객체). `overlay_image` 필드를 매번 새로 덮어써도 다른 `cache_key`(다른
+  타겟 클래스/threshold)의 캐시된 객체는 전혀 건드리지 않는다 — 공유 참조
+  문제는 **없었다**. 한 가지 기존 설계(이번 변경 전부터 있던 동작, 문서화된
+  의도): 같은 타겟 클래스로 다시 전환해 캐시 히트가 나면 `set_blob_data()`가
+  `_manual_strokes`를 초기화하므로 "이전에 그 타겟에서 했던 보정"은 재사용되지
+  않고 사라진다(스펙 "클래스 전환으로 라벨맵이 바뀌면 이전 삭제 이력은
+  의미 없음"과 동일한 정책) — 이번 작업으로 새로 생긴 문제가 아니라 기존
+  정책을 그대로 따른 것.
+- `result.class_map`/`raw_class_map`/`confidence_map` 등 원본 필드는 어디서도
+  mutate하지 않음(`corrected = class_map.copy()`로 사본만 사용, 테스트로
+  원본 불변 검증).
+
+### self-check / 검증
+- 신규 `tests/test_zone_brush_overlay_sync_2026_10_28.py` 3개:
+  1. `_reblend_overlay()`가 지우기→배경(0)/그리기→타겟 id로 보정된
+     `class_map` 사본을 `engine.colorize_class_map()`에 넘기는지(모킹으로
+     캡처) + 원본 `class_map` 불변 확인.
+  2. 타겟 클래스 없을 때 기존 `engine.reblend()` 경로로 떨어지는지(회귀 방지).
+  3. `ZoneCanvas`가 커밋된 스트로크를 더 이상 별도로 그리지 않고 드래그 중
+     스트로크만 그리는 디스패치 분기 확인.
+- `r_roi_canvas.py`의 `__main__` self-check에 R 쪼개기 로직 검증 2케이스 추가.
+- `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -q` → **172 passed**
+  (기존 169 + 신규 3, 회귀 없음).
+- 성능 실측(4000×3000=12MP 합성 이미지, `engine.colorize_class_map` 기준
+  `_MAX_OVERLAY_DIM=2048` 다운스케일 적용됨):
+  - `class_map.copy()` + 두 boolean mask 대입: 약 15ms.
+  - `colorize_class_map()` 자체: 약 266ms.
+  - 총합 약 281ms — 기존(변경 전) `engine.reblend()` 단독 호출 약 239ms와
+    같은 오더(차이는 신규 `.copy()` + mask 대입 오버헤드 ~40ms뿐). 브러시
+    스트로크 커밋/Undo/타겟 전환 시 1회만 발생(매 프레임 아님)이라 체감
+    지연 없음 — 기존 opacity 슬라이더 재합성과 동일한 비용 특성.
+
+### 커밋/버전
+- 스테이징: `app/core/inference_engine.py`, `app/tabs/zone_analysis_tab.py`,
+  `app/widgets/r_roi_canvas.py`, `app/widgets/zone_canvas.py`,
+  `docs/CHANGELOG.md`, `tests/test_zone_brush_overlay_sync_2026_10_28.py`만
+  (`.codex/`, `AGENTS.md`, `data/annotations/`, `graphify-out/` 등 무관한
+  untracked 항목은 제외).
+- 버전: 리더 지시대로 동일 미출시 버전 `zone-v1.9.0`에 묶어 `docs/CHANGELOG.md`
+  같은 절에 `### 수정` bullet만 추가(새 버전 절 생성 안 함). **단, 로컬에
+  이미 `zone-v1.9.0` 태그가 현재 HEAD(`b3e26f9`)를 가리키고 있는 것을
+  발견** — 이번 커밋들은 그 태그보다 나중에 생겨 태그 시점 스냅샷에는
+  포함되지 않는다. 리더 지시를 그대로 따랐으나, 이미 태그된 버전에 새
+  변경을 묶는 것이 맞는지(PATCH로 새 태그가 필요한지)는 리더가 한 번 더
+  판단해주길 권장.
+- push는 하지 않음(지시대로).
+
+### 상태
+- 구현 완료. **검증 에이전트 확인 필요** — 특히 실제 UI 골든 패스로
+  (1) R분석: 검출 실행 후 브러시 그리기 1회 커밋 → 화면이 초록 레이어
+  하나로만 보이는지(파란/회색 안 남는지), 드래그 중엔 파란/회색 미리보기가
+  보이는지, (2) 존분석: 타겟 클래스 지정 후 브러시 지우기/그리기 각 1회
+  커밋 → 해당 영역이 배경/타겟 클래스 색과 완전히 같아 보이는지(별도 색
+  안 보이는지), Undo 시에도 원래 검출 색으로 정확히 복원되는지 — 이번
+  세션은 self-check/pytest + 모킹 기반 유닛 검증까지만 수행(실제 QPainter
+  렌더링 픽셀 비교는 하지 않음).

@@ -314,6 +314,26 @@ def reblend(
     )
 
 
+def colorize_class_map(
+    class_map: np.ndarray,
+    image_path_or_pil: "Path | str | Image.Image",
+    opacity: float,
+) -> QImage:
+    """임의의 class_map 배열로 직접 합성 — InferenceResult를 요구하지 않는다.
+
+    호출자가 수동 보정(브러시) 등을 반영한 class_map 사본을 만들어 넘기는 용도.
+    원본 result.class_map 등은 건드리지 않는다(호출자 책임).
+    """
+    pil_img = (
+        image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
+        else Image.open(str(image_path_or_pil)).convert("RGB")
+    )
+    return _colorize_and_blend(
+        pil_img, class_map,
+        {c.class_id: c for c in load_classes()}, opacity,
+    )
+
+
 def blob_at(result: InferenceResult, x: int, y: int) -> BlobStat | None:
     """class_map(원본 해상도) 위의 정수 픽셀 좌표 (x, y)가 속한 blob을 반환한다.
 

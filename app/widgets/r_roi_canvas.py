@@ -439,13 +439,21 @@ class RRoiCanvas(OverlayViewer):
         p.drawImage(0, 0, self._mask_image)
         p.restore()
 
-    def _paint_stroke_preview(self, p: QPainter) -> None:
-        if self._stroke_overlay is not None:
-            p.save()
-            p.translate(self._pan)
-            p.scale(self._zoom, self._zoom)
-            p.drawImage(0, 0, self._stroke_overlay)
-            p.restore()
+    def _paint_committed_strokes(self, p: QPainter) -> None:
+        """커밋된 전체 스트로크 래스터 — 검출 마스크가 없을 때만(그 외엔 _mask_image가
+        effective_mask()를 이미 반영하므로 이걸 또 그리면 이중 렌더링이 된다)."""
+        if self._stroke_overlay is None:
+            return
+        p.save()
+        p.translate(self._pan)
+        p.scale(self._zoom, self._zoom)
+        p.drawImage(0, 0, self._stroke_overlay)
+        p.restore()
+
+    def _paint_current_stroke(self, p: QPainter) -> None:
+        """드래그 중(아직 커밋 안 됨)인 스트로크 — mask_image 유무와 무관하게 항상 미리보기."""
+        if not self._current_stroke:
+            return
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(_COLOR_DRAW if self._mode == "brush_draw" else _COLOR_ERASE)
         for cx, cy, r in self._current_stroke:
@@ -454,6 +462,13 @@ class RRoiCanvas(OverlayViewer):
             center = self._orig_to_screen_point(cx, cy)
             radius = r * s * self._zoom
             p.drawEllipse(center, radius, radius)
+
+    def _paint_strokes(self, p: QPainter) -> None:
+        """커밋된 스트로크(검출 마스크 없을 때만) + 드래그 중 스트로크(항상) 디스패치.
+        로직을 분리해 self-check에서 QPainter 없이 검증 가능하게 했다."""
+        if self._mask_image is None:
+            self._paint_committed_strokes(p)
+        self._paint_current_stroke(p)
 
     def _paint_roi(self, p: QPainter) -> None:
         rect = self._screen_rect()
@@ -478,8 +493,7 @@ class RRoiCanvas(OverlayViewer):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._paint_mask_overlay(p)
-        if self._manual_strokes or self._current_stroke:
-            self._paint_stroke_preview(p)
+        self._paint_strokes(p)
         self._paint_roi(p)
         p.end()
 
@@ -646,5 +660,24 @@ if __name__ == "__main__":
     fc2._paint_mask_overlay(None)   # painter 미사용 경로 — None이어도 에러 없이 즉시 리턴
     fc2.set_mask_overlay_visible(True)
     assert fc2._mask_visible is True
+
+    # _paint_strokes(): 커밋 후(effective_mask 있음) 파란/회색 덧칠이 사라지고
+    # 드래그 중 미리보기만 항상 그려지는지(사용자가 명시한 핵심 버그 수정) 확인.
+    class _FakeCanvas3:
+        _mask_image = None
+        _paint_strokes = RRoiCanvas._paint_strokes
+        def __init__(self):
+            self.calls = []
+        def _paint_committed_strokes(self, p):
+            self.calls.append("committed")
+        def _paint_current_stroke(self, p):
+            self.calls.append("current")
+    fc3 = _FakeCanvas3()
+    fc3._paint_strokes(None)   # 마스크 없음 → 커밋 래스터도 보여줘야(유일한 피드백)
+    assert fc3.calls == ["committed", "current"]
+    fc3b = _FakeCanvas3()
+    fc3b._mask_image = "detected"   # 검출 완료 → 커밋 래스터는 더 이상 그리지 않음
+    fc3b._paint_strokes(None)
+    assert fc3b.calls == ["current"]
 
     print("r_roi_canvas self-check OK")

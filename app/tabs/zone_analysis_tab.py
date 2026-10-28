@@ -1046,9 +1046,13 @@ class ZoneAnalysisTab(QWidget):
 
         if not ids:
             self._lbl_target_info.setText(t("zone.no_class_detected"))
-            self._show_overlay_state()
+            # target_class_id/set_blob_data를 먼저 리셋해야 _show_overlay_state() →
+            # _ai_and_final_masks()가 이전 타겟의 stale 보정(수동 스트로크)을 새
+            # class_map에 잘못 섞어 쓰지 않는다(target_class_id=None이면 바로 (None,None)
+            # 반환해 plain reblend로 떨어짐).
             self._target_class_id = None
             self._canvas.set_blob_data(None, None)
+            self._show_overlay_state()
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             self._set_tool(_TOOL_CIRCLE)
@@ -1133,8 +1137,11 @@ class ZoneAnalysisTab(QWidget):
                     self._target_cache.popitem(last=False)   # BUG-039: 가장 오래된 항목 제거
             self._last_result = result
             self._target_class_id = cid
-            self._show_overlay_state()
+            # set_blob_data()가 removed_blob_ids/manual_strokes를 리셋한 *다음*에
+            # 재합성해야 _ai_and_final_masks()가 이전 타겟의 stale 보정을 섞어
+            # 쓰지 않는다(set_blob_data가 먼저였다면 reblend가 옛 보정을 반영할 수 있음).
             self._canvas.set_blob_data(labels, stats)
+            self._show_overlay_state()
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             for action in (self._brush_tools.act_brush, self._brush_tools.act_eraser,
@@ -1162,13 +1169,28 @@ class ZoneAnalysisTab(QWidget):
     def _reblend_overlay(self) -> None:
         """현재 슬라이더 opacity로 overlay_image를 다시 합성(모델 재실행 없음, forward pass
         없는 numpy/cv2 합성만 — _show_overlay_state() 호출마다 매번 거쳐도 비용이 크지 않음).
-        슬라이더 값이 이미지 전환/재추론에도 유지되도록(요구사항) 여기서 항상 반영한다."""
+        슬라이더 값이 이미지 전환/재추론에도 유지되도록(요구사항) 여기서 항상 반영한다.
+
+        브러시로 그리기/지우기를 커밋하면(사용자 요구사항: "검출된 결과물에 브러시로
+        그 결과물을 수정") 그 영역이 AI가 원래 그 색으로 검출했던 것과 완전히 동일한
+        색·불투명도로 보이도록, 보정된 class_map 사본으로 다시 컬러화한다 — 원본
+        self._last_result.class_map 등은 건드리지 않는다(사본에만 적용)."""
         if self._last_result is None or self._image_path is None:
             return
         try:
-            self._last_result.overlay_image = engine.reblend(
-                self._last_result, self._image_path, self._overlay_opacity,
-            )
+            ai_mask, final_mask = self._ai_and_final_masks()
+            if ai_mask is not None and final_mask is not None:
+                corrected = self._last_result.class_map.copy()   # 사본 — 원본 class_map 변형 금지
+                corrected[ai_mask & ~final_mask] = 0   # 수동 지우기 → 배경(틴트 없음)
+                corrected[final_mask & ~ai_mask] = self._target_class_id   # 수동 그리기 → 타겟 색
+                overlay_img = engine.colorize_class_map(
+                    corrected, self._image_path, self._overlay_opacity,
+                )
+            else:
+                overlay_img = engine.reblend(
+                    self._last_result, self._image_path, self._overlay_opacity,
+                )
+            self._last_result.overlay_image = overlay_img
             self._results[self._image_path] = self._last_result
         except Exception:
             log.exception("존 분석 오버레이 재합성 실패")
@@ -1346,6 +1368,10 @@ class ZoneAnalysisTab(QWidget):
     def _recompute_zones(self) -> None:
         if self._suppress_recompute:
             return   # BUG-040: 이미지 전환 중 set_state() 복원 전의 중간 재계산을 스킵
+        # 브러시 스트로크 커밋/Undo/블랍삭제가 모두 이 함수로 모이는 공유 funnel이므로
+        # 여기서 overlay_image도 같이 재합성한다(별도 시그널 배선 불필요, 사용자 요구사항:
+        # 브러시로 고친 결과가 검출 결과와 동일한 색으로 보여야 함).
+        self._show_overlay_state()
         # circles_changed 는 원 드래그 이동/반지름조절 중에도 mouseMoveEvent마다 emit된다
         # (BUG-018과 동일한 근본 원인) -- blockSignals 없이 clear()+재구성하면 QListWidget의
         # currentRow가 -1로 리셋되며 그 currentRowChanged(-1)이 _on_zone_row_selected를 타고

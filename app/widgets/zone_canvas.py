@@ -564,8 +564,8 @@ class ZoneCanvas(OverlayViewer):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self._removed_blob_ids:
             self._paint_removed_blobs(p)
-        if self._manual_strokes or self._current_stroke:
-            self._paint_erase_preview(p)
+        if self._current_stroke:
+            self._paint_current_stroke(p)
         if not self._circles:
             p.end()
             return
@@ -635,17 +635,15 @@ class ZoneCanvas(OverlayViewer):
             )
             p.drawRect(rect)
 
-    def _paint_erase_preview(self, p: QPainter) -> None:
-        """커밋된 스트로크는 rasterize-on-commit 캐시(`self._stroke_overlay`)를
-        `drawImage()` 1회로 그리고(R-ZONE-1 — 매 프레임 `_manual_strokes` 전체
-        순회를 제거), 진행 중인 현재 스트로크(`self._current_stroke`, 스탬프
-        개수가 적어 저렴)만 기존 방식대로 매 프레임 직접 그린다."""
-        if self._stroke_overlay is not None:
-            p.save()
-            p.translate(self._pan)
-            p.scale(self._zoom, self._zoom)
-            p.drawImage(0, 0, self._stroke_overlay)
-            p.restore()
+    def _paint_current_stroke(self, p: QPainter) -> None:
+        """진행 중인(아직 커밋 안 된) 스트로크만 파란/회색으로 미리보기.
+
+        커밋된 스트로크(`self._stroke_overlay`)는 더 이상 여기서 그리지 않는다 —
+        커밋 시점에 탭이 `overlay_image` 자체를 보정 반영해 재합성하므로
+        (타겟 클래스 색으로 통일), 여기서 또 덧칠하면 이중 렌더링이 된다.
+        `_stroke_overlay`/`_rasterize_stroke`/`_rebuild_stroke_overlay`는 캐시
+        메커니즘이라 남겨두되(다른 참조 없음 확인됨) paintEvent에서는 더 이상 쓰지
+        않는다."""
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(_COLOR_DRAW if self._mode == "brush_draw" else _COLOR_ERASE)
         for cx, cy, r in self._current_stroke:
