@@ -251,13 +251,16 @@ class RAnalysisTab(QWidget):
 
         toolbar = QToolBar()
         toolbar.setIconSize(QSize(18, 18))
+        toolbar.setStyleSheet(
+            "QToolBar QToolButton:checked { background:#1e3a5f; border:1px solid #60a5fa; color:#60a5fa; }"
+        )
 
         # 공유 클러스터(브러시그리기/브러시지우기/이동/브러시크기/undo)는
         # app/widgets/brush_toolbar.py 의 BrushToolbar(show_delete_region=False)에서
         # 가져온다 — ROI 편집만 호스트 로컬로 유지(R분석 전용 도구, 영역삭제 개념
         # 없음). 라벨링/Zone 탭과 동일한 "양방향 set_tool()/tool_changed 수동
         # 동기화" 패턴(QActionGroup 대신).
-        self._act_roi = QAction(svg_icon("tool_select"), "", self)
+        self._act_roi = QAction(svg_icon("tool_rect"), "", self)
         self._act_roi.setToolTip(t("r.tool_roi_tip"))
         self._act_roi.setCheckable(True)
         self._act_roi.setChecked(True)
@@ -280,6 +283,15 @@ class RAnalysisTab(QWidget):
         self._act_undo.setToolTip(t("r.undo_tip"))
         self._act_undo.setEnabled(False)
         toolbar.addAction(self._act_undo)
+
+        self._act_overlay_visible = QAction(svg_icon("eye"), "", self)
+        self._act_overlay_visible.setCheckable(True)
+        self._act_overlay_visible.setChecked(True)
+        self._act_overlay_visible.setToolTip(t("r.overlay_visible_tip") + " [F]")
+        self._act_overlay_visible.toggled.connect(self._canvas.set_mask_overlay_visible)
+        self._canvas.overlay_toggle_requested.connect(self._act_overlay_visible.toggle)
+        toolbar.addAction(self._act_overlay_visible)
+
         self._active_tool: str = _TOOL_ROI
         layout.addWidget(toolbar)
 
@@ -965,5 +977,21 @@ if __name__ == "__main__":
     assert tab._opacity_slider.value() == 35
     tab._opacity_slider.setValue(80)
     assert tab._canvas.mask_opacity() == round(80 / 100 * 255)
+
+    # ROI 아이콘 — tool_select -> tool_rect 교체(에러 없이 생성되는지만 확인).
+    assert not tab._act_roi.icon().isNull()
+
+    # 검출 결과 show/hide — 눈 액션 toggled가 캔버스 플래그에 반영되는지,
+    # F키 입력이 액션을 토글하는지(실제 keyPressEvent 호출로 시뮬레이션).
+    assert tab._act_overlay_visible.isChecked() is True
+    assert tab._canvas._mask_visible is True
+    tab._act_overlay_visible.setChecked(False)
+    assert tab._canvas._mask_visible is False
+    from PyQt6.QtCore import QEvent as _QEvent
+    from PyQt6.QtGui import QKeyEvent as _QKeyEvent
+    f_press = _QKeyEvent(_QEvent.Type.KeyPress, Qt.Key.Key_F, Qt.KeyboardModifier.NoModifier)
+    tab._canvas.keyPressEvent(f_press)
+    assert tab._act_overlay_visible.isChecked() is True   # F키 -> toggle() -> 다시 표시
+    assert tab._canvas._mask_visible is True
 
     print("r_analysis_tab self-check OK")

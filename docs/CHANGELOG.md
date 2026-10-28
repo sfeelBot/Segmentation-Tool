@@ -23,6 +23,15 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
   alpha(90/255)였던 검출 마스크 오버레이를 캔버스 좌측 하단 플로팅 슬라이더
   (기본 35%, 90/255에 해당)로 조절. 메모리의 numpy 마스크만 재합성해 디바운스
   불필요.
+- 라벨링/존분석/R분석 탭 공통: 선택된 도구를 알아보기 쉽게 툴바 버튼
+  `:checked` 상태에 활성 강조 색(`#1e3a5f` 배경 + `#60a5fa` 테두리/글자) 적용.
+- R분석 탭: ROI 편집 툴바 아이콘을 화살표 모양(`tool_select`)에서 사각형
+  아웃라인(`tool_rect`, 신규 SVG)으로 교체 — 영역이 사각형임을 더 명확히 표시.
+- R분석 탭: 라벨링 탭과 동일한 패턴으로 검출 결과(마스크) show/hide 토글 추가
+  (눈 아이콘, `[F]` 단축키). `app/widgets/r_roi_canvas.py`에
+  `overlay_toggle_requested` 시그널 + `set_mask_overlay_visible()` 추가 —
+  화면 표시 여부만 끄고 마스크 데이터/boundary 편집·면적 계산은 그대로 동작.
+  `app/core/i18n.py`에 `r.overlay_visible_tip` 신규 키(ko/en).
 
 ---
 

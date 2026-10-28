@@ -430,6 +430,7 @@ class ZoneAnalysisTab(QWidget):
         self._edit_toolbar.setIconSize(QSize(20, 20))
         self._edit_toolbar.setStyleSheet(
             "QToolBar QToolButton { min-width:36px; min-height:30px; padding:4px 8px; }"
+            "QToolBar QToolButton:checked { background:#1e3a5f; border:1px solid #60a5fa; color:#60a5fa; }"
         )
 
         # 공유 클러스터(브러시그리기/브러시지우기/영역삭제/pan/undo/브러시크기)는

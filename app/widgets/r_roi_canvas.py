@@ -51,6 +51,7 @@ class RRoiCanvas(OverlayViewer):
     roi_committed = pyqtSignal()    # 드래그 완료 — 탭이 재검출을 트리거하는 지점
     erase_changed = pyqtSignal()    # 브러시 스트로크가 끝났을 때 1회(데이터 재계산 트리거)
     mask_changed = pyqtSignal()     # 화면에 그려지는 effective_mask()가 바뀔 때마다
+    overlay_toggle_requested = pyqtSignal()   # F키 — 탭이 show/hide 액션을 토글
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -71,6 +72,7 @@ class RRoiCanvas(OverlayViewer):
         self._detected_mask: np.ndarray | None = None
         self._mask_image: QImage | None = None
         self._mask_alpha = 90   # _COLOR_MASK 기본 alpha(0~255) — set_mask_opacity()로 조절
+        self._mask_visible = True   # 화면 표시 여부만 — effective_mask()/데이터는 영향 없음
 
         # ── effective_mask() 증분 캐시(P0 성능) ──────────────────────────────
         # 스트로크를 1개 커밋할 때마다 누적된 manual_strokes 전체를 처음부터
@@ -156,6 +158,12 @@ class RRoiCanvas(OverlayViewer):
         set_detected_mask()로 갈아끼워도 다음 호출까지 그대로 적용된다."""
         self._mask_alpha = max(0, min(255, alpha_0_255))
         self._rebuild_mask_image()
+        self.update()
+
+    def set_mask_overlay_visible(self, visible: bool) -> None:
+        """검출 마스크 오버레이를 화면에 그릴지 여부만 전환(데이터/boundary 편집에는
+        영향 없음) — 라벨링 탭의 어노테이션 show/hide와 동일한 눈 아이콘 토글용."""
+        self._mask_visible = visible
         self.update()
 
     def mask_opacity(self) -> int:
@@ -420,6 +428,8 @@ class RRoiCanvas(OverlayViewer):
         self._mask_image = img.copy()   # numpy 버퍼와 분리(생명주기 안전)
 
     def _paint_mask_overlay(self, p: QPainter) -> None:
+        if not self._mask_visible:
+            return
         if self._mask_image is None:
             return
         sx, sy = self._orig_scale()
@@ -581,6 +591,9 @@ class RRoiCanvas(OverlayViewer):
         self.roi_committed.emit()
 
     def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self.overlay_toggle_requested.emit()
+            return
         if event.matches(QKeySequence.StandardKey.Undo):
             self.undo()
             return
@@ -618,5 +631,20 @@ if __name__ == "__main__":
     assert fc.mask_opacity() == 255
     fc.set_mask_opacity(-10)   # 클램프 하한
     assert fc.mask_opacity() == 0
+
+    # set_mask_overlay_visible(): 플래그 저장 + _paint_mask_overlay()가 숨김 시
+    # 그리기를 건너뛰는지(painter에 손대지 않고 바로 return 하는지) 확인.
+    class _FakeCanvas2:
+        _mask_visible = True
+        _mask_image = "not-none-sentinel"
+        set_mask_overlay_visible = RRoiCanvas.set_mask_overlay_visible
+        _paint_mask_overlay = RRoiCanvas._paint_mask_overlay
+        def update(self): pass
+    fc2 = _FakeCanvas2()
+    fc2.set_mask_overlay_visible(False)
+    assert fc2._mask_visible is False
+    fc2._paint_mask_overlay(None)   # painter 미사용 경로 — None이어도 에러 없이 즉시 리턴
+    fc2.set_mask_overlay_visible(True)
+    assert fc2._mask_visible is True
 
     print("r_roi_canvas self-check OK")
