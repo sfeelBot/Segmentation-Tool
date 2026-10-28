@@ -27,6 +27,7 @@ from app.core.zone_metrics import (
     export_zone_percentages_to_excel, pivot_wide_format, ZoneBlobStat,
     max_blob_pixels_by_zone, zone_name_sort_key,
 )
+from app.core.i18n import t
 
 log = get_logger(__name__)
 
@@ -55,7 +56,7 @@ class ZoneBatchResultDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("일괄 처리 결과")
+        self.setWindowTitle(t("zone_batch.window_title"))
         self.resize(1000, 700)
         self._rows = rows
         self._blob_rows = blob_rows
@@ -69,19 +70,19 @@ class ZoneBatchResultDialog(QDialog):
         layout.addLayout(self._build_filter_bar(rows))
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_long_tab(rows, self._blob_rows), "Long (이미지 × 존)")
-        tabs.addTab(self._build_wide_tab(rows), "Wide (피벗)")
+        tabs.addTab(self._build_long_tab(rows, self._blob_rows), t("zone_batch.tab_long"))
+        tabs.addTab(self._build_wide_tab(rows), t("zone_batch.tab_wide"))
         layout.addWidget(tabs, stretch=1)
 
         btn_row = QHBoxLayout()
-        btn_export = QPushButton("Excel로 내보내기")
+        btn_export = QPushButton(t("zone_batch.btn_export_excel"))
         btn_export.clicked.connect(self._on_export)
         btn_row.addWidget(btn_export)
-        btn_copy = QPushButton("클립보드로 복사")
+        btn_copy = QPushButton(t("zone_batch.btn_copy_clipboard"))
         btn_copy.clicked.connect(self._on_copy_clipboard)
         btn_row.addWidget(btn_copy)
         btn_row.addStretch()
-        btn_close = QPushButton("닫기")
+        btn_close = QPushButton(t("common.close"))
         btn_close.clicked.connect(self.accept)
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
@@ -92,16 +93,16 @@ class ZoneBatchResultDialog(QDialog):
 
     def _build_filter_bar(self, rows: list[tuple[str, str, float]]) -> QHBoxLayout:
         bar = QHBoxLayout()
-        lbl_filter = QLabel("필터")
+        lbl_filter = QLabel(t("zone_batch.filter_label"))
         lbl_filter.setStyleSheet("color:#9ca3af;font-weight:bold;")
         bar.addWidget(lbl_filter)
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("이미지명 검색...")
+        self._search_edit.setPlaceholderText(t("zone_batch.search_placeholder"))
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.textChanged.connect(self._apply_filter)
         bar.addWidget(self._search_edit, stretch=1)
 
-        bar.addWidget(QLabel("존:"))
+        bar.addWidget(QLabel(t("zone_batch.zone_label")))
         # set() 대신 dict.fromkeys — 동점(같은 정렬 버킷) 처리 순서를 해시 랜덤화에
         # 맡기지 않고 첫 등장 순서로 고정(2026-10-03#5, pivot_wide_format과 동일 수정).
         zone_names = sorted(dict.fromkeys(zone for _, zone, _ in rows), key=zone_name_sort_key)
@@ -123,7 +124,7 @@ class ZoneBatchResultDialog(QDialog):
         self._lbl_filter_count.setStyleSheet("color:#9ca3af;")
         bar.addWidget(self._lbl_filter_count)
 
-        btn_reset = QPushButton("초기화")
+        btn_reset = QPushButton(t("zone_batch.btn_reset"))
         btn_reset.clicked.connect(self._on_reset_filter)
         bar.addWidget(btn_reset)
         return bar
@@ -169,7 +170,10 @@ class ZoneBatchResultDialog(QDialog):
         max_blobs = max_blob_pixels_by_zone(blob_rows)
 
         table = QTableWidget(len(sorted_rows), 4)
-        table.setHorizontalHeaderLabels(["이미지", "존", "타겟 비율(%)", "최대 blob 픽셀수"])
+        table.setHorizontalHeaderLabels([
+            t("zone_batch.col_image"), t("zone_batch.col_zone"),
+            t("zone_batch.col_ratio"), t("zone_batch.col_max_blob"),
+        ])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         for r, (img_name, zone_name, pct) in enumerate(sorted_rows):
@@ -199,10 +203,7 @@ class ZoneBatchResultDialog(QDialog):
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
         v.addWidget(table, stretch=1)
-        caption = QLabel(
-            "\"최대 blob 픽셀수\"는 해당 (이미지, 존) 안에서 가장 큰 연결 영역 1개의 "
-            "픽셀 수입니다 — 존재하지 않으면 0."
-        )
+        caption = QLabel(t("zone_batch.long_caption"))
         caption.setStyleSheet("color:#6b7280;font-size:10.5px;")
         v.addWidget(caption)
         self._long_table = table
@@ -217,11 +218,7 @@ class ZoneBatchResultDialog(QDialog):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        note = QLabel(
-            "참고: 이미지마다 원(존) 개수가 다르면 같은 열이라도 다른 위치를 가리킬 "
-            "수 있습니다. 정확한 원본 데이터는 '목록별' 탭을 참고하세요.\n"
-            "열 헤더를 클릭하면 그 열 기준으로 정렬됩니다."
-        )
+        note = QLabel(t("zone_batch.wide_note"))
         note.setWordWrap(True)
         note.setStyleSheet("color:#9ca3af; font-size:11px;")
         layout.addWidget(note)
@@ -230,7 +227,7 @@ class ZoneBatchResultDialog(QDialog):
         self._wide_images = images
         self._wide_zone_cols = zone_cols
         table = QTableWidget(len(images), 1 + len(zone_cols))
-        table.setHorizontalHeaderLabels(["이미지"] + zone_cols)
+        table.setHorizontalHeaderLabels([t("zone_batch.col_image")] + zone_cols)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         for r, img in enumerate(images):
@@ -249,7 +246,7 @@ class ZoneBatchResultDialog(QDialog):
 
     def _on_export(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Excel로 내보내기", "zones.xlsx", "Excel (*.xlsx)"
+            self, t("zone_batch.btn_export_excel"), "zones.xlsx", "Excel (*.xlsx)"
         )
         if not path:
             return
@@ -257,15 +254,15 @@ class ZoneBatchResultDialog(QDialog):
             export_zone_percentages_to_excel(self._rows, Path(path), self._blob_rows)
         except Exception as exc:
             log.exception("Excel 내보내기 실패")
-            QMessageBox.critical(self, "내보내기 오류", str(exc))
+            QMessageBox.critical(self, t("zone_batch.export_error_title"), str(exc))
             return
         QMessageBox.information(
-            self, "내보내기 완료", f"{len(self._rows)}개 행을 내보냈습니다."
+            self, t("zone_batch.export_done_title"), t("zone_batch.export_done_msg").format(n=len(self._rows))
         )
 
     def _on_copy_clipboard(self) -> None:
         max_blobs = max_blob_pixels_by_zone(self._blob_rows)
-        lines = ["이미지\t존\t타겟 비율(%)\t최대 blob 픽셀수"]
+        lines = [t("zone_batch.clipboard_header")]
         for img_name, zone_name, pct in self._rows:
             lines.append(
                 f"{img_name}\t{zone_name}\t{pct:.2f}\t{max_blobs.get((img_name, zone_name), 0)}"

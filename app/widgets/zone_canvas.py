@@ -44,6 +44,7 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer
 from app.widgets.overlay_viewer import OverlayViewer
 from app.core.zone_metrics import disk_mask
 from app.core import zone_metrics
+from app.core.i18n import t
 
 _CENTER_HIT_PX = 10.0   # 중심(이동) 판정 반경 — 화면 픽셀
 _BORDER_HIT_PX = 8.0    # 테두리(반지름 조절) 판정 허용 오차 — 화면 픽셀
@@ -862,9 +863,9 @@ class ZoneCanvas(OverlayViewer):
         self.circle_selected.emit(circle_id)
         self.update()
         menu = QMenu(self)
-        resize_action = menu.addAction("지름 변경...")
-        rename_action = menu.addAction("이름 변경...")
-        delete_action = menu.addAction("원 삭제")
+        resize_action = menu.addAction(t("zone_canvas.menu_resize"))
+        rename_action = menu.addAction(t("zone_canvas.menu_rename"))
+        delete_action = menu.addAction(t("zone_canvas.menu_delete"))
         chosen = menu.exec(event.globalPos())
         if chosen == delete_action:
             self.remove_selected()
@@ -883,7 +884,7 @@ class ZoneCanvas(OverlayViewer):
             return
         max_dim = max(self._img_orig_w, self._img_orig_h, 1)
         diameter, ok = QInputDialog.getDouble(
-            self, "지름 변경", "지름(px):", item.r * 2,
+            self, t("zone_canvas.resize_dialog_title"), t("zone_canvas.resize_dialog_label"), item.r * 2,
             0.1, max_dim * 2, 1,
         )
         if not ok:
@@ -901,7 +902,7 @@ class ZoneCanvas(OverlayViewer):
         if item is None:
             return
         text, ok = QInputDialog.getText(
-            self, "이름 변경", "존 이름(비우면 자동 이름 사용):", text=item.name or "",
+            self, t("zone_canvas.rename_dialog_title"), t("zone_canvas.rename_dialog_label"), text=item.name or "",
         )
         if not ok:
             return

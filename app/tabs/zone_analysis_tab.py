@@ -201,13 +201,13 @@ class _ZoneBatchPostWorker(QThread):
                 else:
                     circles = scale_circles(self._circles_ref, self._ref_size, (w, h))
                 if not circles:
-                    self.progress.emit(path, "done", "원 없음", done, total)
+                    self.progress.emit(path, "done", t("zone.batch_no_circles"), done, total)
                     continue
 
                 previous = zstate.load_state(path)
                 computed = _compute_zone_rows(path, result, self._target_cid, circles, previous)
                 if computed is None:
-                    self.progress.emit(path, "done", "원 없음", done, total)
+                    self.progress.emit(path, "done", t("zone.batch_no_circles"), done, total)
                     continue
                 rows, blob_rows = computed
 
@@ -343,15 +343,15 @@ class ZoneAnalysisTab(QWidget):
         toolbar_row1.setContentsMargins(14, 7, 14, 7)
         toolbar_row2 = QHBoxLayout()
 
-        self._btn_ckpt = QPushButton("체크포인트 열기 (.pt)…")
+        self._btn_ckpt = QPushButton(t("zone.btn_ckpt_open"))
         toolbar_row1.addWidget(self._btn_ckpt)
         self._lbl_ckpt_dot = QLabel("●")
         self._lbl_ckpt_dot.setStyleSheet("color:#34d399;font-size:15px;background:transparent;border:none;")
         toolbar_row1.addWidget(self._lbl_ckpt_dot)
-        self._lbl_ckpt = QLabel("선택된 체크포인트 없음")
+        self._lbl_ckpt = QLabel(t("zone.ckpt_none"))
         self._lbl_ckpt.setStyleSheet("color:#9ca3af;")
         toolbar_row1.addWidget(self._lbl_ckpt)
-        self._lbl_ckpt_badge = QLabel("자동 선택됨")
+        self._lbl_ckpt_badge = QLabel(t("zone.ckpt_auto_badge"))
         self._lbl_ckpt_badge.setStyleSheet(
             "color:#34d399;font-size:11px;background:#0d2318;"
             "border:1px solid #10b981;border-radius:4px;padding:1px 6px;"
@@ -364,9 +364,9 @@ class ZoneAnalysisTab(QWidget):
         self._infer_progress.hide()
         toolbar_row1.addWidget(self._infer_progress)
 
-        toolbar_row1.addWidget(QLabel("타겟(녹) 클래스:"))
+        toolbar_row1.addWidget(QLabel(t("zone.target_class_label")))
         self._target_name_edit = QLineEdit()
-        self._target_name_edit.setPlaceholderText("클래스 이름 (예: 녹)")
+        self._target_name_edit.setPlaceholderText(t("zone.target_name_placeholder"))
         self._target_name_edit.setFixedWidth(120)
         self._target_name_edit.hide()
         toolbar_row1.addWidget(self._target_name_edit)
@@ -375,49 +375,49 @@ class ZoneAnalysisTab(QWidget):
         self._target_combo.hide()
         toolbar_row1.addWidget(self._target_combo)
         toolbar_row1.addStretch()
-        lbl_mode = QLabel("추론 방식: <b style='color:#cbd5e1'>sliding window</b> (고정)")
+        lbl_mode = QLabel(t("zone.infer_mode_fixed"))
         lbl_mode.setStyleSheet("color:#9ca3af;font-size:11px;background:transparent;border:none;")
         toolbar_row1.addWidget(lbl_mode)
-        self._btn_run = QPushButton("▶  추론 실행")
+        self._btn_run = QPushButton(t("zone.run"))
         self._btn_run.setStyleSheet(
             "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
             "padding:6px 18px;color:#93c5fd;font-weight:bold;font-size:13.5px;"
         )
         toolbar_row1.addWidget(self._btn_run)
 
-        toolbar_row2.addWidget(QLabel("AI 신뢰도:"))
+        toolbar_row2.addWidget(QLabel(t("zone.ai_confidence_label")))
         self._conf_slider = QSlider(Qt.Orientation.Horizontal)
         self._conf_slider.setRange(0, 100)
         self._conf_slider.setValue(int(_DEFAULT_MIN_CONFIDENCE * 100))
         self._conf_slider.setFixedWidth(90)
-        self._conf_slider.setToolTip("blob(연결 영역)의 평균 신뢰도가 이 값 미만이면 배경으로 제거")
+        self._conf_slider.setToolTip(t("zone.confidence_tip"))
         toolbar_row2.addWidget(self._conf_slider)
         self._lbl_confidence = QLabel(f"{self._conf_slider.value()}%")
         self._lbl_confidence.setFixedWidth(32)
         toolbar_row2.addWidget(self._lbl_confidence)
 
-        toolbar_row2.addWidget(QLabel("픽셀 threshold:"))
+        toolbar_row2.addWidget(QLabel(t("zone.pixel_threshold_label")))
         self._min_px_spin = QSpinBox()
         self._min_px_spin.setRange(0, 100000)
         self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
         self._min_px_spin.setSuffix(" px")
         self._min_px_spin.setFixedWidth(90)
-        self._min_px_spin.setToolTip("blob 면적(픽셀 수)이 이 값 미만이면 배경으로 제거")
+        self._min_px_spin.setToolTip(t("zone.pixel_threshold_tip"))
         toolbar_row2.addWidget(self._min_px_spin)
 
-        toolbar_row2.addWidget(QLabel("민감도:"))
+        toolbar_row2.addWidget(QLabel(t("zone.sensitivity_label")))
         self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
         self._sensitivity_slider.setRange(0, 100)
         self._sensitivity_slider.setValue(50)
         self._sensitivity_slider.setFixedWidth(90)
-        self._sensitivity_slider.setToolTip("원 자동 검출 민감도(아래 '자동 검출' 버튼의 파라미터)")
+        self._sensitivity_slider.setToolTip(t("zone.sensitivity_tip"))
         toolbar_row2.addWidget(self._sensitivity_slider)
         self._lbl_sensitivity = QLabel("50%")
         self._lbl_sensitivity.setFixedWidth(32)
         toolbar_row2.addWidget(self._lbl_sensitivity)
-        self._btn_detect = QPushButton("자동 검출")
+        self._btn_detect = QPushButton(t("zone.btn_detect"))
         self._btn_detect.setEnabled(False)
-        self._btn_detect.setToolTip("추론을 먼저 실행하면 검출된 원이 캔버스에 표시됩니다")
+        self._btn_detect.setToolTip(t("zone.detect_tip"))
         toolbar_row2.addWidget(self._btn_detect)
 
         self._edit_toolbar = QToolBar()
@@ -432,19 +432,19 @@ class ZoneAnalysisTab(QWidget):
         # 밖). 라벨링 탭(`labeling_tab._build_toolbar`/`_set_tool`)과 동일한 "양방향
         # set_tool()/tool_changed 수동 동기화" 패턴을 그대로 따른다(QActionGroup 대신).
         self._act_circle = QAction(svg_icon("tool_polygon"), "", self)
-        self._act_circle.setToolTip("원 편집")
+        self._act_circle.setToolTip(t("zone.tool_circle_tip"))
         self._act_circle.setCheckable(True)
         self._act_circle.setChecked(True)
         self._act_circle.triggered.connect(lambda: self._set_tool(_TOOL_CIRCLE))
 
         self._brush_tools = BrushToolbar(self._edit_toolbar, show_delete_region=True)
-        self._brush_tools.act_brush.setToolTip("브러시로 타겟 영역 그리기")
-        self._brush_tools.act_eraser.setToolTip("브러시로 타겟 영역 지우기")
-        self._brush_tools.act_delete_region.setToolTip("클릭한 연결 블랍 삭제")
-        self._brush_tools.act_pan.setToolTip("화면 이동")
+        self._brush_tools.act_brush.setToolTip(t("zone.tool_brush_tip"))
+        self._brush_tools.act_eraser.setToolTip(t("zone.tool_eraser_tip"))
+        self._brush_tools.act_delete_region.setToolTip(t("zone.tool_delete_region_tip"))
+        self._brush_tools.act_pan.setToolTip(t("zone.tool_pan_tip"))
         self._brush_tools.spin_brush_size.setValue(30)   # Zone 기존 기본값(20이 아님) 유지
         self._brush_tools.spin_brush_size.setSuffix(" px")
-        self._brush_tools.spin_brush_size.setToolTip("그리기/지우기 브러시 지름(원본 이미지 픽셀 단위)")
+        self._brush_tools.spin_brush_size.setToolTip(t("zone.brush_size_tip"))
         self._brush_tools.spin_brush_size.setEnabled(False)
         self._erase_brush_spin = self._brush_tools.spin_brush_size   # 기존 호출부 호환용 별칭
 
@@ -463,12 +463,12 @@ class ZoneAnalysisTab(QWidget):
             action.setEnabled(False)
 
         self._edit_toolbar.addSeparator()
-        self._edit_toolbar.addWidget(QLabel("브러시 크기:"))
+        self._edit_toolbar.addWidget(QLabel(t("tool.brush_size")))
         self._edit_toolbar.addWidget(self._brush_tools.spin_brush_size)
 
         self._edit_toolbar.addSeparator()
         self._act_undo = self._brush_tools.act_undo
-        self._act_undo.setToolTip("원/그리기/지우기/블랍 삭제를 시간순으로 되돌립니다 (Ctrl+Z)")
+        self._act_undo.setToolTip(t("zone.undo_tip"))
         self._act_undo.setEnabled(False)
         self._edit_toolbar.addAction(self._act_undo)
 
@@ -483,12 +483,12 @@ class ZoneAnalysisTab(QWidget):
         )
         root.addWidget(self._lbl_model_info)
 
-        self._lbl_target_info = QLabel("추론을 먼저 실행하세요")
+        self._lbl_target_info = QLabel(t("zone.run_inference_first"))
         self._lbl_target_info.setStyleSheet("color:#9ca3af; font-size:11px;")
         root.addWidget(self._lbl_target_info)
 
         # ── 커스텀 모델 코드 박스 (툴바 아래, preset이 아닌 체크포인트일 때만 노출) ──
-        self._code_box = QGroupBox("모델 아키텍처 코드 (이 체크포인트는 프리셋이 아님)")
+        self._code_box = QGroupBox(t("zone.code_box_title"))
         code_layout = QVBoxLayout(self._code_box)
         self._code_editor = QPlainTextEdit()
         self._code_editor.setPlaceholderText(
@@ -496,8 +496,8 @@ class ZoneAnalysisTab(QWidget):
         )
         code_layout.addWidget(self._code_editor)
         code_btn_row = QHBoxLayout()
-        self._btn_validate = QPushButton("검증 (Validate)")
-        self._btn_load_code = QPushButton("로드 (Load Model)")
+        self._btn_validate = QPushButton(t("zone.btn_validate"))
+        self._btn_load_code = QPushButton(t("zone.btn_load_code"))
         self._btn_load_code.setEnabled(False)
         code_btn_row.addWidget(self._btn_validate)
         code_btn_row.addWidget(self._btn_load_code)
@@ -521,7 +521,7 @@ class ZoneAnalysisTab(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 4, 0)
         header_row = QHBoxLayout()
-        self._lbl_images_header = QLabel("② 이미지")
+        self._lbl_images_header = QLabel(t("zone.images_header"))
         self._lbl_images_header.setStyleSheet("color:#60a5fa;font-weight:bold;background:transparent;border:none;")
         header_row.addWidget(self._lbl_images_header)
         header_row.addStretch()
@@ -532,7 +532,7 @@ class ZoneAnalysisTab(QWidget):
         header_row.addWidget(self._btn_image)
         header_row.addWidget(self._btn_folder)
         left_layout.addLayout(header_row)
-        self._lbl_folder_path = QLabel("선택된 이미지 없음")
+        self._lbl_folder_path = QLabel(t("zone.no_image_selected"))
         self._lbl_folder_path.setStyleSheet("color:#9ca3af; font-size:11px;")
         self._lbl_folder_path.setWordWrap(True)
         left_layout.addWidget(self._lbl_folder_path)
@@ -542,37 +542,26 @@ class ZoneAnalysisTab(QWidget):
         left_layout.addWidget(self._img_list, stretch=1)
 
         # ── 배치 컨트롤 (3b) — 좌측 패널 하단, 발견성 개선을 위해 그룹박스로 묶음 ──
-        self._batch_box = QGroupBox("Zone 결정 방법")
+        self._batch_box = QGroupBox(t("zone.batch_mode_group"))
         batch_layout = QVBoxLayout(self._batch_box)
         self._mode_combo = QComboBox()
-        self._mode_combo.addItem("일괄 적용", "apply_all")
-        self._mode_combo.addItem("일괄 적용 후 수정", "apply_all_edit")
-        self._mode_combo.addItem("장별 적용(이미지별 개별)", "per_image")
-        self._mode_combo.setToolTip(
-            "일괄 적용: 기준 이미지의 원을 나머지 전체에 그대로 적용\n"
-            "일괄 적용 후 수정: 위와 동일하게 적용 후 이미지별로 열어 직접 수정(자동 저장)\n"
-            "장별 적용: 이미지마다 원을 개별 자동 검출(민감도 슬라이더 값 사용)"
-        )
+        self._mode_combo.addItem(t("zone.mode_apply_all"), "apply_all")
+        self._mode_combo.addItem(t("zone.mode_apply_all_edit"), "apply_all_edit")
+        self._mode_combo.addItem(t("zone.mode_per_image"), "per_image")
+        self._mode_combo.setToolTip(t("zone.mode_combo_tip"))
         batch_layout.addWidget(self._mode_combo)
-        self._btn_recipe = QPushButton(svg_icon("tool_polygon"), "원(Zone) 설정...")
+        self._btn_recipe = QPushButton(svg_icon("tool_polygon"), t("zone.btn_recipe"))
         self._btn_recipe.setStyleSheet(
             "background:#2b313a;border:1px solid #60a5fa;border-radius:5px;"
             "padding:6px 8px;color:#93c5fd;"
         )
-        self._btn_recipe.setToolTip(
-            "레시피(저장된 원 집합)를 불러오거나 새로 만들어 기준 이미지에 적용합니다.\n"
-            "'장별 적용' 모드에서는 이미지마다 개별 자동 검출을 쓰므로 표시되지 않습니다."
-        )
+        self._btn_recipe.setToolTip(t("zone.recipe_tip"))
         batch_layout.addWidget(self._btn_recipe)
-        self._btn_batch = QPushButton("▶ 선택 이미지 일괄 처리 (0장)")
+        self._btn_batch = QPushButton(t("zone.btn_batch").format(n=0))
         self._btn_batch.setEnabled(False)
-        self._btn_batch.setToolTip(
-            "목록에 2장 이상 있고, 기준(현재 로드된) 이미지에 원이 1개 이상 정의돼 있어야 합니다\n"
-            "(Ctrl/Shift로 여러 장 고르면 그 부분집합만 처리 — 정확히 1장만 골라도 목록 전체가 "
-            "처리됩니다. 1장만 확인하려면 그 이미지를 클릭해 캔버스에서 직접 확인하세요.)"
-        )
+        self._btn_batch.setToolTip(t("zone.btn_batch_tip"))
         batch_layout.addWidget(self._btn_batch)
-        self._lbl_batch_condition = QLabel("필요 조건: 추론 실행 · 원 1개 이상 · 이미지 2장 이상")
+        self._lbl_batch_condition = QLabel(t("zone.batch_condition_label"))
         self._lbl_batch_condition.setStyleSheet("color:#9ca3af; font-size:11px;")
         self._lbl_batch_condition.setWordWrap(True)
         batch_layout.addWidget(self._lbl_batch_condition)
@@ -598,12 +587,12 @@ class ZoneAnalysisTab(QWidget):
         toolbar_header_layout = QHBoxLayout(toolbar_header)
         toolbar_header_layout.setContentsMargins(8, 5, 8, 5)
         toolbar_header_layout.addWidget(self._edit_toolbar)
-        self._lbl_wheel_hint = QLabel("휠: 화면 줌 · Alt+휠: 선택한 원 지름 조절")
+        self._lbl_wheel_hint = QLabel(t("zone.wheel_hint"))
         self._lbl_wheel_hint.setStyleSheet("color:#9ca3af;font-size:10.5px;")
         toolbar_header_layout.addWidget(self._lbl_wheel_hint)
         toolbar_header_layout.addStretch()
-        self._btn_align = QPushButton("정렬(중심 맞추기)")
-        self._btn_align.setToolTip("모든 원의 중심을 평균 중심으로 맞춥니다(반지름은 그대로).")
+        self._btn_align = QPushButton(t("zone.btn_align"))
+        self._btn_align.setToolTip(t("zone.align_tip"))
         toolbar_header_layout.addWidget(self._btn_align)
         canvas_layout.addWidget(toolbar_header)
         canvas_layout.addWidget(self._canvas, stretch=1)
@@ -614,31 +603,28 @@ class ZoneAnalysisTab(QWidget):
         side = QWidget()
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(4, 0, 0, 0)
-        side_layout.addWidget(QLabel("검출된 원 (반지름 오름차순)"))
+        side_layout.addWidget(QLabel(t("zone.circle_list_label")))
         self._circle_list = QListWidget()
         self._circle_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._circle_list.customContextMenuRequested.connect(self._on_circle_list_context_menu)
         side_layout.addWidget(self._circle_list, stretch=1)
-        side_layout.addWidget(QLabel("존별 타겟 클래스 비율 (%)"))
+        side_layout.addWidget(QLabel(t("zone.zone_list_label")))
         self._zone_list = QListWidget()
-        self._zone_list.setToolTip("클릭하면 캔버스에서 해당 존이 하이라이트됩니다")
+        self._zone_list.setToolTip(t("zone.zone_list_tip"))
         side_layout.addWidget(self._zone_list, stretch=1)
         self._lbl_selected_blob = QLabel("")
         self._lbl_selected_blob.setWordWrap(True)
         self._lbl_selected_blob.setStyleSheet("color:#fbbf24; font-size:11px;")
         side_layout.addWidget(self._lbl_selected_blob)
-        self._btn_export_single = QPushButton("현재 이미지 결과 보기")
+        self._btn_export_single = QPushButton(t("zone.btn_export_single"))
         self._btn_export_single.setStyleSheet(
             "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
             "padding:7px 8px;color:#93c5fd;font-weight:bold;"
         )
-        self._btn_export_single.setToolTip("현재 화면에 표시된 존 목록(이미지 1장)을 표로 보고 Excel/클립보드로 내보냅니다")
+        self._btn_export_single.setToolTip(t("zone.export_single_tip"))
         side_layout.addWidget(self._btn_export_single)
-        self._btn_view_all = QPushButton("전체 결과 보기")
-        self._btn_view_all.setToolTip(
-            "이번 세션에서 추론을 실행한 모든 이미지를 모아서 봅니다.\n"
-            "(세션 메모리 기반 — 과거 세션 결과나 미추론 이미지는 제외됩니다.)"
-        )
+        self._btn_view_all = QPushButton(t("zone.btn_view_all"))
+        self._btn_view_all.setToolTip(t("zone.view_all_tip"))
         self._btn_view_all.setEnabled(False)
         side_layout.addWidget(self._btn_view_all)
         side.setMinimumWidth(160)
@@ -715,27 +701,28 @@ class ZoneAnalysisTab(QWidget):
     def _on_select_image(self) -> None:
         """다중 파일 선택 — inference_tab._on_select_file과 동일 패턴."""
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "이미지 선택", "",
+            self, t("zone.select_image_title"), "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tiff *.tif)"
         )
         if not paths:
             return
         self._img_list.load_files([Path(p) for p in paths], append=True)
         self._lbl_folder_path.setText(
-            f"{len(paths)}개 파일 선택됨" if len(paths) > 1 else str(Path(paths[0]).parent)
+            t("zone.files_selected_count").format(n=len(paths)) if len(paths) > 1
+            else str(Path(paths[0]).parent)
         )
         self._lbl_folder_path.setStyleSheet("color:#e5e7eb; font-size:11px;")
         self._after_list_load()
 
     def _on_select_folder(self) -> None:
         """폴더 열기 — 하위 폴더 포함 재귀 스캔(InferenceImageList.load_folder)."""
-        folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
+        folder = QFileDialog.getExistingDirectory(self, t("browser.add_folder_dialog_title"))
         if not folder:
             return
         self._img_list.load_folder(Path(folder), append=True)
         if self._img_list.count() == 0:
             QMessageBox.information(
-                self, "이미지 없음", "선택한 폴더(하위 폴더 포함)에 지원되는 이미지가 없습니다."
+                self, t("browser.no_images_title"), t("zone.no_images_recursive_msg")
             )
             return
         self._lbl_folder_path.setText(folder)
@@ -746,7 +733,7 @@ class ZoneAnalysisTab(QWidget):
         # 목록은 이미지가 2장 이상일 때만 표시 — 단일 이미지 워크플로우는 목록
         # 없이 그대로 동작(회귀 없음, 스펙 C-1 명시).
         self._img_list.setVisible(self._img_list.count() > 1)
-        self._lbl_images_header.setText(f"② 이미지 ({self._img_list.count()})")
+        self._lbl_images_header.setText(t("zone.images_header_count").format(n=self._img_list.count()))
         self._refresh_step_indicator()
 
     def _on_images_removed(self, removed: list[Path]) -> None:
@@ -768,7 +755,7 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_blob_data(None, None)
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
-        self._lbl_images_header.setText(f"② 이미지 ({self._img_list.count()})")
+        self._lbl_images_header.setText(t("zone.images_header_count").format(n=self._img_list.count()))
         self._refresh_step_indicator()
 
     def _on_list_image_selected(self, path: Path) -> None:
@@ -846,14 +833,13 @@ class ZoneAnalysisTab(QWidget):
             if not self._save_failed_once:   # 세션당 1회만 표면화(판단 6)
                 self._save_failed_once = True
                 QMessageBox.warning(
-                    self, "저장 실패",
-                    f"{self._image_path.parent} 폴더에 편집 내용을 저장하지 못했습니다"
-                    "(읽기 전용 등). 이후 실패는 조용히 로그에만 남습니다."
+                    self, t("zone.save_failed_title"),
+                    t("zone.save_failed_msg").format(folder=self._image_path.parent)
                 )
 
     def _on_select_checkpoint(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "체크포인트 선택", "", "Checkpoint (*.pt)"
+            self, t("zone.select_checkpoint_title"), "", "Checkpoint (*.pt)"
         )
         if not path:
             return
@@ -882,20 +868,20 @@ class ZoneAnalysisTab(QWidget):
             model = load_model_from_ckpt(self._ckpt_path)
             if model is not None:
                 self._model = model
-                self._lbl_model_info.setText(f"{label}  (자동 준비됨)")
+                self._lbl_model_info.setText(t("zone.ckpt_auto_ready").format(label=label))
                 self._lbl_model_info.setStyleSheet(
                     "color:#34d399; font-size:11px; padding:2px 4px;"
                 )
             else:
-                self._lbl_model_info.setText(f"{label} 프리셋 로드 실패 — 아래에 코드를 붙여넣으세요")
+                self._lbl_model_info.setText(t("zone.preset_load_failed").format(label=label))
                 self._lbl_model_info.setStyleSheet(
                     "color:#f87171; font-size:11px; padding:2px 4px;"
                 )
                 self._code_box.show()
         else:
-            reason = "사용자 정의 모델" if meta.model_source == "loaded" else "모델 정보 없는 체크포인트"
+            reason = t("zone.reason_custom_model") if meta.model_source == "loaded" else t("zone.reason_no_model_info")
             self._lbl_model_info.setText(
-                f"{reason} — 이 체크포인트를 학습한 모델 코드를 아래에 붙여넣고 Validate → Load 하세요"
+                t("zone.paste_code_hint").format(reason=reason)
             )
             self._lbl_model_info.setStyleSheet(
                 "color:#fbbf24; font-size:11px; padding:2px 4px;"
@@ -911,7 +897,7 @@ class ZoneAnalysisTab(QWidget):
         code = self._code_editor.toPlainText().strip()
         self._code_log.clear()
         if not code:
-            self._log_code("[WARN] 코드가 비어 있습니다.", "#fbbf24")
+            self._log_code(t("zone.code_empty"), "#fbbf24")
             return
         result = validate(code)
         for err in result.errors:
@@ -919,24 +905,24 @@ class ZoneAnalysisTab(QWidget):
         for warn in result.warnings:
             self._log_code(f"[WARN] {warn}", "#fbbf24")
         if result.ok:
-            self._log_code(f"[OK] 검증 통과 — 클래스: {result.model_class_name}", "#10b981")
+            self._log_code(t("zone.validate_ok").format(name=result.model_class_name), "#10b981")
             self._btn_load_code.setEnabled(True)
         else:
-            self._log_code(f"[ERR] 검증 실패 — {len(result.errors)}개 오류", "#f87171")
+            self._log_code(t("zone.validate_failed").format(n=len(result.errors)), "#f87171")
             self._btn_load_code.setEnabled(False)
 
     def _on_load_code(self) -> None:
         code = self._code_editor.toPlainText().strip()
         result = load_from_code(code)   # save_user_code() 호출하지 않음 — 세션 메모리에만 유지
         if not result.ok:
-            self._log_code(f"[ERR] 로드 실패: {result.error}", "#f87171")
+            self._log_code(t("zone.load_failed").format(error=result.error), "#f87171")
             return
         self._model = result.model
         self._log_code(
-            f"[OK] 로드 완료 — 클래스: {result.class_name}  파라미터: {result.num_params:,}",
+            t("zone.load_ok").format(name=result.class_name, params=f"{result.num_params:,}"),
             "#10b981",
         )
-        self._lbl_model_info.setText(f"{result.class_name}  (커스텀 모델 로드됨)")
+        self._lbl_model_info.setText(t("zone.custom_model_loaded").format(name=result.class_name))
         self._lbl_model_info.setStyleSheet(
             "color:#34d399; font-size:11px; padding:2px 4px;"
         )
@@ -948,26 +934,24 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_run(self) -> None:
         if self._image_path is None:
-            QMessageBox.warning(self, "이미지 없음", "이미지를 먼저 선택하세요.")
+            QMessageBox.warning(self, t("infer.no_image_title"), t("zone.no_image_msg"))
             return
         if self._ckpt_path is None:
-            QMessageBox.warning(self, "체크포인트 없음", "체크포인트를 먼저 선택하세요.")
+            QMessageBox.warning(self, t("infer.no_ckpt_title"), t("zone.no_ckpt_msg"))
             return
         if self._model is None:
             QMessageBox.warning(
-                self, "모델 없음",
-                "모델이 준비되지 않았습니다. 프리셋이 아닌 체크포인트라면 코드를 "
-                "붙여넣고 Validate → Load 하세요.",
+                self, t("infer.no_model_title"), t("zone.no_model_msg"),
             )
             return
 
-        if not prompt_gpu_availability(self, "존 분석"):
+        if not prompt_gpu_availability(self, t("zone.feature_name")):
             return
 
         if not self._canvas.get_circles():
             reply = QMessageBox.question(
-                self, "영역 없음",
-                "영역(원)이 설정되지 않았습니다. 그래도 추론을 진행하시겠습니까?",
+                self, t("zone.no_region_title"),
+                t("zone.no_region_msg"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -979,7 +963,7 @@ class ZoneAnalysisTab(QWidget):
         self._target_cache.clear()   # R-PERF-1: 새 추론 세션 — 이전 캐시는 전부 무의미
         self._btn_view_all.setEnabled(bool(self._results))
         self._btn_run.setEnabled(False)
-        self._btn_run.setText("추론 중…")
+        self._btn_run.setText(t("zone.running"))
         self._infer_progress.setRange(0, len(paths))
         self._infer_progress.setValue(0)
         self._infer_progress.setFormat("0/%d (0%%)" % len(paths))
@@ -1008,7 +992,7 @@ class ZoneAnalysisTab(QWidget):
             avg_ms = self._infer_elapsed.elapsed() / done
             remain_s = max(0, avg_ms * (total - done) / 1000.0)
             m, s = divmod(int(remain_s), 60)
-            eta_txt = f"예상 남은 시간: 약 {m}분 {s}초" if m else f"예상 남은 시간: 약 {s}초"
+            eta_txt = t("zone.eta_minutes").format(m=m, s=s) if m else t("zone.eta_seconds").format(s=s)
             self._infer_progress.setToolTip(eta_txt)   # ETA는 호버로 확인(디자인 확인 2026-10-03#3)
         if path == self._image_path:
             self._last_result = result
@@ -1016,9 +1000,9 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_inference_finished(self) -> None:
         self._btn_run.setEnabled(True)
-        self._btn_run.setText("▶  전체 추론 실행")
+        self._btn_run.setText(t("zone.run_all"))
         self._infer_progress.setFormat(
-            f"완료 {len(self._results)} / {self._infer_progress.maximum()}"
+            t("zone.infer_done_format").format(done=len(self._results), total=self._infer_progress.maximum())
         )
         self._worker = None
         self._refresh_step_indicator()
@@ -1038,7 +1022,7 @@ class ZoneAnalysisTab(QWidget):
         self._target_combo.hide()
 
         if not ids:
-            self._lbl_target_info.setText("배경 외 클래스가 검출되지 않았습니다.")
+            self._lbl_target_info.setText(t("zone.no_class_detected"))
             self._show_overlay_state()
             self._target_class_id = None
             self._canvas.set_blob_data(None, None)
@@ -1061,7 +1045,7 @@ class ZoneAnalysisTab(QWidget):
             self._target_name_edit.setText("class_1")
             self._target_name_edit.blockSignals(False)
             self._target_name_edit.show()
-            self._lbl_target_info.setText(f"클래스 1개 검출됨 (id={ids[0]}) — 이름 수정 가능")
+            self._lbl_target_info.setText(t("zone.class_detected_single").format(id=ids[0]))
         else:
             self._target_combo.blockSignals(True)
             self._target_combo.clear()
@@ -1069,7 +1053,7 @@ class ZoneAnalysisTab(QWidget):
                 self._target_combo.addItem(f"class_{i + 1} (id={cid})", cid)
             self._target_combo.blockSignals(False)
             self._target_combo.show()
-            self._lbl_target_info.setText(f"클래스 {len(ids)}개 검출됨 — 타겟을 선택하세요")
+            self._lbl_target_info.setText(t("zone.class_detected_multi").format(n=len(ids)))
 
         self._on_target_changed()
 
@@ -1137,7 +1121,7 @@ class ZoneAnalysisTab(QWidget):
             self._recompute_zones()
         except Exception as exc:
             log.exception("존 분석 타겟 클래스 재필터링 실패")
-            QMessageBox.critical(self, "재필터링 오류", str(exc))
+            QMessageBox.critical(self, t("zone.refilter_error_title"), str(exc))
 
     def _toggle_overlay(self) -> None:
         self._overlay_visible = not self._overlay_visible
@@ -1310,7 +1294,7 @@ class ZoneAnalysisTab(QWidget):
             spacer = QWidget()
             bar_layout.addWidget(spacer, stretch=max(1, round(100 - min(pct, 100))))
         bar_row.addWidget(bar_bg, stretch=1)
-        lbl_max = QLabel(f"최대 {max_px:,}px")
+        lbl_max = QLabel(t("zone.max_px_label").format(n=f"{max_px:,}"))
         lbl_max.setStyleSheet("color:#9ca3af;font-size:9.5px;")
         bar_row.addWidget(lbl_max, alignment=Qt.AlignmentFlag.AlignVCenter)
         v.addLayout(bar_row)
@@ -1382,9 +1366,9 @@ class ZoneAnalysisTab(QWidget):
             self._lbl_selected_blob.setText("")
             return
         self._canvas.highlight_blob_bbox(blob.bbox_x, blob.bbox_y, blob.bbox_w, blob.bbox_h)
-        score_txt = f"{blob.ai_score * 100:.1f}%" if blob.ai_score is not None else "N/A(수동 편집)"
+        score_txt = f"{blob.ai_score * 100:.1f}%" if blob.ai_score is not None else t("zone.manual_edit_score")
         self._lbl_selected_blob.setText(
-            f"선택된 블랍 — 존: {blob.zone_name} · 면적 {blob.pixel_count}px · AI 점수 {score_txt}"
+            t("zone.blob_info").format(zone=blob.zone_name, px=blob.pixel_count, score=score_txt)
         )
 
     # ── 슬롯 — 단일 이미지 Excel 내보내기 (R3-1) ─────────────────────────────
@@ -1398,7 +1382,7 @@ class ZoneAnalysisTab(QWidget):
         rows = self._compute_zone_percentages(zones)
         if not rows or self._image_path is None:
             QMessageBox.information(
-                self, "내보낼 결과 없음", "먼저 원을 정의하고 추론을 실행하세요."
+                self, t("zone.no_export_title"), t("zone.no_export_msg")
             )
             return
         excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
@@ -1413,7 +1397,7 @@ class ZoneAnalysisTab(QWidget):
         집계할 수 없다(재추론 자동 트리거 없음, YAGNI) — 그런 이미지는 제외하고
         안내 팝업 1회만 띄운다."""
         if self._target_class_id is None:
-            QMessageBox.information(self, "준비 안 됨", "먼저 추론을 실행하고 타겟 클래스를 확정하세요.")
+            QMessageBox.information(self, t("zone.not_ready_title"), t("zone.not_ready_msg1"))
             return
         self._flush_state()   # 현재 이미지의 편집 상태를 사이드카에 먼저 반영(비교 대상 최신화)
         all_rows: list[tuple[str, str, float]] = []
@@ -1439,13 +1423,12 @@ class ZoneAnalysisTab(QWidget):
             all_rows.extend(rows)
             all_blob_rows.extend(blob_rows)
         if not all_rows:
-            QMessageBox.information(self, "결과 없음", "이번 세션에서 추론을 실행한 이미지가 없습니다.")
+            QMessageBox.information(self, t("zone.no_results_title"), t("zone.no_results_session_msg"))
             return
         if skipped:
             QMessageBox.information(
-                self, "일부 제외됨",
-                f"이번 세션에서 추론하지 않은 {len(skipped)}장은 제외했습니다.\n"
-                "(과거 세션 결과는 재추론 전까지 복원할 수 없습니다 — 먼저 추론을 실행하세요.)",
+                self, t("zone.partial_excluded_title"),
+                t("zone.partial_excluded_msg").format(n=len(skipped)),
             )
         self._result_viewed = True
         self._refresh_step_indicator()
@@ -1455,7 +1438,7 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_auto_detect(self) -> None:
         if self._image_path is None:
-            QMessageBox.warning(self, "이미지 없음", "이미지를 먼저 선택하세요.")
+            QMessageBox.warning(self, t("infer.no_image_title"), t("zone.no_image_msg"))
             return
         sensitivity = self._sensitivity_slider.value() / 100.0
         try:
@@ -1465,11 +1448,11 @@ class ZoneAnalysisTab(QWidget):
             circles = detect_circles(bgr, sensitivity=sensitivity)
         except Exception as exc:
             log.exception(f"존 분석 원 자동 검출 실패 — image={self._image_path}")
-            QMessageBox.critical(self, "자동 검출 오류", str(exc))
+            QMessageBox.critical(self, t("zone.detect_error_title"), str(exc))
             return
         self._canvas.set_circles(circles)
         if not circles:
-            QMessageBox.information(self, "검출 결과 없음", "원을 찾지 못했습니다. 민감도를 조절하거나 수동으로 추가하세요.")
+            QMessageBox.information(self, t("zone.detect_no_result_title"), t("zone.detect_no_result_msg"))
 
     # ── 슬롯 — 레시피 팝업(7-3) ─────────────────────────────────────────────
 
@@ -1481,12 +1464,12 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_open_recipe_dialog(self) -> None:
         if self._image_path is None or self._original_pixmap is None:
-            QMessageBox.warning(self, "이미지 없음", "이미지를 먼저 선택하세요.")
+            QMessageBox.warning(self, t("infer.no_image_title"), t("zone.no_image_msg"))
             return
         existing = self._canvas.get_circles()
         if existing:
             reply = QMessageBox.question(
-                self, "기존 원 발견", "기존 원을 레시피로 교체하시겠습니까?",
+                self, t("zone.existing_circles_title"), t("zone.existing_circles_msg"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -1512,8 +1495,8 @@ class ZoneAnalysisTab(QWidget):
         self._circle_list.clear()
         selected_row = -1
         for i, (circle_id, cx, cy, r, name) in enumerate(self._canvas.circles_with_ids(), start=1):
-            label = f"{name}  r={r:.1f}px  중심=({cx:.0f}, {cy:.0f})" if name else \
-                f"원 {i}  r={r:.1f}px  중심=({cx:.0f}, {cy:.0f})"
+            label = t("zone.circle_label_named").format(name=name, r=r, cx=cx, cy=cy) if name else \
+                t("zone.circle_label_unnamed").format(i=i, r=r, cx=cx, cy=cy)
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, circle_id)
             self._circle_list.addItem(item)
@@ -1550,7 +1533,7 @@ class ZoneAnalysisTab(QWidget):
             return
         circle_id = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
-        action = menu.addAction("삭제")
+        action = menu.addAction(t("ui.delete"))
         if menu.exec(self._circle_list.viewport().mapToGlobal(pos)) == action:
             self._canvas.select_circle(circle_id)   # remove_selected()는 _selected_id 기준
             self._canvas.remove_selected()
@@ -1565,14 +1548,14 @@ class ZoneAnalysisTab(QWidget):
 
     def _update_batch_button_label(self) -> None:
         n = len(self._img_list.selected_paths())
-        self._btn_batch.setText(f"▶ 선택 이미지 일괄 처리 ({n}장)")
+        self._btn_batch.setText(t("zone.btn_batch").format(n=n))
 
     def _confirm_existing_zones(self, count: int) -> str:
-        box = QMessageBox(QMessageBox.Icon.Question, "기존 존 발견",
-                          f"선택 이미지 중 {count}장에 기존 존이 있습니다.", parent=self)
-        replace = box.addButton("기존 존을 대체하고 전체 적용", QMessageBox.ButtonRole.AcceptRole)
-        missing_only = box.addButton("존 없는 이미지만 적용", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box = QMessageBox(QMessageBox.Icon.Question, t("zone.existing_zones_title"),
+                          t("zone.existing_zones_msg").format(count=count), parent=self)
+        replace = box.addButton(t("zone.btn_replace_all"), QMessageBox.ButtonRole.AcceptRole)
+        missing_only = box.addButton(t("zone.btn_apply_missing_only"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(t("common.cancel"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is replace:
             return "replace"
@@ -1585,13 +1568,13 @@ class ZoneAnalysisTab(QWidget):
                 or self._target_classes is None or self._model is None
                 or self._ckpt_path is None):
             QMessageBox.warning(
-                self, "준비 안 됨",
-                "먼저 기준 이미지에서 추론을 실행하고 타겟 클래스를 확정하세요.",
+                self, t("zone.not_ready_title"),
+                t("zone.not_ready_msg2"),
             )
             return
         circles_ref = self._canvas.get_circles()   # (cx, cy, r) 반지름 오름차순, 원본 좌표
         if not circles_ref:
-            QMessageBox.warning(self, "원 없음", "기준 이미지에 원을 1개 이상 정의하세요.")
+            QMessageBox.warning(self, t("zone.no_circle_title"), t("zone.no_circle_msg"))
             return
 
         ref_w, ref_h = self._image_size
@@ -1615,7 +1598,7 @@ class ZoneAnalysisTab(QWidget):
                 targets = [p for p in targets if p not in existing_set]
             elif choice != "replace":
                 return
-        if not targets or not prompt_gpu_availability(self, "존 분석"):
+        if not targets or not prompt_gpu_availability(self, t("zone.feature_name")):
             return
 
         cached = {p: self._results[p] for p in targets if p in self._results}
@@ -1630,9 +1613,9 @@ class ZoneAnalysisTab(QWidget):
         self._batch_targets = targets
         self._batch_completed = set()
         self._batch_progress = QProgressDialog(
-            "존 분석 일괄 처리 중…", "취소", 0, len(targets), self
+            t("zone.batch_progress_label"), t("common.cancel"), 0, len(targets), self
         )
-        self._batch_progress.setWindowTitle("일괄 처리 진행 중")
+        self._batch_progress.setWindowTitle(t("zone.batch_progress_title"))
         self._batch_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._batch_progress.setMinimumDuration(0)
         self._batch_elapsed = QElapsedTimer()
@@ -1679,13 +1662,14 @@ class ZoneAnalysisTab(QWidget):
                 avg_ms = self._batch_elapsed.elapsed() / done
                 remain_s = max(0, avg_ms * (total - done) / 1000.0)
                 m, s = divmod(int(remain_s), 60)
-                eta_txt = f"\n예상 남은 시간: 약 {m}분 {s}초" if m else f"\n예상 남은 시간: 약 {s}초"
+                eta_txt = ("\n" + t("zone.eta_minutes").format(m=m, s=s)) if m else \
+                    ("\n" + t("zone.eta_seconds").format(s=s))
             dlg.setLabelText(f"{done} / {total}  {path.name}{eta_txt}")
         if status == "processing":
             self._img_list.set_item_status(path, "processing")
         elif status == "error":
             log.error(f"존 분석 일괄 처리 실패 — {path}: {detail}")
-            self._img_list.set_item_status(path, "done", badge="오류")
+            self._img_list.set_item_status(path, "done", badge=t("zone.badge_error"))
             self._batch_completed.add(path)   # BUG-038: 확정 상태 — 취소 리셋 대상 아님
         else:
             self._img_list.set_item_status(path, "done", badge=detail)
@@ -1744,7 +1728,7 @@ class ZoneAnalysisTab(QWidget):
         self._update_batch_button_state()
         self._refresh_step_indicator()
         if not rows:
-            QMessageBox.information(self, "결과 없음", "처리된 결과가 없습니다.")
+            QMessageBox.information(self, t("zone.no_results_title"), t("zone.no_results_msg"))
             return
         self._result_viewed = True
         self._refresh_step_indicator()

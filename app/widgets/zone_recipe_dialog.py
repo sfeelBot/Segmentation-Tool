@@ -21,6 +21,7 @@ from app.core import zone_recipe_store as recipe_store
 from app.widgets.zone_canvas import ZoneCanvas
 from app.widgets.icons import icon as svg_icon
 from app.core.logger import get_logger
+from app.core.i18n import t
 
 log = get_logger(__name__)
 
@@ -46,7 +47,7 @@ class ZoneRecipeDialog(QDialog):
 
     def __init__(self, reference_pixmap: QPixmap, ref_size: tuple[int, int], parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("영역(Zone) 설정 — 레시피")
+        self.setWindowTitle(t("zone_recipe.window_title"))
         self._ref_pixmap = reference_pixmap
         self._ref_size = ref_size   # (w, h) 원본 이미지 픽셀 크기
         self._recipe_paths: list = []
@@ -60,7 +61,7 @@ class ZoneRecipeDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        title = QLabel("영역(Zone) 설정 — 레시피 불러오기/새로 만들기")
+        title = QLabel(t("zone_recipe.title_label"))
         title.setStyleSheet("font-size:14px; font-weight:bold;")
         root.addWidget(title)
 
@@ -70,12 +71,12 @@ class ZoneRecipeDialog(QDialog):
         self._canvas.set_pixmap(self._ref_pixmap)
         root.addWidget(self._canvas, stretch=1)
 
-        self._lbl_stats = QLabel("원 개수: 0")
+        self._lbl_stats = QLabel(t("zone_recipe.circle_count").format(n=0))
         self._lbl_stats.setStyleSheet("color:#e5e7eb;")
         root.addWidget(self._lbl_stats)
 
         detect_row = QHBoxLayout()
-        detect_row.addWidget(QLabel("민감도:"))
+        detect_row.addWidget(QLabel(t("zone_recipe.sensitivity_label")))
         self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
         self._sensitivity_slider.setRange(0, 100)
         self._sensitivity_slider.setValue(50)
@@ -83,43 +84,43 @@ class ZoneRecipeDialog(QDialog):
         self._lbl_sensitivity = QLabel("50%")
         self._lbl_sensitivity.setFixedWidth(36)
         detect_row.addWidget(self._lbl_sensitivity)
-        self._btn_detect = QPushButton("자동 검출")
+        self._btn_detect = QPushButton(t("zone_recipe.btn_detect"))
         detect_row.addWidget(self._btn_detect)
-        self._btn_align = QPushButton("정렬(중심 맞추기)")
+        self._btn_align = QPushButton(t("zone_recipe.btn_align"))
         detect_row.addWidget(self._btn_align)
         detect_row.addStretch()
         self._btn_undo = QPushButton(svg_icon("undo"), "")
-        self._btn_undo.setToolTip("실행 취소 (Ctrl+Z)")
+        self._btn_undo.setToolTip(t("zone_recipe.undo_tip"))
         self._btn_undo.setFixedSize(30, 26)
         detect_row.addWidget(self._btn_undo)
         root.addLayout(detect_row)
 
-        recipe_box = QGroupBox("레시피")
+        recipe_box = QGroupBox(t("zone_recipe.group_title"))
         recipe_box_layout = QVBoxLayout(recipe_box)
         row1 = QHBoxLayout()
         self._recipe_combo = QComboBox()
         self._recipe_combo.setMinimumWidth(160)
         row1.addWidget(self._recipe_combo, stretch=1)
-        self._btn_load_recipe = QPushButton("불러오기")
+        self._btn_load_recipe = QPushButton(t("zone_recipe.btn_load"))
         row1.addWidget(self._btn_load_recipe)
         recipe_box_layout.addLayout(row1)
         row2 = QHBoxLayout()
         self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("레시피 이름")
+        self._name_edit.setPlaceholderText(t("zone_recipe.name_placeholder"))
         row2.addWidget(self._name_edit, stretch=1)
-        self._btn_save_recipe = QPushButton("저장")
+        self._btn_save_recipe = QPushButton(t("common.save"))
         row2.addWidget(self._btn_save_recipe)
         recipe_box_layout.addLayout(row2)
-        caption = QLabel("팝업을 열면 가장 최근 사용한 레시피가 자동으로 표시됩니다.")
+        caption = QLabel(t("zone_recipe.caption_auto_recent"))
         caption.setStyleSheet("color:#6b7280;font-size:10.5px;")
         recipe_box_layout.addWidget(caption)
         root.addWidget(recipe_box)
 
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
-        self._btn_cancel = QPushButton("취소")
+        self._btn_cancel = QPushButton(t("common.cancel"))
         bottom_row.addWidget(self._btn_cancel)
-        self._btn_apply = QPushButton("메인 탭에 적용")
+        self._btn_apply = QPushButton(t("zone_recipe.btn_apply"))
         self._btn_apply.setStyleSheet(
             "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
             "padding:7px 18px;color:#93c5fd;font-weight:bold;"
@@ -128,10 +129,7 @@ class ZoneRecipeDialog(QDialog):
         bottom_row.addWidget(self._btn_apply)
         root.addLayout(bottom_row)
 
-        footer_caption = QLabel(
-            "\"메인 탭에 적용\"은 원이 1개 이상 있을 때만 활성화됩니다 — 영역 없이 "
-            "진행하는 경로를 이 팝업에서 차단합니다. \"취소\"는 항상 가능합니다."
-        )
+        footer_caption = QLabel(t("zone_recipe.footer_caption"))
         footer_caption.setWordWrap(True)
         footer_caption.setStyleSheet("color:#6b7280;font-size:10px;")
         root.addWidget(footer_caption)
@@ -180,7 +178,7 @@ class ZoneRecipeDialog(QDialog):
         path = self._recipe_paths[idx]
         recipe = recipe_store.load_recipe(path)
         if recipe is None:
-            QMessageBox.warning(self, "불러오기 실패", "레시피 파일을 읽을 수 없습니다.")
+            QMessageBox.warning(self, t("zone_recipe.load_failed_title"), t("zone_recipe.load_failed_msg"))
             return
         scaled = scale_circles(recipe["circles"], recipe["ref_size"], self._ref_size)
         self._canvas.set_circles(scaled)
@@ -190,19 +188,19 @@ class ZoneRecipeDialog(QDialog):
     def _on_save_recipe(self) -> None:
         name = self._name_edit.text().strip()
         if not name:
-            QMessageBox.warning(self, "이름 없음", "레시피 이름을 입력하세요.")
+            QMessageBox.warning(self, t("zone_recipe.no_name_title"), t("zone_recipe.no_name_msg"))
             return
         circles = self._canvas.get_circles()
         if not circles:
-            QMessageBox.warning(self, "원 없음", "저장할 원이 없습니다.")
+            QMessageBox.warning(self, t("zone_recipe.no_circle_title"), t("zone_recipe.no_circle_msg"))
             return
         try:
             recipe_store.save_recipe(name, circles, self._ref_size)
         except OSError as exc:
-            QMessageBox.critical(self, "저장 실패", str(exc))
+            QMessageBox.critical(self, t("zone_recipe.save_failed_title"), str(exc))
             return
         self._refresh_recipe_list()
-        QMessageBox.information(self, "저장 완료", f"'{name}' 레시피를 저장했습니다.")
+        QMessageBox.information(self, t("zone_recipe.save_done_title"), t("zone_recipe.save_done_msg").format(name=name))
 
     # ── 자동 검출/정렬/적용 ──────────────────────────────────────────────────
 
@@ -214,17 +212,17 @@ class ZoneRecipeDialog(QDialog):
             circles = detect_circles(bgr, sensitivity=sensitivity)
         except Exception as exc:
             log.exception("Zone 레시피 다이얼로그 — 자동 검출 실패")
-            QMessageBox.critical(self, "자동 검출 오류", str(exc))
+            QMessageBox.critical(self, t("zone_recipe.detect_error_title"), str(exc))
             return
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         pixmap_size = (self._ref_pixmap.width(), self._ref_pixmap.height())
         scaled = scale_circles(circles, pixmap_size, self._ref_size)
         self._canvas.set_circles(scaled)
-        self._lbl_stats.setText(f"원 개수: {len(scaled)}    검출 소요시간: {elapsed_ms:.0f}ms")
+        self._lbl_stats.setText(t("zone_recipe.circle_count_with_time").format(n=len(scaled), ms=f"{elapsed_ms:.0f}"))
 
     def _on_circles_changed(self) -> None:
         count = len(self._canvas.get_circles())
-        self._lbl_stats.setText(f"원 개수: {count}")
+        self._lbl_stats.setText(t("zone_recipe.circle_count").format(n=count))
         self._btn_apply.setEnabled(count >= 1)
 
     def _on_apply(self) -> None:

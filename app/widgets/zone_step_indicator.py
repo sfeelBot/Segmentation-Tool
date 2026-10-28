@@ -3,10 +3,18 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-_STEP_LABELS = [
-    "① 체크포인트", "② 이미지", "③ 영역 설정", "④ 추론 실행",
-    "⑤ 진행상황", "⑥ 결과 보정", "⑦ 결과 분석",
-]
+from app.core.i18n import t
+
+
+def _step_labels() -> list[str]:
+    """`t()`가 언어 전환 후 최신 값을 돌려주도록 모듈 import 시점이 아니라
+    위젯 생성 시점에 평가한다(스펙 "공통 주의사항" 1번)."""
+    return [
+        t("zone_step.step1"), t("zone_step.step2"), t("zone_step.step3"), t("zone_step.step4"),
+        t("zone_step.step5"), t("zone_step.step6"), t("zone_step.step7"),
+    ]
+
+
 _DONE_BG, _DONE_FG = "#10b981", "#34d399"
 _CUR_BG, _CUR_BORDER, _CUR_FG = "#1e3a5f", "#60a5fa", "#60a5fa"
 _PENDING_FG = "#6b7280"
@@ -24,7 +32,8 @@ class ZoneStepIndicator(QWidget):
         self._circles: list[QLabel] = []
         self._captions: list[QLabel] = []
         self._lines: list[QFrame] = []
-        for i, text in enumerate(_STEP_LABELS):
+        step_labels = _step_labels()
+        for i, text in enumerate(step_labels):
             col = QVBoxLayout()
             col.setSpacing(3)
             circle = QLabel()
@@ -40,7 +49,7 @@ class ZoneStepIndicator(QWidget):
             layout.addWidget(wrap)
             self._circles.append(circle)
             self._captions.append(caption)
-            if i < len(_STEP_LABELS) - 1:
+            if i < len(step_labels) - 1:
                 line = QFrame()
                 line.setFixedHeight(2)
                 layout.addWidget(line, stretch=1)
