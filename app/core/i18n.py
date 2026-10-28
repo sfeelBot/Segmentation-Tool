@@ -883,7 +883,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "zone.target_name_placeholder": "Class name (e.g. rust)",
         "zone.infer_mode_fixed":     "Inference mode: <b style='color:#cbd5e1'>sliding window</b> (fixed)",
         "zone.run":                  "▶  Run Inference",
-        "zone.running":              "Running inference…",
+        "zone.running":              "Inferring…",
         "zone.run_all":              "▶  Run All Inference",
         "zone.ai_confidence_label":  "AI confidence:",
         "zone.confidence_tip":       "If a blob's (connected region) average confidence is below this value, it is removed as background",

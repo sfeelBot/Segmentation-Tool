@@ -77,6 +77,26 @@ Zone/R 키도 아래 표의 영문 단어로 통일했다.
   Zone/R 키는 "Select"로 통일해 새 불일치를 추가하지 않도록만 했다. 리더가 별도
   라운드로 판단할 사항으로만 기록.
 
+### 리더 최종 감사(2026-10-28) — ko/en 전체 503키 1:1 정합 + 동일 한국어 원문 영문 교차검증
+
+- 전체 `TRANSLATIONS["ko"]`/`["en"]` 키셋 완전 일치(누락 0) 확인.
+- 동일 한국어 원문 → 영문이 갈리는 경우를 스크립트로 전수 조사, 6건 발견:
+  - **수정함(이번 라운드 책임 범위)**: `zone.running`("추론 중…") 영문이 "Running
+    inference…"로 돼 있어 main의 기존 `infer.running`("Inferring…")과 달랐음 →
+    "Inferring…"으로 통일(리더가 직접 1줄 수정).
+  - **오탐(실제 불일치 아님, 수정 안 함)**: `zone.no_circle_title`/
+    `zone_recipe.no_circle_title`("No Circles") vs `zone.batch_no_circles`("No
+    circles") — 전자는 `QMessageBox` 다이얼로그 제목(Title Case), 후자는 배치 처리
+    진행 배지 인라인 텍스트(sentence case)로 쓰임새가 달라 대소문자 구분이 맞음.
+    `zone_batch.col_image`/`r.col_image`/`r_batch.col_image`("Image", 표 헤더) vs
+    `ui.image_browser`("Images", 패널 제목)도 마찬가지로 쓰임새가 다른 정상 사례.
+  - **기존 main 불일치(보류, 범위 밖)**: `train.remove`("삭제"→"Remove") vs
+    `ui.delete`("삭제"→"Delete"); `train.clear_queue`("전체 초기화"→"Clear All")
+    vs `train.confirm_clear_title`(같은 한국어→"Clear Queue"); `infer.no_image_title`
+    ("이미지 없음"→"No Image") vs `browser.no_images_title`(같은 한국어→"No
+    Images"). 위 "선택" 사례와 동일하게 main 자체의 기존 번역이라 이번 라운드에서
+    고치지 않음 — 리더가 별도 라운드 필요 여부 판단.
+
 ---
 
 ## Zone팀 작업 지시
