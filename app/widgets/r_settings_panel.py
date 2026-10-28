@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox, QLabel,
 )
 
+from app.core.i18n import t
+
 _DEBOUNCE_MS = 150
 
 
@@ -24,7 +26,7 @@ class RSettingsPanel(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("검사 설정")
+        self.setWindowTitle(t("r_settings.window_title"))
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(_DEBOUNCE_MS)
@@ -35,12 +37,12 @@ class RSettingsPanel(QDialog):
         layout = QVBoxLayout(self)
 
         roi_row = QHBoxLayout()
-        self._btn_roi_global = QPushButton("ROI 전역 지정")
-        self._btn_roi_global.setToolTip("모든 셀에 공통으로 적용할 검사 영역을 지정합니다")
+        self._btn_roi_global = QPushButton(t("r_settings.btn_roi_global"))
+        self._btn_roi_global.setToolTip(t("r_settings.roi_global_tip"))
         self._btn_roi_global.clicked.connect(self.roi_global_requested.emit)
         roi_row.addWidget(self._btn_roi_global)
-        self._btn_roi_override = QPushButton("이 이미지만 보정")
-        self._btn_roi_override.setToolTip("현재 이미지에만 적용되는 ROI로 전역 ROI를 덮어씁니다")
+        self._btn_roi_override = QPushButton(t("r_settings.btn_roi_override"))
+        self._btn_roi_override.setToolTip(t("r_settings.roi_override_tip"))
         self._btn_roi_override.clicked.connect(self.roi_override_requested.emit)
         roi_row.addWidget(self._btn_roi_override)
         layout.addLayout(roi_row)
@@ -62,23 +64,23 @@ class RSettingsPanel(QDialog):
         self._denominator_spin.setRange(0.0, 1e9)
         self._denominator_spin.setDecimals(2)
         self._denominator_spin.valueChanged.connect(lambda _v: self._debounce.start())
-        form.addRow("분모:", self._denominator_spin)
+        form.addRow(t("r_settings.row_denominator"), self._denominator_spin)
 
         self._spec_lower_spin = QDoubleSpinBox()
         self._spec_lower_spin.setRange(0.0, 1e6)
         self._spec_lower_spin.setDecimals(4)
         self._spec_lower_spin.valueChanged.connect(lambda _v: self._debounce.start())
-        form.addRow("스펙 하한:", self._spec_lower_spin)
+        form.addRow(t("r_settings.row_spec_lower"), self._spec_lower_spin)
 
         self._spec_upper_spin = QDoubleSpinBox()
         self._spec_upper_spin.setRange(0.0, 1e6)
         self._spec_upper_spin.setDecimals(4)
         self._spec_upper_spin.valueChanged.connect(lambda _v: self._debounce.start())
-        form.addRow("스펙 상한:", self._spec_upper_spin)
+        form.addRow(t("r_settings.row_spec_upper"), self._spec_upper_spin)
 
         layout.addLayout(form)
 
-        btn_close = QPushButton("닫기")
+        btn_close = QPushButton(t("common.close"))
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
 

@@ -17,10 +17,10 @@ from PyQt6.QtWidgets import (
     QLabel, QFileDialog, QInputDialog,
 )
 
+from app.core.i18n import t
 from app.widgets.icons import icon as svg_icon
 from app.widgets.inference_image_list import InferenceImageList, SUPPORTED_EXTS
 
-_IMAGE_FILTER = "이미지 (*.jpg *.jpeg *.png *.bmp *.tiff *.tif)"
 _STATUS_COLORS: dict[bool | None, str] = {True: "#10b981", False: "#ef4444", None: "#6b7280"}
 _CELL_ID_ROLE = Qt.ItemDataRole.UserRole
 
@@ -44,13 +44,13 @@ class RCellPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addWidget(QLabel("셀 목록"))
+        layout.addWidget(QLabel(t("r_cell.list_title")))
         btn_row = QHBoxLayout()
-        self._btn_import_folder = QPushButton("폴더로 셀 가져오기")
-        self._btn_import_folder.setToolTip("바로 아래 하위폴더명이 셀 ID가 됩니다")
+        self._btn_import_folder = QPushButton(t("r_cell.btn_import_folder"))
+        self._btn_import_folder.setToolTip(t("r_cell.import_folder_tip"))
         self._btn_import_folder.clicked.connect(self._on_import_folder)
         btn_row.addWidget(self._btn_import_folder)
-        self._btn_add_files = QPushButton("파일로 셀에 추가")
+        self._btn_add_files = QPushButton(t("r_cell.btn_add_files"))
         self._btn_add_files.clicked.connect(self._on_add_files)
         btn_row.addWidget(self._btn_add_files)
         layout.addLayout(btn_row)
@@ -59,14 +59,14 @@ class RCellPanel(QWidget):
         self._cell_list.currentItemChanged.connect(self._on_cell_selected)
         layout.addWidget(self._cell_list, stretch=1)
 
-        layout.addWidget(QLabel("선택한 셀의 이미지 (Delete로 제거)"))
+        layout.addWidget(QLabel(t("r_cell.image_list_title")))
         self._image_list = InferenceImageList()
         self._image_list.set_multi_select(True)   # Zone 탭과 동일 — Shift/Ctrl 다중선택 + Delete 일괄 제거
         self._image_list.image_selected.connect(lambda p: self.image_selected.emit(str(p)))
         self._image_list.images_removed.connect(self._on_images_removed)
         layout.addWidget(self._image_list, stretch=2)
 
-        self._btn_add_to_cell = QPushButton("이 셀에 이미지 추가")
+        self._btn_add_to_cell = QPushButton(t("r_cell.btn_add_to_cell"))
         self._btn_add_to_cell.clicked.connect(self._on_add_images_to_current_cell)
         layout.addWidget(self._btn_add_to_cell)
 
@@ -100,7 +100,7 @@ class RCellPanel(QWidget):
     # ── 셀 가져오기/추가 ─────────────────────────────────────────────────────
 
     def _on_import_folder(self) -> None:
-        root_str = QFileDialog.getExistingDirectory(self, "셀 폴더 가져오기")
+        root_str = QFileDialog.getExistingDirectory(self, t("r_cell.import_folder_dialog_title"))
         if not root_str:
             return
         root = Path(root_str)
@@ -123,7 +123,9 @@ class RCellPanel(QWidget):
             self.cells_changed.emit()
 
     def _on_add_files(self) -> None:
-        files, _ = QFileDialog.getOpenFileNames(self, "이미지 파일 선택", "", _IMAGE_FILTER)
+        files, _ = QFileDialog.getOpenFileNames(
+            self, t("r_cell.select_image_files_title"), "", t("r_cell.image_filter"),
+        )
         if not files:
             return
         cell_id = self._prompt_cell_id()
@@ -142,7 +144,9 @@ class RCellPanel(QWidget):
     def _on_add_images_to_current_cell(self) -> None:
         if self._current_cell is None:
             return
-        files, _ = QFileDialog.getOpenFileNames(self, "이미지 파일 선택", "", _IMAGE_FILTER)
+        files, _ = QFileDialog.getOpenFileNames(
+            self, t("r_cell.select_image_files_title"), "", t("r_cell.image_filter"),
+        )
         if not files:
             return
         existing = self._cells.setdefault(self._current_cell, [])
@@ -158,7 +162,7 @@ class RCellPanel(QWidget):
     def _prompt_cell_id(self) -> str | None:
         items = sorted(self._cells.keys())
         text, ok = QInputDialog.getItem(
-            self, "셀 ID", "셀 ID(기존 선택 또는 새로 입력):", items, 0, True,
+            self, t("r_cell.cell_id_dialog_title"), t("r_cell.cell_id_dialog_label"), items, 0, True,
         )
         if not ok:
             return None

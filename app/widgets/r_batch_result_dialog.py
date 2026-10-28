@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QFileDialog, QMessageBox, QTabWidget, QWidget, QLabel,
 )
 
+from app.core.i18n import t
 from app.core.logger import get_logger
 from app.core.r_analysis_metrics import export_r_results_to_excel
 
@@ -26,7 +27,7 @@ class RBatchResultDialog(QDialog):
 
     def __init__(self, cells: dict, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("셀 일괄 분석 결과")
+        self.setWindowTitle(t("r_batch.window_title"))
         self.resize(900, 600)
         self._cells = cells
         self._build_ui()
@@ -35,16 +36,16 @@ class RBatchResultDialog(QDialog):
         layout = QVBoxLayout(self)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_cell_tab(), "셀")
-        tabs.addTab(self._build_image_tab(), "이미지별(참고)")
+        tabs.addTab(self._build_cell_tab(), t("r_batch.tab_cell"))
+        tabs.addTab(self._build_image_tab(), t("r_batch.tab_image_ref"))
         layout.addWidget(tabs, stretch=1)
 
         btn_row = QHBoxLayout()
-        btn_export = QPushButton("Excel로 내보내기")
+        btn_export = QPushButton(t("r_batch.btn_export_excel"))
         btn_export.clicked.connect(self._on_export)
         btn_row.addWidget(btn_export)
         btn_row.addStretch()
-        btn_close = QPushButton("닫기")
+        btn_close = QPushButton(t("common.close"))
         btn_close.clicked.connect(self.accept)
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
@@ -54,7 +55,10 @@ class RBatchResultDialog(QDialog):
     def _build_cell_tab(self) -> QWidget:
         cell_ids = sorted(self._cells.keys())
         table = QTableWidget(len(cell_ids), 5)
-        table.setHorizontalHeaderLabels(["셀", "이미지 수", "면적 합계", "ratio", "판정"])
+        table.setHorizontalHeaderLabels([
+            t("r_batch.col_cell"), t("r_batch.col_image_count"), t("r_batch.col_sum_area"),
+            "ratio", t("r_batch.col_verdict"),
+        ])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         for r, cell_id in enumerate(cell_ids):
@@ -89,7 +93,9 @@ class RBatchResultDialog(QDialog):
             for image_name, area in data.get("images", [])
         ]
         table = QTableWidget(len(rows), 3)
-        table.setHorizontalHeaderLabels(["셀", "이미지", "면적(참고)"])
+        table.setHorizontalHeaderLabels([
+            t("r_batch.col_cell"), t("r_batch.col_image"), t("r_batch.col_area_ref"),
+        ])
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         for r, (cell_id, image_name, area) in enumerate(rows):
@@ -100,9 +106,7 @@ class RBatchResultDialog(QDialog):
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
         v.addWidget(table)
-        caption = QLabel(
-            "이미지별 면적은 셀 판정을 구성하는 참고 데이터입니다 — 이미지별 개별 판정은 없습니다."
-        )
+        caption = QLabel(t("r_batch.image_tab_caption"))
         caption.setStyleSheet("color:#6b7280;font-size:10.5px;")
         v.addWidget(caption)
         self._image_table = table
@@ -112,7 +116,7 @@ class RBatchResultDialog(QDialog):
 
     def _on_export(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Excel로 내보내기", "r_results.xlsx", "Excel (*.xlsx)"
+            self, t("r_batch.btn_export_excel"), "r_results.xlsx", "Excel (*.xlsx)"
         )
         if not path:
             return
@@ -120,9 +124,12 @@ class RBatchResultDialog(QDialog):
             export_r_results_to_excel(self._cells, Path(path))
         except Exception as exc:
             log.exception("Excel 내보내기 실패")
-            QMessageBox.critical(self, "내보내기 오류", str(exc))
+            QMessageBox.critical(self, t("r_batch.export_error_title"), str(exc))
             return
-        QMessageBox.information(self, "내보내기 완료", f"{len(self._cells)}개 셀을 내보냈습니다.")
+        QMessageBox.information(
+            self, t("r_batch.export_done_title"),
+            t("r_batch.export_done_msg").format(n=len(self._cells)),
+        )
 
 
 if __name__ == "__main__":

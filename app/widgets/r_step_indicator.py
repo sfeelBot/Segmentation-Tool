@@ -4,14 +4,19 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-_STEP_LABELS = [
-    "① 이미지/셀 업로드", "② 검사 설정", "③ Contour 자동 검출",
-    "④ 마스크 보정", "⑤ 셀별 결과 확인",
-]
+from app.core.i18n import t
+
 _DONE_BG, _DONE_FG = "#10b981", "#34d399"
 _CUR_BG, _CUR_BORDER, _CUR_FG = "#1e3a5f", "#60a5fa", "#60a5fa"
 _PENDING_FG = "#6b7280"
-_N_STEPS = len(_STEP_LABELS)
+_N_STEPS = 5
+
+
+def _step_labels() -> list[str]:
+    return [
+        t("r_step.step1"), t("r_step.step2"), t("r_step.step3"),
+        t("r_step.step4"), t("r_step.step5"),
+    ]
 
 
 class RStepIndicator(QWidget):
@@ -26,7 +31,8 @@ class RStepIndicator(QWidget):
         self._circles: list[QLabel] = []
         self._captions: list[QLabel] = []
         self._lines: list[QFrame] = []
-        for i, text in enumerate(_STEP_LABELS):
+        step_labels = _step_labels()
+        for i, text in enumerate(step_labels):
             col = QVBoxLayout()
             col.setSpacing(3)
             circle = QLabel()
@@ -42,7 +48,7 @@ class RStepIndicator(QWidget):
             layout.addWidget(wrap)
             self._circles.append(circle)
             self._captions.append(caption)
-            if i < len(_STEP_LABELS) - 1:
+            if i < len(step_labels) - 1:
                 line = QFrame()
                 line.setFixedHeight(2)
                 layout.addWidget(line, stretch=1)

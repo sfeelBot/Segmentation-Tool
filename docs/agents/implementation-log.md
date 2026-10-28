@@ -6017,4 +6017,45 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   없음).**
 - **검증 에이전트의 독립 확인 전까지는 완료로 간주하지 않음** — 특히 이번
   라운드는 리더 지시에 따라 화면 캡처/실제 UI 조작 검증을 구현자가 하지 않았음
+
+## 2026-10-28 — R분석 탭 i18n 적용 (R팀)
+
+- 상태: 완료(코드 교체 범위), **검증 에이전트 확인 전까지 완료로 간주하지 않음**.
+- 대상: `docs/specs/zone-r-analysis-i18n-2026-10-28.md`의 R팀 매핑표대로
+  `app/tabs/r_analysis_tab.py`(25개), `app/widgets/r_cell_panel.py`(11개),
+  `app/widgets/r_settings_panel.py`(10개), `app/widgets/r_batch_result_dialog.py`
+  (10개), `app/widgets/r_step_indicator.py`(5개) 총 61개 하드코딩 한국어 UI
+  문자열을 `t("키")` 호출로 교체. `app/widgets/r_roi_canvas.py`는 기획 조사대로
+  사용자 노출 문자열이 0개임을 재확인하고 그대로 둠(수정 없음).
+- `app/core/i18n.py`는 건드리지 않음(Zone팀이 동시에 같은 파일 작업 중이라
+  충돌 방지, 리더 지시 준수).
+- 모듈 레벨 상수 2곳을 지연 평가로 변경: `r_cell_panel._IMAGE_FILTER`는
+  호출부(`_on_add_files`/`_on_add_images_to_current_cell`)에서 `t("r_cell.image_filter")`
+  직접 호출로 대체(상수 제거), `r_step_indicator._STEP_LABELS`는 `_step_labels()`
+  함수로 바꿔 `__init__` 시점에 평가.
+- 플레이스홀더가 있는 키(`r.overall_summary_format`/`r.settings_summary_format`/
+  `r.roi_override_suffix`/`r.untested_badge`/`r.cell_title_selected`/
+  `r_batch.export_done_msg`)는 전부 `t("키").format(...)` 패턴으로 교체.
+- 매핑표에 없던 항목 1건 발견: `_run_batch_detect()`의 `QProgressDialog(label, "취소", ...)`
+  두 번째 인자(취소 버튼 텍스트)가 R팀 표에 빠져 있었음 — 새 키를 짓지 않고
+  문서의 "용어집" 표에서 이미 확정된 `common.cancel`("취소"→"Cancel")을 그대로
+  재사용함. i18n.py는 수정하지 않았으므로 이 재사용도 규칙 위반 아님.
+- 검증: `pytest tests/ -q` **168 passed**(R 전용 pytest 파일은 기존에 없고,
+  각 위젯의 `__main__` self-check 블록이 유일한 회귀 테스트 — ko 기본 언어에서
+  `r_analysis_tab.py`/`r_cell_panel.py`/`r_settings_panel.py`/
+  `r_batch_result_dialog.py`/`r_step_indicator.py`/`r_roi_canvas.py` 전부
+  `python -m app.xxx` 직접 실행으로 self-check OK 확인, 내부에 "합격 1" 같은
+  한국어 문자열을 검사하는 assert가 있어 ko 기본값 유지가 중요함을 확인).
+- `QT_QPA_PLATFORM=offscreen`에서 `set_language('en')` 후 `RAnalysisTab`/
+  `RCellPanel`/`RSettingsPanel`/`RBatchResultDialog`/`RStepIndicator` 전부
+  생성 성공(크래시 없음), 영문 텍스트("Not set — select one to save",
+  "Pass 0 · Fail 0 · Untested 0 (total 0 cells)", "Inspection Settings",
+  "Cell Batch Analysis Results", 스텝 캡션 5개 영문) 정상 출력 확인.
+- 남은 한국어는 전부 주석/docstring/log 메시지/self-check assert 설명 문구뿐
+  (스펙 문서가 번역 대상에서 제외한 범위) — grep으로 5개 파일 재확인 완료.
+- 커밋: 이 로그 작성 직후 `app/tabs/r_analysis_tab.py`,
+  `app/widgets/r_cell_panel.py`, `app/widgets/r_settings_panel.py`,
+  `app/widgets/r_batch_result_dialog.py`, `app/widgets/r_step_indicator.py`
+  5개 파일만 선별 `git add` 후 커밋(Zone팀이 동시 작업 중인
+  `app/core/i18n.py`/`app/tabs/zone_analysis_tab.py`는 스테이징 제외).
   (별도 검증 에이전트가 main/zone 두 워크트리를 함께 돌며 확인할 몫).
