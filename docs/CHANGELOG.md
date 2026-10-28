@@ -5,6 +5,37 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.8.0] 2026-10-28
+
+사용자 요청: 존분석("TOP/BOTTOM ANALYSIS")/R분석 탭에 영어(en) 언어 지원 적용
+— 탭 제목만 번역돼 있던 것을 탭 내부 전체(버튼/라벨/툴팁/다이얼로그)로 확장,
+같은 한국어 문구가 탭마다 다르게 번역되지 않도록 전체 탭 기준 용어 일관성도
+감사.
+
+### 추가
+- `app/core/i18n.py`에 `zone.*`/`zone_canvas.*`/`zone_recipe.*`/`zone_batch.*`/
+  `zone_step.*`/`r.*`/`r_cell.*`/`r_settings.*`/`r_batch.*`/`r_step.*` 신규 키
+  242개(ko/en) 추가.
+- 11개 파일(`zone_analysis_tab.py`/`zone_canvas.py`/`zone_recipe_dialog.py`/
+  `zone_batch_result_dialog.py`/`zone_step_indicator.py`/`r_analysis_tab.py`/
+  `r_cell_panel.py`/`r_settings_panel.py`/`r_batch_result_dialog.py`/
+  `r_step_indicator.py`, `r_roi_canvas.py`는 UI 문자열 없어 변경 없음)의
+  하드코딩 한국어 UI 문자열을 `t()` 호출로 교체.
+
+### 수정
+- `zone.running` 영문을 main의 기존 `infer.running`과 통일("Inferring…").
+- **BUG-046**: 공용 `InferenceImageList` 위젯(`editable=False`)의 제목 라벨/
+  검색창 placeholder/정렬 라벨이 `t()`를 거치지 않고 한국어로 하드코딩돼
+  있던 것을 기존 키 재사용으로 수정 — 존/R분석 탭(및 추론 탭)의 이미지 목록
+  패널도 영어 설정에서 정상 표시됨.
+
+### 참고
+- main 공용 탭(라벨링/추론/학습/모델)의 기존 영문 번역 자체에 내부 불일치
+  4건(선택→Select/Choose 등)을 발견했으나 이번 라운드 범위 밖 — main
+  `docs/decisions-needed.md`에 등록.
+
+---
+
 ## [zone-v1.7.0] 2026-10-28
 
 사용자 요청: 존분석/R분석 탭의 이미지 목록에서 Shift(범위)/Ctrl(개별) 다중선택 +
