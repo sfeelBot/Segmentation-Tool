@@ -306,19 +306,29 @@ class TrainerWorker(QThread):
                 log.info("학습 중지 요청 반영 — 남은 학습 배치를 건너뛰고 "
                          "지금까지의 결과로 validation·저장 진행")
 
+            if stopped_early and history:
+                log.info("중지 요청 반영 — 이전 체크포인트가 이미 존재해 "
+                         "이번 epoch의 validation/checkpoint 저장을 생략하고 즉시 종료")
+                break
+
             if batches_processed > 0:
                 train_loss /= batches_processed
 
             # ── Validation ────────────────────────────────────────────────────
-            # stop 요청 중이어도 validation은 (train과 달리 순전파만 하므로
-            # 비교적 짧다) 끝까지 돌려 이 epoch의 지표를 확보한다.
+            # history가 비어있는 epoch 1은 BUG-026 보장을 위해 stop 요청 중에도
+            # 끝까지 돌린다. epoch 2 이상에서 이전 checkpoint가 이미 있다면
+            # validation 도중 stop 요청이 와도 조기 종료한다(아래 루프 참고).
             model.eval()
             val_loss = 0.0
             val_start = time.perf_counter()
             metric_time = 0.0
+            val_batches_processed = 0
             metric_accumulator = StreamingSegmentationMetrics(self._num_classes)
             with torch.no_grad():
                 for images, masks in val_loader:
+                    if history and self._stop.is_set():
+                        log.info("중지 요청 — validation 조기 종료 (처리한 배치만으로 지표 계산)")
+                        break
                     images = images.to(device, non_blocking=True)
                     masks  = masks.to(device,  non_blocking=True)
                     with torch.autocast(device.type, enabled=use_amp):
@@ -328,9 +338,14 @@ class TrainerWorker(QThread):
                     metric_start = time.perf_counter()
                     metric_accumulator.update(preds, masks)
                     metric_time += time.perf_counter() - metric_start
+                    val_batches_processed += 1
 
-            if len(val_loader) > 0:
-                val_loss /= len(val_loader)
+            if val_batches_processed > 0:
+                val_loss /= val_batches_processed
+            else:
+                log.info("중지 요청으로 validation을 한 배치도 처리하지 못해 "
+                         "이번 epoch의 지표/checkpoint 저장을 생략합니다")
+                continue
 
             # ── 에폭 단위 스케쥴러 step ───────────────────────────────────────
             if scheduler is not None and not _is_onecycle:
