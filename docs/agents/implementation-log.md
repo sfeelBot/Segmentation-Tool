@@ -6098,3 +6098,63 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   (`app/core/i18n.py`는 R팀이 동시 작업 중이라 스테이징 제외) —
   `484ccb8 feat: Zone 분석 탭/위젯 하드코딩 한국어 UI 문자열을 i18n 키로 교체`.
   (별도 검증 에이전트가 main/zone 두 워크트리를 함께 돌며 확인할 몫).
+
+## 2026-10-28 — 존/R분석 탭 오버레이 불투명도 슬라이더 (zone-v1.9.0)
+
+- 작업 위치: `D:/segmentation model-zone-analysis-tab` (브랜치
+  `feature/zone-analysis-tab`).
+- 배경: 두 탭 모두 검출 오버레이가 고정 불투명도(존=0.5, R=90/255≈35%)라
+  라벨링/보정 중 조절이 안 됨 — main 추론 탭의 `OverlayViewerPanel` 슬라이더
+  패턴을 그대로 모방.
+- `app/core/i18n.py`: `common.overlay_opacity_label`(ko/en) 신규 키 1개 추가
+  — Zone/R 두 탭이 동일 키를 공유(prefix는 `zone.*`/`r.*` 대신 `common.*`,
+  두 탭이 완전히 같은 문구를 쓰므로 중복 생성 대신 공유).
+- `app/tabs/zone_analysis_tab.py`:
+  - `_overlay_opacity`(float, 세션 유지) + `_opacity_timer`(75ms 디바운스,
+    inference_tab.py의 opacity 디바운스 관례와 동일 간격) 추가.
+  - 캔버스 상단 툴바(`toolbar_header`) 바로 아래에 슬라이더(0~100%, 기본
+    50%) 행 신규 추가(`opacity_row`).
+  - `_show_overlay_state()`가 표시 직전 항상 `_reblend_overlay()`를 거치도록
+    통일 — `engine.reblend()`(모델 재실행 없는 numpy/cv2 합성)로 현재
+    슬라이더 opacity를 반영한 뒤 캔버스에 그린다. 호출 지점이 3곳
+    (`_setup_target_classes`/`_on_target_changed`/`_toggle_overlay`)뿐이라
+    매번 재계산해도 비용 문제 없음 — 이미지 전환/재추론 후에도 슬라이더
+    값이 0.5로 리셋되지 않고 유지됨(요구사항).
+- `app/widgets/r_roi_canvas.py`: `RRoiCanvas`에 `_mask_alpha`(기본 90) +
+  `set_mask_opacity()`/`mask_opacity()` 추가, `_rebuild_mask_image()`가
+  `_COLOR_MASK`의 고정 alpha 대신 `_mask_alpha`를 사용하도록 변경. 디스크
+  I/O·모델 재실행이 없어(메모리의 numpy 마스크 재합성만) 디바운스는 생략
+  (ponytail: 불필요한 타이머 추가 안 함, 드래그 중 체감 지연 생기면 추가).
+  `if __name__ == "__main__"` self-check에 opacity 클램프(0~255) assert 추가.
+- `app/tabs/r_analysis_tab.py`: `_build_opacity_cluster()` 신규 — 기존
+  edit/run/nav 3개 플로팅 클러스터와 겹치지 않도록 캔버스 좌측 하단에 별도
+  배치(상단 3개는 폭 비례 수평 배치 로직이 이미 꽉 차 있어, 겹침 회피가
+  목적인 별도 클러스터가 기존 수평 분배 로직 수정보다 더 단순한 대안으로
+  판단). 슬라이더 기본값 35%(90/255에 매칭, 기존 하드코딩 값과 시각적으로
+  동일). self-check에 기본값/변경 반영 assert 추가.
+- `tests/test_zone_edit_toolbar.py`: `test_zone_overlay_opacity_slider_updates_and_persists`
+  신규 — 슬라이더 값 반영 + `_last_result` 없을 때 조기 return + 이미지
+  전환 후에도 opacity 유지 확인.
+- 검증:
+  - `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -q` → **169 passed**
+    (기존 168 + 신규 1, 회귀 없음).
+  - `py -m app.tabs.r_analysis_tab` / `py -m app.widgets.r_roi_canvas`
+    self-check 둘 다 OK.
+  - ko/en 두 언어 모두에서 `ZoneAnalysisTab`/`RAnalysisTab` 생성 크래시
+    없음 확인, 양쪽 슬라이더를 실제로 `setValue()`해 내부 opacity 상태가
+    바뀌는지 확인.
+  - 가짜 `InferenceResult`로 `_show_overlay_state()` → `reblend()` 실제
+    호출(overlay_image 객체 교체) + 이미지 경로를 바꿔도 슬라이더
+    값(0.9)이 유지되는 것을 별도로 수동 검증.
+- 버전: `release.ini` 1.8.0 → 1.9.0(MINOR, 신규 기능), `docs/CHANGELOG.md`에
+  `[zone-v1.9.0]` 절 추가, `scripts/generate_version_info.py` 재실행으로
+  메타데이터 검증(`Generated release metadata for 1.9.0`).
+- 커밋: `6729d22 feat: 존/R분석 탭 오버레이 불투명도 슬라이더 추가 (zone-v1.9.0)`
+  (관련 7개 파일만 선별 `git add`; `.codex/`, `AGENTS.md`, `data/annotations/`,
+  `graphify-out/` 등 무관한 untracked 항목은 스테이징 제외).
+- 상태: 구현 완료. **검증 에이전트 확인 필요** — 특히 실제 체크포인트로
+  추론을 실행해 슬라이더 드래그 시 오버레이가 실시간으로 바뀌는지, R분석
+  탭에서 검출 후 슬라이더로 마스크가 즉시 바뀌는지는 UI 골든패스로
+  확인해야 함(이번 세션은 가짜 `InferenceResult`/numpy 마스크로 로직만
+  검증했고 실제 모델 forward pass는 거치지 않았음). 태깅(`zone-v1.9.0`)은
+  배포 에이전트 범위로 남겨둠.
