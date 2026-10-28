@@ -269,6 +269,7 @@ class LabelingTab(QWidget):
         tb.setIconSize(QSize(20, 20))
         tb.setStyleSheet(
             "QToolBar QToolButton { min-width:36px; min-height:30px; padding:4px 8px; }"
+            "QToolBar QToolButton:checked { background:#1e3a5f; border:1px solid #60a5fa; color:#60a5fa; }"
         )
 
         tb.addSeparator()
