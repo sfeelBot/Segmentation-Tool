@@ -195,7 +195,7 @@ class InferenceImageList(QWidget):
 
         # ── 제목 + (editable) 추가/삭제 버튼 — 한 줄에 병합(세로 공간 절약) ──────
         top = QHBoxLayout()
-        top.addWidget(QLabel(t("ui.image_browser") if self._editable else "이미지 목록"))
+        top.addWidget(QLabel(t("ui.image_browser") if self._editable else t("infer.image_list")))
         if self._editable:
             top.addStretch()
             self._btn_add        = QPushButton(t("ui.add_file"))
@@ -210,7 +210,7 @@ class InferenceImageList(QWidget):
         layout.addLayout(top)
 
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("파일명 검색...")
+        self._search_edit.setPlaceholderText(t("browser.search_placeholder"))
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setStyleSheet(
             "QLineEdit { background:#111418; border:1px solid #374151; "
@@ -220,7 +220,7 @@ class InferenceImageList(QWidget):
         layout.addWidget(self._search_edit)
 
         sort_row = QHBoxLayout()
-        sort_lbl = QLabel("정렬:")
+        sort_lbl = QLabel(t("browser.sort_label"))
         sort_lbl.setStyleSheet("font-size:11px; color:#9ca3af;")
         sort_row.addWidget(sort_lbl)
         self._sort_combo = QComboBox()
