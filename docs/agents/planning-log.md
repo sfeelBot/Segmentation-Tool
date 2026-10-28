@@ -1870,3 +1870,67 @@ Excel/클립보드), 체크포인트 파일명에 학습 시작 날짜 포함. �
 라운드 분할은 스펙에 없으므로 리더가 판단해 구현 전 라운드를 나눌 수 있음 —
 데이터 모델(`r_cell_store.py`)이 가장 먼저 필요한 선행 의존성). `docs/roadmap.md`
 에 신규 절 추가는 구현 착수 시점에 리더가 수행.
+
+---
+
+## 2026-10-28 — Zone/R 분석 탭 i18n(en) 전면 적용 — 키/번역 확정 + i18n.py 직접 반영
+
+### 배경
+Zone 분석·R 분석 탭 11개 파일(`zone_analysis_tab.py`/`zone_canvas.py`/
+`zone_recipe_dialog.py`/`zone_batch_result_dialog.py`/`zone_step_indicator.py`/
+`r_analysis_tab.py`/`r_cell_panel.py`/`r_settings_panel.py`/`r_roi_canvas.py`/
+`r_batch_result_dialog.py`/`r_step_indicator.py`)가 탭 제목만 번역돼 있고 탭
+내부 UI는 하드코딩 한국어 상태. 이번 라운드는 리더 지시대로 "기획이 번역 키와
+영문 문구를 전부 확정해 i18n.py에 직접 반영하고, 구현 에이전트 2명(Zone팀/R팀)은
+i18n.py를 건드리지 않고 각자 담당 파일에서 `t()` 호출로 치환만 하는" 구조로
+진행 — 신규 키를 두 구현 에이전트가 동시에 `i18n.py`에 쓰면 충돌하므로 기획이
+전부 선작업.
+
+### 한 일
+- 11개 파일을 전부 읽고 하드코딩 한국어 문자열을 조사. **핵심 발견**: 사전 조사가
+  추정한 "총 568개" 대부분이 실제로는 QLabel/QPushButton 등 UI 코드가 아니라
+  개발자 주석·docstring이었음(특히 `zone_canvas.py`는 UI 문자열 7개뿐, 실 사용자
+  노출 문자열이 전혀 없는 `r_roi_canvas.py`는 0개) — 주석은 번역 대상이 아니므로
+  제외하고, 실제 QLabel/QPushButton/QMessageBox/QInputDialog/QFileDialog/
+  setToolTip/setPlaceholderText/addAction/addItem 등 사용자 노출 문자열만 추출.
+- `app/core/i18n.py` 기존 ko/en 전체를 먼저 읽어 용어집(glossary) 구축 —
+  확인/취소/닫기/저장/적용/삭제/폴더 선택/이미지 없음/체크포인트 없음/모델
+  없음/브러시 크기 등 기존 확정 영문을 추출. 신규 Zone/R 키 작성 시 이 용어집
+  기준으로 영문을 통일(예: "화면 이동" 툴팁은 zone/r 양쪽 다 "Pan view"로,
+  "실행 취소 (Ctrl+Z)"는 세 파일(zone_recipe/zone/r) 모두 "Undo (Ctrl+Z)" 계열로
+  통일). 기존 main 번역 자체의 불일치 1건("선택"이 맥락별로 Select/Choose로
+  혼용)을 발견했으나 이번 라운드 범위(main 코드 수정 금지) 밖이라 고치지 않고
+  스펙 문서에 "기존 번역 불일치 발견 — main 수정 필요(보류)" 절로만 기록.
+- **신규 키 242개**(ko/en 각 242, 총 484 엔트리) 확정 — 섹션별: `zone.*` 111,
+  `zone_canvas.*` 7, `zone_recipe.*` 24, `zone_batch.*` 19, `zone_step.*` 7,
+  `r.*` 36, `r_cell.*` 11, `r_settings.*` 8, `r_batch.*` 14, `r_step.*` 5.
+  동일/유사 의미의 기존 공용 키(`common.cancel`/`common.close`/`common.save`/
+  `ui.delete`/`browser.add_folder_dialog_title`/`browser.no_images_title`/
+  `infer.no_image_title`/`infer.no_ckpt_title`/`infer.no_model_title`/
+  `tool.brush_size`)는 새로 만들지 않고 재사용하도록 매핑표에 명시.
+- `app/core/i18n.py`를 **직접 수정**(ko/en 양쪽에 섹션 주석과 함께 추가) —
+  Edit 2회로 ko 딕셔너리 끝(`labeling.copy_filename` 뒤)과 en 딕셔너리 끝
+  (`labeling.copy_filename` 뒤, "Missing shortcut keys" 섹션 앞)에 각각 삽입.
+  삽입 후 `Grep`으로 ko/en 양쪽 섹션별 키 개수를 전수 대조해 1:1 정합 확인
+  완료(불일치 0건) — 실행은 못 하므로(기획 역할, Bash 도구도 없음) 코드 리뷰로만
+  검증, 괄호/쉼표/따옴표 균형도 전체 파일 재독해 확인.
+- 플레이스홀더가 있는 키(`{n}`/`{name}`/`{label}` 등)는 전부 스펙 문서 매핑표에
+  정확한 변수명을 명시해 구현 에이전트가 `.format()` 인자명을 추측하지 않게 함.
+  `zone.eta_minutes`/`zone.eta_seconds`처럼 호출부 2곳 중 한 곳만 선행 `\n`이
+  붙는 경우도 "키 값에는 `\n`을 넣지 않고 호출부가 붙인다"는 규칙을 명시.
+- 스펙 문서 신설: [docs/specs/zone-r-analysis-i18n-2026-10-28.md](../specs/zone-r-analysis-i18n-2026-10-28.md)
+  — 용어집 표, 기존 번역 불일치 발견(보류), Zone팀/R팀 각 파일별 "원문→교체
+  키→플레이스홀더" 매핑표, 공통 주의사항(모듈 레벨 상수는 함수 내부로 이동
+  필요 등) 전체 포함.
+- `docs/decisions-needed.md` 갱신 없음 — 이번 라운드는 전부 기계적 치환
+  매핑이라 사용자 결정 필요 지점 없음.
+- `docs/roadmap.md` 갱신은 이번 세션 범위 밖(에디션 브랜치 `roadmap.md`는
+  zone 전용이라 별도 세션/리더가 구현 완료 후 갱신 권장).
+
+### 상태
+완료 — 다음: 리더가 Zone팀/R팀 구현 에이전트 2명을 **병렬** 투입(파일 겹침
+없음 확인됨 — `i18n.py`는 둘 다 건드리지 않으므로 충돌 없음). 각자 스펙 문서의
+매핑표대로 하드코딩 문자열을 `t()` 호출로 치환만 하면 되고, 신규 번역 작성은
+불필요. 구현 완료 후 검증 에이전트가 `python main.py`로 ko/en 전환해 Zone/R
+탭 전체(툴팁 포함) 한국어 잔존·KeyError 없는지 + 스펙 문서 "용어집" 기준 용어
+일관성(예: 모든 "Pan" 툴팁이 "Pan view"로 통일)을 재검토할 것.
