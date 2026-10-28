@@ -1,5 +1,150 @@
 # 기획 (Planning) 로그
 
+## 2026-10-28 — 학습 진행 다이얼로그: 단계별 로그 UI / 느린 시작 조사 / 중지 버그 스코프 산정
+
+### 배경
+사용자가 학습(Training) 탭/진행 다이얼로그 관련 3건을 요청. 리더가 사전 조사(코드 레벨
+근거)를 제시하며 위임: ① 학습 준비 단계가 느릴 때 어느 단계인지 보여주는 로그 ② 그
+원인 조사 + 가능하면 개선 ③ 학습 중지가 안 먹히고 그로 인해 메인 창도 안 닫히는 버그.
+
+### 한 일
+- `app/core/trainer.py`(`_train()` 전체), `app/widgets/training_progress_dialog.py`,
+  `app/tabs/training_tab.py`, `app/main_window.py:closeEvent()`,
+  `app/core/device_info.py`(`pick_device()`), `app/core/logger.py`(전역 로거 브리지),
+  `app/widgets/log_panel.py`를 직접 읽고 리더의 사전 조사를 재검증.
+- **정정 발견 1**: CUDA 컨텍스트 초기화 비용은 리더가 지목한 `model.to(device)`가 아니라
+  `pick_device()` 안의 GPU 생존 프로브(`torch.zeros(..., device="cuda")`+
+  `synchronize()`)에서 이미 발생함 — `_train()` 진입 직후, 데이터셋 구성보다도 먼저
+  호출되는 지점이라 아무 로그도 없이 가장 오래 멈출 수 있는 구간으로 재특정.
+- **정정 발견 2**: `TrainerWorker`는 이미 `QThread`라 UI 스레드 자체는 멈추지 않음 —
+  "멈춘 것처럼 보인다"는 실제 freeze가 아니라 피드백 부재 문제로 재정의(1번 요청의
+  본질이 성능 개선이 아니라 가시성/instrumentation임을 명확히 함).
+- 중지 버그: `_train()`이 중지 요청 후에도 validation 전체 루프(stop 체크 없음)+
+  checkpoint 저장을 항상 끝까지 완료하는 것이 원인(BUG-026 "최소 체크포인트 1개 보존"을
+  위한 의도적 설계, 주석으로 확인)임을 재확인. 리더 제안("이전 체크포인트가 있으면
+  validation/저장 생략하고 즉시 종료")을 코드로 검증한 결과 **타당함** — `history`
+  non-empty가 "체크포인트 최소 1개 존재"를 정확히 함의함(epoch 1 완료 시 `best_iou`가
+  `-inf`에서 갱신되므로 `best.pt`가 거의 항상 저장됨). 다만 **보강 1건 필요**: epoch 1
+  자체가 중지될 때의 강제 validation도 대형 validation set에서 느릴 수 있으므로,
+  validation 루프 안에도 stop 체크를 추가해야 함(리더가 명시적으로 검토를 요청한 지점) —
+  단, 이 경우 `val_loss` 분모를 `len(val_loader)`가 아니라 실제 처리한 배치 수로 바꿔야
+  하는 동반 수정이 필수임을 발견(안 하면 중지 시 val_loss가 부정확하게 낮게 계산되는
+  신규 버그를 만들게 됨).
+- `main_window.py`/`training_tab.py`는 수정 불필요함을 확인 — `queue_active`가 프롬프트
+  하게 False로 떨어지면 `closeEvent()`가 자연히 통과하므로, 원인은 `trainer.py` 단독.
+- 단계별 로그 UI 설계 시 처음엔 "`log_panel.py`의 전역 로거 브리지(`bridge.log_received`)를
+  trainer 로거만 필터링해 재사용"하는 쪽이 코드가 적어 유리하다고 판단했으나 **기각**:
+  `trainer.py`의 `log.info()` 문자열은 한국어 하드코딩 진단 메시지이고,
+  `training_progress_dialog.py`는 "아이콘/이모지 i18n 완비" 라운드에서 이미 en 전환이
+  끝난 사용자 대상 UI라, 로거 브리지를 그대로 꽂으면 번역이 끝난 다이얼로그에 다시
+  한국어 전용 텍스트가 섞이는 회귀가 생김. 대신 신규 시그널(`stage_changed`)이 짧은
+  key만 전달하고 UI가 `t()`로 i18n 키를 조회하는 방식으로 설계.
+- DataLoader 블로킹(워커 행잉)에 대한 `timeout=` 처리는 검토했으나 범위 밖으로 결정 —
+  정상적인 느린 배치와 진짜 행(hang)을 구분하는 임계값을 실측 없이 정하면 가짜 타임아웃
+  에러를 유발할 위험이 있어, 이번 3건의 실질 원인(강제 validation)이 해소되면 불필요.
+- CUDA 프리워밍(앱/탭 진입 시 미리 GPU 컨텍스트 워밍)은 "기동 시간 증가 ↔ 학습 시작
+  지연 감소"라는 트레이드오프라 **실측 근거 없이 기획 단계에서 결정하지 않기로 함** —
+  작업 B(단계별 로그+타이밍 계측)가 배포되면 실제 소요시간이 로그로 드러나므로, 그
+  수치를 본 뒤 리더가 필요시 스파이크 에이전트에게 프리워밍 비용/이득 실측을 요청하도록
+  보고 사항으로 남김(이번 라운드에서 스스로 결정하지 않음).
+- `cudnn.benchmark=True` 미설정은 이번 3건과 무관한 별개 성능 기회로 식별, 로드맵에
+  "향후 후보"로만 기록(이번 범위 아님).
+- 스펙 문서 신설: [docs/specs/training-progress-and-stop-fix-2026-10-28.md](../specs/training-progress-and-stop-fix-2026-10-28.md)
+  — 작업 A(중지 버그, P1)/B(단계별 로그 UI, P2)/C(시간 계측, P3, B에 포함해 구현)
+  각각 문제정의·설계·영향 파일·검증 체크리스트 + 실행 순서(A 단독 최우선 → B+C는
+  `trainer.py` 공유 파일이라 A 완료·검증 후 순차 진행).
+- `docs/roadmap.md` "학습 탭" 절에 포인터 추가 + 신규 절 "학습 진행 다이얼로그 —
+  단계별 로그/느린시작/중지 버그 (2026-10-28)" 신설(작업 A/B/C 체크박스, 핵심 발견,
+  실행 순서, 리더 보고 사항 요약).
+- `docs/decisions-needed.md`는 갱신하지 않음 — 세 작업 전부 코드 근거로 설계가 확정됐고
+  사용자 재확인이 필요한 블로킹 지점이 없음(CUDA 프리워밍은 "결정 보류"가 아니라
+  "실측 전까지 스스로 결정하지 않는다"는 기획 판단이라 사용자 결정 대기 항목이 아니라
+  리더 보고 사항으로 분류).
+- 코드는 건드리지 않음. Write/Edit는 스펙 신설 1건, `roadmap.md`, 본 로그 갱신에만 사용.
+  시작 전 `git status` 확인 — 기존 uncommitted 변경(`CLAUDE.md`, `QA.md`,
+  `docs/agents/design-log.md`/`verification-log.md`, `docs/roadmap.md`, `.codex/`,
+  `.worktrees/`, `AGENTS.md`, `data/annotations/`, 공유 위젯 스펙, `graphify-out/`)은
+  이번 작업과 무관해 건드리지 않음.
+
+### 상태
+완료 — 다음: 리더가 "기획 검토" 단계를 거친 뒤 구현 에이전트에 위임. 권장 순서: 작업 A
+(중지 버그, `trainer.py` 단독, 최우선) → 독립검증 → 작업 B+C(단계별 로그 UI + 시간
+계측, `trainer.py`/`training_progress_dialog.py`/`training_tab.py`/`i18n.py`) → 검증.
+CUDA 프리워밍 여부는 작업 B 배포 후 실측 로그를 리더가 확인한 뒤 스파이크 필요성을
+재판단.
+
+---
+
+## 2026-10-27 — 공유 위젯 추출 (브러시 툴바 / 뷰어 pan·zoom / 이미지 리스트) — 완료
+
+사용자 요청(이미 3라운드 확인 완료, 재확인 불필요): 라벨링 탭의 툴바·이미지 뷰어·
+이미지 리스트를 재사용 가능한 위젯으로 뽑아 추론 탭 + 차후 존분석/R분석 탭(에디션
+브랜치 `feature/zone-analysis-tab`)에도 적용. **1단계(이번 라운드) = main 브랜치만**:
+라벨링 탭 + 추론 탭 + 신규 공유 위젯. 2단계(존/R 적용)는 범위 밖, 로드맵에 "다음
+단계"로만 기록.
+
+**조사 방법**: 코드 직접 대조 — `labeling_tab.py`(`_build_toolbar` 등), `inference_tab.py`,
+`annotation_canvas.py`/`overlay_viewer.py`의 pan/zoom 메서드(`wheelEvent`/`_c2i`/
+`_fit_view`/`mouseMoveEvent`), `image_browser.py`/`inference_image_list.py` 전체
+(공개 메서드 전수), 그리고 다른 워크트리(`D:/segmentation model-zone-analysis-tab`)의
+`zone_analysis_tab.py`/`r_analysis_tab.py` 툴바 섹션(grep으로 구조만 확인, 2단계
+참고용). `grep`으로 `TOOL_BRUSH`/`TOOL_ERASER`/`TOOL_ERASER_FLOOD`/`TOOL_PAN`,
+`MIN_ZOOM`/`MAX_ZOOM`, `_image_browser.` 전체 호출부, `image_browser.py` 외부
+참조자를 전부 확인해 이동/치환 시 누락 위험 없음을 검증.
+
+**핵심 발견**:
+- `AnnotationCanvas`와 `OverlayViewer`의 pan/zoom 공식이 상수값(`MIN_ZOOM=0.05`,
+  `MAX_ZOOM=20.0`)까지 완전히 동일(복붙 중복) — 순수 함수 추출 리스크 거의 없음.
+- `zone_analysis_tab.py`의 blob-delete 버튼이 이미 `tool_eraser_flood` 아이콘을
+  쓰고 있어, 라벨링의 flood-eraser와 시각적으로 이미 통일돼 있었음 — 통합이 자연스러움.
+- `TOOL_BRUSH`/`TOOL_ERASER`/`TOOL_ERASER_FLOOD`/`TOOL_PAN` 4개 상수를 외부에서
+  import하는 곳은 `annotation_canvas.py` 자신과 `labeling_tab.py`뿐 — 공유 모듈로
+  이동해도 깨지는 참조 없음.
+- `ImageBrowser`→`InferenceImageList` 흡수 시 필요한 메서드 전수: `set_mutation_guard`/
+  `has_list_focus`/`selected_paths`/`refresh_item`/`refresh_items`/`_on_delete`(→
+  `delete_selected` 공개화)/`image_deleted` 시그널/Ctrl+C 복사(`eventFilter`)/
+  `_import_worker` 직접 접근(→ `is_importing()` 공개 메서드로 교체) — 전부 스펙에
+  반영.
+- `InferenceImageList.load_folder()`는 재귀(`rglob`) 스캔인데 `ImageBrowser.reload()`
+  는 1단계만(BUG-005로 폴더 그룹핑이 죽은 코드였던 것과 동일 원인) — 라벨링 탭 전환
+  시 "이전엔 안 보이던 하위폴더 이미지가 보이게 됨"이라는 동작 변화가 생김. 데이터
+  손실 없는 개선으로 판단, 리스크로 명시(검증 단계에서 회귀 아님을 확인하도록 체크
+  리스트에 포함).
+
+**설계 재량 판단(사용자가 플래너에게 위임한 항목, 전부 결정 완료 — 사용자 재확인 불필요)**:
+- bucket-fill(브러시채움)/select/clear/auto-label/eye/fullscreen **전부 공유 위젯
+  밖**으로 결정 — 현재 시점 실질 소비자가 라벨링 탭 1개뿐인데 이 6개는 존/R 분석에
+  대응 기능이 없거나(auto-label) 이미 다른 구현이 있어(eye vs 추론 탭 F키 토글)
+  지금 공유 위젯에 넣으면 단일 소비자를 위한 추측성 옵션 플래그가 됨(YAGNI). 1차
+  도형 도구·select·bucket-fill·OK는 각 탭이 자신의 QToolBar에 직접 배치, 공유
+  위젯(`BrushToolbar`)은 브러시/지우개/영역삭제(flood/blob 통합)/pan/undo/브러시크기
+  6종만 담당.
+- 영역삭제(flood-eraser/blob-delete) 통합은 **툴바 계약(액션/아이콘/시그널) 수준**
+  까지만 이번 라운드에서 완성 — 캔버스별 실제 알고리즘(raster flood-fill vs 벡터
+  blob 제거)은 데이터 모델이 근본적으로 달라 억지로 합치면 구조적 리스크가 커서
+  합치지 않음(사용자가 1차 도형 도구에 적용한 논리와 동일하게, 다만 사용자는 이
+  항목은 "동일 동작으로 통합"하라 했으므로 — UX/시그널 계약은 완전히 통일하고,
+  "구현까지 통일"은 2단계에서 존분석이 같은 시그널에 연결하는 시점에 실질적으로
+  완성된다고 해석. 라벨링 쪽 flood-fill 알고리즘 자체는 이번 라운드에서 변경 없음).
+- `InferenceImageList` 파일/클래스명 유지(리네임 안 함) — 2단계에서 존분석 탭도
+  같은 클래스를 import하므로 지금 리네임하면 sync 때 불필요한 충돌만 유발, 기능적
+  이득 없음.
+- `InferenceImageList` 생성자 플래그는 `show_status_icons`/`editable` 2개로 제한 —
+  실제 쓰임이 확인된 변동 지점만 플래그화(추론 탭 기본값 불변 보장).
+
+**산출물**: 상세 구현 스펙(파일별 변경 목록, `BrushToolbar`/`view_transform.py`
+public API, `InferenceImageList` 신규 메서드 표, 구현 순서, 검증 체크리스트) —
+[docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md](../specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md).
+`docs/roadmap.md`에 신규 절 추가(1단계 상태 추적 + 2단계는 "다음 단계"로 표기).
+`docs/decisions-needed.md`에 추가 항목 없음 — 설계 재량 사항 전부 위에서 판단 완료,
+사용자 재확인이 꼭 필요한 블로킹 지점은 발견되지 않았음.
+
+**리더에게 보고할 리스크**: `annotation_canvas.py`/`overlay_viewer.py`는 핵심 편집
+로직 파일이라 diff 범위를 pan/zoom 4개 메서드로 엄격히 제한하도록 스펙에 명시(GitHub
+#9 수정 블록 삭제 금지 명시). `labeling_tab.py`가 가장 많이 바뀌는 파일이라 툴바
+담당/이미지 리스트 담당을 동시병렬로 나누면 같은 파일 충돌 가능성이 높음 — 순차
+진행을 권장(스펙 5절에 명시). 상태: **완료**.
+
 역할 설명은 [README.md](README.md) 참고. append-only — 최신 항목이 아래에 추가된다.
 
 ---

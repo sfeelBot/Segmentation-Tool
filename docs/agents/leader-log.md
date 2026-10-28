@@ -5,7 +5,39 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-28] 존분석("Top/Bottom Analysis")/R분석 탭 영어(en) 언어
+> **[최신, 2026-10-28 (3)] 학습 중지(Stop) 버그 수정 + 학습 준비 단계별 로그 UI
+> + 느린 시작 구간 조사 + 학습 기본값 변경(main) — 완료, 블로커 없음, push
+> 대기.** 사용자 요청 2건이 한 라운드로 합류: (1) "학습 시작 시 너무 느림 —
+> 어느 단계인지 로그로 보여주고, 가능하면 개선", (2) 작업 중간에 "학습을
+> 중단해도 중단되지 않고 창도 안 닫히는 버그", 끝에 "DataLoader workers 기본값
+> 0, LR 스케쥴러 기본값 ReduceLROnPlateau로". 리더가 먼저 코드를 직접 조사(
+> `trainer.py`/`training_progress_dialog.py`/`main_window.py`)해 가설 정리 후
+> 사용자에게 요약 확인 → 사용자가 "기획 에이전트와 기획검토 에이전트 돌린 다음
+> 구현 에이전트로"로 진행 방식 지정. **구조**: planner가 스펙
+> (`docs/specs/training-progress-and-stop-fix-2026-10-28.md`) 작성 중 리더의
+> 가설 1건을 코드로 재검증해 정정(CUDA 콜드스타트 비용은 `model.to(device)`가
+> 아니라 `pick_device()`의 GPU 생존 프로브에서 발생) → 기획검토
+> (general-purpose 에이전트, 독립 비판 리뷰)가 스펙의 validation-loop stop
+> 체크 설계에서 엣지 케이스 발견(epoch 1에서 학습 중 멈추면 validation
+> 0배치로 끊겨 BUG-026 보장이 깨짐) → 리더가 스펙에 `history and` 가드를
+> 추가해 직접 보정 → implementer를 작업 A(중지 버그, 단독 라운드)와 작업 B+C
+> (단계별 로그 UI + 시간 계측, 같은 파일이라 A 완료 후 순차)로 2회 분리 호출 →
+> verifier가 실제 프로덕션 위젯 인스턴스화(`QApplication`→위젯 트리 구동,
+> `.click()` 경로) 기반 골든패스로 17개 체크리스트 전부 PASS 확인(중지 응답성
+> 0.1~0.2초, `closeEvent` 차단 해제, epoch 1 회귀 없음, stage 로그 순서/i18n
+> 정상, CUDA 콜드스타트가 실제로는 "[6/6] 옵티마이저 구성" 단계에 있음을 실측
+> — 스펙의 추정 위치와 다르나 버그 아님). 버그 발견 0건. 이어서 사용자가
+> "DataLoader workers 0 기본값, scheduler ReduceLROnPlateau 기본값"을 추가
+> 요청 — 리더가 `app/widgets/config_form.py` 2곳(스핀박스 기본값, 콤보박스
+> `findData("plateau")`) 수정으로 사소하다고 판단해 직접 처리(서브에이전트
+> 미호출, AGENTS.md 예외 규정). 버전은 이미 작업 B/C에서 미태깅 상태로
+> `v1.12.0`으로 올라가 있어(release.ini) 재태깅 전이라 추가 범프 없이 같은
+> 버전에 합류. 커밋 완료(`0be9c31`/`0d1c834`/`1eee61b`/`b5b3bef`/`48c4a2b`),
+> **push는 사용자 확인 후 진행**(아직 요청받지 않음). CUDA 프리워밍(코드
+> 개선)은 실측 근거(위 verifier 실측) 확보됐으니 리더가 다음에 사용자와
+> 스파이크 필요 여부를 논의할 수 있음 — 아직 결정 안 함.
+
+> **[2026-10-28] 존분석("Top/Bottom Analysis")/R분석 탭 영어(en) 언어
 > 지원 적용 — 완료, 블로커 없음, push 전 사용자 확인 대기.** 사용자 요청:
 > "영어 버전이 TOP/BOTTOM ANALYSIS와 R ANALYSIS에 아직 적용 안 됨 — 적용
 > 부탁해", 이어서 "탭별로 같은 문구가 다르게 번역되는 일 없도록 검토, 다른
@@ -681,3 +713,58 @@ BUG-032(zone 브랜치는 BUG-033). 실제 UI 골든패스(라벨링 왕복 undo
 결함) 발견 → 리더가 직접 수정(기존 키 재사용 3줄) + main에도 독립 적용
 (BUG-033). 에디션 `zone-v1.8.0`, main `v1.11.1` 태깅 전 커밋까지 완료, push는
 사용자 확인 대기.
+
+## 2026-10-28 (3) — 학습 중지 버그 + 단계별 로그 UI + 학습 기본값 변경
+
+**요청 1**: "학습 진행 시 처음에 시작할 때 너무 느림(epoch/ETA가 안 올라감,
+CUDA는 정상). training progress 창에 training queue 밑에 몇 번째 단계인지
+간략히 로그 추가. 그 다음 느린 이유를 가능하면 개선." 작업 도중 **요청 2**
+(mid-turn): "학습을 중단해도 중단되지 않고 창도 안 닫히는 버그 확인." 리더가
+`app/core/trainer.py`/`app/widgets/training_progress_dialog.py`/
+`app/main_window.py`를 직접 읽어 두 증상의 공통 원인을 먼저 특정(중지 요청 시
+`_train()`이 validation+checkpoint 저장을 강제로 완주하느라 `queue_active`가
+오래 True로 남아 `closeEvent()`가 계속 막힘) 후 사용자에게 요약 확인 →
+사용자가 "기획 에이전트와 기획검토 에이전트 돌린 다음 구현 에이전트로" 지시.
+
+- **planner** (`docs/specs/training-progress-and-stop-fix-2026-10-28.md`):
+  리더 가설 재검증 중 1건 정정(CUDA 콜드스타트는 `model.to(device)`가 아니라
+  `pick_device()`의 GPU 프로브에서 발생). 작업 A(중지 버그, P1)/B(단계별 로그
+  UI, P2)/C(시간 계측, P3)로 분리, A→B+C 순차 진행(같은 파일) 권고.
+- **기획검토** (general-purpose 에이전트, 독립 비판 리뷰): A-2(validation
+  루프 stop 체크) 설계의 엣지 케이스 발견 — 조건이 `self._stop.is_set()`
+  단독이면 epoch 1(체크포인트 없음) 상태에서 학습 중 멈출 때 validation이
+  0배치로 즉시 끊겨 BUG-026 보장(최소 1개 의미있는 체크포인트)이 깨짐. 조건부
+  GO 판정. 리더가 스펙에 `history and self._stop.is_set()` 가드 + 0배치 시
+  저장 스킵 로직을 직접 보강(체크리스트 문구도 함께 수정).
+- **implementer(작업 A)**: `app/core/trainer.py` 단독 수정(배치 루프 종료 직후
+  `stopped_early and history` 분기, validation 루프 stop 체크 +
+  `val_batches_processed` 분모 수정). 커밋 `0be9c31`/`0d1c834`.
+- **implementer(작업 B+C)**: `TrainerWorker.stage_changed` 시그널 신규(6단계:
+  device/dataset_train/dataset_val/dataloader/model_to_device/optimizer),
+  `TrainingProgressDialog`의 학습 대기열 박스 바로 아래 `[idx/6]` 로그 위젯,
+  `training_tab.py` connect/disconnect, `i18n.py` 6쌍 신규, 각 단계 경과시간
+  `app.log` 기록. `release.ini` 1.11.1→1.12.0(MINOR) + CHANGELOG 갱신 +
+  `generate_version_info.py` 검증까지 자체 수행. 커밋 `1eee61b`/`b5b3bef`.
+- **verifier**: GUI 자동화 도구가 없어 실제 프로덕션 위젯을 직접
+  인스턴스화(`QApplication`→`MainWindow`→`TrainingTab`→`TrainingProgressDialog`)
+  하고 버튼 `.click()`(실제 clicked 시그널 경로)로 골든패스 구동, 합성 학습
+  데이터로 실측. 17개 체크리스트 전부 PASS: 중지 후 0.1~0.2초 내 종료,
+  `closeEvent` 차단 해제(원래 버그 재현 경로 정상화 확인), epoch 1 회귀 없음,
+  전체 큐 중지, 정상 완주 플로우, stage 로그 순서/포맷/i18n, stale-signal
+  없음, `app.log` 시간 계측. 추가로 CUDA 콜드스타트 비용(~1.3~2초, 2-job
+  비교로 1회성 확인)이 스펙의 추정("[1/6] 디바이스 선택")과 달리 실제로는
+  "[6/6] 옵티마이저/스케쥴러 구성"(GradScaler 등 첫 무거운 CUDA 연산)에 있음을
+  실측 — 계측 자체는 정확히 동작해 버그 아님, 추후 CUDA 프리워밍 스파이크
+  판단 시 참고 자료로 전달. 버그 미발견, `verification-log.md` append(통과).
+- **요청 3**(mid-turn, verifier 작업 중 도착): "DataLoader workers 기본값 0,
+  LR 스케쥴러 기본값 ReduceLROnPlateau로." 리더가 `app/widgets/config_form.py`
+  2곳만 수정(사소한 수정 예외 규정, 서브에이전트 미호출): 스핀박스
+  기본값을 CPU-코어 기반 자동감지(`_RECOMMENDED_NUM_WORKERS`, 죽은 코드가 돼
+  제거)에서 `0`으로, 스케쥴러 콤보 기본 선택을 `findData("plateau")`로.
+  `TrainingConfig` 데이터클래스 자체 기본값(`num_workers=0`은 이미 일치,
+  `scheduler="none"`)은 바꾸지 않음 — 폼이 항상 명시적으로 값을 넘기므로
+  다른 코드 경로에 영향 없음을 확인. 컴파일 확인 후 커밋 `48c4a2b`.
+
+**버전/push**: `v1.12.0`(release.ini)이 아직 태깅되지 않아 요청 3도 같은
+버전에 합류, 추가 범프 없음. 전체 커밋 완료, **push는 사용자 확인 후 진행**
+(아직 요청받지 않음).
