@@ -8,8 +8,8 @@ QTimer(singleShot) 디바운스 패턴(요구사항 4) — 라이브 프리뷰�
 """
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QSlider,
-    QDoubleSpinBox, QLabel,
+    QCheckBox, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton,
+    QSlider, QDoubleSpinBox, QLabel,
 )
 
 from app.core.i18n import t
@@ -47,18 +47,23 @@ class RSettingsPanel(QDialog):
         roi_row.addWidget(self._btn_roi_override)
         layout.addLayout(roi_row)
 
+        self._chk_auto_detect = QCheckBox(t("r_settings.auto_detect_checkbox"))
+        self._chk_auto_detect.setChecked(True)
+        self._chk_auto_detect.toggled.connect(self._on_auto_detect_toggled)
+        layout.addWidget(self._chk_auto_detect)
+
         form = QFormLayout()
 
-        thr_row = QHBoxLayout()
+        self._thr_row = QHBoxLayout()
         self._threshold_slider = QSlider(Qt.Orientation.Horizontal)
         self._threshold_slider.setRange(0, 255)
         self._threshold_slider.setValue(128)
         self._lbl_threshold = QLabel("128")
         self._lbl_threshold.setFixedWidth(32)
         self._threshold_slider.valueChanged.connect(self._on_threshold_changed)
-        thr_row.addWidget(self._threshold_slider)
-        thr_row.addWidget(self._lbl_threshold)
-        form.addRow("Threshold:", thr_row)
+        self._thr_row.addWidget(self._threshold_slider)
+        self._thr_row.addWidget(self._lbl_threshold)
+        form.addRow("Threshold:", self._thr_row)
 
         self._denominator_spin = QDoubleSpinBox()
         self._denominator_spin.setRange(0.0, 1e9)
@@ -88,7 +93,18 @@ class RSettingsPanel(QDialog):
         self._lbl_threshold.setText(str(value))
         self._debounce.start()
 
+    def _on_auto_detect_toggled(self, checked: bool) -> None:
+        self._threshold_slider.setEnabled(checked)
+        self._lbl_threshold.setEnabled(checked)
+        self.settings_changed.emit()   # 바이너리 토글 — 디바운스 없이 즉시 발화
+
     # ── 공개 getter/setter — 탭이 r_cell_store 세션과 동기화할 때 사용 ───────────
+
+    def auto_detect_enabled(self) -> bool:
+        return self._chk_auto_detect.isChecked()
+
+    def set_auto_detect_enabled(self, value: bool) -> None:
+        self._chk_auto_detect.setChecked(value)
 
     def threshold(self) -> int:
         return self._threshold_slider.value()
@@ -148,5 +164,14 @@ if __name__ == "__main__":
     panel.roi_override_requested.connect(lambda: roi_override_clicks.append(1))
     panel._btn_roi_override.click()
     assert roi_override_clicks == [1]
+
+    assert panel.auto_detect_enabled() is True, "기본값은 켜짐이어야 함(하위호환)"
+    fired.clear()
+    panel.set_auto_detect_enabled(False)
+    assert panel.auto_detect_enabled() is False
+    assert not panel._threshold_slider.isEnabled(), "자동검출 꺼지면 threshold 슬라이더도 비활성화"
+    assert fired == [1], "체크박스 toggled는 디바운스 없이 즉시 settings_changed를 발화해야 함"
+    panel.set_auto_detect_enabled(True)
+    assert panel._threshold_slider.isEnabled()
 
     print("r_settings_panel self-check OK")

@@ -6327,3 +6327,72 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   안 보이는지), Undo 시에도 원래 검출 색으로 정확히 복원되는지 — 이번
   세션은 self-check/pytest + 모킹 기반 유닛 검증까지만 수행(실제 QPainter
   렌더링 픽셀 비교는 하지 않음).
+
+## 2026-10-28 — R분석 탭 "자동 검출" on/off 토글 (ROI 없이 브러시 단독 면적 계산)
+
+- 상태: 완료.
+- 사용자 요청: "R 검사 세팅에 자동 검출 on/off 추가, off 시 ROI 지정 없이
+  브러시로 그린 영역만 쓸 수 있게." 리더가 코드 확인 후 설계까지 확정해
+  전달 — 구현은 그 설계를 그대로 따름.
+- 핵심 버그 포인트: 기존엔 ROI/검출 결과가 없으면
+  `RRoiCanvas.effective_mask()`가 `None`을 반환했고, `r_analysis_tab.py`의
+  면적 계산(`contour_area(eff) if eff is not None else 0`)이 이를 무조건
+  0으로 강제 — ROI 없이는 브러시만으로 면적을 절대 만들 수 없었다. 이번
+  수정으로 "빈 numpy bool 마스크"(all-False, `None` 아님)를 넘기도록
+  통일해 `effective_mask()`가 브러시 단독 결과를 정상 반환하게 됨.
+- `app/widgets/r_settings_panel.py`:
+  - `QCheckBox` 추가(`_chk_auto_detect`, 기본 `True` — 하위호환). `toggled`를
+    디바운스 없이 즉시 `settings_changed.emit()`에 연결(`_on_auto_detect_toggled`)
+    — 바이너리 토글이라 다른 슬라이더/스핀박스의 150ms 디바운스 패턴과
+    다르게 처리.
+  - 꺼지면 threshold 슬라이더/라벨을 `setEnabled(False)`로 비활성화(의미
+    없어지므로).
+  - 공개 API `auto_detect_enabled()`/`set_auto_detect_enabled()` 추가.
+  - `__main__` self-check에 기본값 True, OFF 전환 시 threshold 비활성화 +
+    `settings_changed` 즉시 발화(디바운스 없이) 검증 추가.
+- `app/tabs/r_analysis_tab.py`:
+  - `_default_session()`에 `"auto_detect": True` 추가, `_load_session()`/
+    `_on_settings_changed()`에서 세션 ↔ 패널 동기화.
+  - 신규 헬퍼 `_compute_detected_mask(path, img) -> np.ndarray`(항상
+    `np.zeros((h,w), dtype=bool)` 또는 실제 검출 결과를 반환, `None` 없음)로
+    `_load_image()`/`_run_and_display_detection()`의 중복 로직을 통합 —
+    자동검출 켜짐+ROI 있음일 때만 실제 `detect_contour_mask()` 호출, 그 외
+    (꺼짐, 또는 켜짐인데 ROI 없음)는 빈 마스크.
+  - 신규 헬퍼 `_sync_detect_buttons_enabled()`로 검출 버튼 3개
+    (`_btn_detect_current`/`_btn_detect_cell`/`_btn_detect_all`)의 평상시
+    enabled 상태를 `auto_detect_enabled()`에 동기화 — `__init__`,
+    `_load_session()`, `_on_settings_changed()`에서 호출. 배치 검출 진행 중
+    임시 비활성화(`_set_detect_buttons_enabled`)는 그대로 두되,
+    `_on_batch_detect_finished()`의 복원 호출을 `_sync_detect_buttons_enabled()`
+    로 바꿔 자동검출이 배치 도중 꺼졌으면 다시 켜지지 않게 함(일관성).
+  - ROI 지정 버튼("전역 지정"/"이 이미지만 보정")은 지시대로 건드리지 않음
+    — 꺼도 비활성화 안 함.
+  - `_refresh_settings_summary()`에 자동검출 꺼짐 안내 접미사 추가(선택
+    사항이었으나 간단해서 포함).
+  - `app/core/i18n.py`에 `r_settings.auto_detect_checkbox`/
+    `r_settings.auto_detect_off_suffix` 신규 키(ko/en).
+  - `__main__` self-check에 신규 시나리오 추가: ROI 미지정 상태에서
+    `_compute_detected_mask()`가 OFF/ON(ROI 없음) 양쪽 다 빈 마스크를
+    반환하는지, 브러시 스트로크 1개를 캔버스에 직접 커밋한 뒤
+    `effective_mask()`가 `None`이 아니고 면적 > 0인지, 체크박스 토글 시
+    검출 버튼 3개의 enabled가 `_on_settings_changed()`를 거쳐 정확히
+    반영되는지 확인.
+- self-check: `py -m app.widgets.r_settings_panel`,
+  `py -m app.tabs.r_analysis_tab` 둘 다 "self-check OK" 통과.
+- `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -q` → 172 passed, 회귀 없음.
+- 버전: 리더 지시대로 동일 미출시 버전 `zone-v1.9.0`에 묶어
+  `docs/CHANGELOG.md` `### 추가` 절에 bullet만 추가, `release.ini` 버전은
+  변경하지 않음.
+- 커밋 함(push는 하지 않음, 지시대로).
+
+### 상태
+- 구현 완료. **검증 에이전트 확인 필요** — 특히 실제 UI 골든 패스로:
+  (1) 설정 팝업에서 "자동 검출 사용" 체크 해제 → 검출 버튼 3개가 실제로
+  회색으로 비활성화되는지, ROI 지정 버튼은 여전히 눌리는지, (2) ROI를
+  전혀 지정하지 않은 새 이미지에 브러시로 영역을 그려 커밋 → 우측 패널의
+  면적/셀 판정이 0이 아닌 값으로 정상 갱신되는지, (3) 다시 체크박스를
+  켠 뒤(ROI 아직 없음) 버튼이 재활성화되고 면적이 다시 0으로(검출 결과
+  없음) 돌아가는지, (4) 세션을 저장했다가 다시 열었을 때 자동검출
+  on/off 상태가 그대로 복원되는지. 이번 세션은 self-check/pytest +
+  모킹 기반 유닛 검증까지만 수행(실제 QPainter 렌더링/마우스 드래그
+  브러시 입력은 시뮬레이션하지 않음).

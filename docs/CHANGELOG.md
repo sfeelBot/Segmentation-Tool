@@ -32,6 +32,14 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
   `overlay_toggle_requested` 시그널 + `set_mask_overlay_visible()` 추가 —
   화면 표시 여부만 끄고 마스크 데이터/boundary 편집·면적 계산은 그대로 동작.
   `app/core/i18n.py`에 `r.overlay_visible_tip` 신규 키(ko/en).
+- R분석 탭: 검사 설정에 "자동 검출 사용" 체크박스 추가(기본 켜짐, 하위호환).
+  꺼면 ROI를 지정하지 않아도 되고, 검출 버튼 3개(현재/셀/전체)는 비활성화되며
+  브러시로 그린 영역만으로 면적이 계산된다 — 이전엔 ROI/검출 결과가 없으면
+  `effective_mask()`가 `None`을 반환해 브러시만으로는 면적을 절대 만들 수
+  없던 버그를 함께 고쳤다(`_compute_detected_mask()`가 빈 numpy bool 마스크를
+  반환하도록 통일, `None`과의 구분이 핵심). `app/core/i18n.py`에
+  `r_settings.auto_detect_checkbox`/`r_settings.auto_detect_off_suffix`
+  신규 키(ko/en).
 
 ### 수정
 - 브러시로 수정한 결과가 검출 결과와 별도 색(파란/회색)으로 덧칠돼 보이던 버그

@@ -82,6 +82,7 @@ def _default_session() -> dict:
     return {
         "version": 1, "cells": {}, "global_roi": None,
         "threshold": 128, "denominator": 0.0, "spec_lower": 0.0, "spec_upper": 0.0,
+        "auto_detect": True,
     }
 
 
@@ -143,6 +144,7 @@ class RAnalysisTab(QWidget):
         self._refresh_settings_summary()
         self._refresh_right_panel()
         self._refresh_step_indicator()
+        self._sync_detect_buttons_enabled()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
@@ -542,6 +544,7 @@ class RAnalysisTab(QWidget):
         self._settings_dialog.set_denominator(self._session.get("denominator", 0.0))
         self._settings_dialog.set_spec_lower(self._session.get("spec_lower", 0.0))
         self._settings_dialog.set_spec_upper(self._session.get("spec_upper", 0.0))
+        self._settings_dialog.set_auto_detect_enabled(self._session.get("auto_detect", True))
 
         self._current_cell = None
         self._current_image_path = None
@@ -551,6 +554,7 @@ class RAnalysisTab(QWidget):
         self._refresh_settings_summary()
         self._refresh_right_panel()
         self._refresh_step_indicator()
+        self._sync_detect_buttons_enabled()
 
     def _do_save(self) -> None:
         if self._session_path is None:
@@ -612,6 +616,17 @@ class RAnalysisTab(QWidget):
         gr = self._session.get("global_roi")
         return tuple(gr) if gr else None
 
+    def _compute_detected_mask(self, path: Path, img: np.ndarray) -> np.ndarray:
+        """자동검출 켜짐+ROI 있음 -> 실제 검출. 그 외(자동검출 꺼짐, 또는 ROI 없음)는
+        빈(all-False) 마스크 — None이 아니라 빈 배열이어야 effective_mask()가 브러시
+        단독 결과를 반환한다(None이면 area가 무조건 0으로 강제됨, 핵심 버그 포인트)."""
+        h, w = img.shape[:2]
+        if self._settings_dialog.auto_detect_enabled():
+            roi = self._effective_roi(path)
+            if roi is not None:
+                return detect_contour_mask(img, roi, self._settings_dialog.threshold())
+        return np.zeros((h, w), dtype=bool)
+
     # ── 셀 패널 연동 ─────────────────────────────────────────────────────────
 
     def _on_cell_selected(self, cell_id: str) -> None:
@@ -660,11 +675,8 @@ class RAnalysisTab(QWidget):
                                         # 않는다(필요해지면 manual_strokes처럼 영속화 추가).
                 "manual_strokes": data.get("manual_strokes", []),
             })
-            if img is not None and roi is not None:
-                mask = detect_contour_mask(img, roi, self._settings_dialog.threshold())
-                self._canvas.set_detected_mask(mask)
-            else:
-                self._canvas.set_detected_mask(None)
+            mask = self._compute_detected_mask(path, img) if img is not None else None
+            self._canvas.set_detected_mask(mask)
         finally:
             self._canvas.blockSignals(False)
 
@@ -725,10 +737,12 @@ class RAnalysisTab(QWidget):
         self._session["denominator"] = self._settings_dialog.denominator()
         self._session["spec_lower"] = self._settings_dialog.spec_lower()
         self._session["spec_upper"] = self._settings_dialog.spec_upper()
+        self._session["auto_detect"] = self._settings_dialog.auto_detect_enabled()
         if self._current_image_path is not None:
             self._run_and_display_detection(self._current_image_path)
         self._refresh_settings_summary()
         self._refresh_right_panel()
+        self._sync_detect_buttons_enabled()
         self._schedule_autosave()
 
     def _on_roi_global_requested(self) -> None:
@@ -765,6 +779,8 @@ class RAnalysisTab(QWidget):
         override_n = sum(1 for d in self._image_data_map.values() if d.get("roi_override"))
         if override_n:
             roi_desc += t("r.roi_override_suffix").format(n=override_n)
+        if not self._settings_dialog.auto_detect_enabled():
+            roi_desc += t("r_settings.auto_detect_off_suffix")
         self._lbl_settings_summary.setText(
             t("r.settings_summary_format").format(
                 threshold=s.get('threshold', 128),
@@ -779,11 +795,10 @@ class RAnalysisTab(QWidget):
 
     def _run_and_display_detection(self, path: Path) -> None:
         img = self._cv2_imread_cached(path)
-        roi = self._effective_roi(path)
-        if img is None or roi is None:
+        if img is None:
             self._canvas.set_detected_mask(None)
             return
-        mask = detect_contour_mask(img, roi, self._settings_dialog.threshold())
+        mask = self._compute_detected_mask(path, img)
         self._canvas.set_detected_mask(mask)
         eff = self._canvas.effective_mask()
         self._image_data(path)["area"] = contour_area(eff) if eff is not None else 0
@@ -841,6 +856,12 @@ class RAnalysisTab(QWidget):
         self._btn_detect_cell.setEnabled(enabled)
         self._btn_detect_all.setEnabled(enabled)
 
+    def _sync_detect_buttons_enabled(self) -> None:
+        """자동검출이 꺼지면 "검출" 버튼 3개는 의미가 없으므로 비활성화한다 — 배치
+        검출이 실행 중일 때의 임시 비활성화(_set_detect_buttons_enabled)와는 별개로,
+        설정 변경·세션 로드 시 이 메서드로 "정상 상태"의 enabled를 동기화한다."""
+        self._set_detect_buttons_enabled(self._settings_dialog.auto_detect_enabled())
+
     def _on_detect_image_done(self, path_str: str, area: int) -> None:
         self._image_data_map.setdefault(path_str, _default_image_data())["area"] = area
 
@@ -848,7 +869,7 @@ class RAnalysisTab(QWidget):
         if self._progress is not None:
             self._progress.close()
             self._progress = None
-        self._set_detect_buttons_enabled(True)
+        self._sync_detect_buttons_enabled()
         if self._current_image_path is not None:
             self._run_and_display_detection(self._current_image_path)
         self._refresh_right_panel()
@@ -993,5 +1014,35 @@ if __name__ == "__main__":
     tab._canvas.keyPressEvent(f_press)
     assert tab._act_overlay_visible.isChecked() is True   # F키 -> toggle() -> 다시 표시
     assert tab._canvas._mask_visible is True
+
+    # 자동 검출 OFF + ROI 미지정 + 브러시만으로 면적이 계산되는지(이번 라운드 핵심 버그 수정).
+    dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+    dummy_path = Path("dummy_no_roi.jpg")
+    assert tab._effective_roi(dummy_path) is None   # ROI 지정 안 함
+    tab._settings_dialog.set_auto_detect_enabled(False)
+    mask_off = tab._compute_detected_mask(dummy_path, dummy_img)
+    assert mask_off.dtype == bool and not mask_off.any()   # 빈 마스크(None 아님)
+    tab._canvas.set_image_size(100, 100)
+    tab._canvas.set_detected_mask(mask_off)
+    tab._canvas._manual_strokes = [(True, [(50.0, 50.0, 10.0)])]   # 브러시 1스트로크 직접 커밋
+    eff_off = tab._canvas.effective_mask()
+    assert eff_off is not None and eff_off.any(), "자동검출 OFF라도 브러시 영역만으로 effective_mask가 나와야 함"
+    assert contour_area(eff_off) > 0
+
+    # 자동검출을 다시 ON으로 켜도(ROI 여전히 없음) 검출 마스크 자체는 그대로 빈 상태 유지.
+    tab._settings_dialog.set_auto_detect_enabled(True)
+    mask_on_no_roi = tab._compute_detected_mask(dummy_path, dummy_img)
+    assert not mask_on_no_roi.any(), "ROI 없으면 자동검출 ON이어도 검출 마스크는 비어야 함(기존 동작 유지)"
+
+    # 자동검출 체크박스를 끄면 검출 버튼 3개가 비활성화된다.
+    assert tab._btn_detect_current.isEnabled() is True   # 아직 다시 켜진 상태
+    tab._settings_dialog.set_auto_detect_enabled(False)
+    tab._on_settings_changed()
+    assert tab._btn_detect_current.isEnabled() is False
+    assert tab._btn_detect_cell.isEnabled() is False
+    assert tab._btn_detect_all.isEnabled() is False
+    tab._settings_dialog.set_auto_detect_enabled(True)
+    tab._on_settings_changed()
+    assert tab._btn_detect_current.isEnabled() is True
 
     print("r_analysis_tab self-check OK")
