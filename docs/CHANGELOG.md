@@ -26,6 +26,13 @@
 - `app/core/i18n.py` — `train_progress.stage.*` ko/en 6쌍 신규(라벨만 번역,
   `"[idx/6]"` 포맷은 코드에서 조립).
 
+### 변경
+- `app/widgets/config_form.py` — 학습 설정 기본값 변경(사용자 요청). DataLoader
+  `num_workers` 기본값을 CPU 코어 기반 자동 감지(상한 2) 대신 `0`(메인
+  프로세스만 사용, 워커 기동 비용 없음)으로 고정. LR 스케쥴러 기본 선택을
+  "없음" 대신 `ReduceLROnPlateau`(val loss 정체 시 자동 감소)로 변경
+  (`findData("plateau")`로 `_SCHEDS` 순서 변경에도 안전하게 조회).
+
 ---
 
 ## [v1.11.1] 2026-10-28
