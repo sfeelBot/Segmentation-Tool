@@ -61,6 +61,7 @@ class RCellPanel(QWidget):
 
         layout.addWidget(QLabel("선택한 셀의 이미지 (Delete로 제거)"))
         self._image_list = InferenceImageList()
+        self._image_list.set_multi_select(True)   # Zone 탭과 동일 — Shift/Ctrl 다중선택 + Delete 일괄 제거
         self._image_list.image_selected.connect(lambda p: self.image_selected.emit(str(p)))
         self._image_list.images_removed.connect(self._on_images_removed)
         layout.addWidget(self._image_list, stretch=2)
@@ -237,5 +238,12 @@ if __name__ == "__main__":
     # 다른 셀 선택 시 current_cell 전환
     panel._select_cell("CELL-B")
     assert panel.selected_cell() == "CELL-B"
+
+    # Zone 탭과 동일한 Shift/Ctrl 다중선택 + Delete 일괄 제거 동작(이번 변경)
+    from PyQt6.QtWidgets import QTreeWidget
+    assert panel._image_list._tree.selectionMode() == QTreeWidget.SelectionMode.ExtendedSelection
+    panel._select_cell("CELL-A")
+    panel._on_images_removed([Path("a.jpg"), Path("b.jpg")])
+    assert panel.get_cells()["CELL-A"] == [], "다중 선택 삭제 시 전부 제거돼야 함"
 
     print("r_cell_panel self-check OK")

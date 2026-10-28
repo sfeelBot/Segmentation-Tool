@@ -5,6 +5,19 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.7.0] 2026-10-28
+
+사용자 요청: 존분석/R분석 탭의 이미지 목록에서 Shift(범위)/Ctrl(개별) 다중선택 +
+Delete 일괄 제거가 두 탭에서 동일하게 동작하도록.
+
+### 변경
+- R분석 탭 "선택한 셀의 이미지" 목록(`RCellPanel._image_list`)에
+  `set_multi_select(True)` 적용 — Zone 탭(`ZoneAnalysisTab._img_list`)과
+  동일하게 Shift 범위선택/Ctrl 개별선택 + Delete 일괄 제거(목록에서만 제거,
+  원본 파일 보존) 지원. Zone 탭은 이미 동일 기능이 있어 변경 없음(확인만).
+
+---
+
 ## [zone-v1.6.3] 2026-10-27
 
 사용자 요청: main v1.11.0(공유 위젯 추출: view_transform/brush_toolbar/
