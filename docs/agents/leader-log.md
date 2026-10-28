@@ -5,7 +5,31 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-28 (5)] 브러시-검출 시각 통일 + R분석 자동검출 on/off
+> **[최신, 2026-10-28 (6)] 학습·추론·Top/Bottom분석·R분석 탭 — 버튼 순서
+> 가이드 MD + 도식화 PPT 작성 완료, 블로커 없음, commit만 완료(push는
+> 사용자 확인 대기).** 사용자 요청: "4개 탭을 실제 사용하는 버튼 순서대로
+> MD/PPT로 작성, 분기를 도식화하고 장면별 스크린샷 포함, 탭별 추천
+> 파라미터도 별도 정리". 범위 확인 질문 2개로 (1) main(학습·추론)+
+> edition(Top/Bottom·R분석) 4개 탭을 하나의 통합 문서로, (2) 스크린샷은
+> 오프스크린이 아니라 **실제 화면 캡처**로 하기로 사용자가 결정. 리더가
+> 4개 탭을 general-purpose 서브에이전트 4개에 병렬 위임(각자 실제 Qt
+> 플랫폼으로 MainWindow를 띄우고 QTest로 실제 클릭/드래그/키 입력을 보내
+> `grabWindow()`로 캡처, 합성 테스트 이미지·임시 체크포인트로 격리 — 프로덕션
+> 코드 미수정, git 작업 없음). 산출물: 스크린샷 56장(학습 9·추론 10·
+> Top/Bottom 24·R분석 13) + 탭별 마크다운 섹션(Mermaid 흐름도로 분기 표시:
+> GPU유무/중지확인/검출성공-실패/자동검출on-off 등) + 탭별 추천 파라미터
+> 표. 리더가 edition 저장소 스크린샷을 main repo `docs/manual/screenshots/`
+> 로 복사 후 4개 섹션을 통합 `docs/manual/workflow-guide.md`로 조립(기존
+> `USER_MANUAL.md`/`USER_MANUAL_ZONE.html`과는 별개 문서임을 본문에 명시 —
+> 전자는 전체 레퍼런스, 이 문서는 클릭 순서 가이드). PPT는 Artifact
+> Slides 타입으로 14슬라이드 게시(표지+탭별 흐름도/스크린샷/파라미터
+> 3슬라이드×4+마무리) — IBM Plex Sans 1폰트, 다크 네이비+앰버 2색 팔레트,
+> 분기는 플로우 레이아웃의 좌우 2열 카드로 단순화해 표현. main repo에
+> `docs/manual/workflow-guide.md`+스크린샷 56장 커밋(`dc44387`), push는
+> 아직 사용자 확인 전. edition 저장소의 원본 스크린샷(agent가 생성한
+> untracked 파일)은 그대로 둠(커밋/삭제 안 함 — 최종본은 main에 있음).
+
+> **[2026-10-28 (5)] 브러시-검출 시각 통일 + R분석 자동검출 on/off
 > 토글 — 완료, 블로커 없음, push 대기.** 사용자가 (4)번 작업 검증 직후
 > 핵심 질문 3개를 던짐: "R분석에서 브러시로 그린 것도 불투명도 조절되는 게
 > 맞아? 브러시랑 검출된 게 화면에 동일하게 보이는 게 맞아? 같은 객체로
@@ -876,3 +900,34 @@ PASS. 이어서 "R분석 자동검출 on/off, 꺼지면 ROI 없이 브러시만�
 실제 재현해 PASS. `zone-v1.9.0` 태그가 이미 push돼 있어 재지정 대신
 `zone-v1.10.0`로 버전 분리(CHANGELOG 항목도 이동). 사용자가 "push 진행해봐"
 지시 → 에디션+main 전부 push 완료.
+
+## 2026-10-28 (6) — 학습·추론·Top/Bottom분석·R분석 버튼 순서 가이드 MD+PPT 작성
+
+사용자가 4개 탭(학습·추론·Top/Bottom분석·R분석)을 실제 사용 버튼 순서대로
+MD+PPT로 문서화, 분기 도식화, 장면별 스크린샷, 탭별 추천 파라미터 정리를
+요청. 범위(통합 문서 vs 저장소별 분리)와 캡처 방식(오프스크린 자동 vs 실제
+화면)을 AskUserQuestion으로 확인 — 통합 문서 + 실제 화면 캡처로 결정.
+general-purpose 서브에이전트 4개를 탭별로 병렬 호출(각자 실제 Qt 플랫폼
+(QT_QPA_PLATFORM 미설정)으로 MainWindow를 띄우고 QTest로 실제 위젯 클릭/
+드래그/키 입력을 보내 `grabWindow()`로 캡처 — 합성 테스트 이미지·임시
+체크포인트를 스크래치 디렉터리에서 사용, 프로덕션 코드 미수정, git add/
+commit 안 함). 4개 에이전트 모두 완료: 스크린샷 56장(학습 9·추론 10·
+Top/Bottom 24·R분석 13), 탭별 마크다운 섹션(Mermaid로 분기 표시 —
+GPU 유무/학습 중지 확인/동심원 검출 성공·실패/R분석 자동검출 on-off 등),
+탭별 추천 파라미터 표. 리더가 edition 저장소(`D:\segmentation model-zone-
+analysis-tab`)의 Top/Bottom·R분석 스크린샷을 main repo
+`docs/manual/screenshots/`로 복사하고 4개 섹션을 헤딩 레벨 통일해
+`docs/manual/workflow-guide.md`로 조립(기존 `USER_MANUAL.md`/
+`USER_MANUAL_ZONE.html`과 역할이 다름을 문서 상단에 명시 — 전자는 설치·
+전체 기능 레퍼런스, 이 문서는 클릭 순서 중심 가이드). PPT는 Artifact
+Slides 타입(`https://claude.ai/artifact/9ormTsEbCqyjodFrRpCay8`)으로
+14슬라이드 작성·게시 — 표지 1 + 탭별(흐름도/스크린샷/파라미터 3슬라이드)
+×4 + 마무리 1, IBM Plex Sans 단일 폰트, 다크 네이비(#16202c)+앰버
+(#e0a23c)+블루(#3b7dd8) 팔레트, 분기는 flow 레이아웃의 좌우 2열 카드로
+단순화해 표현(핵심 포인트: R분석/Top-Bottom 모두 "브러시 보정 커밋 후 검출
+결과와 완전히 동일한 색·불투명도로 통일"이라는 기존 메모리
+(`feedback_brush_correction_visual_unity.md`) 원칙을 흐름도에도 명시).
+main repo에 `docs/manual/workflow-guide.md`+스크린샷 56장 커밋
+(`dc44387`). edition 저장소의 원본 스크린샷(서브에이전트가 생성한 untracked
+파일)은 그대로 둠 — 최종본은 main에 있으므로 별도 커밋/삭제 안 함. push는
+아직 사용자 확인 전.
