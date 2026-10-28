@@ -5,7 +5,47 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-28] 존분석/R분석 탭 이미지 목록 Shift/Ctrl 다중선택 +
+> **[최신, 2026-10-28] 존분석("Top/Bottom Analysis")/R분석 탭 영어(en) 언어
+> 지원 적용 — 완료, 블로커 없음, push 전 사용자 확인 대기.** 사용자 요청:
+> "영어 버전이 TOP/BOTTOM ANALYSIS와 R ANALYSIS에 아직 적용 안 됨 — 적용
+> 부탁해", 이어서 "탭별로 같은 문구가 다르게 번역되는 일 없도록 검토, 다른
+> 탭도 모두". 리더 조사: 탭 제목(`tab.zone_analysis`/`tab.r_analysis`)만
+> 번역돼 있고 탭 내부(11개 파일, 하드코딩 한국어 약 568개 리터럴 — 실제
+> UI 노출분은 161개, 나머지는 주석/docstring)가 전부 한국어 하드코딩임을
+> 확인해 사용자에게 범위 보고 후 승인받고 진행. **구조**: planner가 먼저
+> `app/core/i18n.py`에 신규 키 242개(ko/en)를 전부 써넣어 용어집(기존 main
+> 공용 번역에서 추출)과 파일별 "원문→키" 매핑표를 스펙 문서(`docs/specs/
+> zone-r-analysis-i18n-2026-10-28.md`)로 남김 → Zone팀/R팀 implementer 2명을
+> **완전 병렬**로 호출(둘 다 i18n.py는 건드리지 않아 충돌 없음) — Zone팀이
+> `zone_analysis_tab.py`/`zone_canvas.py`/`zone_recipe_dialog.py`/
+> `zone_batch_result_dialog.py`/`zone_step_indicator.py`(95+7+24+19+7곳),
+> R팀이 `r_analysis_tab.py`/`r_cell_panel.py`/`r_settings_panel.py`/
+> `r_batch_result_dialog.py`/`r_step_indicator.py`(25+11+10+10+5곳,
+> `r_roi_canvas.py`는 UI 문자열 없어 변경 없음)를 각각 `t()` 호출로 교체,
+> 둘 다 pytest 168개 통과 확인. **리더가 직접 전체 503키(ko/en) 1:1 정합 +
+> "동일 한국어 원문인데 영문이 다른" 케이스를 스크립트로 전수 감사**(사용자가
+> 명시적으로 요청한 "다른 탭도 모두" 포함) — 6건 중 1건 실수정(`zone.running`
+> "Running inference…"→main의 기존 `infer.running`과 통일해 "Inferring…"),
+> 2건은 쓰임새가 달라 대소문자만 다른 정상 케이스(오탐), 나머지 3건은 main
+> 자체의 기존 번역 불일치(선택→Select/Choose, 삭제→Remove/Delete, 전체
+> 초기화→Clear All/Clear Queue, 이미지 없음→No Image/No Images)로 이번
+> 라운드 범위 밖이라 `docs/decisions-needed.md`에 등록만(수정 안 함).
+> verifier가 ko/en 양쪽 실제 위젯 생성 기준 골든패스 검증 — **PASS**(잔존
+> 한국어 0건, 한국어 모드 회귀 없음, 용어집 일치 확인) + **BUG-046 신규
+> 발견**(이번 11개 파일 범위 밖의 기존 공유 위젯 `inference_image_list.py`
+> 버그 — `editable=False`일 때 제목/검색창 placeholder/정렬 라벨 3곳이
+> `t()`를 전혀 안 거쳐 항상 한국어, 추론 탭도 동일 결함 보유 추정). 리더가
+> 사소한 수정으로 판단해 직접 처리(서브에이전트 미호출) — 이미 존재하던
+> `infer.image_list`/`browser.search_placeholder`/`browser.sort_label` 키를
+> 재사용해 3줄만 수정, **main에도 독립 적용**(main 쪽은 BUG-033으로 별도
+> 등록, zone 쪽 BUG-046은 Closed 처리). 양쪽 pytest 재확인(main 97/에디션
+> 168) 통과. 버전: 에디션 `zone-v1.7.0`→`zone-v1.8.0`(MINOR, 신규 i18n
+> 기능), main `v1.11.0`→`v1.11.1`(PATCH, BUG-033 버그 수정만) +
+> CHANGELOG 갱신 + `generate_version_info.py` 검증 양쪽 완료. **커밋 완료
+> (에디션 `a892474`~`d80b652`, main `786e6a6`~`9ed6fc8`), push는 사용자
+> 확인 전까지 보류.**
+
+> **[2026-10-28] 존분석/R분석 탭 이미지 목록 Shift/Ctrl 다중선택 +
 > Delete 일괄 제거 동일화 — 완료, 블로커 없음.** 사용자 요청: "공용 이미지
 > 목록에 Shift 범위선택/Ctrl 개별선택/Delete 일괄삭제 기능 추가" → 범위를
 > 묻는 과정에서 라벨링 탭은 이미 동작 중(`editable=True` → ExtendedSelection+
@@ -627,3 +667,16 @@ BUG-032(zone 브랜치는 BUG-033). 실제 UI 골든패스(라벨링 왕복 undo
 (MINOR), CHANGELOG 갱신, `generate_version_info.py` 검증. 작업 전 해당 워크트리에
 남아있던 2단계 검증 로그 커밋 누락분(`8a92bd9`)도 먼저 정리해 커밋. 이번 변경
 커밋 완료, **push는 사용자 확인 후 진행 예정**(아직 요청받지 않음).
+
+## 2026-10-28 (2) — 존분석/R분석 탭 영어(en) 언어 지원 적용
+
+사용자 요청: "TOP/BOTTOM ANALYSIS와 R ANALYSIS에 영어 버전 적용" + "탭별로 같은
+문구가 다르게 번역되지 않도록, 다른 탭도 모두". planner → Zone팀/R팀 implementer
+2명 병렬(i18n.py는 planner가 미리 다 써놔서 구현 단계에서 충돌 없음) → verifier
+순서로 진행. i18n.py 신규 키 242개, 11개 파일 중 10개 파일 161곳 `t()` 치환.
+리더가 전체 503키 용어 일관성 전수 감사(사용자가 "다른 탭도 모두"로 요청한 범위)
+— `zone.running` 1건 실수정, main 기존 불일치 4건은 `docs/decisions-needed.md`
+등록만. verifier가 BUG-046(공유 위젯 `inference_image_list.py`의 비관련 기존
+결함) 발견 → 리더가 직접 수정(기존 키 재사용 3줄) + main에도 독립 적용
+(BUG-033). 에디션 `zone-v1.8.0`, main `v1.11.1` 태깅 전 커밋까지 완료, push는
+사용자 확인 대기.
