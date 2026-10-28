@@ -273,6 +273,7 @@ class ZoneAnalysisTab(QWidget):
         self._last_result: InferenceResult | None = None
         self._original_pixmap: QPixmap | None = None
         self._overlay_visible = True
+        self._overlay_opacity = 0.5   # 슬라이더 값 — 세션 동안 유지(이미지 전환/재추론에도 보존)
         self._results: dict[Path, InferenceResult] = {}
         # R-PERF-1: (target_cid, min_confidence, min_pixel_size) 키로 refilter+
         # compute_blob_labels 결과를 캐싱 — 같은 이미지를 같은 조합으로 재방문할 때
@@ -300,6 +301,11 @@ class ZoneAnalysisTab(QWidget):
         self._threshold_timer.setSingleShot(True)
         self._threshold_timer.setInterval(150)
         self._threshold_timer.timeout.connect(self._on_target_changed)
+        # 오버레이 불투명도 슬라이더 디바운스 — inference_tab.py의 opacity 관례(75ms)와 동일
+        self._opacity_timer = QTimer(self)
+        self._opacity_timer.setSingleShot(True)
+        self._opacity_timer.setInterval(75)
+        self._opacity_timer.timeout.connect(self._show_overlay_state)
         # ── R-ZONE-3: 사이드카 자동 저장(디바운스) ─────────────────────────────
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -595,6 +601,22 @@ class ZoneAnalysisTab(QWidget):
         self._btn_align.setToolTip(t("zone.align_tip"))
         toolbar_header_layout.addWidget(self._btn_align)
         canvas_layout.addWidget(toolbar_header)
+
+        opacity_row = QWidget()
+        opacity_row.setStyleSheet("background:#1f2329;border:none;border-bottom:1px solid #374151;")
+        opacity_row_layout = QHBoxLayout(opacity_row)
+        opacity_row_layout.setContentsMargins(8, 4, 8, 4)
+        opacity_row_layout.addWidget(QLabel(t("common.overlay_opacity_label")))
+        self._overlay_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._overlay_opacity_slider.setRange(0, 100)
+        self._overlay_opacity_slider.setValue(int(self._overlay_opacity * 100))
+        self._lbl_overlay_opacity_pct = QLabel(f"{self._overlay_opacity_slider.value()}%")
+        self._lbl_overlay_opacity_pct.setFixedWidth(36)
+        opacity_row_layout.addWidget(self._overlay_opacity_slider)
+        opacity_row_layout.addWidget(self._lbl_overlay_opacity_pct)
+        self._overlay_opacity_slider.valueChanged.connect(self._on_overlay_opacity_changed)
+        canvas_layout.addWidget(opacity_row)
+
         canvas_layout.addWidget(self._canvas, stretch=1)
 
         splitter.addWidget(canvas_panel)
@@ -1129,11 +1151,31 @@ class ZoneAnalysisTab(QWidget):
 
     def _show_overlay_state(self) -> None:
         if self._overlay_visible and self._last_result is not None:
+            self._reblend_overlay()
             self._canvas.set_pixmap(
                 QPixmap.fromImage(self._last_result.overlay_image), preserve_view=True
             )
         elif self._original_pixmap is not None:
             self._canvas.set_pixmap(self._original_pixmap, preserve_view=True)
+
+    def _reblend_overlay(self) -> None:
+        """현재 슬라이더 opacity로 overlay_image를 다시 합성(모델 재실행 없음, forward pass
+        없는 numpy/cv2 합성만 — _show_overlay_state() 호출마다 매번 거쳐도 비용이 크지 않음).
+        슬라이더 값이 이미지 전환/재추론에도 유지되도록(요구사항) 여기서 항상 반영한다."""
+        if self._last_result is None or self._image_path is None:
+            return
+        try:
+            self._last_result.overlay_image = engine.reblend(
+                self._last_result, self._image_path, self._overlay_opacity,
+            )
+            self._results[self._image_path] = self._last_result
+        except Exception:
+            log.exception("존 분석 오버레이 재합성 실패")
+
+    def _on_overlay_opacity_changed(self, value: int) -> None:
+        self._lbl_overlay_opacity_pct.setText(f"{value}%")
+        self._overlay_opacity = value / 100.0
+        self._opacity_timer.start()
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.NoModifier:

@@ -160,3 +160,26 @@ def test_blob_clicked_only_in_circle_mode_and_blob_delete_unaffected() -> None:
     assert len(spy_pan) == 0
     canvas.close()
 
+
+def test_zone_overlay_opacity_slider_updates_and_persists() -> None:
+    """오버레이 불투명도 슬라이더 — 값이 _overlay_opacity에 반영되고 이미지 전환 후에도
+    유지돼야 한다(사용자 요구사항: 0.5로 리셋되면 안 됨)."""
+    _app_ref = _app()
+    zone = ZoneAnalysisTab()
+    assert zone._overlay_opacity_slider.value() == 50
+    assert zone._overlay_opacity == 0.5
+
+    zone._overlay_opacity_slider.setValue(80)
+    assert zone._overlay_opacity == 0.8
+    assert zone._lbl_overlay_opacity_pct.text() == "80%"
+
+    # _last_result가 없을 때도 예외 없이(조기 return) 동작해야 한다.
+    zone._opacity_timer.stop()
+    zone._show_overlay_state()
+
+    # 이미지 전환을 흉내(새 _image_path)내도 슬라이더 값은 그대로 유지된다.
+    zone._image_path = Path("dummy.png")
+    zone._show_overlay_state()
+    assert zone._overlay_opacity == 0.8
+    zone.close()
+

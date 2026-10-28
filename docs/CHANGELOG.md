@@ -5,6 +5,27 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.9.0] 2026-10-28
+
+사용자 요청: 존분석/R분석 탭의 검출 결과 오버레이가 고정 불투명도라 라벨링/보정
+중 조절이 안 되던 것을, main 추론 탭(`OverlayViewerPanel`)과 동일한 패턴의
+슬라이더로 조절 가능하게 변경.
+
+### 추가
+- `app/core/i18n.py`에 `common.overlay_opacity_label` 신규 키(ko/en) — 두 탭이
+  동일 문구를 공유(라벨마다 별도 키를 만들지 않음).
+- 존분석 탭: 캔버스 상단 툴바 바로 아래에 불투명도 슬라이더(0~100%, 기본 50%)
+  행 추가. 값 변경 시 75ms 디바운스 후 `inference_engine.reblend()`로 모델
+  재실행 없이 오버레이만 재합성(main 추론 탭 opacity 패턴과 동일). 슬라이더
+  값은 이미지 전환/재추론에도 유지된다(`_show_overlay_state()` 호출마다 항상
+  현재 슬라이더 opacity로 재합성).
+- R분석 탭: `RRoiCanvas.set_mask_opacity()`/`mask_opacity()` 추가 — 고정
+  alpha(90/255)였던 검출 마스크 오버레이를 캔버스 좌측 하단 플로팅 슬라이더
+  (기본 35%, 90/255에 해당)로 조절. 메모리의 numpy 마스크만 재합성해 디바운스
+  불필요.
+
+---
+
 ## [zone-v1.8.0] 2026-10-28
 
 사용자 요청: 존분석("TOP/BOTTOM ANALYSIS")/R분석 탭에 영어(en) 언어 지원 적용

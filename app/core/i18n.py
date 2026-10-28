@@ -22,6 +22,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "common.apply":  "적용",
         "common.yes":    "예",
         "common.no":     "아니오",
+        "common.overlay_opacity_label": "오버레이 불투명도:",
 
         # ── 설정 ──────────────────────────────────────────────────────────
         "menu.settings.tip":           "설정 열기",
@@ -595,6 +596,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "common.apply":  "Apply",
         "common.yes":    "Yes",
         "common.no":     "No",
+        "common.overlay_opacity_label": "Overlay Opacity:",
 
         # ── Settings ──────────────────────────────────────────────────────
         "menu.settings.tip":           "Open settings",

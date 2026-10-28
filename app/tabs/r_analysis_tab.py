@@ -27,8 +27,9 @@ from PyQt6.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QListWidget,
-    QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QSpinBox,
-    QSplitter, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget,
+    QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QSlider,
+    QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
+    QWidget,
 )
 
 from app.core import r_cell_store as r_store
@@ -236,6 +237,7 @@ class RAnalysisTab(QWidget):
         self._build_edit_cluster()
         self._build_run_cluster()
         self._build_nav_cluster()
+        self._build_opacity_cluster()
         QTimer.singleShot(0, self._position_overlays)
         return center
 
@@ -344,6 +346,33 @@ class RAnalysisTab(QWidget):
 
         self._nav_cluster = cluster
 
+    def _build_opacity_cluster(self) -> None:
+        cluster = QFrame(self._canvas)
+        cluster.setStyleSheet(
+            "background:rgba(31,35,41,215);border:1px solid #374151;border-radius:6px;"
+        )
+        layout = QHBoxLayout(cluster)
+        layout.setContentsMargins(6, 4, 6, 4)
+
+        layout.addWidget(QLabel(t("common.overlay_opacity_label")))
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setFixedWidth(120)
+        self._opacity_slider.setRange(0, 100)
+        self._opacity_slider.setValue(round(self._canvas.mask_opacity() / 255 * 100))
+        self._lbl_opacity_pct = QLabel(f"{self._opacity_slider.value()}%")
+        self._lbl_opacity_pct.setFixedWidth(36)
+        layout.addWidget(self._opacity_slider)
+        layout.addWidget(self._lbl_opacity_pct)
+        self._opacity_slider.valueChanged.connect(self._on_mask_opacity_changed)
+
+        self._opacity_cluster = cluster
+
+    def _on_mask_opacity_changed(self, value: int) -> None:
+        self._lbl_opacity_pct.setText(f"{value}%")
+        # 디바운스 불필요 — set_mask_opacity()는 디스크 I/O나 모델 재실행 없이
+        # 메모리의 numpy 마스크를 QImage로 다시 그리기만 하므로 드래그 중에도 가볍다.
+        self._canvas.set_mask_opacity(round(value / 100 * 255))
+
     def _build_right_panel(self) -> QWidget:
         right = QWidget()
         layout = QVBoxLayout(right)
@@ -417,6 +446,10 @@ class RAnalysisTab(QWidget):
         run_x = max(run_x, edit_right + margin)
         self._run_cluster.move(run_x, margin)
         self._nav_cluster.move(max(nav_left, run_x + self._run_cluster.width() + margin), margin)
+
+        # 불투명도 슬라이더는 상단 3개 클러스터와 겹치지 않도록 좌측 하단에 별도 배치.
+        self._opacity_cluster.adjustSize()
+        self._opacity_cluster.move(margin, self._canvas.height() - margin - self._opacity_cluster.height())
 
     # ── 편집 도구 ────────────────────────────────────────────────────────────
 
@@ -927,5 +960,10 @@ if __name__ == "__main__":
 
     tab._refresh_right_panel()
     assert "합격 1" in tab._lbl_overall_summary.text()
+
+    # 오버레이 불투명도 슬라이더 — 기본값(90/255≈35%)과 변경 시 캔버스 반영 확인.
+    assert tab._opacity_slider.value() == 35
+    tab._opacity_slider.setValue(80)
+    assert tab._canvas.mask_opacity() == round(80 / 100 * 255)
 
     print("r_analysis_tab self-check OK")

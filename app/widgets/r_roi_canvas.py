@@ -70,6 +70,7 @@ class RRoiCanvas(OverlayViewer):
         # ── 검출된/보정된 마스크(원본 해상도 bool) ───────────────────────────────
         self._detected_mask: np.ndarray | None = None
         self._mask_image: QImage | None = None
+        self._mask_alpha = 90   # _COLOR_MASK 기본 alpha(0~255) — set_mask_opacity()로 조절
 
         # ── effective_mask() 증분 캐시(P0 성능) ──────────────────────────────
         # 스트로크를 1개 커밋할 때마다 누적된 manual_strokes 전체를 처음부터
@@ -149,6 +150,16 @@ class RRoiCanvas(OverlayViewer):
     def erase_mask(self) -> np.ndarray | None:
         """지운 영역만의 bool 마스크(원본 좌표) — zone_canvas.erase_mask()와 동일 getter 패턴."""
         return self._erase_mask_np
+
+    def set_mask_opacity(self, alpha_0_255: int) -> None:
+        """검출 마스크 오버레이 투명도 조절(0~255). 세션 동안 값 유지 — 새 마스크를
+        set_detected_mask()로 갈아끼워도 다음 호출까지 그대로 적용된다."""
+        self._mask_alpha = max(0, min(255, alpha_0_255))
+        self._rebuild_mask_image()
+        self.update()
+
+    def mask_opacity(self) -> int:
+        return self._mask_alpha
 
     def effective_mask(self) -> np.ndarray | None:
         """검출 마스크 + 수동 그리기/지우기 반영 최종 마스크(면적 계산용).
@@ -404,7 +415,7 @@ class RRoiCanvas(OverlayViewer):
             return
         h, w = mask.shape
         rgba = np.zeros((h, w, 4), dtype=np.uint8)
-        rgba[mask] = _COLOR_MASK
+        rgba[mask] = (*_COLOR_MASK[:3], self._mask_alpha)
         img = QImage(rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888)
         self._mask_image = img.copy()   # numpy 버퍼와 분리(생명주기 안전)
 
@@ -592,5 +603,20 @@ if __name__ == "__main__":
     # nw 핸들은 반대
     fixed_names2, movable_names2 = _HANDLE_FIXED_MOVABLE["nw"]
     assert fixed_names2 == ("right", "bottom") and movable_names2 == ("left", "top")
+
+    # set_mask_opacity(): 저장/클램프만 Qt 비의존적으로 검증(렌더링은 QImage 생성 필요해 생략)
+    class _FakeCanvas:
+        _mask_alpha = 90
+        set_mask_opacity = RRoiCanvas.set_mask_opacity
+        mask_opacity = RRoiCanvas.mask_opacity
+        def _rebuild_mask_image(self): pass
+        def update(self): pass
+    fc = _FakeCanvas()
+    fc.set_mask_opacity(35)
+    assert fc.mask_opacity() == 35
+    fc.set_mask_opacity(999)   # 클램프 상한
+    assert fc.mask_opacity() == 255
+    fc.set_mask_opacity(-10)   # 클램프 하한
+    assert fc.mask_opacity() == 0
 
     print("r_roi_canvas self-check OK")
