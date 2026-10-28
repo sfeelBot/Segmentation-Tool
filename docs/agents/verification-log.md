@@ -7047,3 +7047,40 @@ BUG-046은 이번 라운드가 새로 만든 문제가 아니라 그 이전부�
 - 결론: 1~3번 전부 PASS, 발견된 버그 없음(QA.md 신규 등록 없음). 4번은 사실 확인된
   보고사항(버그 아님, 리더 판단 대기). **추가 작업 불필요, 리더가 버전/push만
   판단하면 됨.**
+
+## 2026-10-28 — R분석 "자동 검출 사용" 토글 독립 검증 (커밋 490ac9f)
+
+작업 위치: `D:/segmentation model-zone-analysis-tab`(에디션 워크트리). 코드 수정 없이
+정적 검토 + 실제 QCheckBox/QMouseEvent 골든패스로 독립 재현. 구현 에이전트의
+self-check(모킹/직접 호출)와 별개로 처음부터 직접 작성한 스크립트로 확인.
+
+- **1) 체크박스 실제 조작 → 버튼 활성/비활성 동기화** — PASS. 실제
+  `RSettingsPanel._chk_auto_detect.setChecked(False)`(toggled 시그널 실발화) →
+  `_btn_detect_current`/`_btn_detect_cell`/`_btn_detect_all` 3개
+  `isEnabled()==False`, ROI 버튼 2개(`_btn_roi_global`/`_btn_roi_override`)는
+  `isEnabled()==True` 유지 확인.
+- **2) ROI 미지정 + 브러시 단독 → area 실측 양수 갱신** — PASS. ROI를 전혀
+  지정하지 않은 새 200×200 합성 이미지를 `_set_current_image()`로 로드(자동검출
+  OFF) → 브러시 전 `area==0` 확인 → 실제 `QMouseEvent`(press/move/release, 좌표는
+  캔버스 자체의 `_orig_to_screen_point()`로 매핑) 3단계로 (100,100)→(130,100)
+  브러시 스트로크 드래그+커밋 → `area==1583`(반경15 원 궤적과 대략 일치, 0 아님)로
+  갱신 확인 — 이번 라운드가 고치려던 핵심 버그(예전엔 `None` 마스크라 area가 항상
+  0으로 강제됐음) 실제 재현으로 해소 확인.
+- **3) 재ON 시 버튼 재활성화 + 빈 마스크 복귀 + 스트로크 보존** — PASS. 체크박스
+  재ON(ROI 여전히 미지정) → 검출 버튼 3개 다시 `isEnabled()==True`,
+  `_compute_detected_mask()`가 다시 빈(all-False) 마스크로 복귀, 기존 브러시
+  스트로크(`_manual_strokes` 1개)는 그대로 유지되며 `effective_mask()` 면적도
+  동일(1583)하게 유지됨을 확인 — on/off 토글이 `_manual_strokes`를 지우지 않음.
+- **4) 세션 저장/재오픈 왕복** — PASS. `_do_save()` → 새 `RAnalysisTab` 인스턴스로
+  `_load_session()` 재오픈 → `auto_detect=False`/`True` 양방향 모두 체크박스 상태로
+  정확히 복원, `manual_strokes`/`area`도 함께 왕복 보존 확인.
+- **5) 회귀** — `QT_QPA_PLATFORM=offscreen build/venv/Scripts/python.exe -m pytest
+  tests/ -q`: **172 passed**(기대치와 정확히 일치, 이번 라운드가 테스트를
+  추가하지 않았다는 보고와 일치). `r_settings_panel.py`/`r_analysis_tab.py` 자체
+  self-check(`python -m ...`)도 모두 OK. 추가로 기존 ROI 지정 + 자동검출 ON 골든
+  패스(리팩터링으로 통합된 `_compute_detected_mask()`/`_run_and_display_detection()`
+  경로)를 실제 `QMouseEvent` ROI 드래그로 별도 재현 — 80×80 흰 블롭이 그려진 합성
+  이미지에서 ROI 드래그 → `detect_contour_mask()` 실행 → area=6561(81×81, 예상과
+  정확히 일치) 확인, 리팩터링이 기존 검출 경로를 깨지 않았음을 확인.
+- 발견된 버그 없음(QA.md 신규 등록 없음). **추가 작업 불필요, 리더가 버전/push만
+  판단하면 됨.**
