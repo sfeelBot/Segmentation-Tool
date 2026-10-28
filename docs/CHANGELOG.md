@@ -5,6 +5,19 @@
 
 ---
 
+## [v1.11.1] 2026-10-28
+
+사용자 요청: 존/R분석 탭 i18n 라운드(에디션 브랜치) 검증 중 발견된 공용
+`InferenceImageList` 위젯의 영문 미지원(BUG-033)을 main에도 독립 적용.
+
+### 수정
+- `app/widgets/inference_image_list.py` — `editable=False`(추론 탭 기본값)일 때
+  제목 라벨/검색창 placeholder/정렬 라벨이 `t()`를 거치지 않고 한국어로
+  하드코딩돼 있던 것을 기존 `infer.image_list`/`browser.search_placeholder`/
+  `browser.sort_label` 키 재사용으로 수정. 신규 번역 키 추가 없음.
+
+---
+
 ## [v1.11.0] 2026-10-27
 
 사용자 요청: 라벨링 탭의 툴바/뷰어(pan·zoom)/이미지 리스트를 재사용 가능한
