@@ -3505,3 +3505,45 @@ GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
 **검증 에이전트의 실제 확인(라벨링/추론 탭 골든 패스 — 특히 도구 상호배타
 양방향, pan/zoom, 이미지 리스트 상태 아이콘/정렬/추가·삭제/Ctrl+C) 전까지는
 완료로 간주하지 않음.**
+
+## 2026-10-28 — 학습 중지(Stop) 응답성 버그 수정 (작업 A만, 스펙 3건 중 1건)
+
+스펙: `docs/specs/training-progress-and-stop-fix-2026-10-28.md`의 "작업 A" 절만
+구현 (작업 B/C는 다음 라운드, 같은 파일이라 순차 진행 합의).
+
+- `app/core/trainer.py` `_train()` 단독 수정.
+  - **A-1**: 배치 루프 종료 직후(`stopped_early` 로그 다음), validation 블록
+    진입 전에 `if stopped_early and history: log.info(...); break` 추가 —
+    이전 epoch 체크포인트가 이미 있으면(=BUG-026 보장 충족) 이번 epoch의
+    validation/checkpoint를 생략하고 즉시 종료.
+  - **A-2**: validation 루프(`for images, masks in val_loader:`)에
+    `if history and self._stop.is_set(): break` 체크 추가(조건은 명세대로
+    `history and` 선행 — `self._stop.is_set()` 단독이면 epoch 1에서 학습
+    배치 중 멈춤 → validation 0배치 체크포인트가 저장되는 회귀가 생기므로
+    반드시 `history`가 비어있지 않을 때만 발동). 신규 카운터
+    `val_batches_processed` 도입.
+  - `val_loss /= len(val_loader)` → `val_batches_processed`(0보다 클 때만
+    나누기)로 교체해 조기 종료 시 val_loss 왜곡(과소평가) 방지.
+  - `val_batches_processed == 0`이면 `history.append(...)`/checkpoint 저장을
+    생략하고 로그만 남긴 뒤 `continue`로 바깥 `for epoch` 루프 다음 반복으로
+    진행(그 반복 맨 위 stop 체크가 즉시 종료).
+  - validation 섹션 머리 주석도 새 동작(epoch 1은 끝까지, epoch 2+는 이전
+    checkpoint 있으면 조기 종료)에 맞게 갱신.
+  - `app/main_window.py`/`app/tabs/training_tab.py`는 스펙 확인대로 수정
+    불필요(`queue_active`가 정상적으로 False가 되면 `closeEvent()`가
+    자연히 통과).
+- 확인: `ast.parse`로 문법 검증, `import app.core.trainer` 정상, 실제
+  `python main.py` 구동(장치 감지·로그까지 정상 출력, GUI 이벤트 루프 진입
+  확인 — Ctrl+C로 중단). 콘솔 cp949 인코딩 경고는 em-dash 로그 문자열
+  관련 기존 이슈로 이번 변경과 무관(UTF-8 IO로 재확인 시 정상).
+- 커밋: `0be9c31` fix: 학습 중지(Stop) 응답성 버그 수정 — 불필요한
+  validation/checkpoint 강제 완주 제거
+  - 주의: 이 커밋 메시지에 `Co-Authored-By: Claude Sonnet 5` attribution
+    라인을 빠뜨렸음(작성 실수). 아직 push 전이므로 리더가 필요 시 조치
+    가능 — 구현 에이전트 본인은 "새 커밋 생성, amend 금지" 원칙을 지키기
+    위해 별도 amend를 하지 않고 이 사실만 보고함.
+
+**검증 에이전트 확인 필요** — 특히 스펙의 "검증 체크리스트"(epoch 2+ 중지
+응답성, 전체 큐 중지 시 메인 창 close, epoch 1 중지 시 기존 동작 유지,
+validation 도중 중지 시 분모/스킵 동작, 정상 완주 플로우 회귀 없음) 실제
+UI 조작으로 확인 전까지 완료로 간주하지 않음.
