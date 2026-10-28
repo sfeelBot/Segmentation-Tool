@@ -6928,3 +6928,61 @@ BUG-046은 이번 라운드가 새로 만든 문제가 아니라 그 이전부�
 **커밋/배포 판단**: 코드 수정 없음(검증만 수행). 이번 라운드(기획+구현) 자체는 커밋할
 변경 사항이 이미 구현 에이전트들이 만들어 둔 상태이므로, **리더가 push 여부만 사용자에게
 확인하면 된다.** BUG-046은 Open으로 QA.md에 남겨두고 별도 수정 라운드 필요.
+
+## 2026-10-28 — 오버레이 불투명도 슬라이더 / 툴바 선택 강조 / R분석 ROI 아이콘 / 검출 오버레이 show-hide 독립 재검증 (PASS)
+
+- 대상 커밋: `6729d22`(존/R분석 오버레이 불투명도 슬라이더), `bb751f6`(툴바 선택 강조 +
+  R분석 ROI 아이콘 교체 + 검출 오버레이 show/hide), main `9048714`(라벨링 탭 툴바 선택
+  강조). 구현 에이전트 자체 self-check 보고를 신뢰하지 않고, 실제 `QApplication` +
+  실제 위젯(`ZoneAnalysisTab`/`RAnalysisTab`/에디션+main `LabelingTab`)을 생성해 독립
+  재현했다(스크립트는 세션 스크래치패드에 작성, 저장소에 커밋하지 않음).
+- **1) 오버레이 불투명도 슬라이더** — PASS.
+  - 존분석: 합성 `InferenceResult`(class_map 절반 class 1)로 `_overlay_opacity_slider`를
+    실제 `setValue(20)`/`setValue(90)`로 조작 → `QTest.qWait(150)`으로 75ms 디바운스
+    플러시 후 캔버스에 실제 표시된 `QPixmap`을 `toImage().pixelColor()`로 읽어
+    `orig*(1-op)+color*op` 기대값과 ±2 오차 내로 일치(20%≠90% 픽셀값도 확인). 이미지
+    전환(`_show_overlay_state()` 재호출, `_setup_target_classes` 경로와 동일) 후에도
+    슬라이더 값 90이 유지되고 재합성 결과에 90%가 다시 반영됨을 확인 — "리셋 안 됨"
+    요구사항 충족.
+  - R분석: `RRoiCanvas.set_detected_mask()`로 실제 마스크 주입 → `_opacity_slider`
+    `setValue(10)`/`setValue(90)` → `canvas._mask_image.pixelColor().alpha()`가
+    `round(value/100*255)`와 정확히 일치, 10%≠90% 확인. 재검출(다른 마스크로
+    `set_detected_mask()` 재호출, threshold 변경 시뮬레이션) 후에도 슬라이더 값 90 유지 +
+    새 마스크에 90% 알파가 재적용됨을 확인.
+- **2) 툴바 선택 강조** — PASS. 존분석(`_edit_toolbar`)/R분석(`findChild(QToolBar)`)/
+  라벨링(에디션+main, 각 `findChild(QToolBar)`) 4곳 모두 `styleSheet()`에
+  `"QToolBar QToolButton:checked"` 규칙이 실제로 포함됨을 확인. 각 탭에서 실제
+  도구 액션을 `trigger()`해 `isChecked()==True`로 바뀌고 이전 활성 도구가
+  `isChecked()==False`로 바뀌는 상호배제도 확인(존분석은 신규 탭이 편집 도구를
+  기본 비활성화해 `setEnabled(True)` 후 trigger 필요 — 실제 사용 흐름에서는 이미지
+  로드 시 자동 활성화되므로 버그 아님).
+- **3) R분석 ROI 아이콘** — PASS. `self._act_roi.icon().pixmap(QSize(18,18)).toImage()`와
+  `icons.icon("tool_rect")`로 직접 만든 아이콘의 동일 크기 `toImage()`가 완전히 동일
+  (`==`)하고, 교체 전 아이콘(`tool_select`)과는 다름을 확인.
+- **4) R분석 눈/F키 토글 골든패스** — PASS, 가장 중요한 (d) 데이터 불변성까지 확인.
+  실제 60×60 합성 이미지(흑백 배경 + 흰 사각형 30×30=900px)를 디스크에 써서
+  `_set_current_image()` → `_on_detect_current()`(실제 `detect_contour_mask` cv2 경로)로
+  `_mask_image`를 채운 뒤:
+  - 눈 액션 `trigger()` → `_paint_mask_overlay()`를 실제 호출해 캔버스 위젯 크기로
+    렌더링한 `QImage`의 alpha>0 픽셀 수가 표시 상태 51,984px → 숨김 0px → 재클릭 시
+    51,984px로 정확히 복원됨을 확인.
+  - `QKeyEvent(Key_F)`를 `RRoiCanvas.keyPressEvent()`에 실제로 보내 액션 체크 상태와
+    렌더 결과가 동일하게 토글됨을 확인(라벨링 탭의 `sc.ann_visible` F키 패턴과 동일
+    동작).
+  - **숨김 상태에서** `get_roi()`, 실제 `QMouseEvent` 3개(press/move/release)로 브러시
+    지우기 스트로크 적용 → `effective_mask()`/`contour_area()`가 900→682로 정상
+    갱신됨을 확인(화면 렌더링은 계속 0px로 차단됨) → 재표시 시 지워진 결과가 화면에
+    반영(51,984 → 그보다 작은 값)됨을 확인 — "숨김=화면표시만 차단, 데이터는 그대로"
+    요구사항이 실제 편집 동작까지 포함해 성립.
+- **5) 회귀** — 에디션 `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -q`: **169 passed**
+  (기대치와 정확히 일치). main 쪽도 동일 명령 실행: **96 passed, 1 failed**
+  (`test_training_performance.py::test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`,
+  `assert model.calls == 6` → 실제 5). 구현 에이전트 보고대로 이번 4개 기능과 무관한
+  기존 결함임을 직접 재확인했다(학습 중지 로직 쪽 — 다른 세션 작업 영역). 이번
+  라운드 변경 범위 밖이라 QA.md에 새 Open 항목으로 등록하지 않음(참고용으로 이 로그에만
+  기록).
+- **6) main `labeling_tab.py` 회귀** — PASS. `findChild(QToolBar).styleSheet()`에
+  `:checked` 규칙 확인 + 폴리곤→select→brush→polygon 실제 `trigger()` 전환 3회 모두
+  정상(상호배제·기존 골든패스 회귀 없음).
+- 결론: 4개 기능 전부 PASS, 발견된 버그 없음. **커밋/배포 추가 작업 불필요 — 리더가
+  push 여부만 사용자에게 확인하면 됨.**
