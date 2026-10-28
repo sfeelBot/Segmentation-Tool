@@ -5,7 +5,30 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-27] "브러시 도구/이미지 뷰어/이미지 리스트 공통 위젯화" —
+> **[최신, 2026-10-28] 존분석/R분석 탭 이미지 목록 Shift/Ctrl 다중선택 +
+> Delete 일괄 제거 동일화 — 완료, 블로커 없음.** 사용자 요청: "공용 이미지
+> 목록에 Shift 범위선택/Ctrl 개별선택/Delete 일괄삭제 기능 추가" → 범위를
+> 묻는 과정에서 라벨링 탭은 이미 동작 중(`editable=True` → ExtendedSelection+
+> `delete_selected()`), 추론 탭은 다중선택/삭제 자체가 설계상 없음(전체 목록
+> 일괄 추론이라 선택 개념 불필요)을 확인하고 사용자에게 공유 → 사용자가
+> "존분석, R분석"으로 범위 확정 → "두 개가 동일하게 동작하도록"으로 최종 확정.
+> 리더가 직접 조사(에디션 워크트리 `D:/segmentation model-zone-analysis-tab`):
+> **존분석 탭은 이미 완전히 동작**(`ZoneAnalysisTab._img_list.set_multi_select(True)`,
+> R-C 3b 배치처리용으로 기존에 구현됨) — 변경 불필요. **R분석 탭**은
+> `RCellPanel._image_list`(역시 공용 `InferenceImageList` 재사용 중, "선택한
+> 셀의 이미지" 패널)에 `set_multi_select(True)` 호출만 빠져 있던 것이 유일한
+> 차이 — 사소한 1줄 수정으로 판단해 리더가 직접 처리(서브에이전트 미호출,
+> AGENTS.md 예외 규정). `app/widgets/r_cell_panel.py`에 1줄 추가 +
+> `__main__` 자체 점검에 다중선택모드/다중삭제 assert 2건 추가. 검증:
+> 모듈 자체 점검 통과, `QTest.mouseClick`으로 실제 Shift 범위선택/Ctrl
+> 개별추가/Ctrl 토글해제/선택 4장 Delete 일괄제거까지 실측 재현 스크립트
+> 작성·실행해 전부 PASS 확인, 에디션 pytest 168개 재확인 통과(회귀 없음).
+> `release.ini` zone-v1.6.3→zone-v1.7.0(MINOR, 신규 사용자 체감 기능) +
+> CHANGELOG 갱신 + `generate_version_info.py` 검증 완료. **커밋 완료
+> (`D:/segmentation model-zone-analysis-tab`, feature/zone-analysis-tab), push는
+> 사용자 확인 전까지 보류.**
+
+> **[2026-10-27] "브러시 도구/이미지 뷰어/이미지 리스트 공통 위젯화" —
 > 기획+구현(main 1단계) 완료, 검증 대기.** 기획(planner)이
 > `docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`로 스펙 확정 →
 > designer(레이아웃·아이콘 검토, 코드 변경 없음)와 implementer를 병행 호출 →
@@ -586,3 +609,20 @@
 별도 커밋함(`74639d4`/`9ea66ac`/`d6b4cbb`). QA.md 넘버링은 브랜치 독립이라 여기선
 BUG-032(zone 브랜치는 BUG-033). 실제 UI 골든패스(라벨링 왕복 undo, Export) 28/28
 어서션 통과, PASS. push는 리더가 사용자 확인 후 진행.
+
+## 2026-10-28 — 존분석/R분석 이미지 목록 Shift/Ctrl 다중선택 + Delete 일괄제거 동일화
+
+사용자 요청: "공용 이미지 목록에 Shift 범위선택/Ctrl 개별선택/Delete 일괄삭제
+추가". 범위 확인 질문(AskUserQuestion)으로 라벨링 탭은 이미 동작 중, 추론 탭은
+설계상 선택/삭제 개념이 없음을 공유 → 사용자가 "존분석, R분석"으로 범위 지정 →
+"두 개가 동일하게 동작하도록" 확정. 리더가 에디션 워크트리
+(`D:/segmentation model-zone-analysis-tab`)를 직접 조사: 존분석 탭은 기존 R-C 3b
+작업(`set_multi_select(True)`)으로 이미 완전히 동작, R분석 탭의
+`RCellPanel._image_list`(공용 `InferenceImageList` 재사용)만 그 호출이 빠져
+있었음. 1줄 추가로 리더가 직접 수정(서브에이전트 미호출, 사소한 수정 예외
+규정) — `app/widgets/r_cell_panel.py`. `__main__` 자체 점검 + 별도
+`QTest.mouseClick` 기반 Shift/Ctrl/일괄삭제 실측 스크립트로 검증, 전부 PASS.
+에디션 pytest 168개 재확인(회귀 없음). `release.ini` zone-v1.6.3→zone-v1.7.0
+(MINOR), CHANGELOG 갱신, `generate_version_info.py` 검증. 작업 전 해당 워크트리에
+남아있던 2단계 검증 로그 커밋 누락분(`8a92bd9`)도 먼저 정리해 커밋. 이번 변경
+커밋 완료, **push는 사용자 확인 후 진행 예정**(아직 요청받지 않음).
