@@ -41,9 +41,10 @@
 > 등록, zone 쪽 BUG-046은 Closed 처리). 양쪽 pytest 재확인(main 97/에디션
 > 168) 통과. 버전: 에디션 `zone-v1.7.0`→`zone-v1.8.0`(MINOR, 신규 i18n
 > 기능), main `v1.11.0`→`v1.11.1`(PATCH, BUG-033 버그 수정만) +
-> CHANGELOG 갱신 + `generate_version_info.py` 검증 양쪽 완료. **커밋 완료
-> (에디션 `a892474`~`d80b652`, main `786e6a6`~`9ed6fc8`), push는 사용자
-> 확인 전까지 보류.**
+> CHANGELOG 갱신 + `generate_version_info.py` 검증 양쪽 완료. 사용자가 "PUSH
+> 진행해줘" 지시 → main push(`v1.11.1`, 태그 포함) + 에디션
+> `feature/zone-analysis-tab` push(`zone-v1.8.0`, 태그 포함) 전부 완료.
+> **이번 라운드 완료, 블로커 없음.**
 
 > **[2026-10-28] 존분석/R분석 탭 이미지 목록 Shift/Ctrl 다중선택 +
 > Delete 일괄 제거 동일화 — 완료, 블로커 없음.** 사용자 요청: "공용 이미지
