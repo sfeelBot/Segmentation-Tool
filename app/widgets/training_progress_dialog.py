@@ -11,6 +11,11 @@ from app.core.i18n import t
 
 _QUEUE_ICON_SIZE = 14
 
+_STAGE_ORDER = [
+    "device", "dataset_train", "dataset_val",
+    "dataloader", "model_to_device", "optimizer",
+]
+
 STATUS_ICON_NAME = {
     "waiting": "status_ring",
     "running": "status_dot",
@@ -108,6 +113,13 @@ class TrainingProgressDialog(QDialog):
         q_layout.addWidget(self._queue_list)
         root.addWidget(q_box, stretch=1)
 
+        # ── 준비 단계 로그 (작업 B) ───────────────────────────────────────────
+        self._stage_list = QListWidget()
+        self._stage_list.setAlternatingRowColors(True)
+        self._stage_list.setMaximumHeight(90)
+        self._stage_list.setStyleSheet("font-size:11px; color:#aaa;")
+        root.addWidget(self._stage_list)
+
         # ── 버튼 ─────────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         self._btn_stop_current = QPushButton(t("train_progress.stop_current"))
@@ -132,6 +144,14 @@ class TrainingProgressDialog(QDialog):
         self._lbl_train_loss.setText("Train: —")
         self._lbl_val_loss.setText("Val: —")
         self._lbl_iou.setText("IoU: —")
+        self._stage_list.clear()
+
+    def append_stage(self, key: str) -> None:
+        """TrainerWorker.stage_changed 수신 — 학습 준비 단계 로그 한 줄 추가."""
+        idx = _STAGE_ORDER.index(key) + 1 if key in _STAGE_ORDER else len(_STAGE_ORDER)
+        label = t(f"train_progress.stage.{key}")
+        self._stage_list.addItem(f"[{idx}/{len(_STAGE_ORDER)}] {label}")
+        self._stage_list.scrollToBottom()
 
     def update_epoch(self, epoch: int, total: int,
                      train_loss: float, val_loss: float, iou: float,

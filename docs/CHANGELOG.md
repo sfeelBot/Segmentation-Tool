@@ -5,6 +5,29 @@
 
 ---
 
+## [v1.12.0] 2026-10-28
+
+사용자 요청: 학습 진행 다이얼로그의 "멈춘 것처럼 보이는" 준비 구간(디바이스 선택
+~ optimizer 구성) 가시화(`docs/specs/training-progress-and-stop-fix-2026-10-28.md`
+작업 B/C). 작업 A(중지 버그 수정)는 이전 라운드(v1.11.1 이후 커밋 0be9c31/0d1c834)에서
+이미 완료됨.
+
+### 추가
+- `app/core/trainer.py` — `TrainerWorker`에 `stage_changed(str)` 시그널 추가. `_train()`
+  준비 단계 6곳(`device`/`dataset_train`/`dataset_val`/`dataloader`/`model_to_device`/
+  `optimizer`) 진입 직전 emit, 각 단계 종료 시 `time.perf_counter()` 기반 경과시간을
+  `log.info()`로 기록(작업 C — 느린 구간 측정 가능하게 만듦, 알고리즘 개선은 범위 밖).
+- `app/widgets/training_progress_dialog.py` — 학습 큐(`q_box`) 바로 아래 준비 단계
+  로그용 컴팩트 `QListWidget`(높이 상한 90px) 추가. `set_current_job()` 시 clear,
+  신규 `append_stage(key)`로 `"[idx/6] {label}"` 형식 한 줄 append.
+- `app/tabs/training_tab.py` — `_run_next_job()`에서 `stage_changed` 연결(신규
+  `_on_stage_changed` 슬롯 → 다이얼로그 `append_stage` 호출), `_retire_trainer()`
+  disconnect 목록에도 포함(stale-signal 방지).
+- `app/core/i18n.py` — `train_progress.stage.*` ko/en 6쌍 신규(라벨만 번역,
+  `"[idx/6]"` 포맷은 코드에서 조립).
+
+---
+
 ## [v1.11.1] 2026-10-28
 
 사용자 요청: 존/R분석 탭 i18n 라운드(에디션 브랜치) 검증 중 발견된 공용

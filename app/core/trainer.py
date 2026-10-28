@@ -78,6 +78,7 @@ class TrainingConfig:
 
 class TrainerWorker(QThread):
     training_started  = pyqtSignal(int, int)   # total_train_batches, total_epochs
+    stage_changed      = pyqtSignal(str)   # stage_key — 학습 준비 단계 진입 알림 (B)
     epoch_done        = pyqtSignal(int, float, float, dict)
     # epoch, train_loss, val_loss, {"mean_iou": float, "mean_dice": float}
     batch_done        = pyqtSignal(int, int, float)
@@ -137,7 +138,10 @@ class TrainerWorker(QThread):
 
     def _train(self) -> None:
         cfg    = self._cfg
+        self.stage_changed.emit("device")
+        _stage_t0 = time.perf_counter()
         device = pick_device(cfg.device)
+        log.info(f"[단계 1/6] 디바이스 선택: {time.perf_counter() - _stage_t0:.2f}s")
         history: list[dict[str, float | int]] = []
         best_iou = float("-inf")
         log.info(f"선택된 디바이스: {device}")
@@ -150,6 +154,8 @@ class TrainerWorker(QThread):
             + (f"  (결함 우선 확률: {cfg.defect_sample_prob:.0%})"
                if cfg.sample_mode == "random_crop" else "")
         )
+        self.stage_changed.emit("dataset_train")
+        _stage_t0 = time.perf_counter()
         try:
             # 학습: 지정된 샘플링 모드 사용
             dataset = SegmentationDataset(
@@ -164,6 +170,7 @@ class TrainerWorker(QThread):
             log.exception("데이터셋 구성 실패")
             raise RuntimeError(f"데이터셋 구성 실패: {e}") from e
         log.info(f"데이터셋 로드 완료 — 총 {len(dataset)} 샘플")
+        log.info(f"[단계 2/6] 학습 데이터셋 구성: {time.perf_counter() - _stage_t0:.2f}s")
 
         if len(dataset) == 0:
             raise RuntimeError(
@@ -193,12 +200,15 @@ class TrainerWorker(QThread):
         train_ds = _TrainImageSubset(dataset, train_img_idx)
 
         # Validation: 검증 이미지만 resize 로 일관되게 평가
+        self.stage_changed.emit("dataset_val")
+        _stage_t0 = time.perf_counter()
         val_ds_resize = SegmentationDataset(
             image_size=(cfg.image_w, cfg.image_h),
             mode="resize",
             cache_bytes_budget=_VAL_CACHE_BYTES,
         )
         val_ds = _IndexedSubset(val_ds_resize, val_img_idx)
+        log.info(f"[단계 3/6] 검증 데이터셋 구성: {time.perf_counter() - _stage_t0:.2f}s")
 
         pin = device.type == "cuda"
         # persistent_workers=True: num_workers>0 일 때 필수 — 없으면 매 epoch마다
@@ -208,6 +218,8 @@ class TrainerWorker(QThread):
         # persistent_workers=True 로 두면 최초 epoch만 워커 기동 비용을 내고 이후
         # epoch은 9~13ms/batch로 20~30배 개선(디코딩 캐시 워밍업 효과 포함).
         persist = cfg.num_workers > 0
+        self.stage_changed.emit("dataloader")
+        _stage_t0 = time.perf_counter()
         train_loader = DataLoader(
             train_ds, batch_size=cfg.batch_size, shuffle=True,
             num_workers=cfg.num_workers, pin_memory=pin,
@@ -218,7 +230,10 @@ class TrainerWorker(QThread):
             num_workers=0, pin_memory=pin,
             persistent_workers=False,
         )
+        log.info(f"[단계 4/6] DataLoader 생성: {time.perf_counter() - _stage_t0:.2f}s")
 
+        self.stage_changed.emit("model_to_device")
+        _stage_t0 = time.perf_counter()
         try:
             model = self._model.to(device)
         except Exception as e:
@@ -227,7 +242,10 @@ class TrainerWorker(QThread):
                 f"모델을 {device} 로 옮길 수 없습니다: {e}\n"
                 f"CUDA 메모리 상태와 드라이버를 확인하세요."
             ) from e
+        log.info(f"[단계 5/6] 모델을 디바이스로 이동: {time.perf_counter() - _stage_t0:.2f}s")
 
+        self.stage_changed.emit("optimizer")
+        _stage_t0 = time.perf_counter()
         optimizer  = _build_optimizer(model, cfg)
         loss_fn    = _build_loss_fn(cfg.loss_fn, device)
         use_amp    = should_use_amp(device, cfg.mixed_precision)
@@ -249,6 +267,7 @@ class TrainerWorker(QThread):
             log.info(f"LR 스케쥴러: {cfg.scheduler}  (초기 LR: {cfg.lr:.2e})")
         else:
             log.info(f"LR 스케쥴러: 없음 (고정 {cfg.lr:.2e})")
+        log.info(f"[단계 6/6] 옵티마이저/스케쥴러 구성: {time.perf_counter() - _stage_t0:.2f}s")
 
         _project.checkpoints_dir().mkdir(parents=True, exist_ok=True)
         self.training_started.emit(len(train_loader), cfg.epochs)
