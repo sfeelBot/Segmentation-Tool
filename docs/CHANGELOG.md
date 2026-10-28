@@ -5,6 +5,40 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.10.0] 2026-10-28
+
+사용자 요청: (1) "브러시로 그린 것도 검출 결과와 동일하게(불투명도 포함) 화면에
+보이게, Top/Bottom도 동일하게" — 브러시는 검출 결과를 수정하는 도구이지 별도
+레이어가 아니라는 원칙 확인. (2) "R 검사 세팅에 자동 검출 on/off 추가, 꺼지면
+ROI 지정 없이 브러시로 그린 영역만 사용".
+
+### 수정
+- 브러시로 수정한 결과가 검출 결과와 별도 색(파란/회색)으로 덧칠돼 보이던 버그
+  수정 — 커밋 후엔 검출 결과와 완전히 동일한 레이어 하나로만 보이도록 변경.
+  - R분석(`r_roi_canvas.py`): 커밋된 전체 스트로크 래스터(`_stroke_overlay`)는
+    검출 마스크(`effective_mask()`)가 없을 때만 그리고, 있으면 초록 마스크
+    레이어 하나로 통일. 드래그 중(커밋 전) 스트로크는 그대로 파란/회색 미리보기.
+  - 존분석(`zone_canvas.py`/`zone_analysis_tab.py`/`inference_engine.py`): 신규
+    `engine.colorize_class_map()`(임의 class_map을 직접 컬러화, `InferenceResult`
+    불필요)을 추가하고, `_reblend_overlay()`가 브러시로 지운/그린 영역을
+    `class_map` 사본에 반영(지우기→배경 0, 그리기→타겟 클래스 id)한 뒤 다시
+    컬러화하도록 변경 — 원본 `class_map`은 변형하지 않음. 커밋된 스트로크의
+    파란/회색 덧칠(`_paint_erase_preview`)은 제거하고 드래그 중 스트로크만
+    유지. 재합성은 `_recompute_zones()`(브러시 커밋/Undo/블랍삭제 공유 funnel)
+    와 타겟 클래스 전환 시점에 호출.
+
+### 추가
+- R분석 탭: 검사 설정에 "자동 검출 사용" 체크박스 추가(기본 켜짐, 하위호환).
+  꺼면 ROI를 지정하지 않아도 되고, 검출 버튼 3개(현재/셀/전체)는 비활성화되며
+  브러시로 그린 영역만으로 면적이 계산된다 — 이전엔 ROI/검출 결과가 없으면
+  `effective_mask()`가 `None`을 반환해 브러시만으로는 면적을 절대 만들 수
+  없던 버그를 함께 고쳤다(`_compute_detected_mask()`가 빈 numpy bool 마스크를
+  반환하도록 통일, `None`과의 구분이 핵심). `app/core/i18n.py`에
+  `r_settings.auto_detect_checkbox`/`r_settings.auto_detect_off_suffix`
+  신규 키(ko/en).
+
+---
+
 ## [zone-v1.9.0] 2026-10-28
 
 사용자 요청: 존분석/R분석 탭의 검출 결과 오버레이가 고정 불투명도라 라벨링/보정
@@ -32,30 +66,6 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
   `overlay_toggle_requested` 시그널 + `set_mask_overlay_visible()` 추가 —
   화면 표시 여부만 끄고 마스크 데이터/boundary 편집·면적 계산은 그대로 동작.
   `app/core/i18n.py`에 `r.overlay_visible_tip` 신규 키(ko/en).
-- R분석 탭: 검사 설정에 "자동 검출 사용" 체크박스 추가(기본 켜짐, 하위호환).
-  꺼면 ROI를 지정하지 않아도 되고, 검출 버튼 3개(현재/셀/전체)는 비활성화되며
-  브러시로 그린 영역만으로 면적이 계산된다 — 이전엔 ROI/검출 결과가 없으면
-  `effective_mask()`가 `None`을 반환해 브러시만으로는 면적을 절대 만들 수
-  없던 버그를 함께 고쳤다(`_compute_detected_mask()`가 빈 numpy bool 마스크를
-  반환하도록 통일, `None`과의 구분이 핵심). `app/core/i18n.py`에
-  `r_settings.auto_detect_checkbox`/`r_settings.auto_detect_off_suffix`
-  신규 키(ko/en).
-
-### 수정
-- 브러시로 수정한 결과가 검출 결과와 별도 색(파란/회색)으로 덧칠돼 보이던 버그
-  수정 — 사용자 요구사항("검출된 결과물에 브러시로 그 결과물을 수정") 대로 커밋
-  후엔 검출 결과와 완전히 동일한 레이어 하나로만 보여야 한다.
-  - R분석(`r_roi_canvas.py`): 커밋된 전체 스트로크 래스터(`_stroke_overlay`)는
-    검출 마스크(`effective_mask()`)가 없을 때만 그리고, 있으면 초록 마스크
-    레이어 하나로 통일. 드래그 중(커밋 전) 스트로크는 그대로 파란/회색 미리보기.
-  - 존분석(`zone_canvas.py`/`zone_analysis_tab.py`/`inference_engine.py`): 신규
-    `engine.colorize_class_map()`(임의 class_map을 직접 컬러화, `InferenceResult`
-    불필요)을 추가하고, `_reblend_overlay()`가 브러시로 지운/그린 영역을
-    `class_map` 사본에 반영(지우기→배경 0, 그리기→타겟 클래스 id)한 뒤 다시
-    컬러화하도록 변경 — 원본 `class_map`은 변형하지 않음. 커밋된 스트로크의
-    파란/회색 덧칠(`_paint_erase_preview`)은 제거하고 드래그 중 스트로크만
-    유지. 재합성은 `_recompute_zones()`(브러시 커밋/Undo/블랍삭제 공유 funnel)
-    와 타겟 클래스 전환 시점에 호출.
 
 ---
 
