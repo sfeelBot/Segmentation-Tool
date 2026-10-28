@@ -6740,3 +6740,121 @@ QA.md 신규 등록 불필요(새 버그 없음). 리더는 커밋+push 진행 �
   포맷 골든패스 모두 회귀 없음. 발견된 제품 버그 없음.
 - QA.md BUG-032를 Open Issues에서 Closed Issues로 이동, 독립 재검증 결과 추가.
 - `git push`는 지시에 따라 수행하지 않음 — 사용자 확인 후 리더가 처리.
+
+---
+
+## 2026-10-27 — 존/R분석 탭 공유 BrushToolbar 반영 골든패스 검증(신규) + 4탭 스크린샷
+
+### 범위
+- `feature/zone-analysis-tab` 워크트리(`D:/segmentation model-zone-analysis-tab`), 로컬 merge+구현
+  커밋 `f7529a3`+`acb7277`+`73b369d` — 존분석/R분석 탭이 공유 `BrushToolbar`
+  (`app/widgets/brush_toolbar.py`)를 쓰도록 바뀐 뒤 실제 UI 조작 기준 첫 검증.
+- main(`d:/segmentation model`, 커밋 `90a124f`..`7bd280e`)의 라벨링/추론 탭은 지난 라운드에
+  이미 골든패스 검증 완료 — 이번엔 회귀 확인(가볍게) + 스크린샷 캡처만.
+
+### 방법
+- `python main.py` 수동 조작 대신, `QT_QPA_PLATFORM=offscreen` + 실제 탭 위젯(`ZoneAnalysisTab`/
+  `RAnalysisTab`)을 직접 생성해 `QTest.mousePress/mouseMove/mouseRelease`로 캔버스를 실제
+  클릭·드래그하고, 툴바 `QAction.trigger()`로 실제 버튼 클릭 경로를 그대로 탄 재현 스크립트
+  3개 작성·실행(독립 재현 가능하도록 스크래치패드에 보존):
+  - `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\verify_zone_tab.py` — 26개 체크, 26 PASS.
+  - `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\verify_r_tab.py` — 21개 체크, 21 PASS.
+  - `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\verify_multiselect_convention.py` — 7개 체크, 7 PASS.
+- `pytest tests/` 재실행: 에디션 168 passed(보고값과 일치), main 97 passed.
+
+### 존분석 탭 — 확인 사항(전부 PASS)
+- 원(circle) 편집은 호스트 로컬 그대로: 드래그로 생성(`get_circles()` 반영) 확인.
+- 공유 `BrushToolbar` 브러시그리기/브러시지우기/pan: 클릭 시 해당 액션만 checked, 나머지
+  전부 unchecked(상호배타), `ZoneCanvas._mode`가 `brush_draw`/`brush_erase`/`pan`으로 정확히
+  전환됨.
+- **블랍삭제(TOOL_ERASER_FLOOD → `set_blob_delete_mode()`)**: `act_delete_region.trigger()` →
+  `canvas._mode == "blob_delete"` 전환 확인 후, 실제 블랍 좌표를 `QTest.mousePress/Release`로
+  클릭 → `blob_deleted` 시그널 1회 emit + `_removed_blob_ids`에 실제 추가(진짜로 지워짐) +
+  Undo 버튼 활성화까지 전부 실측 확인. 구현 보고("실제 호출까지 확인" 요청) 그대로 재현됨.
+- **"요청5"(활성 도구 재클릭 → 토글 해제 → 원편집 복귀)**: 브러시/블랍삭제 둘 다 재클릭 시
+  `_active_tool == "circle"` 및 `act_circle.isChecked()`로 정상 복귀 확인 — 리팩토링 후에도
+  보존됨.
+- 브러시 크기 스핀(`spin_brush_size`) 변경 → `canvas._erase_brush_size` 실제 반영 확인.
+- 공유 `act_undo.trigger()` → `canvas.undo()` 실제 호출 → 직전 블랍삭제가 복원됨(원래
+  `_removed_blob_ids`에서 제거) 확인.
+
+### R분석 탭 — 확인 사항(전부 PASS)
+- ROI 편집(호스트 로컬): 드래그 생성 + 중심 드래그 이동 둘 다 `get_roi()` 값 변화로 확인
+  (8방향 리사이즈는 좌표 변환 로직이 Zone 원과 동일 포팅 구조라 정적 확인으로 갈음, 코드
+  리뷰로 핸들별 fixed/movable edge 매핑 확인함).
+- `BrushToolbar(show_delete_region=False)` → `act_delete_region is None` 확인 + 편집 툴바의
+  5개 액션(ROI/브러시/지우개/pan/undo, separator 제외) 중 "영역삭제"/"블랍" 관련 액션이
+  전혀 없음을 toolTip 전수 검사로 확인 — R분석엔 그 개념이 없다는 요구사항 충족.
+  (코드 리뷰로도 2단계 refactor 커밋 메시지에서 "R분석 탭 영역삭제 개념 없음" 의도 확인.)
+  브러시그리기/지우기/pan/undo/브러시크기 전부 Zone과 동일 패턴으로 정상 동작.
+- **undo QPushButton → QAction 전환**: 실제 `act_undo.trigger()` 호출 시 `canvas.undo()`가
+  불려 `manual_strokes`가 실제로 되돌아감을 확인(기능 정상). 시각적 위치는 스크린샷
+  `04_r_analysis_tab.png`로 확인 — 편집 클러스터 툴바 안에 separator로 구분돼 자연스럽게
+  배치됨(어색하거나 가려지는 느낌 없음, 과거 BUG-044의 겹침 문제와는 무관한 영역).
+
+### 다중선택 관례 분기(`InferenceImageList.selected_paths()`, `_multi_select` 플래그) — 가장 걱정되던 회귀 지점, 전부 PASS
+- Zone 탭 관례(`set_multi_select(True)`): 0개 선택 → 전체 반환, 1개 선택 → 전체 반환(0/1개
+  모두 "전체" 취급), 2개 이상 선택 → 그 부분집합만 반환, 전체 선택 → 전체 반환. 전부 실측
+  일치.
+- 라벨링 탭 관례(`set_multi_select()` 미호출, `editable=True`): 0개 선택 → 전체가 아니라
+  현재 항목 1개로 폴백, 1개 선택 → 정확히 그 1개만, 2개 선택 → 정확히 그 2개만(전체로
+  뭉개지지 않음). Zone 관례가 라벨링 탭에 새어 들어가지 않았음을 확인.
+
+### 스크린샷 (4개 탭, 1280x800, offscreen)
+- `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\01_labeling_tab.png` (main)
+- `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\02_inference_tab.png` (main, 2장 로드 — 이미지 리스트 패널 노출 확인)
+- `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\03_zone_analysis_tab.png` (edition, 원 2개 + 공유 브러시 툴바 노출)
+- `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\04_r_analysis_tab.png` (edition, ROI + 공유 브러시 툴바 노출)
+- offscreen 렌더링 특성상 한글 폰트가 없어 라벨 텍스트가 네모(□)로 보이는 것은 헤드리스
+  환경 폰트 부재 때문이며 실제 OS 환경(`python main.py`)에서는 발생하지 않는 렌더링
+  아티팩트 — 버그 아님(레이아웃/위젯 배치 자체는 정상 확인됨).
+
+### main 라벨링/추론 탭 회귀 확인(가볍게)
+- 라벨링 탭: 프로젝트 fallback `images_dir()`에서 이미지 자동 로드 + 클래스 패널 + 캔버스
+  + 툴바 전부 정상 렌더링, 지난 라운드 골든패스 대비 레이아웃 변화 없음.
+- 추론 탭: 2장 로드 시 이미지 리스트 패널이 정상적으로 나타남(`_after_load()` 경로),
+  뷰어 정상 표시. 둘 다 이번 라운드의 공유 위젯 리팩토링(`view_transform`/
+  `inference_image_list`/`brush_toolbar`) 영향권 밖이지만 import 경로 공유라 회귀 없음 재확인.
+
+### 비고(버그 아님, 참고 사항)
+- `D:/segmentation model-zone-analysis-tab/data/annotations/b.json` 잔존 확인 — 기존에 등록된
+  BUG-034(pytest 전체 스위트 실행 시에만 재현되는 테스트 격리 결함, main에서 이미 Closed 처리된
+  것과 동일 패턴)와 동일 원인으로 추정, 이번 라운드 변경과 무관. 정리는 생략(매 pytest 실행마다
+  재생성되는 테스트 인프라 이슈라 별도 조치 불필요).
+- `RAnalysisTab`/`RRoiCanvas`에 대한 pytest 커버리지가 현재 0건(zone 쪽은
+  `tests/test_zone_edit_toolbar.py` 등에서 다수 커버). 이번 라운드에서 발견된 버그는
+  아니지만(과거 라운드에 QTest 기반 독립 스크립트로만 검증돼 왔음, QA.md BUG-043/044/045
+  Closed 이력 참고), 앞으로 회귀 방지를 위해 영구 pytest로 옮겨두면 좋을 항목으로 기록만
+  남김 — 결정은 리더/기획 몫.
+
+### 결론
+**통과(PASS).** 발견된 버그 없음. 존분석/R분석 탭의 공유 BrushToolbar 반영 — 상호배타,
+블랍삭제 실제 삭제, "요청5" 토글, undo, 브러시크기, 다중선택 두 관례 분기 — 전부 실제
+QAction/QTest 조작 기준으로 재현 확인. main 라벨링/추론 탭도 회귀 없음.
+
+## 2026-10-27 — 공유 위젯 리팩토링 성능 집중 검증(버벅임/반응 지연 관점, Zone/R분석 탭)
+
+### 배경
+main과 동일 세션에서 수행한 성능 전용 재검토(기능 골든패스는 이미 PASS, 위 항목 참고).
+상세 측정값/방법은 main 쪽 `docs/agents/verification-log.md` 2026-10-27 "공유 위젯
+리팩토링 성능 집중 검증" 항목에 기록(BrushToolbar 시그널 루프, view_transform 오버헤드,
+eventFilter 비용 — 세 항목 모두 Zone/R분석 탭에서도 동일 공유 코드를 그대로 쓰므로 그
+측정이 그대로 적용됨). 여기서는 에디션 브랜치 전용 리스크(R분석 탭 기존 P0 성능 개선
+재회귀 여부)만 별도 기록.
+
+### 확인 — R 분석 탭 `0eb148a`(zone-v1.6.2) P0 성능 개선 재회귀 여부
+- `git log --oneline -- app/widgets/r_roi_canvas.py app/core/zone_metrics.py`: 두 파일 모두
+  `0eb148a` 이후 커밋 없음. 2단계 `acb7277`(BrushToolbar 교체, undo QPushButton→QAction)은
+  `app/tabs/r_analysis_tab.py`/`app/tabs/zone_analysis_tab.py`(툴바 와이어링)와 테스트
+  파일만 수정했고, 캔버스(`r_roi_canvas.py`)/메트릭(`zone_metrics.py`)은 건드리지 않음 —
+  `git show acb7277 --stat`으로 재확인.
+- 코드 확인: `RRoiCanvas.effective_mask()`의 `_mask_cache_base`/`_mask_cache_n_strokes`/
+  `_mask_cache_result` 증분 캐시, `zone_metrics.disk_mask()`의 바운딩박스 최적화 주석·구현
+  그대로 존재(라인/로직 변경 없음).
+- `r_analysis_tab.py`의 `effective_mask()` 호출부(라인 447/623/737 등)도 2단계 작업 전후로
+  호출 패턴 변화 없음(툴바 액션 연결만 바뀜, 캔버스 호출 경로 무관).
+
+### 결론
+**성능 리스크 없음 (PASS).** 2단계 BrushToolbar 교체 작업이 428배 개선된 R분석 탭
+브러시/이미지 전환 성능 경로(`r_roi_canvas.py`, `zone_metrics.py`)를 전혀 건드리지 않았음을
+git log + 코드 대조로 확인. QA.md 등록 대상 없음.
