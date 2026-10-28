@@ -6986,3 +6986,64 @@ BUG-046은 이번 라운드가 새로 만든 문제가 아니라 그 이전부�
   정상(상호배제·기존 골든패스 회귀 없음).
 - 결론: 4개 기능 전부 PASS, 발견된 버그 없음. **커밋/배포 추가 작업 불필요 — 리더가
   push 여부만 사용자에게 확인하면 됨.**
+
+## 2026-10-28 — 브러시 보정/검출 결과 색상 동기화 독립 검증 (커밋 d5e8339)
+
+작업 위치: `D:/segmentation model-zone-analysis-tab`(에디션 워크트리). 코드 수정 없이
+정적 검토 + 실제 QMouseEvent 골든패스(offscreen QPainter 렌더 → 픽셀 직접 비교)로
+독립 재현. 구현 에이전트의 self-check/모킹 테스트와 별개로 처음부터 직접 작성.
+
+- **1) R분석(`r_roi_canvas.py`) 실제 골든패스** — PASS. 합성 300×300 이미지에 ROI
+  지정 후 실제 `r_analysis_metrics.detect_contour_mask()`로 검출 실행 →
+  `_mask_image` 생성 확인 → 실제 `QMouseEvent` press/move/release로 브러시 스트로크
+  1개 드래그+커밋:
+  - 검출 전(`_mask_image is None`) 상태: 드래그 중/커밋 후 모두 `_COLOR_DRAW`
+    파란색이 렌더 결과에 존재(유일한 피드백 — 유지돼야 하는 케이스, 실제 확인됨).
+  - 검출 후(`_mask_image` 있음) 상태: 드래그 **중**에는 파란 미리보기가 보이다가,
+    **커밋 즉시** 파란/회색 분류 픽셀 수가 0으로 떨어지고 초록(`_COLOR_MASK`) 픽셀
+    수만 증가함을 실제 렌더링 결과에서 확인(핵심 버그 수정 검증). 브러시 지우기도
+    동일 패턴으로 확인 — 커밋 직후 지운 지점 색이 정확히 배경(원본 이미지) 색으로
+    복귀, 회색 잔존 없음.
+- **2) 존분석(`zone_canvas.py`+`zone_analysis_tab.py`+`inference_engine.colorize_class_map`)
+  실제 골든패스** — PASS. 실제 `ZoneAnalysisTab()` 생성 → 디스크에 쓴 합성 200×200
+  PNG를 `_on_list_image_selected()`로 로드 → 가짜 `InferenceResult`(class_map에
+  타겟 영역 포함)로 `_on_inference_result()` → `_setup_target_classes()` →
+  `_on_target_changed()` 실경로 태움 → 실제 `QMouseEvent`로:
+  - 지우기 커밋 → `_canvas`를 실제 렌더링한 픽셀이 지운 지점에서 배경색(20,20,20)과
+    완전히 일치(틴트 없음) 확인.
+  - 그리기 커밋(검출 밖 배경에) → 그린 지점 색이 AI 검출 영역의 참조색과 **완전히
+    동일**(`==`, 근사 아님) 확인 — 사용자 요구사항("브러시 보정=검출 결과와 동일") 핵심
+    충족.
+  - Undo(`canvas.undo()`) → 지우기 전 원래 검출색으로 정확히 복원 확인.
+  - 다중 클래스(class1/class2) 합성 결과로 class1 선택 → 지우기 커밋(스테일 스트로크
+    생성) → `_target_combo`로 class2로 전환 → `_canvas._manual_strokes`가 빈
+    리스트로 리셋됨을 확인(구현 에이전트가 주장한 `set_blob_data()` 선행 호출
+    순서 수정이 실제로 stale 스트로크 누수를 막음 — 실제 재현으로 확인).
+- **3) 회귀** — `QT_QPA_PLATFORM=offscreen build/venv/Scripts/python.exe -m pytest
+  tests/ -q`: **172 passed**(기대치와 정확히 일치, 기존 169 + 신규 3). 대형 이미지
+  (2200×2200, 타겟 클래스 영역 1600×1600) 기준 `_reblend_overlay()` 실측: 플레인
+  `engine.reblend()` 베이스라인 ~292ms, 타겟 선택 상태(보정 없음) ~337ms, 수동
+  스트로크 1개 반영(보정 경로) ~318~337ms — 구현 에이전트가 주장한 "약 281ms,
+  추가 오버헤드 약 40ms"와 같은 자릿수로 재현됨(측정 환경차 ±수십ms는 정상 범위,
+  오버헤드가 수백ms급으로 벌어지는 회귀는 없음).
+- **4) 버전 태그 확인** — 사실 확인됨. `git tag -v zone-v1.9.0` → 커밋 `b3e26f9`를
+  가리킴(`git merge-base --is-ancestor zone-v1.9.0 HEAD` 성공, 즉 태그가 HEAD의
+  조상). HEAD(`d5e8339`)는 태그보다 1커밋 더 나가 있어 이번 수정은 `zone-v1.9.0`
+  스냅샷에 포함되지 않음 — 구현 에이전트 보고 정확. 태그 재조정/새 버전 태깅 여부는
+  리더 판단.
+- **참고(버그 아님)**: `engine.colorize_class_map()`/`engine.reblend()`는 둘 다
+  내부적으로 프로젝트 전역 `load_classes()`로 색을 조회하고, 존분석 탭의 즉석
+  타겟 클래스 목록(`self._target_classes`, `DEFAULT_PALETTE` 기반 ad-hoc 색)은
+  이 조회에 전혀 쓰이지 않는다(기존 `engine.reblend()` 경로부터 이미 그랬음 — 이번
+  라운드가 만든 회귀 아님). 그러나 `_reblend_overlay()`가 AI 검출 영역과 브러시
+  보정 영역을 **항상 같은 `colorize_class_map()` 호출 1번**으로 같은 `cls_map`을
+  거쳐 색칠하므로(위 2번 검증에서 실측), "브러시=검출 결과와 동일하게 보여야 한다"는
+  이번 라운드의 핵심 불변식은 깨지지 않는다. 다만 만약 프로젝트 `classes.json`에
+  해당 class_id가 등록돼 있지 않으면 AI 검출 영역 자체도 검은색으로 보일 여지가
+  있는 별개의 레이턴트 이슈로 보인다(이번 세션 테스트 환경은 `classes.json`이
+  없어 `_default_classes()`가 우연히 class_id=1과 일치해 드러나지 않았다). 실사용
+  시 모델 학습에 쓰인 class_id가 `classes.json`에 다 등록돼 있다면 영향 없음 — 별도
+  QA 등록 없이 참고만 남김(이번 라운드 범위 밖, 재현된 실제 결함 아님).
+- 결론: 1~3번 전부 PASS, 발견된 버그 없음(QA.md 신규 등록 없음). 4번은 사실 확인된
+  보고사항(버그 아님, 리더 판단 대기). **추가 작업 불필요, 리더가 버전/push만
+  판단하면 됨.**
