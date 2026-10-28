@@ -24,9 +24,10 @@
 > 개별추가/Ctrl 토글해제/선택 4장 Delete 일괄제거까지 실측 재현 스크립트
 > 작성·실행해 전부 PASS 확인, 에디션 pytest 168개 재확인 통과(회귀 없음).
 > `release.ini` zone-v1.6.3→zone-v1.7.0(MINOR, 신규 사용자 체감 기능) +
-> CHANGELOG 갱신 + `generate_version_info.py` 검증 완료. **커밋 완료
-> (`D:/segmentation model-zone-analysis-tab`, feature/zone-analysis-tab), push는
-> 사용자 확인 전까지 보류.**
+> CHANGELOG 갱신 + `generate_version_info.py` 검증 완료. 사용자가 "push 진행해"
+> 지시 → `feature/zone-analysis-tab`(`bedcc08`) push + 태그 `zone-v1.7.0` push,
+> main 리더 로그 커밋(`4ec5390`) push까지 전부 완료. **이번 라운드 완료,
+> 블로커 없음.**
 
 > **[2026-10-27] "브러시 도구/이미지 뷰어/이미지 리스트 공통 위젯화" —
 > 기획+구현(main 1단계) 완료, 검증 대기.** 기획(planner)이
