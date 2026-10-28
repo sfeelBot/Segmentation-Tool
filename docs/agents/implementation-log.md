@@ -3607,3 +3607,30 @@ UI 조작으로 확인 전까지 완료로 간주하지 않음.
 남는지 — 특히 job을 2개 이상 큐에 넣어 `device` 단계가 1회성 비용인지
 비교) 실제 UI 조작 및 로그 확인 전까지 완료로 간주하지 않음. 또한 A(중지
 버그)의 기존 미완료 검증 체크리스트도 여전히 유효.
+
+## 2026-10-28 — 라벨링 탭 툴바 버튼 선택 상태 강조 색 (에디션 요청과 연계, main 독립 적용)
+
+- 배경: `feature/zone-analysis-tab` 에디션 워크트리에서 작업 중 "선택된
+  도구가 다크 테마에서 거의 안 보인다"는 요청을 받았고, 동일 패턴
+  (`QToolBar QToolButton { ... }` 스타일시트)이 main의 `labeling_tab.py`
+  에도 그대로 있어 **이 1개 파일만** 독립적으로 같이 고침(에디션 커밋과는
+  완전히 분리).
+- `app/tabs/labeling_tab.py`의 `tb.setStyleSheet(...)`(기존
+  `min-width/min-height/padding` sizing 규칙)에
+  `QToolBar QToolButton:checked { background:#1e3a5f; border:1px solid
+  #60a5fa; color:#60a5fa; }` 한 줄을 이어붙임 — 앱 전역에서 이미 쓰는 활성
+  강조 색(트리 아이템 선택색)과 동일.
+- 테스트: `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -q` 96 passed, 1
+  failed(`test_training_performance.py::
+  test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`)
+  — `git stash push -- app/tabs/labeling_tab.py` 후 재실행해도 동일하게
+  실패함을 확인, 이번 변경과 무관한 기존 결함(97개 기대 중 1개는 원래부터
+  실패).
+- 커밋: `9048714 fix: 라벨링 탭 툴바 버튼 선택 상태 강조 색 추가` (main
+  브랜치, `app/tabs/labeling_tab.py` 1개 파일만 — 워크트리에 있던 다른
+  세션의 미커밋 변경(`CLAUDE.md`, `docs/agents/design-log.md`)은 건드리지
+  않음).
+- 상태: 구현 완료. **검증 에이전트 확인 필요** — 라벨링 탭에서 폴리곤/
+  브러시/지우개/이동 도구를 바꿔가며 체크된 버튼에 강조색이 실제로
+  보이는지 UI로 확인 필요. 기존 `test_training_performance.py` 실패는
+  별도 이슈로 트래킹 필요(이번 범위 아님).
