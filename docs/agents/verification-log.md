@@ -6858,3 +6858,73 @@ eventFilter 비용 — 세 항목 모두 Zone/R분석 탭에서도 동일 공유
 **성능 리스크 없음 (PASS).** 2단계 BrushToolbar 교체 작업이 428배 개선된 R분석 탭
 브러시/이미지 전환 성능 경로(`r_roi_canvas.py`, `zone_metrics.py`)를 전혀 건드리지 않았음을
 git log + 코드 대조로 확인. QA.md 등록 대상 없음.
+
+## 2026-10-28 — Zone/R 분석 탭 i18n 전면 적용 라운드 검증
+
+### 배경
+기획(242개 키 추가) + 구현(Zone팀/R팀, 11개 대상 파일 `t()` 교체) 완료 후, 실제 ko/en
+전환 후 화면에 보이는 문구 기준 골든패스 검증. 작업 위치
+`D:/segmentation model-zone-analysis-tab`(브랜치 `feature/zone-analysis-tab`, 검증 시작
+시점 커밋 `5033987`). 스펙/매핑표:
+`docs/specs/zone-r-analysis-i18n-2026-10-28.md`.
+
+### 방법
+- `pytest tests/` 전체 재실행(`QT_QPA_PLATFORM=offscreen`, `py -m pytest`).
+- 11개 대상 파일 전수 grep(한국어 포함 라인 중 주석/docstring/로그 호출 제외, 실제 UI API
+  호출(`setText`/`setToolTip`/`setPlaceholderText`/`QMessageBox`/`addRow`/헤더 등)에 한국어
+  리터럴이 남아있는지 패턴 매칭으로 재확인).
+- `QT_QPA_PLATFORM=offscreen`에서 `set_language("en")` 후 `ZoneAnalysisTab`/
+  `RAnalysisTab`/`ZoneRecipeDialog`/`ZoneBatchResultDialog`/`ZoneStepIndicator`/
+  `RSettingsPanel`/`RBatchResultDialog`/`RCellPanel`/`RStepIndicator`를 실제 생성하고,
+  각 위젯 트리의 `text()`/`toolTip()`/`placeholderText()`/`windowTitle()`/헤더 라벨/탭
+  타이틀/`QAction` 텍스트를 전부 수집해 한글 유니코드 범위 검사. `ZoneAnalysisTab`은
+  `_on_batch_process()`를 사전조건 미충족 상태로 호출해 실제 `QMessageBox.warning` 경로
+  (`zone.not_ready_*`/`zone.no_circle_*`)도 가로채 확인. 이어서 `set_language("ko")`로
+  되돌려 동일 위젯들을 재생성, "번역 키 자체가 화면에 그대로 노출"되는 리그레션(오타 키
+  등) 여부를 정규식으로 확인. 검증 스크립트:
+  `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\verify_i18n.py`.
+
+### 결과
+1. **`pytest tests/` 168개 전부 PASS** (기대치와 일치, 회귀 없음).
+2. **11개 대상 파일 잔존 한국어 문자열 없음** — grep 결과 488건은 전부 docstring/인라인
+   주석/`log.*()` 호출(사용자 노출 아님)이었고, UI API 호출 패턴과 겹치는 2건
+   (`zone_analysis_tab.py:990,996`)도 실제로는 `setFormat`/`setToolTip` 호출 뒤에 붙은
+   인라인 주석일 뿐 문자열 리터럴 자체는 영문(`f"{done}/{total} (%p%)"`, `eta_txt` 변수)
+   이었음 — 오탐.
+3. **영어 모드 골든패스 — Zone/R 탭 전부 PASS** (아래 BUG-046 제외): `zone.run`/
+   `zone.running`(="Inferring…", `infer.running`과 통일 확인)/`zone.run_all` 버튼 텍스트
+   전환, `zone.tool_pan_tip`/`r.tool_pan_tip` 둘 다 "Pan view"로 동일, `zone_recipe.undo_tip`/
+   `r.undo_tip` 둘 다 "Undo"+"Ctrl+Z" 포함, `common.cancel`="Cancel"(R팀이 재사용한 부분
+   실제로도 정상 동작), `ZoneRecipeDialog`/`ZoneBatchResultDialog`/`RSettingsPanel`/
+   `RBatchResultDialog`/`RStepIndicator`(5개 캡션)/`ZoneStepIndicator`(7개 캡션) 전부
+   한국어 문자열 0건. "원 없음"/"준비 안 됨" `QMessageBox.warning` 경로를 실제 가로채
+   확인한 결과도 한국어 없음.
+4. **한국어 모드 회귀 없음**: `ZoneAnalysisTab`/`RAnalysisTab`/`ZoneRecipeDialog`/
+   `RSettingsPanel`을 ko로 재생성해도 번역 키가 그대로 노출되는 사례(`[a-z_]+\.[a-z_0-9]+`
+   패턴 매칭) 0건 — 번역 교체가 한국어 쪽을 깨뜨리지 않았음.
+5. **용어 일관성**: 스펙 문서 "용어집" 표의 주요 항목(Pan view, Undo (Ctrl+Z), Cancel,
+   Inferring…) 전부 실측 `t()` 반환값 기준으로 확인, 일치.
+
+### 발견한 버그 — BUG-046 (P2, 등록)
+영어 모드에서 `ZoneAnalysisTab`/`RAnalysisTab`/`RCellPanel`을 생성하면 좌측 이미지 목록
+패널에 "이미지 목록"/"파일명 검색..."/"정렬:"이 한국어로 그대로 표시됨. 원인은 이번
+라운드 대상 11개 파일이 아니라 **공유 위젯** `app/widgets/inference_image_list.py`의
+`InferenceImageList`(이 세 탭 + 추론 탭이 `editable=False`로 재사용)가 애초에 3곳
+(제목 라벨의 `editable=False` 분기, 검색창 placeholder, 정렬 라벨)에서 `t()`를 전혀
+거치지 않고 한국어를 하드코딩해 둔 것 — Zone/R i18n 라운드 범위 밖의 기존 main 버그.
+`inference_tab.py`도 동일 위젯을 `editable=False`로 쓰므로 영어 모드 추론 탭에서도 같은
+증상이 재현될 것으로 추정(이번 검증 범위 밖이라 직접 실행 확인은 하지 않음, 코드상
+동일 분기를 타는 것만 확인). 상세·개선 방향은 `QA.md` BUG-046 참고.
+
+### 결론
+**통과(PASS), 단 BUG-046 신규 등록.** Zone/R 분석 탭 내부(11개 대상 파일) 범위에서는
+한국어 하드코딩 잔존 0건, en/ko 양방향 회귀 없음, 용어 일관성 확인 완료 — 이번 라운드
+구현(기획 i18n.py 신규 키 242개 + Zone팀/R팀 11개 파일 `t()` 교체)은 목표를 달성했다.
+BUG-046은 이번 라운드가 새로 만든 문제가 아니라 그 이전부터 있던 공유 위젯의 누락을
+이번 검증 과정에서 처음 실측으로 발견한 것이며, 영향도가 작고(기능은 정상 동작, 표시
+언어만 섞임) 수정 범위가 11개 파일 밖이라 **이번 라운드 커밋 대상에는 포함하지 않음**
+— 리더가 별도 라운드로 판단할 사항.
+
+**커밋/배포 판단**: 코드 수정 없음(검증만 수행). 이번 라운드(기획+구현) 자체는 커밋할
+변경 사항이 이미 구현 에이전트들이 만들어 둔 상태이므로, **리더가 push 여부만 사용자에게
+확인하면 된다.** BUG-046은 Open으로 QA.md에 남겨두고 별도 수정 라운드 필요.
