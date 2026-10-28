@@ -3547,3 +3547,63 @@ GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
 응답성, 전체 큐 중지 시 메인 창 close, epoch 1 중지 시 기존 동작 유지,
 validation 도중 중지 시 분모/스킵 동작, 정상 완주 플로우 회귀 없음) 실제
 UI 조작으로 확인 전까지 완료로 간주하지 않음.
+
+## 2026-10-28 — 학습 준비 단계별 로그 UI + 느린 구간 시간 계측 (작업 B/C)
+
+스펙: `docs/specs/training-progress-and-stop-fix-2026-10-28.md` 작업 B/C.
+작업 A(중지 버그 수정)는 이전 라운드(커밋 `0be9c31`/`0d1c834`)에서 이미 완료돼
+있어 `app/core/trainer.py`를 먼저 다시 읽고 A의 변경(`stopped_early and history`
+분기, validation 루프 내 stop 체크, `val_batches_processed` 분모 수정)이
+그대로 반영돼 있음을 확인한 뒤, 그 위에 B/C만 순수 추가했다(A의 로직은 건드리지
+않음).
+
+- `app/core/trainer.py`
+  - `TrainerWorker`에 신규 시그널 `stage_changed = pyqtSignal(str)` 추가.
+  - `_train()` 안, 스펙이 지정한 6개 지점(`pick_device()`, train
+    `SegmentationDataset(...)`, val `SegmentationDataset(...)`, `DataLoader`×2,
+    `self._model.to(device)`, `_build_optimizer(...)`) **진입 직전**에
+    `stage_changed.emit("device"/"dataset_train"/"dataset_val"/"dataloader"/
+    "model_to_device"/"optimizer")` 추가(고정 순서 6개, 분기 없음).
+  - 각 단계 **종료 시점**에 `time.perf_counter()` 기반 경과시간을
+    `log.info(f"[단계 N/6] ...: {elapsed:.2f}s")`로 추가(작업 C — 기존
+    "~완료" 로그는 그대로 두고 별도 줄로 추가, 대체 아님).
+- `app/widgets/training_progress_dialog.py`
+  - 모듈 상수 `_STAGE_ORDER`(6개 key, 고정 순서) 추가.
+  - `_build_ui()`에서 `root.addWidget(q_box, stretch=1)` 다음, 버튼 행
+    전에 `self._stage_list`(`QListWidget`, `setMaximumHeight(90)`, alternating
+    row color, 기존 `_queue_list`와 통일된 작은 스타일) 추가.
+  - `set_current_job()`에서 `self._stage_list.clear()` 호출.
+  - 신규 공개 메서드 `append_stage(key: str)` — `_STAGE_ORDER.index(key)+1`로
+    `"[idx/6] {label}"` 조립(라벨은 `t(f"train_progress.stage.{key}")`로 조회),
+    한 줄 append 후 `scrollToBottom()`.
+- `app/tabs/training_tab.py`
+  - `_run_next_job()`에서 기존 5개 worker 시그널 connect 옆에
+    `self._worker.stage_changed.connect(self._on_stage_changed)` 1줄 추가.
+  - 신규 슬롯 `_on_stage_changed(key)` — 다이얼로그가 있으면
+    `self._dialog.append_stage(key)` 호출.
+  - `_retire_trainer()`의 stale-signal 방지 disconnect 목록에도
+    `worker.stage_changed` 추가(기존 5개와 동일 패턴).
+- `app/core/i18n.py` — `train_progress.stage.device` 등 6개 ko/en 키 쌍
+  신규 추가(라벨 텍스트만 번역, `"[idx/6]"` 포맷은 코드에서 조립). 기존
+  `trainer.py`의 "~완료" `log.info()` 호출은 전부 그대로 유지(대체하지 않음 —
+  `stage_changed`는 완전히 별도의 신규 신호).
+- 버전: `release.ini` 1.11.1 → 1.12.0(MINOR, 신규 기능), `docs/CHANGELOG.md`에
+  `[v1.12.0]` 절 추가, `scripts/generate_version_info.py`로 메타데이터 검증
+  완료(`Generated release metadata for 1.12.0`).
+- 확인: `python -m py_compile`로 4개 수정 파일 문법 검증,
+  `import app.core.trainer, app.widgets.training_progress_dialog,
+  app.tabs.training_tab, app.core.i18n` 정상, `PYTHONIOENCODING=utf-8`로
+  `python main.py` 실제 구동해 QApplication 기동·디바이스 감지 로그까지 정상
+  출력 확인(timeout으로 중단). cp949 콘솔 인코딩 경고는 기존 이슈로 이번
+  변경과 무관.
+- 커밋: `1eee61b` feat: 학습 준비 단계별 로그 UI + 느린 구간 시간 계측
+  (작업 B/C)
+
+**검증 에이전트 확인 필요** — 스펙의 작업 B/C 검증 체크리스트(큐 시작 직후
+"[1/6]"~"[6/6]"가 빈 틈 없이 순서대로 뜨는지, en 전환 시 전부 영어로
+표시되는지, 다음 job 시작 시 이전 stage 로그가 clear되는지, 큐 전체 중지/
+에러 시 `_retire_trainer()`의 `stage_changed` disconnect로 stale-signal이
+새지 않는지, `data/logs/app.log`에 6단계 각각의 소요시간이 초 단위로
+남는지 — 특히 job을 2개 이상 큐에 넣어 `device` 단계가 1회성 비용인지
+비교) 실제 UI 조작 및 로그 확인 전까지 완료로 간주하지 않음. 또한 A(중지
+버그)의 기존 미완료 검증 체크리스트도 여전히 유효.
