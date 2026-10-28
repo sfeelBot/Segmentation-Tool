@@ -6058,4 +6058,43 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   `app/widgets/r_batch_result_dialog.py`, `app/widgets/r_step_indicator.py`
   5개 파일만 선별 `git add` 후 커밋(Zone팀이 동시 작업 중인
   `app/core/i18n.py`/`app/tabs/zone_analysis_tab.py`는 스테이징 제외).
+
+## 2026-10-28 — Zone 분석 탭/위젯 i18n 적용 (Zone팀)
+
+- 상태: 완료(구현 범위) — 검증 에이전트 확인 필요.
+- 대상: `app/tabs/zone_analysis_tab.py`, `app/widgets/zone_canvas.py`,
+  `app/widgets/zone_recipe_dialog.py`, `app/widgets/zone_batch_result_dialog.py`,
+  `app/widgets/zone_step_indicator.py`. 스펙 문서
+  `docs/specs/zone-r-analysis-i18n-2026-10-28.md`의 매핑표를 그대로 따라
+  `t("키")` 호출로 교체(`app/core/i18n.py`는 건드리지 않음 — R팀이 동시에
+  같은 파일을 다룰 예정이라 리더 지시대로 미접촉).
+- 교체한 문자열 개수(파일별, QLabel/QPushButton/QMessageBox/QInputDialog/
+  QFileDialog/setToolTip/setPlaceholderText/addAction/addItem 등 사용자 노출
+  문자열 기준): `zone_analysis_tab.py` 약 95곳, `zone_canvas.py` 7곳(스펙
+  예상과 일치), `zone_recipe_dialog.py` 약 24곳, `zone_batch_result_dialog.py`
+  약 19곳, `zone_step_indicator.py` 7곳(`_STEP_LABELS`).
+- `zone_step_indicator.py`의 모듈 레벨 상수 `_STEP_LABELS`는 import 시점에
+  1회 평가되던 문제를 `_step_labels()` 함수로 바꿔 위젯 `__init__` 시점에
+  평가되도록 수정(스펙 "공통 주의사항" 1번 반영) — R팀의 `r_step_indicator.py`
+  와 동일한 패턴.
+- 플레이스홀더가 있는 키는 전부 `t("키").format(...)` 패턴으로 교체
+  (`zone.eta_minutes`/`zone.eta_seconds`는 호출부에서 `"\n" + t(...)`로
+  `\n`을 앞에 붙이는 스펙 지침 그대로 따름).
+- 매핑표에 없어서 보류한 문자열: 없음 — 스펙 매핑표에 있는 항목만으로 5개
+  파일의 하드코딩 한국어 UI 문자열(QMessageBox 버튼 텍스트 "취소" 포함)을
+  전부 커버했다. `_on_batch_process()`의 `QProgressDialog(..., "취소", ...)`
+  두 번째 인자(취소 버튼)는 표에 없었지만 용어집의 `common.cancel`
+  ("취소"→"Cancel") 기존 키를 그대로 재사용(신규 키 없음, i18n.py 미수정).
+- 검증: `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -k zone -q` **56 passed**.
+- `QT_QPA_PLATFORM=offscreen`에서 `set_language('en')` 후
+  `ZoneAnalysisTab`/`ZoneCanvas`/`ZoneRecipeDialog`/`ZoneBatchResultDialog`/
+  `ZoneStepIndicator` 전부 생성 성공(크래시 없음) 확인. `set_language('ko')`
+  기본값에서도 `ZoneAnalysisTab` 생성 정상 확인.
+- 남은 한국어는 전부 주석/docstring/log 메시지뿐(스펙이 번역 대상에서 제외한
+  범위) — grep으로 5개 파일 재확인 완료.
+- 커밋: `app/tabs/zone_analysis_tab.py`, `app/widgets/zone_canvas.py`,
+  `app/widgets/zone_recipe_dialog.py`, `app/widgets/zone_batch_result_dialog.py`,
+  `app/widgets/zone_step_indicator.py` 5개 파일만 선별 `git add` 후 커밋
+  (`app/core/i18n.py`는 R팀이 동시 작업 중이라 스테이징 제외) —
+  `484ccb8 feat: Zone 분석 탭/위젯 하드코딩 한국어 UI 문자열을 i18n 키로 교체`.
   (별도 검증 에이전트가 main/zone 두 워크트리를 함께 돌며 확인할 몫).
