@@ -6158,3 +6158,58 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   확인해야 함(이번 세션은 가짜 `InferenceResult`/numpy 마스크로 로직만
   검증했고 실제 모델 forward pass는 거치지 않았음). 태깅(`zone-v1.9.0`)은
   배포 에이전트 범위로 남겨둠.
+
+## 2026-10-28 — 툴바 선택 강조 + R분석 ROI 아이콘 교체 + 검출 오버레이 show/hide
+
+- 요청: (1) 어떤 도구가 선택됐는지 다크 테마에서도 구분되게, (2) R분석 ROI
+  툴바 아이콘을 사각형 모양으로, (3) R분석에도 라벨링 탭처럼 검출 결과
+  show/hide(눈 아이콘 + F키) 추가.
+- 작업 A: `labeling_tab.py`/`zone_analysis_tab.py`의 기존
+  `QToolBar QToolButton { ... }` 스타일시트 문자열에
+  `QToolBar QToolButton:checked { background:#1e3a5f; border:1px solid
+  #60a5fa; color:#60a5fa; }` 한 줄을 이어붙임. `r_analysis_tab.py`의
+  `_build_edit_cluster()` 툴바는 기존 스타일시트가 없어 `:checked` 규칙만
+  새로 추가.
+- 작업 B: `r_analysis_tab.py`의 `self._act_roi` 아이콘을 `tool_select` ->
+  `tool_rect`(리더가 미리 만들어둔 아웃라인 사각형 SVG)로 교체.
+- 작업 C: `app/widgets/r_roi_canvas.py`에 `overlay_toggle_requested` 시그널
+  + `_mask_visible` 플래그(기본 True) + `set_mask_overlay_visible(bool)`
+  공개 메서드 추가, `_paint_mask_overlay()` 맨 앞에 가드 추가(화면 표시만
+  끔 — `effective_mask()`/마스크 데이터/boundary 편집·면적 계산은 그대로
+  동작). `keyPressEvent()`의 Undo 분기보다 먼저 F키를 체크해
+  `overlay_toggle_requested`를 emit(Zone의 `zone_canvas.py` F키 처리와
+  동일 패턴, 모드와 무관하게 가장 먼저 가로챔). `r_analysis_tab.py`에
+  `self._act_overlay_visible`(눈 아이콘, checkable, 기본 체크, 툴팁 `[F]`
+  접미사) 추가 — `toggled` 시그널을 `_canvas.set_mask_overlay_visible`에
+  직접 연결하고, `_canvas.overlay_toggle_requested`를
+  `self._act_overlay_visible.toggle`에 연결(라벨링 탭의 `_act_ann_visible`
+  패턴 그대로, Zone의 별도 `_toggle_overlay()` 함수 방식 대신 더 단순한
+  경로 채택).
+- i18n: `app/core/i18n.py`에 `r.overlay_visible_tip`(ko: "검출 결과
+  표시/숨김", en: "Show/hide detection result") 추가.
+- self-check: `r_roi_canvas.py`에 `set_mask_overlay_visible()` 플래그 저장 +
+  `_paint_mask_overlay()`가 숨김 시 painter를 건드리지 않고 즉시 리턴하는지
+  검증하는 `_FakeCanvas2` 블록 추가. `r_analysis_tab.py`에 ROI 아이콘이
+  정상 생성되는지, 눈 액션 `toggled` -> 캔버스 플래그 반영, 실제
+  `QKeyEvent(Key_F)`를 `_canvas.keyPressEvent()`에 직접 전달해 액션이
+  토글되는지까지 검증하는 assert 추가. `py -m app.widgets.r_roi_canvas` /
+  `py -m app.tabs.r_analysis_tab` 둘 다 OK.
+- 테스트: `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -q` 169 passed(회귀
+  없음).
+- 버전/CHANGELOG: 아직 배포되지 않은 동일 사용자 요청 단위로 보고 버전은
+  `zone-v1.9.0` 그대로 유지, `docs/CHANGELOG.md`의 같은 `[zone-v1.9.0]`
+  절에 이번 3개 변경 내용만 추가 bullet로 보강(새 버전 절 생성 안 함).
+- 커밋: `bb751f6 feat: 툴바 선택 강조 + R분석 ROI 아이콘 교체 + 검출 오버레이
+  show/hide` (`feature/zone-analysis-tab` 브랜치, 관련 7개 파일만 스테이징
+  — `.codex/`, `AGENTS.md`, `data/annotations/`, `graphify-out/` 등 무관한
+  untracked 항목 제외).
+- 참고: main 워크트리(`D:/segmentation model`)의 `app/tabs/labeling_tab.py`
+  에도 동일한 `:checked` 스타일 규칙을 **별도 커밋**으로 추가했음(main
+  저장소의 `docs/agents/implementation-log.md`에 별도 기록, 커밋
+  `9048714`). 두 저장소는 완전히 독립적인 커밋이며 서로 역병합하지 않음.
+- 상태: 구현 완료. **검증 에이전트 확인 필요** — 특히 실제 UI로 (1) 라벨링/
+  존/R분석 각 탭에서 도구를 바꿔가며 체크 상태 강조색이 실제로 보이는지,
+  (2) R분석 ROI 버튼 아이콘이 사각형으로 바뀌었는지 눈으로 확인, (3) R분석
+  탭에서 실제 검출 실행 후 눈 아이콘 클릭/F키로 마스크가 화면에서만
+  사라지고 ROI·브러시 편집·셀 면적 계산에는 영향이 없는지 골든패스로
+  확인 필요(이번 세션은 self-check로 로직만 검증).
