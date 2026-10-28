@@ -167,3 +167,36 @@
 - 두 저장소 모두 작업 디렉토리에 이번 작업과 무관한 기존 미추적/수정 파일
   (`AGENTS.md`, `.codex/`, `data/annotations/`, `docs/agents/*-log.md` 등)이 남아있으나
   배포 범위 밖이라 건드리지 않음.
+
+---
+
+## 2026-10-28 — v1.12.0 태깅 (학습 중지 버그 수정 + 준비 단계별 로그 UI + 시간 계측 + 학습 설정 기본값 변경)
+
+### 배경
+- 리더 요청: main의 이번 작업 단위(학습 중지 버그 수정 + 학습 준비 단계별 로그 UI +
+  느린 시작 구간 실측 + 학습 설정 기본값 변경)가 검증까지 통과하고 push도 완료된 상태
+  (`origin/main` 동기화 확인됨) → 버전 태깅.
+- 관련 커밋: `0be9c31`(중지 버그), `0d1c834`, `1eee61b`(단계로그+시간계측), `b5b3bef`,
+  `48c4a2b`(config_form 기본값), `7a6eb8a`/`4753055`(문서).
+- 참고 스펙: `docs/specs/training-progress-and-stop-fix-2026-10-28.md`
+
+### 조치
+- `release.ini` 확인: `version = 1.12.0`(이미 구현 라운드에서 1.11.1→1.12.0 MINOR 갱신 완료).
+- `docs/CHANGELOG.md` `[v1.12.0]` 섹션 확인: trainer `stage_changed` 시그널, 학습 진행
+  다이얼로그 단계 로그 `QListWidget`, `training_tab.py` 연결, i18n 6쌍은 이미 기술돼
+  있었으나 **`app/widgets/config_form.py`의 DataLoader `num_workers` 기본값 0 / LR
+  스케쥴러 `ReduceLROnPlateau` 기본값 변경(커밋 `48c4a2b`, 구현 라운드와 별도로 리더가
+  나중에 추가)이 빠져 있어 보강**("변경" 절 추가).
+  - 커밋 `bd3cf98` (`docs: CHANGELOG v1.12.0에 config_form.py 학습 기본값 변경 보강`).
+- `scripts/generate_version_info.py` 실행 → `Generated release metadata for 1.12.0` 성공.
+- `git tag -a v1.12.0`(대상 커밋 `bd3cf98`, CHANGELOG 요약을 태그 메시지로 사용).
+- push는 수행하지 않음 — 리더가 사용자 확인 후 직접 push할 예정(이번 라운드 지시사항).
+
+### 결과 요약
+- 버전: v1.12.0
+- 커밋: `bd3cf98`(CHANGELOG 보강, 아직 origin에 push 안 됨 — 로컬에만 존재, HEAD는
+  push된 `4753055`보다 1커밋 앞섬)
+- 태그: `v1.12.0`(annotate, 커밋 `bd3cf98` 대상, 로컬 전용, push 안 함)
+- CHANGELOG 보강: 함(config_form.py 기본값 변경 "변경" 절 추가)
+- GitHub Release: 생성하지 않음(요청 범위 밖, installer 패키징 미포함)
+- 남은 작업: 리더가 사용자에게 push 승인받은 뒤 `git push origin main` + `git push origin v1.12.0`
