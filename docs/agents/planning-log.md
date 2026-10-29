@@ -1,5 +1,81 @@
 # 기획 (Planning) 로그
 
+## 2026-10-29 — Zone 분석 탭 배치 단순화 + 존 이름/숨김 + 결과 일괄 저장 (9건)
+
+### 배경
+사용자가 Zone 분석 탭(`feature/zone-analysis-tab` 에디션 브랜치) 개편 요구사항 9건을
+제시. 리더가 사전 조사(코드 레벨 근거, file:line)를 제공하며 위임. 요약: ① 자동검출
+버튼 삭제 ② 배치 모드 3종→'고정' 1종 단순화 ③ 민감도 슬라이더 제거 ④ 배치 적용의
+모델/추론 의존성 제거(영역만 먼저 깔고 나중에 개별 추론하는 워크플로우 지원) ⑤ 배치
+후 개별 수정 가능(회귀 확인만) ⑥ 존별 비율 패널 "삭제"=숨기기(비파괴) ⑦ 존 이름
+변경을 패널에서 직접(바깥쪽 존 포함) ⑧ 레시피에 이름/숨김/바깥쪽이름 포함 + 저장
+다이얼로그 이름 기본값(날짜) ⑨ "결과보기" 아래 결과 이미지 일괄 PNG 저장.
+
+### 한 일
+- 리더의 사전 조사 전체를 각 파일(`zone_analysis_tab.py`/`zone_canvas.py`/
+  `zone_metrics.py`/`zone_state_store.py`/`zone_recipe_store.py`/`zone_recipe_dialog.py`)
+  직접 열어 재검증. **정정 2건 발견**(사전 조사 대비):
+  1. "레시피는 이름이 없다"는 부정확함 — `zone_recipe_store.save_recipe()`/
+     `zone_state_store.save_state()`/`load_state()` 둘 다 `circles` 튜플 길이를 전혀
+     검사하지 않는 제네릭 패스스루 구조(`scale_circles()`도 `*rest` 통과)라, `name`은
+     이미 레시피/사이드카에 저장·복원되고 있었음(타입 힌트/문서만 3-tuple로 돼 있었을
+     뿐, 실제 runtime 동작은 아님). 이 발견으로 요구사항 8 "레시피 확장"의 실제 구현
+     범위가 사전 조사보다 훨씬 작아짐 — `hidden`을 원 튜플에 추가만 하면 두 저장소는
+     코드 수정 없이 자동으로 함께 영속화된다.
+  2. 바깥쪽(outermost) 존 이름은 원과 달리 어떤 튜플에도 얹을 수 없는 스칼라라(원에
+     귀속 안 됨), `zone_state_store.py`/`zone_recipe_store.py` 양쪽에 신규 top-level
+     키 `outer_name`을 실제로 추가하는 코드 변경이 필요함을 확인(이 부분은 사전
+     조사가 맞았음).
+- 데이터 모델 설계: `_CircleItem`(`zone_canvas.py`)에 `hidden: bool = False` 추가,
+  영향받는 전 메서드(`set_circles`/`get_circles`/`circles_with_ids`/`get_state`/
+  `set_state`/`contextMenuEvent`) + 호출부 6곳(`_current_zones`/
+  `_on_canvas_blob_clicked`/`_refresh_circle_list`/`_compute_zone_rows` 등) 전수
+  나열. `outer_name`은 `ZoneCanvas`에 `rename_outer_zone()`/`outer_name()` 신설 +
+  `get_state`/`set_state`/두 저장소/`zones_from_circles()` 파라미터 추가까지 호출
+  체인 전체 설계.
+- 요구사항 4(배치-모델 분리)를 가장 리스크가 큰 항목으로 식별 — 현재 `_on_batch_process`
+  가 CUDA 추론 워커(`_ZoneBatchWorker`)와 원복사+퍼센티지 워커(`_ZoneBatchPostWorker`)
+  를 한 파이프라인으로 묶고 있어, "추론 없이 원만 복사"가 구조적으로 불가능함을 확인.
+  `_ZoneBatchWorker`를 완전히 제거(다른 호출부 없음 확인)하고, `_ZoneBatchPostWorker`를
+  모델/추론과 무관한 경량 워커(이미지 크기만 읽어 `scale_circles`+사이드카 저장)로
+  재작성하는 설계 제시. 이로 인해 배치 완료 시 더 이상 퍼센티지를 보여줄 데이터가
+  없다는 UX 공백이 생겨 **결정 필요 1건으로 등록**(A: 단순 확인 메시지로 교체[권장]
+  vs B: 세션 캐시 기회적 부분표시) — 결정 전까지 A로 진행해도 안전하다고 명시(A→B
+  확장이 B→A 축소보다 쉬움).
+- 요구사항 6(숨기기)의 Excel/패널 필터 설계: 비율 계산 자체(`zone_stats`)는 존별
+  독립 계산이라 숨김이 수학에 개입할 지점이 없음을 확인(요구사항 원문 "표시+export
+  필터만"과 일치). 블랍 행은 zone_name 문자열로만 걸러지므로 이름 충돌 시 과도하게
+  걸러질 수 있는 기존 한계(`max_blob_pixels_by_zone()`도 이미 같은 가정)를 상속함을
+  명시(이번 기능이 새로 만드는 리스크 아님). 3개 호출부(`_recompute_zones`/
+  `_on_export_single`/`_compute_zone_rows`)가 필터를 복붙하지 않도록 `zone_metrics.py`에
+  공유 순수 함수 추출을 권장.
+- 요구사항 9(결과 일괄 저장)는 거의 공짜로 구현 가능함을 발견 —
+  `InferenceResult.overlay_image`(QImage)가 `self._results` dict에 세션 중 이미
+  최신 상태로 보관돼 있어(`_reblend_overlay()`가 편집마다 갱신), `overlay_image.save()`
+  한 줄로 끝남. QThread는 과설계(YAGNI)로 판단, 동기 루프 권장.
+- 실행 순서 제안: (1+2+3 자동검출/모드콤보/슬라이더, 서로 강결합이라 한 커밋) →
+  4(최우선 다음, 고리스크, 1~3 완료 전제) → (6+7 데이터모델 병렬, UI는 같은 파일이라
+  순차) → 8(6·7의 필드가 선행조건) → 9(완전 독립, 언제든 병렬).
+- 스펙 문서 신설:
+  [docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md](../specs/zone-analysis-tab-batch-simplify-2026-10-29.md)
+  — 9건 전체 설계 + 데이터모델 변경 + 호출부 수정 목록(표) + 리스크/순서 + 손대지
+  않는 것(레시피 다이얼로그 자체 슬라이더/버튼, `_btn_export_single`, `zone_metrics.py`
+  수식, 저장소 제네릭 구조) + 결정 필요 1건.
+- `docs/decisions-needed.md`에 1건 등록(요구사항4 배치완료 후 UX A/B). 다른 8건은
+  결정 없이 바로 구현 가능.
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건, `decisions-needed.md`, 본 로그
+  갱신에만 사용. `docs/roadmap.md`는 이 에디션 브랜치 전용 작업이라 main 로드맵에는
+  반영하지 않음(에디션 브랜치 규칙 — zone 전용 작업은 main roadmap과 분리, 필요 시
+  이 워크트리 자체의 로드맵/스펙 문서로 추적).
+
+### 상태
+완료 — 다음: 리더가 사용자에게 `docs/decisions-needed.md`의 "배치 완료 후 UX A/B"
+1건 확인(또는 A 기본값으로 바로 진행 승인). 나머지 8건은 결정 없이 구현 에이전트에
+위임 가능. 권장 순서: (1+2+3) → 4(고리스크, 검증 시 "모델 미로드 상태에서 배치 적용
+→ 개별 추론 → 결과보기" 골든패스 필수) → (6+7) → 8 → 9(병렬 가능).
+
+---
+
 ## 2026-10-28 — 학습 진행 다이얼로그: 단계별 로그 UI / 느린 시작 조사 / 중지 버그 스코프 산정
 
 ### 배경
