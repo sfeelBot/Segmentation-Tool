@@ -6524,3 +6524,86 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   on/off 상태가 그대로 복원되는지. 이번 세션은 self-check/pytest +
   모킹 기반 유닛 검증까지만 수행(실제 QPainter 렌더링/마우스 드래그
   브러시 입력은 시뮬레이션하지 않음).
+
+## 2026-10-29 — 존 분석 탭 배치 단순화 + 존 hidden/outer_name + 결과 일괄 저장 (Zone팀)
+
+스펙: `docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md` (플래너 작성,
+사용자 확정 — 배치 완료 다이얼로그는 A안 "단순 확인 메시지"). 작업 디렉토리
+`D:/segmentation model-zone-analysis-tab`(worktree, `feature/zone-analysis-tab`).
+
+- **1~3. 배치 단순화**: 민감도 슬라이더/자동검출 버튼(`_sensitivity_slider`/
+  `_btn_detect`/`_on_auto_detect`) 완전 삭제. 배치 모드 콤보(`_mode_combo`,
+  일괄 적용/일괄 적용 후 수정/장별 적용) 삭제 — "고정 배치" 하나만 남기고
+  레시피 버튼(`_btn_recipe`)은 항상 노출. `_on_batch_process()`의 모델/
+  체크포인트/추론 결과 게이팅(`_last_result`/`_model`/`_ckpt_path`/
+  `_target_class_id`/`_target_classes` 체크)을 전부 제거 — 원 1개 이상 +
+  대상 이미지 1장 이상만 있으면 동작.
+- **4. 배치 워커 재설계**: CUDA 추론 워커 `_ZoneBatchWorker` 삭제. 2단
+  파이프라인(CUDA 추론 + cv2 후처리)이던 `_ZoneBatchPostWorker`를 CUDA를
+  전혀 호출하지 않는 단일 워커 `_ZoneCircleLayoutWorker`로 재작성(기준 원을
+  각 대상 이미지 크기로 `scale_circles()` + 사이드카 저장만). 배치 완료
+  다이얼로그는 퍼센티지 집계 표(`ZoneBatchResultDialog`) 대신 단순 확인
+  메시지("N장에 영역 적용 완료…")로 교체 — 비율은 기존 "결과보기" 버튼으로.
+  성공 건수는 `완료 - 오류`로 계산(`_batch_errors` 신규 집합).
+- **5. 배치 후 개별 수정**: 코드 변경 없음(기존에도 되던 동작, `_on_list_image_
+  selected`가 전환마다 편집 도구를 항상 재활성화) — 회귀 없음 확인만.
+- **6/7. 존 hidden + 패널에서 이름변경/숨기기**: `ZoneCanvas._CircleItem`에
+  `hidden: bool` 필드 추가, `get_circles()`/`circles_with_ids()`/`get_state()`/
+  `set_state()` 전부 반영(5~6요소로 확장, 역호환 `*rest` 파싱). `zone_metrics.
+  Circle`/`Zone`에도 동일 필드, `zones_from_circles()`에 `outer_name` 파라미터
+  추가(바깥쪽 존 전용 이름 — 원에 귀속 안 됨). 숨긴 존을 표시/export 레이어에서
+  거르는 공유 헬퍼 `zone_metrics.drop_hidden()` 추가(면적 계산 자체는 무변경).
+  캔버스 우클릭 메뉴 + 존별 비율 패널(`_zone_list`) 우클릭 메뉴 양쪽에 "이름
+  변경.../숨기기·보이기" 추가 — 패널 메뉴는 캔버스의 `_prompt_name_change()`/
+  `_prompt_rename_outer_zone()`/`_toggle_hidden()`을 그대로 재사용(신규 core
+  로직 없음). **디자인 검토 반영**: 숨긴 행은 패널에서 사라지지 않고 회색조
+  (#6b7280) + "(숨김)" 접미사로 계속 보이며, Excel 내보내기에서만 제외.
+- **8. 레시피 확장**: `hidden`은 두 저장소(zone_state_store/zone_recipe_store)
+  가 이미 원 튜플을 제네릭 패스스루로 다뤄 코드 수정 없이 자동 영속화.
+  `outer_name`만 양쪽에 신규 top-level 키로 추가(구버전 파일 로드 시 `None`
+  기본값 폴백 — 자가진단에 레거시 포맷 로드 케이스 추가해 직접 검증).
+  `ZoneRecipeDialog` 저장 이름 입력란 기본값을 `{YYYYMMDD}_recipe`로 미리 채움.
+- **9. 결과 이미지 일괄 저장**: "결과보기" 버튼 아래 신규 버튼
+  (`_btn_save_all_images`) — 세션 중 추론을 실행한 모든 이미지의 최신
+  `overlay_image`를 선택한 폴더에 PNG로 한 번에 저장(추론 안 된 이미지 자동
+  제외). 동기 루프로 충분(QThread 미사용, YAGNI — 스펙 권장).
+- **디자인 검토 2건 반영**: (1) 배치 그룹박스 제목(`zone.batch_mode_group`)을
+  "Zone 결정 방법"에서 "배치 처리"로 교체(모드 선택 UI가 없어졌으므로).
+  (2) 존 숨김 행을 패널에서 완전히 숨기지 않고 회색조+접미사로 유지(위 6/7 항목).
+- **스펙과 다르게 구현한 부분**: 배치 완료 다이얼로그를 단순 메시지로 교체할 때
+  "성공 건수"를 `완료-오류`로 집계하도록 `_batch_errors` 집합을 신규 추가했다
+  (스펙은 집계 방식을 명시하지 않았음) — 취소된(미완료) 이미지를 성공으로
+  잘못 세지 않기 위한 보강.
+- 커밋(push 안 함, 버전 태깅/release.ini 변경 안 함 — 지시대로):
+  - `031d740` feat: 존 hidden/outer_name 데이터 모델 + 레시피 저장소 확장
+  - `a64daa9` feat: 배치 영역적용을 추론/모델과 완전히 분리 + 패널 UI + 결과
+    이미지 일괄 저장
+  - `367645e` test: 배치 단순화 + 존 hidden/outer_name 데이터모델에 맞춰
+    테스트 스위트 갱신
+- self-check: `zone_metrics.py`/`zone_state_store.py`/`zone_recipe_store.py`
+  `__main__` 자가진단 전부 OK(hidden/outer_name/drop_hidden/레거시 포맷 케이스
+  포함). `py_compile` 전체 `app/` 통과.
+- pytest(BUG-028 DLL 충돌 회피를 위해 파일 단위 개별 실행, 전부 통과):
+  `test_zone_batch_worker.py`(14) / `test_zone_state_persistence.py`(1) /
+  `test_zone_redesign_2026_10_01.py`(19) / `test_zone_edit_toolbar.py`(7) /
+  `test_zone_github_13_14.py`(9) / `test_zone_step_indicator.py`(4) /
+  `test_zone_brush_overlay_sync_2026_10_28.py`(3) — 총 57 passed.
+- 헤드리스 스모크: `ZoneAnalysisTab()` 생성 + 캔버스 hidden/outer_name
+  round-trip(undo 포함) + `_ZoneCircleLayoutWorker.run()` 스케일/저장 직접
+  실행까지 확인. **참고**: `MainWindow()` 전체 생성은 이 샌드박스(offscreen,
+  디스플레이 없음)에서 120초 넘게 응답이 없어 백그라운드로 넘어감(이번 라운드
+  변경과 무관해 보임 — GPU 프롬프트류 블로킹 다이얼로그 추정, Zone 탭 자체
+  생성은 위처럼 별도로 빠르게 확인됨). 검증 에이전트는 실제 디스플레이가 있는
+  환경에서 `python main.py`로 골든 패스를 확인할 것.
+
+### 상태
+- 구현 완료. **검증 에이전트 확인 필요** — 특히 실제 UI 골든 패스로:
+  (1) 모델/체크포인트 미선택 상태에서 배치 "영역 적용" 클릭 → 경고 없이 바로
+  진행되고 대상 이미지들에 원이 복사되는지, (2) 배치 완료 후 단순 확인 메시지만
+  뜨는지(퍼센티지 표가 뜨지 않는지), (3) 배치 적용 직후 개별 이미지를 열어
+  원 드래그/삭제가 여전히 되는지(회귀 없음), (4) 존별 비율 패널에서 우클릭 →
+  이름 변경/숨기기 토글 → 숨긴 존이 회색조+"(숨김)"로 패널엔 남고 Excel
+  내보내기에는 빠지는지, (5) 바깥쪽 존 이름 변경(패널 우클릭, 원이 없는 행),
+  (6) 레시피 저장 다이얼로그 이름 입력란에 날짜 기본값이 채워지는지 + 저장한
+  레시피를 다시 불러왔을 때 outer_name/hidden이 복원되는지, (7) "결과 이미지
+  일괄 저장" 버튼으로 실제 PNG 파일들이 지정 폴더에 저장되는지.
