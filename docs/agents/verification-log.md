@@ -7375,3 +7375,108 @@ self-check(모킹/직접 호출)와 별개로 처음부터 직접 작성한 스�
   정확히 일치) 확인, 리팩터링이 기존 검출 경로를 깨지 않았음을 확인.
 - 발견된 버그 없음(QA.md 신규 등록 없음). **추가 작업 불필요, 리더가 버전/push만
   판단하면 됨.**
+
+## 2026-10-29 — 존 분석 탭 "배치 단순화 + hidden/outer_name + 결과 일괄 저장" 검증
+(커밋 c85c947/5126876/d9563e6/8d116a8/41c2df5, 스펙
+`docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md`)
+
+작업 위치: `D:/segmentation model-zone-analysis-tab`(에디션 워크트리). "주요 기능
+추가" 라운드로 판단해 정적 리뷰 + 실제 QTest 기반 골든패스(실제 Qt 플랫폼,
+`QT_QPA_PLATFORM` 미설정)까지 전부 수행.
+
+### 구현 에이전트가 보고한 블로커("`MainWindow()` 생성 120초+ 무응답") 재현 결과
+**블로커 아님 — 구현 에이전트의 오프스크린/디스플레이 없는 샌드박스 환경 특이
+현상으로 확인.** 이 환경(실제 Windows 데스크탑, `QT_QPA_PLATFORM` 미설정)에서
+`MainWindow()`를 직접 생성해 재현 시도:
+- 1차 시도: `MainWindow()` 생성 3.23초, `show()`+`processEvents()`까지 전부 정상
+  completion. 이후 `win.close()`를 호출해 재현 스크립트 자체가 멈췄는데, 원인은
+  `closeEvent()`가 띄우는 `QMessageBox.question()`(종료 확인) 모달이 실제 클릭을
+  기다리며 블로킹된 것 — `close()`를 호출하지 않고 `deleteLater()`로 정리하도록
+  수정한 재시도에서는 **`MainWindow()` 생성 2.04초, `show()`+`qWaitForWindowExposed()`
+  까지 전부 정상, Zone 탭이 index 0으로 정확히 노출**됨을 확인(`tab titles: ['상/하부
+  분석', 'R 분석', '라벨링', '학습', '추론', '모델']`). 이번 라운드 변경(Zone 탭)과
+  무관한 결과 — 구현 에이전트가 의심한 "GPU 프롬프트 블로킹"은 재현되지 않았고,
+  `prompt_gpu_availability()`는 애초에 `_on_run()`(추론 실행 버튼)에서만 호출되므로
+  탭/창 생성 경로와 무관함을 코드 확인으로도 재확인.
+- 결론: 비교 커밋(`89a70e6`) 대조는 불필요 — 이번 환경에서는 애초에 증상이
+  재현되지 않았으므로 "환경 차이(오프스크린 vs 실제 디스플레이)" 가설로 충분히 설명됨.
+
+### 정적 리뷰
+`zone_analysis_tab.py`/`zone_canvas.py`/`zone_metrics.py`/`zone_state_store.py`/
+`zone_recipe_store.py`/`zone_recipe_dialog.py`/`i18n.py` 전체 diff 영역 직접 열람.
+스펙 설계와 구현이 정확히 일치: `hidden`/`outer_name` 필드 추가 및 전 계층(캔버스
+get/set_circles·get/set_state, zone_metrics.Circle/Zone/zones_from_circles,
+두 저장소) 전파, `_ZoneBatchWorker`(CUDA)와 구 `_ZoneBatchPostWorker` 완전 삭제 →
+`_ZoneCircleLayoutWorker`(CUDA 미호출) 단일 워커로 교체, `drop_hidden()` 공유
+필터 함수로 DRY 확보, 삭제 대상 i18n 키(`zone.sensitivity_label` 등) 실제 삭제
+확인(grep 0건), 레시피 다이얼로그 자체 민감도/검출 UI는 스펙대로 보존.
+
+### pytest 독립 재실행 (BUG-028 회피, 파일 단위)
+`test_zone_batch_worker.py`(14) / `test_zone_state_persistence.py`(1) /
+`test_zone_redesign_2026_10_01.py`(19) / `test_zone_edit_toolbar.py`(7) /
+`test_zone_github_13_14.py`(9) / `test_zone_step_indicator.py`(4) /
+`test_zone_brush_overlay_sync_2026_10_28.py`(3) = **57 passed** — 구현 에이전트
+보고치와 정확히 일치, 독립 재현 완료. `zone_metrics.py`/`zone_state_store.py`/
+`zone_recipe_store.py` self-check(`py -m ...`) 전부 OK(구버전 포맷 로드 케이스
+포함).
+
+### 실제 QTest 골든패스 (실제 Qt 플랫폼, 처음엔 실패 다수 → 테스트 하니스 결함
+3건 수정 후 전부 PASS로 수렴 — 아래 "테스트 하니스에서 발견한 함정" 참고)
+
+**전부 PASS (44/44 체크):**
+1. 모델/체크포인트 미선택 상태에서 실제 "영역 적용" 버튼 클릭(QTest.mouseClick)
+   → 경고 없이 즉시 진행, 대상 이미지 2장의 사이드카에 원 2개 + outer_name("가장자리")
+   정확히 복사됨(스케일링 포함).
+2. 배치 완료 시 `QMessageBox.information`로 단순 확인 메시지만 뜸("2장에 영역
+   적용 완료 — 개별 이미지를 열어 추론을 실행하면...") — 퍼센티지 표
+   (`ZoneBatchResultDialog`)는 뜨지 않음 확인.
+3. 배치 적용 직후 대상 이미지로 전환해 실제 마우스 드래그로 원 이동, 실제
+   `QContextMenuEvent`로 우클릭 메뉴 "원 삭제" 실행 — 둘 다 정상 동작(회귀 없음).
+4. 존별 비율 패널(`_zone_list`) 실제 우클릭 → "이름 변경..."(QInputDialog 모킹)으로
+   중심부 존 이름 "상부캡" 변경 확인, 이어서 "숨기기" 토글 → 패널에서 행이 사라지지
+   않고 회색조 + "(숨김)" 접미사로 유지(행 개수 3개 그대로), 단일 이미지 export
+   (`_compute_zone_percentages`+`drop_hidden`)에서는 "상부캡" 정확히 제외됨.
+5. 바깥쪽(원 없는) 존 행의 `UserRole` 데이터가 `None`임을 확인한 뒤 패널 우클릭
+   "이름 변경..."으로 `_canvas.outer_name()`이 "외곽영역"으로 정확히 변경됨.
+6. 레시피 버튼(`_btn_recipe`, 모드 무관 항상 노출) 실제 클릭 → 다이얼로그 이름
+   입력란 기본값이 `{오늘날짜:YYYYMMDD}_recipe`와 정확히 일치. 별도 다이얼로그
+   인스턴스에서 실제 드래그로 원 생성 → 실제 우클릭으로 숨김 처리 → 실제 저장
+   버튼 클릭 → 새 다이얼로그 재오픈 시 `_load_most_recent()`가 hidden=True/
+   outer_name("커스텀외곽")/이름 전부 정확히 복원됨.
+7. "결과 이미지 일괄 저장" 버튼(결과보기 바로 아래) 실제 클릭 → 추론 결과가 있는
+   이미지만 실제 PNG 파일로 저장됨, 추론 안 한 이미지 2장은 저장 대상에서 정확히
+   제외됨.
+- 추가: 민감도 슬라이더/자동검출 버튼/배치모드 콤보 위젯 자체가 인스턴스에
+  존재하지 않음(`hasattr` False) 확인, 배치 그룹박스 레이아웃에 버튼 2개+라벨
+  1개만 남아 깨짐 없음, 제목이 "배치 처리"로 교체됨 확인. 구버전(hidden/outer_name
+  키 없는 3-tuple) 사이드카 JSON을 직접 작성해 `load_state()`→`set_state()`
+  실제 왕복 — KeyError 없이 안전 로드 확인(self-check 재탕이 아니라 신규 작성한
+  더미 파일로 별도 확인).
+
+### 테스트 하니스에서 발견한 함정 (애플리케이션 버그 아님 — 기록용)
+첫 실행에서 8개 항목이 FAIL했으나 전부 검증 스크립트 자체의 결함이었고, 실제
+애플리케이션 코드 문제는 하나도 없었다:
+1. **`QTest.mouseClick(widget, RightButton)`이 이 환경(Windows, 실제 플랫폼)에서
+   네이티브 컨텍스트 메뉴로 번역되지 않음** — `contextMenuEvent`/
+   `customContextMenuRequested`가 전혀 트리거되지 않아 우클릭 메뉴 관련 검증
+   4건이 거짓 FAIL. 실제 `QContextMenuEvent`를 만들어 `QApplication.sendEvent()`로
+   직접 보내는 방식으로 수정 후 전부 PASS로 전환 — 향후 이 환경에서 우클릭 메뉴를
+   QTest로 검증할 때 참고할 것.
+2. 드래그로 원을 이동시킨 뒤 "이동 전" 화면 좌표로 재우클릭해 좌표가 어긋남 —
+   이동 후 좌표를 `_orig_to_screen()`으로 다시 계산해 수정.
+3. `QFileDialog.getExistingDirectory`를 모킹할 때 실제로 존재하지 않는 폴더
+   경로를 반환해 `QImage.save()`가 조용히 실패 — 실제 다이얼로그는 항상 존재하는
+   폴더를 반환하므로 테스트에서도 `mkdir()` 후 반환하도록 수정.
+(최초 배치 흐름 재현 시도 중 "기존 존 발견" 확인 다이얼로그가 raw `QMessageBox(...).
+exec()` 인스턴스 호출이라 정적 `QMessageBox.question()` 모킹만으론 가로채지지
+않아 멈췄던 것도 별도로 확인·해결 — 인스턴스 `exec()`까지 몽키패치해 해결, 이
+자체는 FAIL 집계에 포함되지 않았으나 디버깅 과정에 기록.)
+
+### 발견된 버그
+없음. **QA.md 신규 등록 없음.**
+
+### 상태: PASS — 추가 구현 작업 불필요
+정적 리뷰, pytest 57건 독립 재현, 실제 QTest 골든패스 7개 항목 전부(44개 세부
+체크) PASS. 구현 에이전트가 보고한 "MainWindow 생성 블로커"는 실제 디스플레이
+환경에서 재현되지 않아 환경 특이 현상으로 결론. 리더가 버전/CHANGELOG/push만
+판단하면 됨.

@@ -5,6 +5,57 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.11.0] 2026-10-29
+
+사용자 요청 9건(스펙 `docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md`):
+(1) 자동검출 버튼 삭제, (2) 배치 모드를 '고정' 하나로 단순화, (3) 민감도 슬라이더
+제거, (4) 배치 영역 적용을 추론/모델 요구사항과 완전히 분리, (5) 배치 적용 후
+개별 이미지 수정 가능(회귀 확인), (6) 존별 비율 패널에서 "삭제"는 숨기기(비파괴),
+(7) 존 이름 변경을 패널에서 직접(바깥쪽 포함), (8) 레시피에 hidden/outer_name
+확장 + 기본 이름 `YYYYMMDD_recipe`, (9) "결과보기" 아래 결과 이미지 일괄 저장(PNG).
+
+### 추가
+- `_CircleItem.hidden: bool` 필드 — `ZoneCanvas.get_circles()`/`circles_with_ids()`/
+  `get_state()`/`set_state()` 전부로 전파(5요소/6요소로 확장, 역호환 유지). 우클릭
+  메뉴에 "숨기기"/"보이기" 토글 추가(비파괴, 즉시 반영).
+- `ZoneCanvas.outer_name()`/`rename_outer_zone()` — 바깥쪽(가장 큰) 존 전용 이름,
+  원에 귀속되지 않는 스칼라 값. `get_state()`/`set_state()`/`zone_state_store.py`/
+  `zone_recipe_store.py`에 `outer_name` 키로 영속화(구버전 파일은 `None` 기본값으로
+  자동 역호환). `zones_from_circles()`에 `outer_name` 파라미터 추가.
+- 존별 비율 패널(`_zone_list`)에서 각 행 우클릭 → "이름 변경..."으로 중심부/링
+  존은 물론 바깥쪽 존(circle_id 없음)까지 직접 이름 변경 가능.
+- 존별 비율 패널에서 "숨기기" 토글 시 패널에서 사라지지 않고 회색조 + "(숨김)"
+  표시로 유지, 단일/전체 이미지 Excel 내보내기는 `zone_metrics.drop_hidden()`
+  (신규 공유 순수 함수, `_recompute_zones()`/`_on_export_single()`/
+  `_compute_zone_rows()` 3곳이 공유)로 숨겨진 존을 걸러냄.
+- `ZoneRecipeDialog` 이름 입력란 기본값을 `f"{date.today():%Y%m%d}_recipe"`로
+  미리 채움(최근 레시피가 있으면 그 이름으로 덮어씀). 레시피 저장/로드가
+  hidden/outer_name을 포함해 왕복(구버전 3-tuple 레거시 포맷도 안전 로드,
+  자가진단에 케이스 추가).
+- "결과보기" 버튼 바로 아래 "결과 이미지 일괄 저장" 버튼 추가 — 세션 중 추론을
+  실행한 이미지의 `overlay_image`(최신 브러시 보정 반영분)를 선택한 폴더에
+  PNG로 일괄 저장, 추론 안 한 이미지는 자동 제외.
+
+### 변경
+- 배치 "영역 적용"(`_on_batch_process()`)이 더 이상 모델/체크포인트/추론 결과를
+  요구하지 않음 — 게이팅을 기준 원 1개 이상 + 대상 이미지로 축소. CUDA 추론
+  워커(`_ZoneBatchWorker`)와 추론-원복사 2단 파이프라인(`_ZoneBatchPostWorker`)을
+  삭제하고, CUDA를 전혀 호출하지 않는 단일 워커(`_ZoneCircleLayoutWorker`)로
+  교체 — 각 대상 이미지 크기만 읽어 원을 스케일링하고 기존 사이드카
+  (`removed_blob_ids`/`erase_strokes`/`manual_strokes`는 보존)에 반영.
+- 배치 모드 콤보박스('고정'/'이미지별 재검출')와 민감도 슬라이더, 자동검출 버튼
+  삭제 — 배치는 이제 항상 "고정"(기준 원을 복사) 방식 하나뿐. 레시피 버튼은
+  모드와 무관하게 항상 노출.
+- 배치 완료 다이얼로그가 퍼센티지 결과표(`ZoneBatchResultDialog`) 대신 단순 확인
+  메시지("N장에 영역 적용 완료 — 개별 이미지를 열어 추론을 실행하면...")로 교체
+  — 추론-무관 요구사항과 일치(비율은 "결과보기" 버튼으로 별도 확인).
+
+### 삭제
+- i18n 키(ko/en): `zone.sensitivity_label`, `zone.sensitivity_tip`,
+  `zone.btn_detect`, `zone.detect_tip`, `zone.not_ready_msg2`.
+  (`zone_recipe_dialog.py`가 쓰는 `zone_recipe.*` 네임스페이스는 별개 코드라
+  그대로 유지.)
+
 ## [zone-v1.10.0] 2026-10-28
 
 사용자 요청: (1) "브러시로 그린 것도 검출 결과와 동일하게(불투명도 포함) 화면에
