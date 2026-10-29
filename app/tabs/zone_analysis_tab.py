@@ -23,8 +23,13 @@
 (`{stem}.zone.json`, `zone_state_store.py`)에 디바운스(500ms) 자동 저장한다.
 이미지 전환 시 사이드카가 있으면 복원, 없으면 빈 캔버스로 시작(자세한 설계는
 docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md "요청 A" 참고).
+2026-10-29 배치 단순화: 민감도 슬라이더/자동검출 버튼 및 3-way 배치 모드 콤보를
+삭제하고 "고정 배치"(기준 원을 각 이미지 크기로 스케일만) 하나로 통일 — 배치가
+더 이상 추론/모델과 무관하게 동작한다(`_ZoneCircleLayoutWorker`, CUDA 미호출).
+존 숨기기(`hidden`)/바깥쪽 존 이름(`outer_name`) 필드 추가 + 패널에서 직접
+이름 변경/숨기기 + "결과 이미지 일괄 저장" 버튼 추가.
+docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md 참고.
 """
-import queue
 from collections import OrderedDict
 from pathlib import Path
 
@@ -34,7 +39,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QMessageBox, QGroupBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox,
     QSplitter, QSlider, QSpinBox, QListWidget, QListWidgetItem,
-    QProgressDialog, QProgressBar, QToolBar, QFrame, QMenu,
+    QProgressDialog, QProgressBar, QToolBar, QFrame, QMenu, QApplication,
 )
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize, QElapsedTimer
 from PyQt6.QtGui import QImage, QPixmap, QAction
@@ -47,11 +52,10 @@ from app.core.inference_engine import (
 from app.core.model_validator import validate
 from app.core.model_loader import load_from_code
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
-from app.core.circle_detector import detect_circles
 from app.core.zone_metrics import (
     Circle, Zone, zones_from_circles, zone_stats, compute_blob_labels,
     apply_manual_strokes, zone_blob_stats, ZoneBlobStat, scale_circles,
-    max_blob_pixels_by_zone,
+    max_blob_pixels_by_zone, drop_hidden,
 )
 from app.core import zone_state_store as zstate
 from app.core.i18n import t
@@ -104,127 +108,45 @@ class _ZoneInferenceWorker(QThread):
                 self.failed.emit(path, str(exc))
 
 
-class _ZoneBatchWorker(QThread):
-    """BUG-030 수정: 워커 스레드에서는 CUDA 추론만 수행한다 — cv2/numpy 존·블랍
-    후처리(`compute_blob_labels`/`zones_from_circles`/`detect_circles` 등)는 절대
-    이 스레드 안에서 실행하면 안 된다("다른 스레드의 실 CUDA 추론 직후 같은 스레드에서
-    cv2 후처리"가 `STATUS_STACK_BUFFER_OVERRUN` 하드크래시의 결정적 트리거로 격리됨,
-    QA.md BUG-030). 후처리는 `image_inferred` 시그널을 받는 가벼운 중계 슬롯
-    (`ZoneAnalysisTab._on_batch_image_ready`)을 거쳐 `_ZoneBatchPostWorker`(별도
-    QThread, CUDA 비호출)로 넘어간다 — R-PERF-2(2026-10-07), 응답없음 완화."""
-    progress = pyqtSignal(object, str, object, int, int)
-    image_inferred = pyqtSignal(object, object, int, int)   # path, InferenceResult, done, total
+class _ZoneCircleLayoutWorker(QThread):
+    """배치 '영역 적용' 전용 워커(2026-10-29 배치 단순화) — 추론/모델과 완전히
+    무관하게 기준 원 집합(`circles_ref`)을 각 대상 이미지 크기에 맞춰 스케일링해
+    사이드카에 저장하기만 한다. 이전엔 "원 복사"가 CUDA 추론(`_ZoneBatchWorker`)과
+    한 파이프라인에 얽혀 있어 모델 미선택 시 원조차 복사할 수 없었다 — 이제 CUDA를
+    전혀 호출하지 않으므로 BUG-030류 스레드 제약도 해당 없음(단일 워커로 충분,
+    2단 파이프라인이었던 `_ZoneBatchWorker`+`_ZoneBatchPostWorker`는 제거됨)."""
+    progress = pyqtSignal(object, str, object, int, int)   # path, status, detail, done, total
 
-    def __init__(self, model, paths: list[Path], checkpoint_path: Path,
-                 cached_results: dict[Path, InferenceResult],
-                 classes: list[ClassDef], min_confidence: float, min_pixel_size: int) -> None:
+    def __init__(self, circles_ref: list[tuple], ref_size: tuple[int, int],
+                 outer_name: str | None, target_paths: list[Path]) -> None:
         super().__init__()
-        self._model = model
-        self._paths = paths
-        self._checkpoint_path = checkpoint_path
-        self._cached_results = cached_results
-        self._classes = classes
-        self._min_confidence = min_confidence
-        self._min_pixel_size = min_pixel_size
+        self._circles_ref = circles_ref
+        self._ref_size = ref_size
+        self._outer_name = outer_name
+        self._target_paths = target_paths
 
     def run(self) -> None:
-        prepared = None
-        if any(path not in self._cached_results for path in self._paths):
-            try:
-                prepared = engine.prepare_inference(self._model, self._checkpoint_path)
-            except Exception as exc:
-                self.progress.emit(self._checkpoint_path, "error", str(exc), 0, len(self._paths))
-                return
-
-        total = len(self._paths)
-        for done, path in enumerate(self._paths, 1):
+        total = len(self._target_paths)
+        for done, path in enumerate(self._target_paths, 1):
             if self.isInterruptionRequested():
                 break
             self.progress.emit(path, "processing", None, done - 1, total)
             try:
-                result = self._cached_results.get(path)
-                if result is None:
-                    result = engine.run_sliding_window(
-                        model=self._model, image_path=path,
-                        checkpoint_path=self._checkpoint_path, classes=self._classes,
-                        min_confidence=self._min_confidence,
-                        min_pixel_size=self._min_pixel_size, opacity=0.5,
-                        prepared=prepared,
-                    )
-                self.image_inferred.emit(path, result, done, total)
-            except Exception as exc:
-                log.exception(f"존 분석 일괄 처리(추론) 실패 — image={path}")
-                self.progress.emit(path, "error", str(exc), done, total)
-
-
-class _ZoneBatchPostWorker(QThread):
-    """R-PERF-2(2026-10-07): `_ZoneBatchWorker`가 CUDA 추론을 마친 결과를 큐로
-    받아 cv2/numpy 존·블랍 후처리(`_compute_zone_rows`)와 사이드카 저장을 전담하는
-    두 번째 워커. CUDA를 절대 호출하지 않는다 — BUG-030 트리거는 "다른 스레드의 실
-    CUDA 추론 직후 같은 스레드에서 cv2 후처리"뿐이므로, 이 스레드는 애초에 CUDA를
-    호출하지 않아 그 조합 자체가 성립하지 않는다(QA.md BUG-030).
-
-    `enqueue()`로 들어온 항목을 FIFO로 하나씩 처리하므로 처리 순서(결과/사이드카
-    기록 순서)는 `_ZoneBatchWorker`가 넣은 순서(이미지 리스트 순서)와 동일하게
-    보존된다 — 단일 스레드가 큐를 하나씩 소비하므로 레이스 없음."""
-    row_computed = pyqtSignal(object, object, object, object, int, int)  # path, result, rows, blob_rows, done, total
-    progress = pyqtSignal(object, str, object, int, int)   # path, status, detail, done, total
-
-    def __init__(self, mode: str, circles_ref: list[tuple], ref_size: tuple[int, int],
-                 sensitivity: float, target_cid: int) -> None:
-        super().__init__()
-        self._queue: queue.Queue = queue.Queue()
-        self._mode = mode
-        self._circles_ref = circles_ref
-        self._ref_size = ref_size
-        self._sensitivity = sensitivity
-        self._target_cid = target_cid
-
-    def enqueue(self, path: Path, result: InferenceResult, done: int, total: int) -> None:
-        self._queue.put((path, result, done, total))
-
-    def close(self) -> None:
-        self._queue.put(None)   # sentinel — CUDA 워커가 끝났고 더 들어올 항목이 없음을 알림
-
-    def run(self) -> None:
-        while True:
-            item = self._queue.get()
-            if item is None or self.isInterruptionRequested():
-                break
-            path, result, done, total = item
-            try:
-                h, w = result.raw_class_map.shape
-                if self._mode == "per_image":
-                    with Image.open(str(path)) as im:
-                        rgb = np.array(im.convert("RGB"))
-                    circles = detect_circles(rgb[:, :, ::-1].copy(), sensitivity=self._sensitivity)
-                else:
-                    circles = scale_circles(self._circles_ref, self._ref_size, (w, h))
-                if not circles:
-                    self.progress.emit(path, "done", t("zone.batch_no_circles"), done, total)
-                    continue
-
+                with Image.open(str(path)) as im:
+                    w, h = im.convert("RGB").size   # PIL lazy decode — .size는 헤더만 읽음
+                circles = scale_circles(self._circles_ref, self._ref_size, (w, h))
                 previous = zstate.load_state(path)
-                computed = _compute_zone_rows(path, result, self._target_cid, circles, previous)
-                if computed is None:
-                    self.progress.emit(path, "done", t("zone.batch_no_circles"), done, total)
-                    continue
-                rows, blob_rows = computed
-
-                # circles는 모드에 따라 (cx,cy,r)(장별 자동검출) 또는 (cx,cy,r,name)
-                # (기준 이미지 레시피 적용, *rest로 이름 보존)일 수 있다 — *rest로 흡수.
                 state = previous or {
                     "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
                 }
                 state["circles"] = [
-                    (idx, cx, cy, r, rest[0] if rest else None)
-                    for idx, (cx, cy, r, *rest) in enumerate(circles)
+                    (idx, cx, cy, r, *rest) for idx, (cx, cy, r, *rest) in enumerate(circles)
                 ]
+                state["outer_name"] = self._outer_name
                 zstate.save_state(path, state)
-
-                self.row_computed.emit(path, result, rows, blob_rows, done, total)
+                self.progress.emit(path, "done", t("zone.badge_applied"), done, total)
             except Exception as exc:
-                log.exception(f"존 분석 일괄 처리(후처리) 실패 — image={path}")
+                log.exception(f"존 분석 일괄 처리(영역 적용) 실패 — image={path}")
                 self.progress.emit(path, "error", str(exc), done, total)
 
 
@@ -238,9 +160,10 @@ def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
 
 def _compute_zone_rows(
     path: Path, result: InferenceResult, target_cid: int,
-    circles: list[tuple], previous: dict | None,
+    circles: list[tuple], previous: dict | None, outer_name: str | None = None,
 ) -> tuple[list[tuple[str, str, float]], list[tuple[str, ZoneBlobStat]]] | None:
-    """(rows, blob_rows) — side effect 없음(저장은 호출부 책임).
+    """(rows, blob_rows) — side effect 없음(저장은 호출부 책임). 숨긴(hidden=True)
+    존은 반환 전에 걸러진다(`drop_hidden()`, 요구사항 6 — export 레이어 공유 필터).
 
     `_on_batch_image_inferred()`의 계산 핵심을 순수 함수로 추출(2026-10-03#8) —
     배치 처리/"전체 결과 보기"(`_on_view_all_results`) 둘 다 재사용한다."""
@@ -253,12 +176,14 @@ def _compute_zone_rows(
         ai_mask = ai_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
     final_mask = apply_manual_strokes(ai_mask, previous["manual_strokes"]) if previous else ai_mask
     zones = zones_from_circles(
-        [Circle(idx, cx, cy, r, (rest[0] if rest else None))
-         for idx, (cx, cy, r, *rest) in enumerate(circles)], (h, w)
+        [Circle(idx, cx, cy, r, rest[0] if len(rest) > 0 else None,
+                bool(rest[1]) if len(rest) > 1 else False)
+         for idx, (cx, cy, r, *rest) in enumerate(circles)], (h, w), outer_name,
     )
     percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
     rows = [(path.name, zone.name, pct) for zone, pct in zip(zones, percentages)]
     blob_rows = [(path.name, s) for s in zone_blob_stats(zones, ai_mask, final_mask, result.confidence_map)]
+    rows, blob_rows = drop_hidden(zones, rows, blob_rows)
     return rows, blob_rows
 
 
@@ -283,16 +208,13 @@ class ZoneAnalysisTab(QWidget):
         # 항목 제거), 상한은 적당히 넉넉한 고정값.
         self._target_cache: OrderedDict[Path, tuple[tuple, InferenceResult, np.ndarray, list]] = OrderedDict()
         self._worker: _ZoneInferenceWorker | None = None
-        self._batch_worker: _ZoneBatchWorker | None = None
-        self._post_worker: _ZoneBatchPostWorker | None = None   # R-PERF-2: cv2 후처리 전용 QThread
+        self._post_worker: _ZoneCircleLayoutWorker | None = None   # 배치 '영역 적용' 전용 워커
         self._batch_progress: QProgressDialog | None = None
-        # R-PERF-2: cv2/numpy 존·블랍 후처리 결과(메인 스레드에서 누적, _post_worker가 채움)
-        self._batch_rows: list[tuple[str, str, float]] = []
-        self._batch_blob_rows: list[tuple[str, ZoneBlobStat]] = []
         # BUG-038: 이번 배치의 대상 목록 + 상태가 "done"/"error"로 확정된 경로 —
         # 취소 시 둘의 차집합(아직 processing 아이콘이 남은 이미지)을 pending으로 리셋.
         self._batch_targets: list[Path] = []
         self._batch_completed: set[Path] = set()
+        self._batch_errors: set[Path] = set()   # 완료 메시지의 성공 건수 계산용(완료-오류)
         self._detected_ids: list[int] = []   # raw_class_map의 배경(0) 제외 고유 클래스 id
         self._target_class_id: int | None = None   # 현재 선택된 타겟(녹) 클래스 id
         self._target_classes: list[ClassDef] | None = None   # 일괄 처리(3b)에서 고정 재사용
@@ -335,9 +257,9 @@ class ZoneAnalysisTab(QWidget):
         # ── 상단 툴바 (승인된 목업 순서, Artifact 984ea900 — 이번 세션엔 Artifact
         #    도구가 없어 스펙 문서 "승인된 UI 레이아웃" 절 서술을 그대로 따름):
         #    체크포인트 상태+열기 / ▶ 추론 실행 / 타겟클래스 / AI신뢰도 / 픽셀 threshold /
-        #    (민감도 — 자동검출의 파라미터라 바로 옆에 배치) / 자동검출 / 블랍삭제모드.
-        #    (오프라인 원 검출 테스트는 2026-08-30 요청으로 삭제됨.) 이미지 열기는
-        #    좌측 패널로 이동(C-1). ─
+        #    블랍삭제모드. (오프라인 원 검출 테스트는 2026-08-30 요청으로 삭제됨,
+        #    민감도 슬라이더/자동검출 버튼은 2026-10-29 배치 단순화로 삭제됨.)
+        #    이미지 열기는 좌측 패널로 이동(C-1). ─
         # 두 줄로 분리(BUG-021 수정) — 한 줄에 다 욱여넣으면 최소폭이 1588px까지
         # 벌어져 MainWindow 코딩된 기본 크기(1280x800)를 조용히 무시하고 더 넓게
         # 뜸(main_window.py의 resize() 호출과 실제 동작이 어긋나는 버그였음).
@@ -410,21 +332,6 @@ class ZoneAnalysisTab(QWidget):
         self._min_px_spin.setFixedWidth(90)
         self._min_px_spin.setToolTip(t("zone.pixel_threshold_tip"))
         toolbar_row2.addWidget(self._min_px_spin)
-
-        toolbar_row2.addWidget(QLabel(t("zone.sensitivity_label")))
-        self._sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._sensitivity_slider.setRange(0, 100)
-        self._sensitivity_slider.setValue(50)
-        self._sensitivity_slider.setFixedWidth(90)
-        self._sensitivity_slider.setToolTip(t("zone.sensitivity_tip"))
-        toolbar_row2.addWidget(self._sensitivity_slider)
-        self._lbl_sensitivity = QLabel("50%")
-        self._lbl_sensitivity.setFixedWidth(32)
-        toolbar_row2.addWidget(self._lbl_sensitivity)
-        self._btn_detect = QPushButton(t("zone.btn_detect"))
-        self._btn_detect.setEnabled(False)
-        self._btn_detect.setToolTip(t("zone.detect_tip"))
-        toolbar_row2.addWidget(self._btn_detect)
 
         self._edit_toolbar = QToolBar()
         self._edit_toolbar.setIconSize(QSize(20, 20))
@@ -551,12 +458,6 @@ class ZoneAnalysisTab(QWidget):
         # ── 배치 컨트롤 (3b) — 좌측 패널 하단, 발견성 개선을 위해 그룹박스로 묶음 ──
         self._batch_box = QGroupBox(t("zone.batch_mode_group"))
         batch_layout = QVBoxLayout(self._batch_box)
-        self._mode_combo = QComboBox()
-        self._mode_combo.addItem(t("zone.mode_apply_all"), "apply_all")
-        self._mode_combo.addItem(t("zone.mode_apply_all_edit"), "apply_all_edit")
-        self._mode_combo.addItem(t("zone.mode_per_image"), "per_image")
-        self._mode_combo.setToolTip(t("zone.mode_combo_tip"))
-        batch_layout.addWidget(self._mode_combo)
         self._btn_recipe = QPushButton(svg_icon("tool_polygon"), t("zone.btn_recipe"))
         self._btn_recipe.setStyleSheet(
             "background:#2b313a;border:1px solid #60a5fa;border-radius:5px;"
@@ -634,6 +535,8 @@ class ZoneAnalysisTab(QWidget):
         side_layout.addWidget(QLabel(t("zone.zone_list_label")))
         self._zone_list = QListWidget()
         self._zone_list.setToolTip(t("zone.zone_list_tip"))
+        self._zone_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._zone_list.customContextMenuRequested.connect(self._on_zone_list_context_menu)
         side_layout.addWidget(self._zone_list, stretch=1)
         self._lbl_selected_blob = QLabel("")
         self._lbl_selected_blob.setWordWrap(True)
@@ -650,6 +553,9 @@ class ZoneAnalysisTab(QWidget):
         self._btn_view_all.setToolTip(t("zone.view_all_tip"))
         self._btn_view_all.setEnabled(False)
         side_layout.addWidget(self._btn_view_all)
+        self._btn_save_all_images = QPushButton(svg_icon("export"), t("zone.btn_save_all_images"))
+        self._btn_save_all_images.setToolTip(t("zone.save_all_images_tip"))
+        side_layout.addWidget(self._btn_save_all_images)
         side.setMinimumWidth(160)
         side.setMaximumWidth(220)
         splitter.addWidget(side)
@@ -669,8 +575,6 @@ class ZoneAnalysisTab(QWidget):
         self._img_list.display_changed.connect(self._update_batch_button_state)
         self._img_list.images_removed.connect(self._on_images_removed)
         self._btn_recipe.clicked.connect(self._on_open_recipe_dialog)
-        self._mode_combo.currentIndexChanged.connect(self._on_batch_mode_changed)
-        self._on_batch_mode_changed()   # 초기 모드 기준 버튼 표시 상태 반영
         self._btn_batch.clicked.connect(self._on_batch_process)
         self._btn_ckpt.clicked.connect(self._on_select_checkpoint)
         self._btn_validate.clicked.connect(self._on_validate)
@@ -678,10 +582,6 @@ class ZoneAnalysisTab(QWidget):
         self._btn_run.clicked.connect(self._on_run)
         self._target_name_edit.editingFinished.connect(self._on_target_changed)
         self._target_combo.currentIndexChanged.connect(self._on_target_changed)
-        self._btn_detect.clicked.connect(self._on_auto_detect)
-        self._sensitivity_slider.valueChanged.connect(
-            lambda v: self._lbl_sensitivity.setText(f"{v}%")
-        )
         self._conf_slider.valueChanged.connect(
             lambda v: self._lbl_confidence.setText(f"{v}%")
         )
@@ -714,6 +614,7 @@ class ZoneAnalysisTab(QWidget):
         self._zone_list.currentRowChanged.connect(self._on_zone_row_selected)
         self._btn_export_single.clicked.connect(self._on_export_single)
         self._btn_view_all.clicked.connect(self._on_view_all_results)
+        self._btn_save_all_images.clicked.connect(self._on_save_all_images)
         # 스텝 인디케이터 — 신규 시그널 없이 기존 호출부에 편승(주석 위 Undo 관례와 동일 패턴).
         self._canvas.circles_changed.connect(self._refresh_step_indicator)
         self._canvas.blob_deleted.connect(lambda _id: self._mark_step6_touched())
@@ -774,7 +675,6 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.clear()
             for action in self._edit_tool_actions:
                 action.setEnabled(False)
-            self._btn_detect.setEnabled(False)
             self._canvas.set_blob_data(None, None)
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
@@ -805,10 +705,8 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_pixmap(self._original_pixmap)
             self._act_circle.setEnabled(True)
             self._brush_tools.act_pan.setEnabled(True)
-            # 7-2: 자동 검출/원 편집은 추론 결과와 무관하게 이미지만 로드되면
-            # 바로 쓸 수 있다(detect_circles()는 원본 이미지만 참조) — 영역
-            # 설정을 추론 전에 할 수 있어야 한다는 재설계 요구사항과 일치.
-            self._btn_detect.setEnabled(True)
+            # 7-2: 원 편집은 추론 결과와 무관하게 이미지만 로드되면 바로 쓸 수
+            # 있다 — 영역 설정을 추론 전에 할 수 있어야 한다는 재설계 요구사항과 일치.
         except Exception:
             self._image_size = (0, 0)
             self._original_pixmap = None
@@ -816,7 +714,6 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.clear()
             for action in self._edit_tool_actions:
                 action.setEnabled(False)
-            self._btn_detect.setEnabled(False)
         self._canvas.set_blob_data(None, None)
         self._canvas.set_highlight_rect(None)
         self._lbl_selected_blob.setText("")
@@ -1038,8 +935,6 @@ class ZoneAnalysisTab(QWidget):
         # 결과를 반환한다(동작 동일, sorted() 불필요해짐).
         ids = [int(i) for i in np.unique(result.raw_class_map) if i != 0]
         self._detected_ids = ids
-        # 7-2: _btn_detect는 이미지 로드 시점에 이미 활성화돼 있다(추론 결과와
-        # 무관) — 여기서 다시 건드리지 않는다.
 
         self._target_name_edit.hide()
         self._target_combo.hide()
@@ -1056,10 +951,6 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             self._set_tool(_TOOL_CIRCLE)
-            # 7-2: _btn_detect는 블랍 마스크와 무관(detect_circles는 원본 이미지만
-            # 참조)하므로 타겟 클래스가 없어도 비활성화하지 않는다 — BUG-031 당시의
-            # 제약은 "추론 전엔 원 설정 불가"라는 구UX 전제에 묶여 있던 것으로,
-            # 재설계(7-2)로 그 전제 자체가 제거됨.
             for action in (self._brush_tools.act_brush, self._brush_tools.act_eraser,
                            self._brush_tools.act_delete_region):
                 action.setEnabled(False)
@@ -1275,7 +1166,7 @@ class ZoneAnalysisTab(QWidget):
         done[5] = done[4]   # "진행상황"은 결과가 있으면 이미 끝난 것으로 간주(아래 러닝 중 예외)
         done[6] = self._step6_touched
         done[7] = self._result_viewed
-        if self._worker is not None or self._batch_worker is not None or self._post_worker is not None:
+        if self._worker is not None or self._post_worker is not None:
             return 5, {k for k in (1, 2, 3, 4) if done[k]}   # 추론 진행 중엔 강제로 5번 강조
         completed = {k for k, v in done.items() if v}
         current = next((k for k in range(1, 8) if k not in completed), 7)
@@ -1293,12 +1184,12 @@ class ZoneAnalysisTab(QWidget):
         """원/추론결과/타겟클래스 중 하나라도 없으면 None — 있으면
         `zones_from_circles()`를 1회만 호출한 결과. `_compute_zone_percentages()`/
         `_compute_zone_blob_rows()`가 이 결과를 공유해 중복 계산을 피한다(BUG-040 B)."""
-        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r, name)
+        circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r, name, hidden)
         if not circles_raw or self._last_result is None or self._target_class_id is None:
             return None
-        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in circles_raw]
+        circles = [Circle(cid, cx, cy, r, name, hidden) for cid, cx, cy, r, name, hidden in circles_raw]
         h, w = self._last_result.raw_class_map.shape
-        return zones_from_circles(circles, (h, w))
+        return zones_from_circles(circles, (h, w), self._canvas.outer_name())
 
     def _compute_zone_percentages(self, zones: list[Zone] | None = None) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
@@ -1328,14 +1219,21 @@ class ZoneAnalysisTab(QWidget):
         stats = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
         return [(self._image_path.name, s) for s in stats]
 
-    def _make_zone_row_widget(self, zone_name: str, pct: float, max_px: int) -> QWidget:
+    def _make_zone_row_widget(self, zone_name: str, pct: float, max_px: int, hidden: bool = False) -> QWidget:
+        """디자인 검토(2026-10-29): 숨긴 존도 패널에서 완전히 사라지면 되돌릴 방법이
+        없어지므로, 행은 계속 보이게 두고 이름만 회색조(#6b7280, 기존 캡션 색과
+        동일) + "(숨김)" 접미사로 표시한다 — Excel 내보내기에서는 여전히 제외
+        (`drop_hidden()`, 요구사항 6)."""
         color = "#fbbf24" if pct >= 10.0 else "#34d399"   # 임계값은 시각 구분용 — 기존 판정 로직과 무관
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(6, 4, 6, 4)
         v.setSpacing(3)
         top = QHBoxLayout()
-        lbl_name = QLabel(zone_name)
+        display_name = f"{zone_name}{t('zone.hidden_suffix')}" if hidden else zone_name
+        lbl_name = QLabel(display_name)
+        if hidden:
+            lbl_name.setStyleSheet("color:#6b7280;")
         lbl_pct = QLabel(f"{pct:.1f}%")
         lbl_pct.setStyleSheet(f"color:{color};font-weight:bold;")
         top.addWidget(lbl_name)
@@ -1389,12 +1287,22 @@ class ZoneAnalysisTab(QWidget):
         blob_rows = self._compute_zone_blob_rows(zones)   # 기존 함수 재사용(R3 단일 이미지 Excel용)
         max_blobs = max_blob_pixels_by_zone(blob_rows) if blob_rows else {}
         image_name = self._image_path.name if self._image_path else ""
-        for zone_name, pct in pct_rows:
+        # 숨긴 존도 행은 유지(디자인 검토) -> 행 개수가 zones와 1:1이라 row == zone_index.
+        # 요구사항 7(패널에서 이름 변경)을 위해 각 행에 대응하는 circle_id를 함께
+        # 보관(바깥쪽 존은 원이 없어 None) — zones_from_circles()가 반지름 오름차순
+        # 정렬이므로 circles_with_ids()(동일 정렬 기준)의 같은 인덱스가 그 원이다.
+        circles_raw = self._canvas.circles_with_ids()
+        n = len(circles_raw)
+        for zone_index, (zone, (zone_name, pct)) in enumerate(zip(zones, pct_rows)):
             item = QListWidgetItem()
             item.setSizeHint(QSize(0, 48))
+            circle_id = circles_raw[zone_index][0] if zone_index < n else None
+            item.setData(Qt.ItemDataRole.UserRole, circle_id)
             max_px = max_blobs.get((image_name, zone_name), 0)
             self._zone_list.addItem(item)
-            self._zone_list.setItemWidget(item, self._make_zone_row_widget(zone_name, pct, max_px))
+            self._zone_list.setItemWidget(
+                item, self._make_zone_row_widget(zone_name, pct, max_px, zone.hidden)
+            )
         if highlighted is not None and 0 <= highlighted < self._zone_list.count():
             self._zone_list.setCurrentRow(highlighted)
         else:
@@ -1411,6 +1319,30 @@ class ZoneAnalysisTab(QWidget):
     def _on_zone_row_selected(self, row: int) -> None:
         self._canvas.set_highlighted_zone(row if row >= 0 else None)
 
+    def _on_zone_list_context_menu(self, pos) -> None:
+        """요구사항 6/7 — 존별 비율 패널에서 직접 이름 변경 + 숨기기/보이기 토글.
+        캔버스의 기존 원 우클릭 메뉴(`ZoneCanvas.contextMenuEvent`)와 동일한
+        로직을 재사용한다(신규 core 로직 없음, 캔버스가 상태의 단일 출처)."""
+        item = self._zone_list.itemAt(pos)
+        if item is None:
+            return
+        circle_id = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        rename_action = menu.addAction(t("zone_canvas.menu_rename"))
+        toggle_action = None
+        if circle_id is not None:
+            hidden_map = {cid: hidden for cid, _cx, _cy, _r, _name, hidden in self._canvas.circles_with_ids()}
+            is_hidden = hidden_map.get(circle_id, False)
+            toggle_action = menu.addAction(t("zone_canvas.menu_show") if is_hidden else t("zone_canvas.menu_hide"))
+        chosen = menu.exec(self._zone_list.viewport().mapToGlobal(pos))
+        if chosen == rename_action:
+            if circle_id is not None:
+                self._canvas._prompt_name_change(circle_id)
+            else:
+                self._canvas._prompt_rename_outer_zone()
+        elif toggle_action is not None and chosen == toggle_action:
+            self._canvas._toggle_hidden(circle_id)
+
     def _on_canvas_blob_clicked(self, x: int, y: int) -> None:
         ai_mask, final_mask = self._ai_and_final_masks()
         if final_mask is None or self._last_result is None:
@@ -1426,8 +1358,9 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             return
-        circles = [Circle(cid, cx, cy, r, name) for cid, cx, cy, r, name in self._canvas.circles_with_ids()]
-        zones = zones_from_circles(circles, (h, w))
+        circles = [Circle(cid, cx, cy, r, name, hidden)
+                   for cid, cx, cy, r, name, hidden in self._canvas.circles_with_ids()]
+        zones = zones_from_circles(circles, (h, w), self._canvas.outer_name())
         blob_rows = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
         blob = next((b for b in blob_rows if b.blob_id == label_id), None)
         if blob is None:
@@ -1454,8 +1387,9 @@ class ZoneAnalysisTab(QWidget):
                 self, t("zone.no_export_title"), t("zone.no_export_msg")
             )
             return
-        excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
         blob_rows = self._compute_zone_blob_rows(zones)
+        rows, blob_rows = drop_hidden(zones, rows, blob_rows)   # 숨긴 존은 export에서 제외(요구사항 6)
+        excel_rows = [(self._image_path.name, name, pct) for name, pct in rows]
         self._result_viewed = True
         self._refresh_step_indicator()
         ZoneBatchResultDialog(excel_rows, blob_rows, self).exec()
@@ -1478,14 +1412,16 @@ class ZoneAnalysisTab(QWidget):
                 skipped.append(path.name)
                 continue
             previous = zstate.load_state(path)
-            # BUG-036: 사이드카의 "circles"는 (id, cx, cy, r, name) — ZoneCanvas.get_state()/
-            # _ZoneBatchPostWorker.run()이 항상 id를 맨 앞에 저장한다(get_circles()와 다른
+            # BUG-036: 사이드카의 "circles"는 (id, cx, cy, r, name, hidden) — ZoneCanvas.get_state()/
+            # _ZoneCircleLayoutWorker.run()이 항상 id를 맨 앞에 저장한다(get_circles()와 다른
             # 스키마). id를 자르지 않고 그대로 넘기면 _compute_zone_rows()가 cx 자리에
             # id를, name 자리에 실제 반지름(float)을 받아 zone_name_sort_key()에서
             # TypeError로 크래시한다(QA.md BUG-036).
             circles = (self._canvas.get_circles() if path == self._image_path
                        else [c[1:] for c in (previous or {}).get("circles", [])])
-            computed = _compute_zone_rows(path, result, self._target_class_id, circles, previous)
+            outer_name = (self._canvas.outer_name() if path == self._image_path
+                          else (previous or {}).get("outer_name"))
+            computed = _compute_zone_rows(path, result, self._target_class_id, circles, previous, outer_name)
             if computed is None:
                 continue
             rows, blob_rows = computed
@@ -1503,33 +1439,38 @@ class ZoneAnalysisTab(QWidget):
         self._refresh_step_indicator()
         ZoneBatchResultDialog(all_rows, all_blob_rows, self).exec()
 
-    # ── 슬롯 — 원(circle) 자동 검출 (라운드 2) ──────────────────────────────
+    # ── 슬롯 — 결과 이미지 일괄 저장 (요구사항 9) ───────────────────────────
 
-    def _on_auto_detect(self) -> None:
-        if self._image_path is None:
-            QMessageBox.warning(self, t("infer.no_image_title"), t("zone.no_image_msg"))
+    def _on_save_all_images(self) -> None:
+        """이번 세션에서 추론을 실행한 모든 이미지의 오버레이(`InferenceResult.
+        overlay_image`, 브러시 보정이 반영된 최신 상태)를 한 번에 PNG로 저장한다
+        — 추론 안 된 이미지는 `self._results`에 키 자체가 없어 자동 제외."""
+        if not self._results:
+            QMessageBox.information(self, t("zone.not_ready_title"), t("zone.not_ready_msg1"))
             return
-        sensitivity = self._sensitivity_slider.value() / 100.0
+        out_dir = QFileDialog.getExistingDirectory(self, t("zone.save_all_dir_title"))
+        if not out_dir:
+            return
+        self._flush_state()   # 다른 슬롯과 동일한 관례(현재 이미지 사이드카를 먼저 디스크에 반영)
+        out_path = Path(out_dir)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            with Image.open(str(self._image_path)) as im:
-                rgb = np.array(im.convert("RGB"))
-            bgr = rgb[:, :, ::-1].copy()
-            circles = detect_circles(bgr, sensitivity=sensitivity)
-        except Exception as exc:
-            log.exception(f"존 분석 원 자동 검출 실패 — image={self._image_path}")
-            QMessageBox.critical(self, t("zone.detect_error_title"), str(exc))
-            return
-        self._canvas.set_circles(circles)
-        if not circles:
-            QMessageBox.information(self, t("zone.detect_no_result_title"), t("zone.detect_no_result_msg"))
+            saved = 0
+            for path, result in self._results.items():
+                if result.overlay_image is None:
+                    continue
+                try:
+                    result.overlay_image.save(str(out_path / f"{path.stem}.png"))
+                    saved += 1
+                except Exception:
+                    log.exception(f"존 분석 결과 이미지 저장 실패 — {path}")
+        finally:
+            QApplication.restoreOverrideCursor()
+        QMessageBox.information(
+            self, t("zone.save_all_done_title"), t("zone.save_all_done_msg").format(n=saved)
+        )
 
     # ── 슬롯 — 레시피 팝업(7-3) ─────────────────────────────────────────────
-
-    def _on_batch_mode_changed(self) -> None:
-        """'장별 적용' 모드는 이미지마다 개별 자동검출을 쓰므로 레시피 버튼이
-        의미가 없다(스펙 7-3 — 일괄 적용/일괄 적용 후 수정 모드에서만 표시)."""
-        mode = self._mode_combo.currentData()
-        self._btn_recipe.setVisible(mode in ("apply_all", "apply_all_edit"))
 
     def _on_open_recipe_dialog(self) -> None:
         if self._image_path is None or self._original_pixmap is None:
@@ -1544,12 +1485,15 @@ class ZoneAnalysisTab(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        dialog = ZoneRecipeDialog(self._original_pixmap, self._image_size, self)
+        dialog = ZoneRecipeDialog(
+            self._original_pixmap, self._image_size, self._canvas.outer_name(), self
+        )
         if dialog.exec():
             scaled = scale_circles(
                 dialog.result_circles(), dialog.result_ref_size(), self._image_size
             )
             self._canvas.set_circles(scaled)
+            self._canvas.rename_outer_zone(dialog.result_outer_name())
 
     # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
 
@@ -1563,7 +1507,7 @@ class ZoneAnalysisTab(QWidget):
         self._circle_list.blockSignals(True)
         self._circle_list.clear()
         selected_row = -1
-        for i, (circle_id, cx, cy, r, name) in enumerate(self._canvas.circles_with_ids(), start=1):
+        for i, (circle_id, cx, cy, r, name, _hidden) in enumerate(self._canvas.circles_with_ids(), start=1):
             label = t("zone.circle_label_named").format(name=name, r=r, cx=cx, cy=cy) if name else \
                 t("zone.circle_label_unnamed").format(i=i, r=r, cx=cx, cy=cy)
             item = QListWidgetItem(label)
@@ -1633,27 +1577,15 @@ class ZoneAnalysisTab(QWidget):
         return "cancel"
 
     def _on_batch_process(self) -> None:
-        if (self._last_result is None or self._target_class_id is None
-                or self._target_classes is None or self._model is None
-                or self._ckpt_path is None):
-            QMessageBox.warning(
-                self, t("zone.not_ready_title"),
-                t("zone.not_ready_msg2"),
-            )
-            return
-        circles_ref = self._canvas.get_circles()   # (cx, cy, r) 반지름 오름차순, 원본 좌표
+        """2026-10-29 배치 단순화 — "원 복사"는 추론/모델과 완전히 무관하게 동작
+        한다(요구사항 4). 기준 원 1개 이상 + 대상 이미지 1장 이상만 필요."""
+        circles_ref = self._canvas.get_circles()   # (cx, cy, r, name, hidden) 반지름 오름차순, 원본 좌표
         if not circles_ref:
             QMessageBox.warning(self, t("zone.no_circle_title"), t("zone.no_circle_msg"))
             return
 
+        outer_name = self._canvas.outer_name()
         ref_w, ref_h = self._image_size
-        mode = self._mode_combo.currentData()
-        # apply_all·apply_all_edit 둘 다 기준 원을 스케일 적용, per_image만 개별 자동검출.
-        sensitivity = self._sensitivity_slider.value() / 100.0
-        min_confidence = self._conf_slider.value() / 100.0
-        min_pixel_size = self._min_px_spin.value()
-        target_classes = self._target_classes
-        target_cid = self._target_class_id
 
         targets = self._img_list.selected_paths()
         if self._save_timer.isActive():
@@ -1667,20 +1599,13 @@ class ZoneAnalysisTab(QWidget):
                 targets = [p for p in targets if p not in existing_set]
             elif choice != "replace":
                 return
-        if not targets or not prompt_gpu_availability(self, t("zone.feature_name")):
+        if not targets:
             return
 
-        cached = {p: self._results[p] for p in targets if p in self._results}
-        if self._image_path in targets and self._last_result is not None:
-            cached[self._image_path] = self._last_result
         self._btn_batch.setEnabled(False)
-        # R-PERF-2: 존/블랍 후처리는 CUDA 워커(_batch_worker)가 아니라 전용 cv2
-        # 워커(_post_worker)에서 수행 — 모드/기준 원/민감도/타겟 cid는 그 워커의
-        # 생성자 인자로 직접 넘긴다(메인 스레드 self에 보관할 필요 없음).
-        self._batch_rows = []
-        self._batch_blob_rows = []
         self._batch_targets = targets
         self._batch_completed = set()
+        self._batch_errors = set()
         self._batch_progress = QProgressDialog(
             t("zone.batch_progress_label"), t("common.cancel"), 0, len(targets), self
         )
@@ -1689,24 +1614,10 @@ class ZoneAnalysisTab(QWidget):
         self._batch_progress.setMinimumDuration(0)
         self._batch_elapsed = QElapsedTimer()
         self._batch_elapsed.start()
-        self._batch_worker = _ZoneBatchWorker(
-            self._model, targets, self._ckpt_path, cached,
-            target_classes, min_confidence, min_pixel_size,
-        )
-        self._post_worker = _ZoneBatchPostWorker(
-            mode, circles_ref, (ref_w, ref_h), sensitivity, target_cid,
-        )
-        self._batch_progress.canceled.connect(self._batch_worker.requestInterruption)
+        self._post_worker = _ZoneCircleLayoutWorker(circles_ref, (ref_w, ref_h), outer_name, targets)
         self._batch_progress.canceled.connect(self._post_worker.requestInterruption)
-        self._batch_worker.progress.connect(self._on_batch_progress)
-        self._batch_worker.image_inferred.connect(self._on_batch_image_ready)
-        # CUDA 워커가 끝나면 cv2 워커에 "더 들어올 항목 없음"을 알린다(큐에 남은
-        # 항목은 계속 처리됨) — 최종 완료 판정은 _post_worker.finished 기준(아래).
-        self._batch_worker.finished.connect(self._post_worker.close)
         self._post_worker.progress.connect(self._on_batch_progress)
-        self._post_worker.row_computed.connect(self._on_batch_row_computed)
         self._post_worker.finished.connect(self._on_batch_finished)
-        self._batch_worker.start()
         self._post_worker.start()
         self._refresh_step_indicator()
 
@@ -1715,7 +1626,7 @@ class ZoneAnalysisTab(QWidget):
         # BUG-037/038: 취소 직후 재시작하면 옛 배치의 워커가 여전히 살아 있다가
         # 지연 신호를 보낼 수 있다 — 발신자가 "현재 활성" 워커가 아니면 옛 배치의
         # 신호이므로 조용히 버린다(새 배치 진행률/상태에 섞여 들어가지 않게).
-        if self.sender() not in (self._batch_worker, self._post_worker):
+        if self.sender() is not self._post_worker:
             return
         # `QProgressDialog.setValue()`는 내부적으로 `processEvents()`를 호출해
         # 이미 큐에 쌓인 `finished` 시그널을 재진입(reentrant)으로 먼저 처리할 수
@@ -1740,65 +1651,31 @@ class ZoneAnalysisTab(QWidget):
             log.error(f"존 분석 일괄 처리 실패 — {path}: {detail}")
             self._img_list.set_item_status(path, "done", badge=t("zone.badge_error"))
             self._batch_completed.add(path)   # BUG-038: 확정 상태 — 취소 리셋 대상 아님
+            self._batch_errors.add(path)
         else:
             self._img_list.set_item_status(path, "done", badge=detail)
             self._batch_completed.add(path)
 
-    def _on_batch_image_ready(self, path: Path, result: InferenceResult,
-                              done: int, total: int) -> None:
-        """R-PERF-2: `_ZoneBatchWorker.image_inferred`의 가벼운 중계 슬롯 —
-        무거운 cv2 후처리는 절대 여기서 하지 않고 `_post_worker`(전용 QThread)에
-        큐잉만 하고 즉시 반환한다(메인 스레드 블로킹 없음)."""
-        # BUG-037: 발신자가 현재 활성 _batch_worker가 아니면(=취소 뒤 재시작으로
-        # 이미 새 워커로 교체됐는데, 늦게 끝난 옛 CUDA 워커가 보낸 지연 신호) 버린다
-        # — 그대로 enqueue하면 옛 배치의 결과가 새 배치(새 _post_worker)에 섞여
-        # 같은 이미지가 중복 처리된다.
-        if self.sender() is not self._batch_worker or self._post_worker is None:
-            return
-        self._post_worker.enqueue(path, result, done, total)
-
-    def _on_batch_row_computed(self, path: Path, result: InferenceResult,
-                               rows: list[tuple[str, str, float]],
-                               blob_rows: list[tuple[str, ZoneBlobStat]],
-                               done: int, total: int) -> None:
-        """R-PERF-2: `_ZoneBatchPostWorker.row_computed` 수신 — 가벼운 dict/list
-        누적 + Qt 위젯 호출만 담당(기존 `_on_batch_image_inferred()`에서 cv2 계산을
-        떼어내고 남은 UI 갱신 부분). cv2 후처리 자체는 이미 `_post_worker`(cv2 전용
-        QThread)에서 끝난 뒤이므로 메인 스레드에서 해도 안전하다."""
-        if self.sender() is not self._post_worker:   # BUG-037: 옛 배치의 지연 신호 무시
-            return
-        self._results[path] = result   # BUG(2026-10-03#1): _on_inference_result()와 동일하게
-                                        # 캐시해야 이미지 전환 시 우측 존 비율 패널이 복원된다.
-        self._btn_view_all.setEnabled(bool(self._results))
-        self._batch_rows.extend(rows)
-        self._batch_blob_rows.extend(blob_rows)
-        badge = f"{rows[-1][2]:.1f}%" if rows else None
-        self._on_batch_progress(path, "done", badge, done, total)
-
     def _on_batch_finished(self) -> None:
-        # R-PERF-2: 최종 완료 판정은 _post_worker.finished(cv2 큐가 다 빈 뒤) 기준
-        # — CUDA 워커(_batch_worker)가 먼저 끝나도 cv2 후처리 큐에 항목이 남아있을
-        # 수 있으므로, 더 늦게 끝나는 쪽을 기준으로 삼아야 _batch_rows/_batch_blob_rows가
-        # 누락 없이 전부 채워진 상태로 결과 다이얼로그를 연다.
         # BUG-038: 취소 시 아직 "processing"(또는 그 이전) 상태로 남은 대상들은
         # 결과에서 빠지는 것(취소니까 중단)과 별개로, 목록 아이콘은 다음 배치 전까지
         # "처리 중"으로 영구히 남으면 안 된다 — 중립 상태(pending)로 되돌린다.
         for p in self._batch_targets:
             if p not in self._batch_completed:
                 self._img_list.set_item_status(p, "pending")
+        success = len(self._batch_completed) - len(self._batch_errors)
         self._batch_targets = []
         self._batch_completed = set()
+        self._batch_errors = set()
         if self._batch_progress is not None:
             self._batch_progress.close()
             self._batch_progress = None
-        rows, blob_rows = self._batch_rows, self._batch_blob_rows
-        self._batch_worker = None
         self._post_worker = None
         self._update_batch_button_state()
         self._refresh_step_indicator()
-        if not rows:
-            QMessageBox.information(self, t("zone.no_results_title"), t("zone.no_results_msg"))
-            return
-        self._result_viewed = True
-        self._refresh_step_indicator()
-        ZoneBatchResultDialog(rows, blob_rows, self).exec()
+        # 2026-10-29: 배치가 하는 일은 추론과 무관한 "원 복사"뿐이라 퍼센티지를
+        # 집계할 데이터가 없다 — 단순 확인 메시지로 교체(플래너 권장 A안). 비율이
+        # 보고 싶으면 각 이미지를 열어 추론 실행 후 "결과보기"를 쓰면 된다.
+        QMessageBox.information(
+            self, t("zone.batch_done_title"), t("zone.batch_done_msg").format(n=success)
+        )
