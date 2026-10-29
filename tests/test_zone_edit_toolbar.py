@@ -55,8 +55,8 @@ def test_zone_toolbar_is_exclusive_and_defaults_are_patch_based() -> None:
     assert not zone._brush_tools.act_delete_region.isChecked()
     assert not zone._brush_tools.act_pan.isChecked()
     # 2026-10-01 재설계: Zone 탭은 추론 방식 선택 UI 자체가 제거되고 sliding
-    # window로 고정됐다(_ZoneInferenceWorker/_ZoneBatchWorker가 항상
-    # run_sliding_window()만 호출) — 선택 콤보(_infer_mode)는 더 이상 존재하지 않음.
+    # window로 고정됐다(_ZoneInferenceWorker가 항상 run_sliding_window()만 호출)
+    # — 선택 콤보(_infer_mode)는 더 이상 존재하지 않음.
     assert not hasattr(zone, "_infer_mode")
     assert inference._infer_mode.currentData() == "sliding_window"
     assert training._sample_mode.currentData() == "random_crop"
@@ -86,16 +86,14 @@ def test_offline_circle_detect_test_feature_fully_removed() -> None:
 def test_batch_apply_groupbox_present_and_still_gated() -> None:
     """존 일괄 적용 발견성 개선(그룹박스) — 로직(_update_batch_button_state)은 그대로.
 
-    R-ZONE-3: 2-way 체크박스(`_chk_apply_all`)가 3-way 콤보(`_mode_combo`)로
-    대체됐다 — 기본값은 기존 체크 상태(True)와 동일한 "apply_all"."""
+    2026-10-29 배치 단순화: 배치 모드 콤보(`_mode_combo`)가 제거되고 "고정 배치"
+    동작 하나만 남았다 — 그룹박스 제목도 더 이상 모드 선택을 가리키지 않도록
+    "배치 처리"로 바뀜(디자인 검토)."""
     _app_ref = _app()
     zone = ZoneAnalysisTab()
     assert isinstance(zone._batch_box, QGroupBox)
-    assert "Zone 결정 방법" in zone._batch_box.title()
-    assert [zone._mode_combo.itemData(i) for i in range(zone._mode_combo.count())] == [
-        "apply_all", "apply_all_edit", "per_image",
-    ]
-    assert zone._mode_combo.currentData() == "apply_all"
+    assert "배치 처리" in zone._batch_box.title()
+    assert not hasattr(zone, "_mode_combo")
     assert not zone._btn_batch.isEnabled()   # 초기: 원 없음 + 이미지 1장 이하
 
     zone._img_list.load_files([Path("a.png"), Path("b.png")])

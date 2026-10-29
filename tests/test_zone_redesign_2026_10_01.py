@@ -125,9 +125,9 @@ def test_align_centers_averages_without_changing_radius() -> None:
 
     circles = canvas.get_circles()
     assert len(circles) == 2
-    for cx, cy, r, _name in circles:
+    for cx, cy, r, _name, _hidden in circles:
         assert abs(cx - 5.0) < 1e-6 and abs(cy - 10.0) < 1e-6
-    assert sorted(r for _, _, r, _name in circles) == [5.0, 9.0]
+    assert sorted(r for _, _, r, _name, _hidden in circles) == [5.0, 9.0]
 
 
 def test_align_centers_noop_with_fewer_than_two_circles() -> None:
@@ -164,13 +164,13 @@ def test_alt_wheel_resizes_selected_circle_plain_wheel_always_zooms() -> None:
     zoom_before = canvas._zoom
     undo_depth_before = len(canvas._undo_stack)
     canvas.wheelEvent(make_event(Qt.KeyboardModifier.NoModifier))
-    _, _, r, _name = canvas.get_circles()[0]
+    _, _, r, _name, _hidden = canvas.get_circles()[0]
     assert r == 10.0   # 일반 휠은 지름을 건드리지 않는다
     assert canvas._zoom != zoom_before   # 대신 화면 줌이 동작한다
     assert len(canvas._undo_stack) == undo_depth_before   # 줌은 undo 스택에 쌓이지 않는다
 
     canvas.wheelEvent(make_event(Qt.KeyboardModifier.AltModifier))
-    _, _, r, _name = canvas.get_circles()[0]
+    _, _, r, _name, _hidden = canvas.get_circles()[0]
     assert r > 10.0   # Alt+휠 위로 스크롤 -> 반지름(지름) 증가
     assert canvas.can_undo()
 
@@ -192,12 +192,12 @@ def test_arrow_key_moves_selected_circle_with_gesture_debounced_undo() -> None:
         ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
         canvas.keyPressEvent(ev)
 
-    cx, cy, _, _name = canvas.get_circles()[0]
+    cx, cy, _, _name, _hidden = canvas.get_circles()[0]
     assert cx == 53.0   # 1px * 3회
     assert len(canvas._undo_stack) == undo_depth_before + 1   # 제스처 디바운스 -> 1개만
 
     canvas.undo()
-    cx2, _, _, _name = canvas.get_circles()[0]
+    cx2, _, _, _name, _hidden = canvas.get_circles()[0]
     assert cx2 == 50.0   # 디바운스된 제스처 전체가 undo 1회로 복원
 
 
@@ -235,7 +235,7 @@ def test_recipe_dialog_apply_button_gated_on_circle_count(tmp_path: Path, monkey
 
         dialog._canvas.set_circles([(25.0, 25.0, 10.0)])
         dialog._on_apply()
-        assert dialog.result_circles() == [(25.0, 25.0, 10.0, None)]
+        assert dialog.result_circles() == [(25.0, 25.0, 10.0, None, False)]
         assert dialog.result_ref_size() == (50, 50)
     finally:
         dialog.close()
@@ -247,25 +247,24 @@ def test_recipe_dialog_autoloads_most_recent_recipe(tmp_path: Path, monkeypatch)
     pixmap = QPixmap(20, 20)
     dialog = ZoneRecipeDialog(pixmap, (20, 20))
     try:
-        assert dialog._canvas.get_circles() == [(2.0, 2.0, 2.0, None)]   # (10,10)->(20,20) 2배 스케일
+        assert dialog._canvas.get_circles() == [(2.0, 2.0, 2.0, None, False)]   # (10,10)->(20,20) 2배 스케일
         assert dialog._btn_apply.isEnabled()
     finally:
         dialog.close()
 
 
-# ── 라운드 E: 활성화 조건 분리(7-2) — 추론 전에도 자동검출 가능 ──────────────
+# ── 라운드 E: 활성화 조건 분리(7-2) — 원 편집은 추론 전에도 가능 ──────────────
 
-def test_detect_button_enabled_right_after_image_load_before_inference(tmp_path: Path) -> None:
+def test_circle_edit_enabled_right_after_image_load_before_inference(tmp_path: Path) -> None:
     img_path = tmp_path / "img.png"
     assert QImage(20, 20, QImage.Format.Format_RGB32).save(str(img_path))
     tab = ZoneAnalysisTab()
     try:
-        assert not tab._btn_detect.isEnabled()   # 이미지 로드 전
+        assert not tab._act_circle.isEnabled()   # 이미지 로드 전
 
         tab._on_list_image_selected(img_path)
 
-        assert tab._btn_detect.isEnabled()   # 추론 없이도 바로 활성화(7-2)
-        assert tab._act_circle.isEnabled()
+        assert tab._act_circle.isEnabled()   # 추론 없이도 바로 활성화(7-2)
         for action in (tab._brush_tools.act_brush, tab._brush_tools.act_eraser,
                        tab._brush_tools.act_delete_region):
             assert not action.isEnabled()   # 블랍 기반 편집은 여전히 추론 후에만
@@ -273,15 +272,13 @@ def test_detect_button_enabled_right_after_image_load_before_inference(tmp_path:
         tab.close()
 
 
-def test_recipe_button_visibility_follows_batch_mode() -> None:
+def test_recipe_button_always_visible() -> None:
+    """2026-10-29 배치 단순화 — 배치 모드 콤보가 제거되면서 레시피 버튼은 더
+    이상 모드에 따라 토글되지 않고 항상 노출된다."""
     tab = ZoneAnalysisTab()
     try:
-        assert tab._mode_combo.currentData() == "apply_all"
+        assert not hasattr(tab, "_mode_combo")
         assert not tab._btn_recipe.isHidden()
-
-        per_image_idx = [tab._mode_combo.itemData(i) for i in range(tab._mode_combo.count())].index("per_image")
-        tab._mode_combo.setCurrentIndex(per_image_idx)
-        assert tab._btn_recipe.isHidden()
     finally:
         tab.close()
 
@@ -382,9 +379,12 @@ def test_export_single_reuses_batch_result_dialog(tmp_path: Path, monkeypatch) -
             return 0
 
     import app.tabs.zone_analysis_tab as module
+    from app.core.zone_metrics import Zone
     monkeypatch.setattr(module, "ZoneBatchResultDialog", _Dlg)
     # BUG-040 B: _compute_zone_percentages/_compute_zone_blob_rows가 _current_zones()로
     # 공유 계산한 결과를 받는 선택적 zones 인자를 받도록 바뀌어 호출부가 위치 인자를 넘긴다.
+    # drop_hidden()이 zones와 rows를 zip하므로 둘의 길이/순서가 일치하는 가짜 zones도 필요.
+    monkeypatch.setattr(tab, "_current_zones", lambda: [Zone(0, "중심부", None, False)])
     monkeypatch.setattr(tab, "_compute_zone_percentages", lambda zones=None: [("중심부", 50.0)])
     monkeypatch.setattr(tab, "_compute_zone_blob_rows", lambda zones=None: [])
     tab._image_path = img_path

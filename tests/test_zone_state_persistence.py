@@ -62,7 +62,7 @@ def test_sidecar_saved_on_switch_and_restored_on_return() -> None:
         # 새 ZoneAnalysisTab(앱 재시작 시뮬레이션)에서도 사이드카가 그대로 복원돼야 한다.
         tab2 = ZoneAnalysisTab()
         tab2._on_list_image_selected(img1)
-        assert tab2._canvas.get_circles() == [(5.0, 5.0, 2.0, None)]
+        assert tab2._canvas.get_circles() == [(5.0, 5.0, 2.0, None, False)]
         tab2.close()
         tab.close()
 

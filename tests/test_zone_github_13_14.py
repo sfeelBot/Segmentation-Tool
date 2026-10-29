@@ -147,9 +147,9 @@ def test_shared_center_and_diameter_undo() -> None:
         canvas._prompt_diameter_change(first_circle_id)
     finally:
         zone_canvas_module.QInputDialog.getDouble = previous
-    assert any(abs(r - 40.0) < 1e-6 for _, _, r, _ in canvas.get_circles())
+    assert any(abs(r - 40.0) < 1e-6 for _, _, r, _, _ in canvas.get_circles())
     canvas.undo()
-    assert any(abs(r - 20.0) < 1e-6 for _, _, r, _ in canvas.get_circles())
+    assert any(abs(r - 20.0) < 1e-6 for _, _, r, _, _ in canvas.get_circles())
     canvas.close()
 
 
@@ -164,9 +164,8 @@ def test_original_preview_and_failure_clear() -> None:
         assert tab._image_size == (3000, 1200)
         assert tab._canvas._pixmap is not None
         assert max(tab._canvas._pixmap.width(), tab._canvas._pixmap.height()) <= _PREVIEW_MAX_DIM
-        # 2026-10-01 재설계(7-2): 자동 검출은 추론 결과와 무관하게 이미지 로드
-        # 직후 바로 활성화된다(detect_circles는 원본 이미지만 참조).
-        assert tab._btn_detect.isEnabled()
+        # 2026-10-01 재설계(7-2): 원 편집은 추론 결과와 무관하게 이미지 로드 직후 바로 활성화된다.
+        assert tab._act_circle.isEnabled()
 
         broken_path = Path(tmp) / "broken.png"
         broken_path.write_bytes(b"not an image")
