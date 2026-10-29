@@ -108,11 +108,23 @@
   PyInstaller/Inno Setup 패키징과 GitHub Release 업로드는 포함하지 않음.
 - 검증 완료: 메타데이터 생성 성공, `tests/test_build_release.py` 20 passed.
 
-## 2026-08-28 — v1.10.4 배포
+## 2026-08-27 — zone-v1.1.0 릴리스 준비
 
-- 상태: 배포 승인 및 검증 PASS, `origin/main` push와 annotated tag `v1.10.4` 생성 예정.
-- 내용: 일반 PowerShell/CMD에서 Python 3.12 빌드 venv를 자동 준비하고, 손상되었거나 다른 Python 버전인 기존 venv를 자동 재생성.
-- 검증: main build/release 테스트 24 passed.
+- 상태: 진행 중
+- zone 버전을 `1.0.0`에서 `1.1.0`으로 갱신하고 main 기능 기준을
+  `v1.8.0 + 19 commits`의 `09933fd`로 기록함.
+- zone 전용 제품명·EXE·설치 폴더·AppId와 `zone-v` 태그 체계를 유지함.
+- `zone-v1.0.0`은 기존 논리적 기준 버전이며 Git 태그 이력에는 없음을 확인함.
+- 범위는 메타데이터 생성·검증, 릴리스 커밋·annotated tag·push까지이며 전체 설치
+  패키지 생성과 GitHub Release 업로드는 포함하지 않음.
+- 검증 완료: 메타데이터 생성 성공, build 릴리스 테스트 34 passed, zone #13/#14
+  직접 테스트 통과.
+
+## 2026-08-28 — zone-v1.2.4 배포
+
+- 상태: 배포 승인 및 검증 PASS, 전용 sync PR을 통한 `feature/zone-analysis-tab` 병합과 annotated tag `zone-v1.2.4` 생성 예정.
+- 내용: main의 Python 3.12 빌드 venv 자동 준비 및 잘못된 기존 venv 자동 재생성 수정을 zone에 반영.
+- 검증: zone build/release 테스트 41 passed 및 zone 전용 검사 통과.
 - 제외: 실제 PyInstaller/Inno Setup installer 생성 및 GitHub Release 업로드는 수행하지 않음.
 
 ---
@@ -200,3 +212,85 @@
 - CHANGELOG 보강: 함(config_form.py 기본값 변경 "변경" 절 추가)
 - GitHub Release: 생성하지 않음(요청 범위 밖, installer 패키징 미포함)
 - 남은 작업: 리더가 사용자에게 push 승인받은 뒤 `git push origin main` + `git push origin v1.12.0`
+## 2026-08-31 — Zone 1.4.0 원격 반영
+
+- `release.ini`: `version=1.4.0`, `tag_prefix=zone-v`, main 기준
+  `v1.10.4` 이후 `ba8bf5e`로 갱신.
+- 생성 메타데이터: `MyAppVersion=1.4.0`, `MyProductSlug=SegmentationModelUIZone`.
+- installer 출력명: `SegmentationModelUIZone-Setup-1.4.0.exe`.
+- sync PR #33 병합 완료. main과 `feature/zone-analysis-tab` 모두 origin과 동기화.
+- 태그와 실제 installer 빌드는 이번 요청 범위에 포함하지 않았다.
+
+---
+
+## 2026-10-01 — zone-v1.5.0 배포 (존 분석 탭 "상/하부 분석" 전면 재설계)
+
+### 배경
+- 존 분석 탭 전면 재설계(스펙 `docs/specs/zone-tab-redesign-2026-10-01.md`)가 구현+검증
+  완료(커밋 `4477bc3`~`4fecaa6` + 문서 커밋, QA.md BUG-035 Closed). 기존 `release.ini`의
+  `1.4.0`은 이미 실제 installer로 빌드·배포된 버전이라 그대로 두고, 이번 재설계는 그
+  이후의 새 기능 추가이므로 SemVer MINOR 상승 → `1.5.0` 채택.
+
+### 조치
+- `release.ini`: `version` `1.4.0` → `1.5.0` (다른 키는 변경 없음, `main_base_tag`/
+  `main_base_commit`은 `v1.10.4`/`ba8bf5e` 그대로 유지 — main 동기화 작업 아님).
+- `docs/CHANGELOG.md`에 `## [zone-v1.5.0] 2026-10-01` 섹션 추가: 탭 명칭/순서 변경,
+  체크포인트 자동 승계, 레시피 팝업(자동검출/수동편집/저장·불러오기), 원 중심 정렬·
+  방향키 이동·휠 지름조절, 영역 설정 활성화 조건 분리, 이미지 append+개별 제거, 결과
+  분석 테이블 최대 blob 픽셀수/그룹화/필터/클립보드, 체크포인트 파일명 날짜 포함,
+  sliding window 고정 + 배치 처리 숨은 버그 수정, BUG-035(P3) 수정을 정리.
+- `C:\Users\Feel\AppData\Local\Python\bin\python.exe scripts\generate_version_info.py`
+  실행 → `Generated release metadata for 1.5.0` 성공 (release.ini/CHANGELOG 정합성 검증 통과).
+  `build/version_info.txt`, `build/release-defines.iss`는 `.gitignore` 대상(생성 산출물)이라
+  커밋하지 않음.
+- `release.ini`, `docs/CHANGELOG.md` 2개 파일만 커밋(`5f644db`, `chore: zone 1.5.0 릴리스
+  버전 갱신`) — 같은 워크트리에 planning/design 에이전트가 남긴 기존 미커밋 문서 변경
+  (`docs/agents/design-log.md`, `docs/agents/planning-log.md`, `docs/decisions-needed.md`
+  수정분, `docs/specs/zone-tab-redesign-2026-10-01.md` 신규)과 무관한 미추적 파일
+  (`.codex/`, `AGENTS.md`, `data/annotations/`, `graphify-out/`)은 배포 범위 밖이라 손대지
+  않음 — 리더 확인 필요.
+- 태그 `zone-v1.5.0` (annotate, 커밋 `5f644db` 대상).
+- 사용자 명시 승인에 따라 push 진행: `git push origin feature/zone-analysis-tab`
+  (`246ba8a..5f644db`), `git push origin zone-v1.5.0`. 둘 다 성공.
+
+### 결과 요약
+- 버전: zone-v1.5.0
+- 커밋: `5f644db` (origin/feature/zone-analysis-tab에 push 완료)
+- 태그: `zone-v1.5.0` (origin에 push 완료)
+- installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
+
+---
+
+## 2026-10-02 — zone-v1.5.1 배포 준비 (상/하부 분석 탭 Artifact 비주얼 조정)
+
+### 배경
+- 상/하부 분석 탭을 확정 디자인 Artifact에 맞춰 조정하는 작업(기능 변경 없음, 순수
+  비주얼 — 스텝 인디케이터 신설, 체크포인트 카드/배지, 편집 툴바 재배치, 좌측 삭제
+  아이콘, 우측 비율 색상바, 레시피/결과분석/진행상황 팝업 스타일)이 구현+검증 완료
+  (커밋 `59e136b`~`bacdc13`, 스펙 `docs/specs/zone-tab-ui-reconciliation-2026-10-02.md`,
+  검증 결과 `docs/agents/verification-log.md` 2026-10-02 항목 — PASS, 문제 0건).
+- 사용자가 버전을 명시적으로 **1.5.1**(PATCH)로 지정 — 기능 추가가 아니라 호환되는
+  UI 조정이므로 SemVer PATCH.
+
+### 조치
+- `release.ini`: `version` `1.5.0` → `1.5.1` (다른 키는 변경 없음).
+- `docs/CHANGELOG.md`에 `## [zone-v1.5.1] 2026-10-02` 섹션 추가: 7단계 스텝 인디케이터,
+  체크포인트 카드형+자동선택 배지, 편집 툴바를 캔버스 전용 헤더로 이동, 좌측 이미지
+  목록 상시 삭제 아이콘, 우측 존 비율 색상바, 레시피/결과분석/진행상황 팝업 스타일
+  정비를 정리 — 기능 변경 없음, 순수 UI/UX 조정임을 명시.
+- `build/venv/Scripts/python.exe scripts/generate_version_info.py` 실행 →
+  `Generated release metadata for 1.5.1` 성공 (release.ini/CHANGELOG 정합성 검증 통과).
+- `release.ini`, `docs/CHANGELOG.md` 2개 파일만 커밋(`b1d9ada`, `chore: zone 1.5.1 릴리즈
+  버전 갱신`) — 같은 워크트리의 기존 미추적 파일(`.codex/`, `AGENTS.md`,
+  `data/annotations/`, `graphify-out/`)은 배포 범위 밖이라 손대지 않음.
+- 태그 `zone-v1.5.1` (annotate, 커밋 `b1d9ada` 대상).
+- **push는 수행하지 않음** — 이번엔 리더가 사용자에게 push 여부를 별도로 확인한 뒤
+  처리하기로 함 (작업 지시에 명시).
+
+### 결과 요약
+- 버전: zone-v1.5.1
+- 커밋: `b1d9ada` (로컬에만 존재, origin/feature/zone-analysis-tab 대비 push 전)
+- 태그: `zone-v1.5.1` (로컬 annotated tag, push 전)
+- installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
+- push 대기: 리더가 사용자 확인 후 `git push origin feature/zone-analysis-tab` +
+  `git push origin zone-v1.5.1` 진행 필요.

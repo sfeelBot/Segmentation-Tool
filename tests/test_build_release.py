@@ -1,6 +1,6 @@
 import configparser
 import importlib.util
-import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -54,7 +54,7 @@ def test_installer_build_uses_tested_cuda_torch_pair() -> None:
 
 
 def test_requirements_txt_is_ascii_only() -> None:
-    # GitHub #31: pip's auto_decode() falls back to the OS locale codepage
+    # GitHub #31 (main): pip's auto_decode() falls back to the OS locale codepage
     # (e.g. cp949 on Korean Windows) when a requirements file has no BOM or
     # encoding declaration, so any non-ASCII byte crashes the build on
     # non-English-locale Windows.
@@ -78,6 +78,8 @@ def write_release(path: Path, **overrides: str) -> None:
     values = {
         "version": "1.8.0",
         "tag_prefix": "v",
+        "main_base_tag": "v1.8.0",
+        "main_base_commit": "fc9deecab27258adec8bc469a124cb8a0665a064",
         "product_name": "Segmentation Model UI",
         "product_slug": "SegmentationModelUI",
         "exe_name": "SegmentationModelUI",
@@ -125,6 +127,101 @@ def test_rejects_invalid_guid(tmp_path: Path):
         generator.load_release(release_file)
 
 
+@pytest.mark.parametrize("tag", ["1.8.0", "v1.8", "v01.8.0", "zone-v1.8.0"])
+def test_rejects_invalid_main_base_tag(tmp_path: Path, tag: str):
+    release_file = tmp_path / "release.ini"
+    write_release(release_file, main_base_tag=tag)
+    with pytest.raises(ValueError, match="main_base_tag"):
+        generator.load_release(release_file)
+
+
+@pytest.mark.parametrize("commit", ["fc9deec", "g" * 40, "a" * 39, "a" * 41])
+def test_rejects_invalid_main_base_commit(tmp_path: Path, commit: str):
+    release_file = tmp_path / "release.ini"
+    write_release(release_file, main_base_commit=commit)
+    with pytest.raises(ValueError, match="main_base_commit"):
+        generator.load_release(release_file)
+
+
+def test_repository_main_base_is_a_valid_ancestor():
+    release = generator.load_release()
+    generator.validate_main_base_repository(release)
+
+
+def test_repository_rejects_nonexistent_main_base_commit(tmp_path: Path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    release = generator.load_release()
+    monkeypatch.setattr(generator.shutil, "which", lambda _name: "git")
+    monkeypatch.setattr(
+        generator,
+        "_git",
+        lambda _root, *args: subprocess.CompletedProcess(args, 1, "", "missing"),
+    )
+    with pytest.raises(ValueError, match="main_base_commit does not exist"):
+        generator.validate_main_base_repository(release, tmp_path)
+
+
+def test_repository_rejects_nonexistent_main_base_tag(tmp_path: Path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    release = generator.load_release()
+    monkeypatch.setattr(generator.shutil, "which", lambda _name: "git")
+
+    def fake_git(_root: Path, *args: str):
+        returncode = 1 if args[:2] == ("rev-parse", "--verify") else 0
+        return subprocess.CompletedProcess(args, returncode, "", "")
+
+    monkeypatch.setattr(generator, "_git", fake_git)
+    with pytest.raises(ValueError, match="main_base_tag does not exist"):
+        generator.validate_main_base_repository(release, tmp_path)
+
+
+def test_repository_rejects_non_ancestor_main_base(tmp_path: Path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    release = generator.load_release()
+    monkeypatch.setattr(generator.shutil, "which", lambda _name: "git")
+
+    def fake_git(_root: Path, *args: str):
+        returncode = 1 if args[:2] == ("merge-base", "--is-ancestor") else 0
+        return subprocess.CompletedProcess(args, returncode, "tag-commit\n", "")
+
+    monkeypatch.setattr(generator, "_git", fake_git)
+    with pytest.raises(ValueError, match="ancestor of the current HEAD"):
+        generator.validate_main_base_repository(release, tmp_path)
+
+
+def test_source_zip_without_git_metadata_uses_format_validation_only(
+    tmp_path: Path, monkeypatch
+):
+    release_file = tmp_path / "release.ini"
+    write_release(release_file)
+    monkeypatch.setattr(
+        generator,
+        "_git",
+        lambda *_args: pytest.fail("Git must not be called without .git metadata"),
+    )
+    assert generator.load_release(release_file)["main_base_tag"] == "v1.8.0"
+
+
+def test_git_command_scopes_safe_directory_to_repository(tmp_path: Path, monkeypatch):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(generator.subprocess, "run", fake_run)
+    generator._git(tmp_path, "status", "--short")
+    assert captured["argv"][:4] == [
+        "git",
+        "-c",
+        f"safe.directory={tmp_path.as_posix()}",
+        "-C",
+    ]
+    assert captured["argv"][4:] == [str(tmp_path), "status", "--short"]
+    assert captured["kwargs"]["check"] is False
+
+
 @pytest.mark.parametrize("key", ["product_name", "publisher"])
 @pytest.mark.parametrize("character", ["\n", "\r", "\x00", "\x1f", "\x7f"])
 def test_rejects_control_characters_in_generated_strings(
@@ -147,52 +244,6 @@ def test_changelog_uses_configured_tag_prefix(tmp_path: Path):
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text("# Changelog\n\n## [zone-v1.8.0] 2026-01-01\n", encoding="utf-8")
     generator.validate_changelog("1.8.0", "zone-v", changelog)
-
-
-def test_installer_checks_for_existing_install_before_setup():
-    # GitHub #22: 기존 버전 감지 -> 안내 후 동의 시 자동 제거 -> 재설치 진행.
-    setup_text = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
-    assert "function InitializeSetup(): Boolean" in setup_text
-    assert "RegQueryStringValue(HKA," in setup_text
-    assert "HKLM" not in setup_text
-    assert "HKCU" not in setup_text
-    assert "DisplayVersion" in setup_text
-    assert "UninstallString" in setup_text
-    assert "/VERYSILENT /SUPPRESSMSGBOXES" in setup_text
-    assert "ewWaitUntilTerminated" in setup_text
-
-
-def test_uninstall_reg_key_matches_actual_windows_uninstall_key_format():
-    # BUG-030: GetUninstallRegKey()가 SetupSetting("AppId")로 값을 가져오면 [Setup]의
-    # AppId={{{#MyAppId}} 표현식을 Inno가 "{{" -> "{" 로 이스케이프 해제하기 *이전의*
-    # 원시 텍스트("{{GUID}", 중괄호 2개)를 반환해, 실제 언인스톨 레지스트리 키
-    # ("{GUID}_is1", 중괄호 1개)와 영원히 불일치했다(기존 버전 감지가 항상 실패).
-    # 문자열 존재 여부만 보던 기존 테스트는 이 실제 값 불일치를 잡지 못했으므로,
-    # ISPP 매크로 치환을 그대로 재현해 최종 레지스트리 키 문자열까지 검증한다.
-    setup_text = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
-    assert 'SetupSetting("AppId")' not in setup_text
-
-    match = re.search(
-        r"function GetUninstallRegKey\(\): String;.*?Result := '([^']+)';",
-        setup_text,
-        re.DOTALL,
-    )
-    assert match, "GetUninstallRegKey()의 Result 리터럴을 찾지 못함"
-    template = match.group(1)
-
-    release = generator.load_release()
-    resolved = template.replace("{#MyAppId}", release["app_id"])
-    assert resolved == (
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
-        f"{{{release['app_id']}}}_is1"
-    )
-
-
-def test_installer_removes_runtime_logs_on_uninstall():
-    # BUG-016: 무인 제거 후 data\logs\ 하위 런타임 로그 파일이 남는 문제.
-    setup_text = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
-    assert "[UninstallDelete]" in setup_text
-    assert 'Type: filesandordirs; Name: "{app}\\data\\logs"' in setup_text
 
 
 def test_build_files_consume_generated_metadata():

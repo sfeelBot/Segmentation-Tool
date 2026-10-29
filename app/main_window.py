@@ -11,6 +11,8 @@ from app.tabs.model_tab import ModelTab
 from app.tabs.labeling_tab import LabelingTab
 from app.tabs.training_tab import TrainingTab
 from app.tabs.inference_tab import InferenceTab
+from app.tabs.zone_analysis_tab import ZoneAnalysisTab
+from app.tabs.r_analysis_tab import RAnalysisTab
 from app.widgets.settings_dialog import SettingsDialog
 from app.widgets.export_dialog import ExportDialog
 from app.widgets.import_dialog import ImportAnnotationDialog
@@ -36,7 +38,11 @@ class MainWindow(QMainWindow):
         self._inference_tab = InferenceTab()
         self._labeling_tab.set_mutation_guard(self._guard_training_mutation)
         self._training_tab.set_start_guard(self._labeling_tab.prepare_for_training)
+        self._zone_tab       = ZoneAnalysisTab()
+        self._r_tab          = RAnalysisTab()
 
+        self._tabs.addTab(self._zone_tab,      t("tab.zone_analysis"))
+        self._tabs.addTab(self._r_tab,         t("tab.r_analysis"))
         self._tabs.addTab(self._labeling_tab,  t("tab.labeling"))
         self._tabs.addTab(self._training_tab,  t("tab.training"))
         self._tabs.addTab(self._inference_tab, t("tab.inference"))
@@ -124,6 +130,8 @@ class MainWindow(QMainWindow):
         cl.addWidget(self._btn_settings)
 
         self._tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+        self._on_tab_changed(self._tabs.currentIndex())   # BUG-035: Zone이 기본(0번) 탭이라 currentChanged가 기동 시 발화하지 않음
 
         self.setCentralWidget(self._tabs)
 
@@ -136,6 +144,12 @@ class MainWindow(QMainWindow):
 
     def set_status(self, message: str) -> None:
         self._status_label.setText(message)
+
+    def _on_tab_changed(self, index: int) -> None:
+        if self._tabs.widget(index) is self._zone_tab:
+            self._zone_tab.set_default_checkpoint(
+                self._inference_tab.selected_checkpoint_path()
+            )
 
     def _on_open_settings(self) -> None:
         dlg = SettingsDialog(self)
