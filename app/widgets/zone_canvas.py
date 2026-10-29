@@ -70,6 +70,7 @@ class _CircleItem:
     cy: float
     r: float
     name: str | None = None
+    hidden: bool = False   # 2026-10-29: 존별 비율 패널/Excel 내보내기에서만 제외(면적 계산 무관)
 
 
 class ZoneCanvas(OverlayViewer):
@@ -95,6 +96,7 @@ class ZoneCanvas(OverlayViewer):
         self._img_orig_h = 0
         self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링, N=바깥쪽
         self._mode: str = "circle"
+        self._outer_name: str | None = None   # 바깥쪽 존 전용 이름(원에 귀속 안 됨, 2026-10-29)
         self._blob_labels: np.ndarray | None = None   # (H, W) int32 라벨맵, 원본 이미지 좌표계
         self._blob_stats: np.ndarray | None = None     # [label] = [x, y, w, h, area]
         self._removed_blob_ids: set[int] = set()
@@ -137,17 +139,22 @@ class ZoneCanvas(OverlayViewer):
         self._circles = []
         self._selected_id = None
         self._highlighted_zone = None
+        self._outer_name = None
         self.update()
         self.circles_changed.emit()
         self.circles_committed.emit()
         self.circle_selected.emit(None)
 
     def set_circles(self, circles: list[tuple]) -> None:
-        """(cx, cy, r) 또는 (cx, cy, r, name) 리스트로 전체 교체 — 자동 검출
-        결과 반영용(역호환: name 없는 3요소 입력도 그대로 동작)."""
+        """(cx, cy, r) / (cx, cy, r, name) / (cx, cy, r, name, hidden) 리스트로 전체
+        교체 — 레시피 적용 등에 사용(역호환: name/hidden 없는 입력도 그대로 동작)."""
         self._push_undo()
         self._circles = [
-            _CircleItem(self._next_id + i, cx, cy, r, rest[0] if rest else None)
+            _CircleItem(
+                self._next_id + i, cx, cy, r,
+                rest[0] if len(rest) > 0 else None,
+                bool(rest[1]) if len(rest) > 1 else False,
+            )
             for i, (cx, cy, r, *rest) in enumerate(circles)
         ]
         self._next_id += len(circles)
@@ -157,13 +164,33 @@ class ZoneCanvas(OverlayViewer):
         self.circles_changed.emit()
         self.circles_committed.emit()
 
-    def get_circles(self) -> list[tuple[float, float, float, str | None]]:
-        """반지름 오름차순 (cx, cy, r, name) 리스트."""
-        return [(c.cx, c.cy, c.r, c.name) for c in sorted(self._circles, key=lambda c: c.r)]
+    def get_circles(self) -> list[tuple[float, float, float, str | None, bool]]:
+        """반지름 오름차순 (cx, cy, r, name, hidden) 리스트."""
+        return [(c.cx, c.cy, c.r, c.name, c.hidden) for c in sorted(self._circles, key=lambda c: c.r)]
 
-    def circles_with_ids(self) -> list[tuple[int, float, float, float, str | None]]:
-        """사이드 패널 등 id가 필요한 UI용 — 반지름 오름차순 (id, cx, cy, r, name)."""
-        return [(c.id, c.cx, c.cy, c.r, c.name) for c in sorted(self._circles, key=lambda c: c.r)]
+    def circles_with_ids(self) -> list[tuple[int, float, float, float, str | None, bool]]:
+        """사이드 패널 등 id가 필요한 UI용 — 반지름 오름차순 (id, cx, cy, r, name, hidden)."""
+        return [(c.id, c.cx, c.cy, c.r, c.name, c.hidden) for c in sorted(self._circles, key=lambda c: c.r)]
+
+    def outer_name(self) -> str | None:
+        """바깥쪽 존 전용 이름(원에 귀속되지 않는 스칼라 값) — 없으면 None(기본 이름 사용)."""
+        return self._outer_name
+
+    def set_outer_name(self, name: str | None) -> None:
+        """이미지 전환/레시피 로드 등 비대화형 복원 — undo/시그널 없음
+        (`set_image_size()`와 동일한 plain setter 패턴). 사용자가 직접 트리거하는
+        변경은 `rename_outer_zone()`을 쓴다."""
+        self._outer_name = name
+
+    def rename_outer_zone(self, name: str | None) -> None:
+        """사용자가 트리거하는 바깥쪽 존 이름 변경 — `_prompt_name_change()`와 동일
+        패턴(push_undo -> 필드 설정 -> update() -> 시그널 emit), 원 선택이 필요
+        없다는 점만 다르다."""
+        self._push_undo()
+        self._outer_name = name
+        self.update()
+        self.circles_changed.emit()
+        self.circles_committed.emit()
 
     def select_circle(self, circle_id: int | None) -> None:
         """사이드 패널 클릭 등 외부에서 선택 상태만 동기화(드래그 없음)."""
@@ -417,10 +444,11 @@ class ZoneCanvas(OverlayViewer):
         찍어도 annotation_canvas의 BUG-014(대형 마스크 deepcopy) 같은 메모리
         문제가 생기지 않는다 — 마스크 배열 자체는 절대 저장하지 않는다."""
         self._undo_stack.append({
-            "circles": [(c.id, c.cx, c.cy, c.r, c.name) for c in self._circles],
+            "circles": [(c.id, c.cx, c.cy, c.r, c.name, c.hidden) for c in self._circles],
             "removed_blob_ids": set(self._removed_blob_ids),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
+            "outer_name": self._outer_name,
         })
 
     def can_undo(self) -> bool:
@@ -439,24 +467,30 @@ class ZoneCanvas(OverlayViewer):
         """현재 편집 상태 스냅샷 — `_push_undo()`와 완전히 동일한 경량 표현.
         호출부(탭)가 이미지 전환 시 사이드카(디스크)에 저장하는 용도(R-ZONE-3)."""
         return {
-            "circles": [(c.id, c.cx, c.cy, c.r, c.name) for c in self._circles],
+            "circles": [(c.id, c.cx, c.cy, c.r, c.name, c.hidden) for c in self._circles],
             "removed_blob_ids": set(self._removed_blob_ids),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
+            "outer_name": self._outer_name,
         }
 
     def set_state(self, state: dict) -> None:
         """`get_state()`(또는 사이드카에서 로드한 동일 포맷)가 반환한 스냅샷을
         복원한다 — `undo()`가 스택에서 꺼낸 스냅샷에 적용하던 로직 그대로이지만
-        여기서는 undo 스택 자체엔 영향을 주지 않는다(R-ZONE-3). 역호환: 이름 필드가
-        없던 기존 4요소(id,cx,cy,r) 저장분도 *rest로 흡수한다."""
+        여기서는 undo 스택 자체엔 영향을 주지 않는다(R-ZONE-3). 역호환: 이름/hidden
+        필드가 없던 기존 4/5요소(id,cx,cy,r[,name]) 저장분도 *rest로 흡수한다."""
         self._circles = [
-            _CircleItem(cid, cx, cy, r, rest[0] if rest else None)
+            _CircleItem(
+                cid, cx, cy, r,
+                rest[0] if len(rest) > 0 else None,
+                bool(rest[1]) if len(rest) > 1 else False,
+            )
             for cid, cx, cy, r, *rest in state["circles"]
         ]
         self._removed_blob_ids = set(state["removed_blob_ids"])
         self._erase_strokes = list(state["erase_strokes"])
         self._manual_strokes = list(state.get("manual_strokes", []))
+        self._outer_name = state.get("outer_name")   # 구버전 스냅샷(키 없음) -> None 기본값
         self._replay_erase_strokes()   # 스트로크 좌표에서 지우기 마스크를 재생(스펙 판단 1)
         self._rebuild_stroke_overlay()  # 화면 렌더링 캐시도 스냅샷 기준으로 재구성(R-ZONE-1)
         self._selected_id = None
@@ -857,12 +891,16 @@ class ZoneCanvas(OverlayViewer):
         if hit is None:
             return
         circle_id, _ = hit
+        item = self._find(circle_id)
+        if item is None:
+            return
         self._selected_id = circle_id
         self.circle_selected.emit(circle_id)
         self.update()
         menu = QMenu(self)
         resize_action = menu.addAction(t("zone_canvas.menu_resize"))
         rename_action = menu.addAction(t("zone_canvas.menu_rename"))
+        hide_action = menu.addAction(t("zone_canvas.menu_show") if item.hidden else t("zone_canvas.menu_hide"))
         delete_action = menu.addAction(t("zone_canvas.menu_delete"))
         chosen = menu.exec(event.globalPos())
         if chosen == delete_action:
@@ -871,6 +909,8 @@ class ZoneCanvas(OverlayViewer):
             self._prompt_diameter_change(circle_id)
         elif chosen == rename_action:
             self._prompt_name_change(circle_id)
+        elif chosen == hide_action:
+            self._toggle_hidden(circle_id)
 
     def _prompt_diameter_change(self, circle_id: int) -> None:
         """이슈#13 요구사항1 — 우클릭 메뉴 "지름 변경...": QInputDialog로 지름
@@ -906,6 +946,30 @@ class ZoneCanvas(OverlayViewer):
             return
         self._push_undo()
         item.name = text.strip() or None
+        self.update()
+        self.circles_changed.emit()
+        self.circles_committed.emit()
+
+    def _prompt_rename_outer_zone(self) -> None:
+        """바깥쪽 존(원에 귀속되지 않는 스칼라 값) 이름 변경 다이얼로그 —
+        `_prompt_name_change()`와 동일한 UX, `_find(circle_id)` 단계만 없다."""
+        text, ok = QInputDialog.getText(
+            self, t("zone_canvas.rename_dialog_title"), t("zone_canvas.rename_dialog_label"),
+            text=self._outer_name or "",
+        )
+        if not ok:
+            return
+        self.rename_outer_zone(text.strip() or None)
+
+    def _toggle_hidden(self, circle_id: int) -> None:
+        """존별 비율 패널/Excel 내보내기에서만 해당 원의 존을 제외/복원한다
+        (비파괴 — 원 자체는 그대로 유지, `_prompt_name_change()`와 동일한
+        push_undo -> 필드 변경 -> 시그널 emit 패턴)."""
+        item = self._find(circle_id)
+        if item is None:
+            return
+        self._push_undo()
+        item.hidden = not item.hidden
         self.update()
         self.circles_changed.emit()
         self.circles_committed.emit()

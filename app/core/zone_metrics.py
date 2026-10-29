@@ -25,6 +25,7 @@ class Circle:
     cy: float
     r: float
     name: str | None = None
+    hidden: bool = False   # 2026-10-29 배치 단순화: 존별 비율 패널/export에서만 제외(면적 계산엔 영향 없음)
 
 
 @dataclass
@@ -32,6 +33,7 @@ class Zone:
     index: int          # 0=중심부, 1..N-1=링, N=바깥쪽 (원 N개 기준)
     name: str
     mask: np.ndarray     # (H, W) bool
+    hidden: bool = False   # 귀속 원의 hidden 그대로 상속(바깥쪽 존은 원이 없어 항상 False)
 
 
 def disk_mask(cx: float, cy: float, r: float, img_shape: tuple[int, int]) -> np.ndarray:
@@ -80,10 +82,14 @@ def scale_circles(
     return [(cx * sx, cy * sy, r * (sx + sy) / 2, *rest) for cx, cy, r, *rest in circles]
 
 
-def zones_from_circles(circles: list[Circle], img_shape: tuple[int, int]) -> list[Zone]:
+def zones_from_circles(
+    circles: list[Circle], img_shape: tuple[int, int], outer_name: str | None = None,
+) -> list[Zone]:
     """반지름 오름차순 정렬 후 원판 마스크 차집합으로 존 목록 생성.
 
     원이 없으면 빈 리스트(존 개념 자체가 성립하지 않음). 원 N개면 존 N+1개.
+    `outer_name`은 맨 바깥 존 전용 이름(원에 귀속되지 않는 스칼라 값, 2026-10-29) —
+    지정하지 않으면 기존처럼 "바깥쪽" 자동 이름을 쓴다.
     """
     if not circles:
         return []
@@ -91,10 +97,13 @@ def zones_from_circles(circles: list[Circle], img_shape: tuple[int, int]) -> lis
     n = len(sorted_c)
     masks = [disk_mask(c.cx, c.cy, c.r, img_shape) for c in sorted_c]
 
-    zones = [Zone(0, sorted_c[0].name or "중심부", masks[0])]
+    zones = [Zone(0, sorted_c[0].name or "중심부", masks[0], sorted_c[0].hidden)]
     for i in range(n - 1):
-        zones.append(Zone(i + 1, sorted_c[i + 1].name or f"링 {i + 1}", masks[i + 1] & ~masks[i]))
-    zones.append(Zone(n, "바깥쪽", ~masks[-1]))   # "바깥쪽"은 특정 원에 귀속되지 않아 커스터마이즈 범위 밖(의도적 축소)
+        zones.append(Zone(
+            i + 1, sorted_c[i + 1].name or f"링 {i + 1}", masks[i + 1] & ~masks[i],
+            sorted_c[i + 1].hidden,
+        ))
+    zones.append(Zone(n, outer_name or "바깥쪽", ~masks[-1], False))   # 바깥쪽은 hidden 토글 범위 밖(의도적 축소)
     return zones
 
 
@@ -256,6 +265,25 @@ def pivot_wide_format(
     return images, zone_cols, values
 
 
+def drop_hidden(
+    zones: list[Zone], rows: list, blob_rows: list[tuple[str, "ZoneBlobStat"]],
+) -> tuple[list, list]:
+    """존 숨김(hidden=True) 필터 — 표시(`_recompute_zones()`류)/export
+    (`_on_export_single()`/`_compute_zone_rows()`) 레이어가 공유하는 헬퍼
+    (요구사항 6, DRY — 숨김 필터 로직을 한 곳에만 둔다). 면적/퍼센티지 계산
+    자체는 건드리지 않는다(순수 표시+export 필터).
+
+    `rows`는 `zones`와 완전히 같은 순서로 생성된 목록이어야 한다(zip은 위치
+    기반이라 (name,pct) 2-tuple이든 (image,name,pct) 3-tuple이든 모양은 무관).
+    `blob_rows`는 (이미지파일명, ZoneBlobStat) 목록 — blob은 zone index가 없어
+    숨겨진 존의 "이름 집합"으로 걸러낸다(이름 충돌 시 과도하게 걸러질 수 있는
+    기존 한계를 그대로 상속, `max_blob_pixels_by_zone()`도 이미 동일 전제)."""
+    hidden_names = {z.name for z in zones if z.hidden}
+    visible_rows = [row for zone, row in zip(zones, rows) if not zone.hidden]
+    visible_blob_rows = [br for br in blob_rows if br[1].zone_name not in hidden_names]
+    return visible_rows, visible_blob_rows
+
+
 def max_blob_pixels_by_zone(
     blob_rows: list[tuple[str, "ZoneBlobStat"]],
 ) -> dict[tuple[str, str], int]:
@@ -329,6 +357,13 @@ def export_zone_percentages_to_excel(
 
 
 if __name__ == "__main__":
+    def _stat(zone_name: str, blob_id: int, pixel_count: int) -> ZoneBlobStat:
+        return ZoneBlobStat(
+            zone_name=zone_name, blob_id=blob_id, pixel_count=pixel_count,
+            ai_score=None, centroid_x=0.0, centroid_y=0.0,
+            bbox_x=0, bbox_y=0, bbox_w=1, bbox_h=1,
+        )
+
     # ── self-check: 5x5 합성 이미지, 원 1개(cx=2, cy=2, r=1) — 손계산 검산 ──────
     # (x-2)^2+(y-2)^2<=1 만족 픽셀: (2,1)(1,2)(2,2)(3,2)(2,3) = 5개 (전체 25개 중)
     shape = (5, 5)
@@ -426,5 +461,23 @@ if __name__ == "__main__":
     zones3 = zones_from_circles(circles3, shape)
     assert zones3[0].name == "상부"
     assert zones3[1].name == "바깥쪽"   # 바깥쪽은 커스터마이즈 범위 밖(의도된 설계)
+
+    # ── outer_name(2026-10-29): 지정하면 바깥쪽 존 이름에 반영 ──────────────────
+    zones4 = zones_from_circles([Circle(1, 2, 2, 1)], shape, outer_name="가장자리")
+    assert zones4[1].name == "가장자리"
+    zones4b = zones_from_circles([Circle(1, 2, 2, 1)], shape, outer_name=None)
+    assert zones4b[1].name == "바깥쪽"   # outer_name 미지정 -> 기존 기본값 유지
+
+    # ── hidden(2026-10-29): 원의 hidden이 해당 존에 그대로 전파, 바깥쪽은 항상 False ──
+    circles5 = [Circle(1, 2, 2, 1, hidden=True), Circle(2, 2, 2, 3, hidden=False)]
+    zones5 = zones_from_circles(circles5, shape)
+    assert zones5[0].hidden is True and zones5[1].hidden is False and zones5[2].hidden is False
+
+    # ── drop_hidden: 숨긴 존은 rows에서, 그 이름의 blob은 blob_rows에서 제외 ──────
+    rows5 = [("중심부", 10.0), ("링 1", 20.0), ("바깥쪽", 30.0)]
+    blob_rows5 = [("img.png", _stat("중심부", 1, 5)), ("img.png", _stat("링 1", 2, 7))]
+    visible_rows, visible_blob_rows = drop_hidden(zones5, rows5, blob_rows5)
+    assert visible_rows == [("링 1", 20.0), ("바깥쪽", 30.0)], "숨긴 중심부가 제외돼야 함"
+    assert [s.blob_id for _img, s in visible_blob_rows] == [2], "숨긴 존 이름(중심부)의 blob도 제외"
 
     print("zone_metrics self-check OK")

@@ -30,9 +30,11 @@ def save_recipe(
     name: str,
     circles: list[tuple[float, float, float]],
     ref_size: tuple[int, int],
+    outer_name: str | None = None,
 ) -> Path:
     """이름 기준 1파일 — 같은 이름으로 다시 저장하면 덮어쓴다(mtime이 "최근"으로
-    갱신됨, 의도된 동작)."""
+    갱신됨, 의도된 동작). `outer_name`은 바깥쪽 존 전용 이름(2026-10-29, 원에
+    귀속되지 않는 스칼라 값이라 `circles`와 별도 top-level 키로 저장)."""
     d = recipes_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{_safe_filename(name)}.json"
@@ -41,6 +43,7 @@ def save_recipe(
         "saved_at": datetime.now().isoformat(timespec="seconds"),
         "ref_size": list(ref_size),
         "circles": [list(c) for c in circles],
+        "outer_name": outer_name,
     }
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=d)
     try:
@@ -67,6 +70,7 @@ def load_recipe(path: Path) -> dict | None:
             "saved_at": payload.get("saved_at", ""),
             "ref_size": tuple(payload["ref_size"]),
             "circles": [tuple(c) for c in payload["circles"]],
+            "outer_name": payload.get("outer_name"),   # 구버전 레시피(키 없음) -> None 기본값
         }
     except (OSError, ValueError, KeyError):
         return None
@@ -99,12 +103,25 @@ if __name__ == "__main__":
 
         assert list_recipes() == []
 
-        p1 = save_recipe("표준 캡 3존", [(1200.0, 1800.0, 400.0), (1200.0, 1800.0, 900.0)], (5472, 3648))
+        p1 = save_recipe(
+            "표준 캡 3존", [(1200.0, 1800.0, 400.0), (1200.0, 1800.0, 900.0)], (5472, 3648),
+            outer_name="가장자리",
+        )
         assert p1.name == "표준 캡 3존.json"
         loaded = load_recipe(p1)
         assert loaded["name"] == "표준 캡 3존"
         assert loaded["ref_size"] == (5472, 3648)
         assert loaded["circles"] == [(1200.0, 1800.0, 400.0), (1200.0, 1800.0, 900.0)]
+        assert loaded["outer_name"] == "가장자리"
+
+        # 구버전 레시피(outer_name 키 자체가 없음) -> load_recipe()가 KeyError 없이
+        # None 기본값으로 복원돼야 한다(2026-10-29 역호환).
+        legacy_path = recipes_dir() / "구버전.json"
+        legacy_path.write_text(json.dumps({
+            "name": "구버전", "ref_size": [100, 100], "circles": [[1.0, 2.0, 3.0]],
+        }), encoding="utf-8")
+        legacy_loaded = load_recipe(legacy_path)
+        assert legacy_loaded is not None and legacy_loaded["outer_name"] is None
 
         time.sleep(0.01)
         p2 = save_recipe("다른 레시피", [(1.0, 2.0, 3.0)], (100, 100))

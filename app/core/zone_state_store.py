@@ -18,11 +18,12 @@ def sidecar_path(image_path: Path) -> Path:
 
 
 def save_state(image_path: Path, state: dict) -> None:
-    """state를 이미지 옆 사이드카에 저장. 원/삭제이력/스트로크가 전부 비어 있으면
-    (한 번도 편집 안 한 이미지) 사이드카를 만들지 않고, 기존 파일이 있으면 정리
-    차원에서 지운다(빈 파일 난립 방지)."""
+    """state를 이미지 옆 사이드카에 저장. 원/삭제이력/스트로크/바깥쪽 존 이름이
+    전부 비어 있으면(한 번도 편집 안 한 이미지) 사이드카를 만들지 않고, 기존
+    파일이 있으면 정리 차원에서 지운다(빈 파일 난립 방지)."""
     path = sidecar_path(image_path)
-    is_empty = not state["circles"] and not state["removed_blob_ids"] and not state["manual_strokes"]
+    is_empty = (not state["circles"] and not state["removed_blob_ids"]
+                and not state["manual_strokes"] and not state.get("outer_name"))
     if is_empty:
         path.unlink(missing_ok=True)
         return
@@ -31,6 +32,7 @@ def save_state(image_path: Path, state: dict) -> None:
         "removed_blob_ids": sorted(state["removed_blob_ids"]),   # set -> JSON 배열
         "erase_strokes": state["erase_strokes"],
         "manual_strokes": state["manual_strokes"],
+        "outer_name": state.get("outer_name"),   # 2026-10-29: 바깥쪽 존 전용 이름(원에 귀속 안 됨)
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -60,6 +62,7 @@ def load_state(image_path: Path) -> dict | None:
             "removed_blob_ids": set(payload["removed_blob_ids"]),
             "erase_strokes": [[tuple(pt) for pt in s] for s in payload["erase_strokes"]],
             "manual_strokes": [(m[0], [tuple(pt) for pt in m[1]]) for m in payload["manual_strokes"]],
+            "outer_name": payload.get("outer_name"),   # 구버전 사이드카(키 없음) -> None 기본값
         }
     except (OSError, ValueError, KeyError) as exc:
         log.warning(f"Zone 사이드카 로드 실패, 빈 상태로 시작 — {path}: {exc}")
@@ -78,17 +81,39 @@ if __name__ == "__main__":
             "removed_blob_ids": {3, 1},
             "erase_strokes": [[(1.0, 2.0, 3.0)]],
             "manual_strokes": [(True, [(1.0, 2.0, 3.0)])],
+            "outer_name": "가장자리",
         }
         save_state(img, state)
         loaded = load_state(img)
         assert loaded["circles"] == [(1, 10.0, 20.0, 5.0)]
         assert loaded["removed_blob_ids"] == {1, 3}
         assert loaded["manual_strokes"] == [(True, [(1.0, 2.0, 3.0)])]
+        assert loaded["outer_name"] == "가장자리"
 
-        empty = {"circles": [], "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": []}
+        empty = {
+            "circles": [], "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
+            "outer_name": None,
+        }
         save_state(img, empty)
         assert not sidecar_path(img).exists(), "빈 상태 저장은 기존 사이드카를 지워야 함"
         assert load_state(img) is None
+
+        # outer_name만 있고 원이 하나도 없는 극단적 상태도 사이드카를 유지해야 함.
+        only_outer_name = dict(empty, outer_name="가장자리")
+        save_state(img, only_outer_name)
+        assert sidecar_path(img).exists()
+        assert load_state(img)["outer_name"] == "가장자리"
+        sidecar_path(img).unlink()
+
+        # 구버전 사이드카(outer_name 키 자체가 없음) -> load_state()가 KeyError 없이
+        # None 기본값으로 복원돼야 한다(2026-10-29 역호환).
+        legacy_payload = {
+            "circles": [(1, 10.0, 20.0, 5.0)], "removed_blob_ids": [],
+            "erase_strokes": [], "manual_strokes": [],
+        }
+        sidecar_path(img).write_text(json.dumps(legacy_payload), encoding="utf-8")
+        legacy_loaded = load_state(img)
+        assert legacy_loaded is not None and legacy_loaded["outer_name"] is None
 
         assert load_state(Path(tmp) / "없음.bmp") is None
         print("zone_state_store self-check OK")

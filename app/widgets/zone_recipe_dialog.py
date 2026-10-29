@@ -6,6 +6,7 @@
 목적은 '오프라인 테스트'가 아니라 '레시피 관리'로 바뀐다.
 """
 import time
+from datetime import date
 
 import numpy as np
 from PyQt6.QtWidgets import (
@@ -45,11 +46,13 @@ class ZoneRecipeDialog(QDialog):
     모달 팝업. 메인 탭의 현재 로드된 이미지(원본 스케일 pixmap은 너무 무거워
     이미 만들어둔 미리보기 pixmap)를 기준 이미지로 그대로 받는다."""
 
-    def __init__(self, reference_pixmap: QPixmap, ref_size: tuple[int, int], parent=None) -> None:
+    def __init__(self, reference_pixmap: QPixmap, ref_size: tuple[int, int],
+                 outer_name: str | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(t("zone_recipe.window_title"))
         self._ref_pixmap = reference_pixmap
         self._ref_size = ref_size   # (w, h) 원본 이미지 픽셀 크기
+        self._initial_outer_name = outer_name   # 메인 탭의 현재 outer_name을 그대로 실어 나르는 통로(2026-10-29)
         self._recipe_paths: list = []
         self._result_circles: list[tuple[float, float, float]] = []
         self._build_ui()
@@ -69,6 +72,7 @@ class ZoneRecipeDialog(QDialog):
         self._canvas.setMinimumHeight(420)
         self._canvas.set_image_size(*self._ref_size)
         self._canvas.set_pixmap(self._ref_pixmap)
+        self._canvas.set_outer_name(self._initial_outer_name)   # 메인 탭 outer_name 시작값 반영
         root.addWidget(self._canvas, stretch=1)
 
         self._lbl_stats = QLabel(t("zone_recipe.circle_count").format(n=0))
@@ -107,6 +111,7 @@ class ZoneRecipeDialog(QDialog):
         row2 = QHBoxLayout()
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText(t("zone_recipe.name_placeholder"))
+        self._name_edit.setText(f"{date.today():%Y%m%d}_recipe")   # 레시피 없으면 이 기본값이 그대로 남음
         row2.addWidget(self._name_edit, stretch=1)
         self._btn_save_recipe = QPushButton(t("common.save"))
         row2.addWidget(self._btn_save_recipe)
@@ -169,6 +174,7 @@ class ZoneRecipeDialog(QDialog):
             return
         scaled = scale_circles(recipe["circles"], recipe["ref_size"], self._ref_size)
         self._canvas.set_circles(scaled)
+        self._canvas.set_outer_name(recipe.get("outer_name"))
         self._name_edit.setText(recipe["name"])
 
     def _on_load_recipe(self) -> None:
@@ -182,6 +188,7 @@ class ZoneRecipeDialog(QDialog):
             return
         scaled = scale_circles(recipe["circles"], recipe["ref_size"], self._ref_size)
         self._canvas.set_circles(scaled)
+        self._canvas.set_outer_name(recipe.get("outer_name"))
         self._name_edit.setText(recipe["name"])
         recipe_store.touch_recipe(path)   # "최근 사용"에도 반영
 
@@ -195,7 +202,7 @@ class ZoneRecipeDialog(QDialog):
             QMessageBox.warning(self, t("zone_recipe.no_circle_title"), t("zone_recipe.no_circle_msg"))
             return
         try:
-            recipe_store.save_recipe(name, circles, self._ref_size)
+            recipe_store.save_recipe(name, circles, self._ref_size, self._canvas.outer_name())
         except OSError as exc:
             QMessageBox.critical(self, t("zone_recipe.save_failed_title"), str(exc))
             return
@@ -236,3 +243,6 @@ class ZoneRecipeDialog(QDialog):
 
     def result_ref_size(self) -> tuple[int, int]:
         return self._ref_size
+
+    def result_outer_name(self) -> str | None:
+        return self._canvas.outer_name()
