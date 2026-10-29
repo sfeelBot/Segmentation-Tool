@@ -5,7 +5,30 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-29 (7)] 존 분석 탭 — 자동검출 버튼 삭제·배치 모드 단순화
+> **[최신, 2026-10-29 (8)] 학습 탭 모델/DataLoader 고정 (Attention U-Net +
+> workers=0) — 완료, 블로커 없음, commit+tag(`zone-v1.12.0`)+push까지 전부
+> 완료.** 사용자 요청: "zone branch에서는 학습 model을 Attention U-Net을
+> 고정으로 쓸 수 있게 해줘, DataLoader 0을 고정으로". 사용자가 "push까지
+> 한번에 진행"을 명시해 평소의 planner/implementer/verifier 서브에이전트
+> 분배 없이 **리더가 직접** 처리(AGENTS.md 리더 규칙 2의 "사소한 수정은
+> 리더가 직접" 예외 적용 — 2개 파일, 각각 한 군데씩의 국소 변경). 직전 라운드의
+> "고정" 해석 선례(배치모드 단순화 때 AskUserQuestion으로 확인한 "다른 선택지
+> 완전 제거, 하나만 남김")를 그대로 적용: `app/tabs/training_tab.py`의
+> `_model_combo`(현재 로드된 모델 + 전체 프리셋 선택)를 제거하고
+> `FIXED_MODEL_SOURCE = "preset:attention_unet"`로 고정(큐 추가 시 항상 이
+> 값 사용, UI엔 "Attention U-Net (2018) — 관심영역 집중 (고정)" 정적 라벨만
+> 표시), `app/widgets/config_form.py`의 `_num_workers` 스핀박스는
+> `setEnabled(False)`로 비활성화해 0 고정(완전히 숨기지 않고 "고정됨"을
+> 시각적으로 알 수 있게 유지). 헤드리스 스모크(큐에 작업 추가 →
+> `model_source == "preset:attention_unet"` 확인, `num_workers==0`+비활성화
+> 확인) 전부 PASS. `release.ini` 1.11.0→1.12.0 MINOR 버프(동작 고정은
+> main과 달라지는 에디션 전용 변경이라 기능 변경으로 취급) +
+> `generate_version_info.py` 통과, CHANGELOG `zone-v1.12.0` 추가, roadmap
+> "존(Zone) 분석 탭" 절에 항목 추가. **main에는 반영 안 함** — 에디션 전용
+> 고정값이라 역병합 대상 아님(AGENTS.md 원칙). 사용자가 미리 "push까지
+> 한번에" 승인해 커밋+태그 직후 바로 push까지 완료.
+
+> **[2026-10-29 (7)] 존 분석 탭 — 자동검출 버튼 삭제·배치 모드 단순화
 > (추론/모델 의존성 제거)·존 숨기기/이름변경·레시피 확장·결과 이미지 일괄 저장
 > 완료, 블로커 없음, commit+tag(`zone-v1.11.0`)까지 완료, push는 사용자 확인
 > 대기.** 사용자 요청 9건: ① 민감도 옆 자동검출 버튼 삭제 ② 배치 적용 시

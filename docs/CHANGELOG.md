@@ -5,6 +5,24 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.12.0] 2026-10-29
+
+사용자 요청 2건: 학습 탭의 모델/DataLoader 설정을 이 에디션 전용으로 고정.
+
+### 변경
+- 학습 탭 "모델" 선택을 **Attention U-Net (2018) 고정**으로 변경 — 기존
+  "현재 로드된 모델"/다른 프리셋을 고르는 콤보박스를 제거하고, 모든 학습 작업이
+  항상 `preset:attention_unet`을 쓰도록 고정(`app/tabs/training_tab.py`
+  `FIXED_MODEL_SOURCE`). 큐 추가 행엔 고른 모델명을 "(고정)" 표시로만 보여준다.
+- `DataLoader Workers`를 **0 고정**으로 변경 — 스핀박스는 그대로 보이되
+  `setEnabled(False)`로 비활성화(`app/widgets/config_form.py`), 값은 항상 0.
+
+### 영향 범위
+이 라운드는 `feature/zone-analysis-tab` 전용 변경이며 main에는 반영하지 않는다
+(에디션 전용 고정값 — AGENTS.md "에디션 브랜치 → main 역병합 금지" 원칙).
+
+---
+
 ## [zone-v1.11.0] 2026-10-29
 
 사용자 요청 9건(스펙 `docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md`):

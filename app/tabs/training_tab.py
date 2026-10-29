@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QScrollArea,
     QPushButton, QLabel, QProgressBar, QTableWidget,
     QTableWidgetItem, QSizePolicy, QMessageBox, QListWidget,
-    QListWidgetItem, QLineEdit, QGroupBox, QComboBox, QSplitter,
+    QListWidgetItem, QLineEdit, QGroupBox, QSplitter,
 )
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtCore import Qt, QThread, QSize, pyqtSignal
@@ -20,7 +20,10 @@ from app.core.model_loader import load_from_code
 from app.core.device_info import prompt_gpu_availability
 from app.core.cuda_diag import run_cuda_diagnostics, CudaDiagResult, DiagStatus
 from app.widgets.cuda_diag_dialog import show_cuda_diag
-from app.model_presets import PRESETS, preset_by_key, load_preset_code
+from app.model_presets import preset_by_key, load_preset_code
+
+# 존 분석 에디션 고정값 — 학습 모델은 Attention U-Net 하나로 고정(2026-10-29 사용자 요청).
+FIXED_MODEL_SOURCE = "preset:attention_unet"
 from app.widgets.config_form import ConfigForm
 from app.widgets.loss_chart import LossChart
 from app.widgets.training_progress_dialog import (
@@ -217,12 +220,11 @@ class TrainingTab(QWidget):
         add_row.addWidget(self._name_input)
 
         add_row.addWidget(QLabel(t("train.model_label")))
-        self._model_combo = QComboBox()
-        self._model_combo.setMinimumWidth(220)
-        self._model_combo.addItem("현재 로드된 모델", "loaded")
-        for p in PRESETS:
-            self._model_combo.addItem(p.title, f"preset:{p.key}")
-        add_row.addWidget(self._model_combo, stretch=1)
+        fixed_model_info = preset_by_key("attention_unet")
+        model_fixed_label = QLabel(f"{fixed_model_info.title} (고정)")
+        model_fixed_label.setStyleSheet("color:#9aa3ab;")
+        model_fixed_label.setToolTip("존 분석 에디션은 학습 모델을 Attention U-Net으로 고정합니다.")
+        add_row.addWidget(model_fixed_label, stretch=1)
 
         self._btn_add_job = QPushButton(t("train.add"))
         self._btn_add_job.setStyleSheet(
@@ -377,7 +379,7 @@ class TrainingTab(QWidget):
                     f"'{name}' 이라는 이름의 작업이 이미 있습니다.")
                 return
         cfg = self._config_form.get_config()
-        model_source = self._model_combo.currentData() or "loaded"
+        model_source = FIXED_MODEL_SOURCE
         self._jobs.append(TrainingJob(
             name=name, config=cfg, model_source=model_source,
         ))
