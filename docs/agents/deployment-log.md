@@ -294,3 +294,42 @@
 - installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
 - push 대기: 리더가 사용자 확인 후 `git push origin feature/zone-analysis-tab` +
   `git push origin zone-v1.5.1` 진행 필요.
+
+---
+
+## 2026-10-29 — zone-v1.11.0 배포 (존 분석 탭 배치 단순화)
+
+### 배경
+- 스펙 `docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md`, 사용자 요청 9건
+  (자동검출 버튼 삭제, 배치 모드 '고정' 단일화 + 추론/모델 의존성 완전 제거, 존
+  숨기기(비파괴)/이름변경(바깥쪽 포함), 레시피 확장(hidden/outer_name, 기본 이름
+  `YYYYMMDD_recipe`), 결과 이미지 일괄 저장)이 구현 완료 후 검증까지 통과
+  (`docs/agents/verification-log.md` 2026-10-29 항목 — 정적 리뷰 + pytest 57 passed +
+  실제 QTest 골든패스 44/44 PASS, 발견된 버그 없음).
+- 이번 라운드는 CUDA 추론 워커(`_ZoneBatchWorker`) 제거 + 배치 파이프라인을
+  `_ZoneCircleLayoutWorker`(추론 무관)로 교체하는 등 신규 기능이라 SemVer MINOR 판단.
+
+### 조치
+- `release.ini`: `version` `1.10.0` → `1.11.0` (`main_base_tag`/`main_base_commit`은
+  이미 `v1.12.0`/`95d5823`로 최신 상태, 변경 불필요).
+- `docs/CHANGELOG.md`에 `[zone-v1.11.0] 2026-10-29` 섹션 추가 — 사용자 요청 9건을
+  추가/변경/삭제로 분류해 요약.
+- `scripts/generate_version_info.py` 실행 → `Generated release metadata for 1.11.0` 성공.
+- 같은 워크트리에 검증 에이전트가 남긴 미커밋 `docs/agents/verification-log.md`
+  (2026-10-29, 44/44 PASS 항목)를 release.ini/CHANGELOG와 함께 커밋에 포함(이번
+  라운드 검증 기록이라 분리할 이유 없음). 무관한 기존 미추적 파일(`.codex/`,
+  `AGENTS.md`, `data/annotations/`, `graphify-out/`)은 배포 범위 밖이라 손대지 않음.
+- 커밋 `5763d8e91ab30f43f1177a83729b08e6eba5b02b`
+  (`chore: zone-v1.11.0 릴리스 — 배치 단순화 + 존 hidden/outer_name + 결과 일괄 저장`).
+- 태그 `zone-v1.11.0` (annotate, 커밋 `5763d8e9` 대상, CHANGELOG 요약을 태그 메시지로 사용).
+- **push는 수행하지 않음** — 지시사항에 따라 커밋/태깅까지만 로컬에서 종료, 리더가
+  사용자 확인 후 `git push origin feature/zone-analysis-tab` + `git push origin
+  zone-v1.11.0` 진행 필요.
+
+### 결과 요약
+- 버전: zone-v1.11.0
+- 커밋: `5763d8e91ab30f43f1177a83729b08e6eba5b02b` (로컬에만 존재, origin/feature/zone-analysis-tab
+  대비 6커밋 앞섬 — 이전 5커밋도 아직 push 전 상태였음)
+- 태그: `zone-v1.11.0` (로컬 annotated tag, push 전)
+- installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
+- push 대기: 리더가 사용자 확인 후 진행 필요.
