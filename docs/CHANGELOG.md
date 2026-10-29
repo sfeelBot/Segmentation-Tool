@@ -463,6 +463,49 @@ Main 기준: v1.8.0 + 19 commits (09933fd)
 
 ---
 
+## [v1.12.0] 2026-10-28
+
+사용자 요청: 학습 진행 다이얼로그의 "멈춘 것처럼 보이는" 준비 구간(디바이스 선택
+~ optimizer 구성) 가시화(`docs/specs/training-progress-and-stop-fix-2026-10-28.md`
+작업 B/C). 작업 A(중지 버그 수정)는 이전 라운드(v1.11.1 이후 커밋 0be9c31/0d1c834)에서
+이미 완료됨.
+
+### 추가
+- `app/core/trainer.py` — `TrainerWorker`에 `stage_changed(str)` 시그널 추가. `_train()`
+  준비 단계 6곳(`device`/`dataset_train`/`dataset_val`/`dataloader`/`model_to_device`/
+  `optimizer`) 진입 직전 emit, 각 단계 종료 시 `time.perf_counter()` 기반 경과시간을
+  `log.info()`로 기록(작업 C — 느린 구간 측정 가능하게 만듦, 알고리즘 개선은 범위 밖).
+- `app/widgets/training_progress_dialog.py` — 학습 큐(`q_box`) 바로 아래 준비 단계
+  로그용 컴팩트 `QListWidget`(높이 상한 90px) 추가. `set_current_job()` 시 clear,
+  신규 `append_stage(key)`로 `"[idx/6] {label}"` 형식 한 줄 append.
+- `app/tabs/training_tab.py` — `_run_next_job()`에서 `stage_changed` 연결(신규
+  `_on_stage_changed` 슬롯 → 다이얼로그 `append_stage` 호출), `_retire_trainer()`
+  disconnect 목록에도 포함(stale-signal 방지).
+- `app/core/i18n.py` — `train_progress.stage.*` ko/en 6쌍 신규(라벨만 번역,
+  `"[idx/6]"` 포맷은 코드에서 조립).
+
+### 변경
+- `app/widgets/config_form.py` — 학습 설정 기본값 변경(사용자 요청). DataLoader
+  `num_workers` 기본값을 CPU 코어 기반 자동 감지(상한 2) 대신 `0`(메인
+  프로세스만 사용, 워커 기동 비용 없음)으로 고정. LR 스케쥴러 기본 선택을
+  "없음" 대신 `ReduceLROnPlateau`(val loss 정체 시 자동 감소)로 변경
+  (`findData("plateau")`로 `_SCHEDS` 순서 변경에도 안전하게 조회).
+
+---
+
+## [v1.11.1] 2026-10-28
+
+사용자 요청: 존/R분석 탭 i18n 라운드(에디션 브랜치) 검증 중 발견된 공용
+`InferenceImageList` 위젯의 영문 미지원(BUG-033)을 main에도 독립 적용.
+
+### 수정
+- `app/widgets/inference_image_list.py` — `editable=False`(추론 탭 기본값)일 때
+  제목 라벨/검색창 placeholder/정렬 라벨이 `t()`를 거치지 않고 한국어로
+  하드코딩돼 있던 것을 기존 `infer.image_list`/`browser.search_placeholder`/
+  `browser.sort_label` 키 재사용으로 수정. 신규 번역 키 추가 없음.
+
+---
+
 ## [v1.11.0] 2026-10-27
 
 사용자 요청: 라벨링 탭의 툴바/뷰어(pan·zoom)/이미지 리스트를 재사용 가능한

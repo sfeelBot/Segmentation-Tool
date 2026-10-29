@@ -5922,6 +5922,134 @@ GitHub #2 export/import 왕복)의 실제 UI 조작 확인이 남아있음.
 양방향, pan/zoom, 이미지 리스트 상태 아이콘/정렬/추가·삭제/Ctrl+C) 전까지는
 완료로 간주하지 않음.**
 
+## 2026-10-28 — 학습 중지(Stop) 응답성 버그 수정 (작업 A만, 스펙 3건 중 1건)
+
+스펙: `docs/specs/training-progress-and-stop-fix-2026-10-28.md`의 "작업 A" 절만
+구현 (작업 B/C는 다음 라운드, 같은 파일이라 순차 진행 합의).
+
+- `app/core/trainer.py` `_train()` 단독 수정.
+  - **A-1**: 배치 루프 종료 직후(`stopped_early` 로그 다음), validation 블록
+    진입 전에 `if stopped_early and history: log.info(...); break` 추가 —
+    이전 epoch 체크포인트가 이미 있으면(=BUG-026 보장 충족) 이번 epoch의
+    validation/checkpoint를 생략하고 즉시 종료.
+  - **A-2**: validation 루프(`for images, masks in val_loader:`)에
+    `if history and self._stop.is_set(): break` 체크 추가(조건은 명세대로
+    `history and` 선행 — `self._stop.is_set()` 단독이면 epoch 1에서 학습
+    배치 중 멈춤 → validation 0배치 체크포인트가 저장되는 회귀가 생기므로
+    반드시 `history`가 비어있지 않을 때만 발동). 신규 카운터
+    `val_batches_processed` 도입.
+  - `val_loss /= len(val_loader)` → `val_batches_processed`(0보다 클 때만
+    나누기)로 교체해 조기 종료 시 val_loss 왜곡(과소평가) 방지.
+  - `val_batches_processed == 0`이면 `history.append(...)`/checkpoint 저장을
+    생략하고 로그만 남긴 뒤 `continue`로 바깥 `for epoch` 루프 다음 반복으로
+    진행(그 반복 맨 위 stop 체크가 즉시 종료).
+  - validation 섹션 머리 주석도 새 동작(epoch 1은 끝까지, epoch 2+는 이전
+    checkpoint 있으면 조기 종료)에 맞게 갱신.
+  - `app/main_window.py`/`app/tabs/training_tab.py`는 스펙 확인대로 수정
+    불필요(`queue_active`가 정상적으로 False가 되면 `closeEvent()`가
+    자연히 통과).
+- 확인: `ast.parse`로 문법 검증, `import app.core.trainer` 정상, 실제
+  `python main.py` 구동(장치 감지·로그까지 정상 출력, GUI 이벤트 루프 진입
+  확인 — Ctrl+C로 중단). 콘솔 cp949 인코딩 경고는 em-dash 로그 문자열
+  관련 기존 이슈로 이번 변경과 무관(UTF-8 IO로 재확인 시 정상).
+- 커밋: `0be9c31` fix: 학습 중지(Stop) 응답성 버그 수정 — 불필요한
+  validation/checkpoint 강제 완주 제거
+  - 주의: 이 커밋 메시지에 `Co-Authored-By: Claude Sonnet 5` attribution
+    라인을 빠뜨렸음(작성 실수). 아직 push 전이므로 리더가 필요 시 조치
+    가능 — 구현 에이전트 본인은 "새 커밋 생성, amend 금지" 원칙을 지키기
+    위해 별도 amend를 하지 않고 이 사실만 보고함.
+
+**검증 에이전트 확인 필요** — 특히 스펙의 "검증 체크리스트"(epoch 2+ 중지
+응답성, 전체 큐 중지 시 메인 창 close, epoch 1 중지 시 기존 동작 유지,
+validation 도중 중지 시 분모/스킵 동작, 정상 완주 플로우 회귀 없음) 실제
+UI 조작으로 확인 전까지 완료로 간주하지 않음.
+
+## 2026-10-28 — 학습 준비 단계별 로그 UI + 느린 구간 시간 계측 (작업 B/C)
+
+스펙: `docs/specs/training-progress-and-stop-fix-2026-10-28.md` 작업 B/C.
+작업 A(중지 버그 수정)는 이전 라운드(커밋 `0be9c31`/`0d1c834`)에서 이미 완료돼
+있어 `app/core/trainer.py`를 먼저 다시 읽고 A의 변경(`stopped_early and history`
+분기, validation 루프 내 stop 체크, `val_batches_processed` 분모 수정)이
+그대로 반영돼 있음을 확인한 뒤, 그 위에 B/C만 순수 추가했다(A의 로직은 건드리지
+않음).
+
+- `app/core/trainer.py`
+  - `TrainerWorker`에 신규 시그널 `stage_changed = pyqtSignal(str)` 추가.
+  - `_train()` 안, 스펙이 지정한 6개 지점(`pick_device()`, train
+    `SegmentationDataset(...)`, val `SegmentationDataset(...)`, `DataLoader`×2,
+    `self._model.to(device)`, `_build_optimizer(...)`) **진입 직전**에
+    `stage_changed.emit("device"/"dataset_train"/"dataset_val"/"dataloader"/
+    "model_to_device"/"optimizer")` 추가(고정 순서 6개, 분기 없음).
+  - 각 단계 **종료 시점**에 `time.perf_counter()` 기반 경과시간을
+    `log.info(f"[단계 N/6] ...: {elapsed:.2f}s")`로 추가(작업 C — 기존
+    "~완료" 로그는 그대로 두고 별도 줄로 추가, 대체 아님).
+- `app/widgets/training_progress_dialog.py`
+  - 모듈 상수 `_STAGE_ORDER`(6개 key, 고정 순서) 추가.
+  - `_build_ui()`에서 `root.addWidget(q_box, stretch=1)` 다음, 버튼 행
+    전에 `self._stage_list`(`QListWidget`, `setMaximumHeight(90)`, alternating
+    row color, 기존 `_queue_list`와 통일된 작은 스타일) 추가.
+  - `set_current_job()`에서 `self._stage_list.clear()` 호출.
+  - 신규 공개 메서드 `append_stage(key: str)` — `_STAGE_ORDER.index(key)+1`로
+    `"[idx/6] {label}"` 조립(라벨은 `t(f"train_progress.stage.{key}")`로 조회),
+    한 줄 append 후 `scrollToBottom()`.
+- `app/tabs/training_tab.py`
+  - `_run_next_job()`에서 기존 5개 worker 시그널 connect 옆에
+    `self._worker.stage_changed.connect(self._on_stage_changed)` 1줄 추가.
+  - 신규 슬롯 `_on_stage_changed(key)` — 다이얼로그가 있으면
+    `self._dialog.append_stage(key)` 호출.
+  - `_retire_trainer()`의 stale-signal 방지 disconnect 목록에도
+    `worker.stage_changed` 추가(기존 5개와 동일 패턴).
+- `app/core/i18n.py` — `train_progress.stage.device` 등 6개 ko/en 키 쌍
+  신규 추가(라벨 텍스트만 번역, `"[idx/6]"` 포맷은 코드에서 조립). 기존
+  `trainer.py`의 "~완료" `log.info()` 호출은 전부 그대로 유지(대체하지 않음 —
+  `stage_changed`는 완전히 별도의 신규 신호).
+- 버전: `release.ini` 1.11.1 → 1.12.0(MINOR, 신규 기능), `docs/CHANGELOG.md`에
+  `[v1.12.0]` 절 추가, `scripts/generate_version_info.py`로 메타데이터 검증
+  완료(`Generated release metadata for 1.12.0`).
+- 확인: `python -m py_compile`로 4개 수정 파일 문법 검증,
+  `import app.core.trainer, app.widgets.training_progress_dialog,
+  app.tabs.training_tab, app.core.i18n` 정상, `PYTHONIOENCODING=utf-8`로
+  `python main.py` 실제 구동해 QApplication 기동·디바이스 감지 로그까지 정상
+  출력 확인(timeout으로 중단). cp949 콘솔 인코딩 경고는 기존 이슈로 이번
+  변경과 무관.
+- 커밋: `1eee61b` feat: 학습 준비 단계별 로그 UI + 느린 구간 시간 계측
+  (작업 B/C)
+
+**검증 에이전트 확인 필요** — 스펙의 작업 B/C 검증 체크리스트(큐 시작 직후
+"[1/6]"~"[6/6]"가 빈 틈 없이 순서대로 뜨는지, en 전환 시 전부 영어로
+표시되는지, 다음 job 시작 시 이전 stage 로그가 clear되는지, 큐 전체 중지/
+에러 시 `_retire_trainer()`의 `stage_changed` disconnect로 stale-signal이
+새지 않는지, `data/logs/app.log`에 6단계 각각의 소요시간이 초 단위로
+남는지 — 특히 job을 2개 이상 큐에 넣어 `device` 단계가 1회성 비용인지
+비교) 실제 UI 조작 및 로그 확인 전까지 완료로 간주하지 않음. 또한 A(중지
+버그)의 기존 미완료 검증 체크리스트도 여전히 유효.
+
+## 2026-10-28 — 라벨링 탭 툴바 버튼 선택 상태 강조 색 (에디션 요청과 연계, main 독립 적용)
+
+- 배경: `feature/zone-analysis-tab` 에디션 워크트리에서 작업 중 "선택된
+  도구가 다크 테마에서 거의 안 보인다"는 요청을 받았고, 동일 패턴
+  (`QToolBar QToolButton { ... }` 스타일시트)이 main의 `labeling_tab.py`
+  에도 그대로 있어 **이 1개 파일만** 독립적으로 같이 고침(에디션 커밋과는
+  완전히 분리).
+- `app/tabs/labeling_tab.py`의 `tb.setStyleSheet(...)`(기존
+  `min-width/min-height/padding` sizing 규칙)에
+  `QToolBar QToolButton:checked { background:#1e3a5f; border:1px solid
+  #60a5fa; color:#60a5fa; }` 한 줄을 이어붙임 — 앱 전역에서 이미 쓰는 활성
+  강조 색(트리 아이템 선택색)과 동일.
+- 테스트: `QT_QPA_PLATFORM=offscreen py -m pytest tests/ -q` 96 passed, 1
+  failed(`test_training_performance.py::
+  test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`)
+  — `git stash push -- app/tabs/labeling_tab.py` 후 재실행해도 동일하게
+  실패함을 확인, 이번 변경과 무관한 기존 결함(97개 기대 중 1개는 원래부터
+  실패).
+- 커밋: `9048714 fix: 라벨링 탭 툴바 버튼 선택 상태 강조 색 추가` (main
+  브랜치, `app/tabs/labeling_tab.py` 1개 파일만 — 워크트리에 있던 다른
+  세션의 미커밋 변경(`CLAUDE.md`, `docs/agents/design-log.md`)은 건드리지
+  않음).
+- 상태: 구현 완료. **검증 에이전트 확인 필요** — 라벨링 탭에서 폴리곤/
+  브러시/지우개/이동 도구를 바꿔가며 체크된 버튼에 강조색이 실제로
+  보이는지 UI로 확인 필요. 기존 `test_training_performance.py` 실패는
+  별도 이슈로 트래킹 필요(이번 범위 아님).
 ---
 
 ## 2026-10-27 — sync 머지(공유 위젯 리팩토링) + Zone/R분석 탭 2단계 반영 (에디션 브랜치)

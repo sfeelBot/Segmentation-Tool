@@ -6741,6 +6741,297 @@ QA.md 신규 등록 불필요(새 버그 없음). 리더는 커밋+push 진행 �
 - QA.md BUG-032를 Open Issues에서 Closed Issues로 이동, 독립 재검증 결과 추가.
 - `git push`는 지시에 따라 수행하지 않음 — 사용자 확인 후 리더가 처리.
 
+
+---
+
+## 2026-10-27 - 공유 위젯 추출(view_transform/brush_toolbar/inference_image_list) 골든패스 실제 조작 검증
+
+스펙: `docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md`. 커밋 범위
+`90a124f`..`7bd280e`. 구현 에이전트가 pytest(97개 통과)와 신호 수준 스모크는 이미
+확인했으나, 실제 마우스/키보드 조작 골든 패스는 이번이 첫 확인(AGENTS.md 규칙상
+"주요 기능 추가" 라운드 - 라벨링/추론 탭 전부 실제 UI 조작 확인 필수).
+
+### 방법
+
+GUI에 직접 손을 댈 수 없는 에이전트 환경이라, `QTest.mouseClick`/`QTest.keyClick`/
+`QTest.keyClicks`로 실제 `QToolButton`/`QAction`/위젯에 합성 이벤트를 주입하고,
+`QApplication.sendEvent()`로 실제 `QWheelEvent`/`QMouseEvent`를 만들어 `wheelEvent()`/
+`mousePressEvent()`/`mouseMoveEvent()` 등 실제 Qt 이벤트 디스패치 경로를 그대로
+타게 했다(mock 없음, 이미 끝난 "신호 수준 스모크"보다 한 단계 위의 확인). `LabelingTab`/
+`InferenceTab` 실제 인스턴스를 QT_QPA_PLATFORM=offscreen 으로 구동, 임시 프로젝트
+(이미지 2~5장, 일부는 하위 폴더 포함)에 연결. 스크립트 3개, 총 66개 체크 전부 PASS
+(스크래치패드: C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\golden_path_check.py / golden_path_check2.py / golden_path_check3.py).
+
+과정에서 테스트 스크립트 자체의 버그 3건(`QAction.setChecked()`+`.trigger()` 이중
+토글, pan 시작 전 레이아웃이 아직 처리 중인 리사이즈가 `_fit_view()`로 수동 설정한
+zoom을 덮어씀, 다중선택 헬퍼의 `setCurrentItem`/`setSelected` 순서)을 먼저 찾아
+고쳤다 - 전부 앱 코드가 아니라 검증 스크립트의 재현 설계 오류였음(아래 "GitHub #9
+드래그 중 휠 줌" 항목에서 상세).
+
+### 1. 라벨링 탭 - golden_path_check.py (41/41 PASS)
+
+- 툴바 아이콘 좌->우 순서: 폴리곤.브러시.채움.지우개.영역지우개.select.pan - 디자인
+  리뷰에서 강조된 "클러스터를 한 덩어리로 묶지 않고 기존 순서에 인터리빙" 요구사항
+  그대로 유지됨(toolbar.actions() 실제 순서 비교).
+- 7종 도구 전부 실제 QToolButton 클릭 + 키보드 단축키 Q/W/E/R/D/A/S 전부 - 매번
+  정확히 1개 액션만 체크(상호배타 정상, BrushToolbar.set_tool() <-> 호스트 로컬
+  체크 루프 양방향 동기화 확인).
+- undo: 실제 어노테이션 상태 변화를 만든 뒤 undo 버튼 클릭 / Ctrl+Z 둘 다 정확히
+  되돌림, _undo_stack 길이도 함께 감소.
+- 브러시크기 스핀박스: 폭 76px 이상(GitHub #3a), 값 변경 -> 캔버스 동기화, 캔버스
+  -> 스핀박스 역동기화, 실제 더블클릭(QTest.mouseDClick)으로 브러시크기 다이얼로그
+  오픈 + 입력값 반영(GitHub #3b) - 더블클릭의 첫 클릭이 미세 스트로크를 커밋하는
+  것도 undo()로 자동 되돌려짐 확인.
+- eye 토글(F), OK 토글(버튼 클릭, 예외 없음), 전체화면(T, 좌우 패널 숨김/복원) 전부 정상.
+- 이미지 리스트: editable=True + show_status_icons=True 플래그 반영(추가/삭제
+  버튼, 정렬 7종), 검색창 실제 타이핑(QTest.keyClicks) 필터링, 정렬 콤보 실제
+  선택, 다중선택 2건(selected_paths()), 실제 Ctrl+C 키 이벤트 -> 클립보드 파일명
+  복사(개행 join), Delete 키가 이미지목록 포커스 시 이미지(+어노테이션 json) 삭제로
+  분기(has_list_focus()), 학습 중 가드(set_mutation_guard(lambda: False)) 걸린
+  상태에서 Delete 키 눌러도 삭제 안 됨.
+
+### 2. 라벨링 탭 pan/zoom + 기타 - golden_path_check2.py (11/11 PASS)
+
+- 휠 줌 - 마우스 아래 콘텐츠 좌표가 고정됨(canvas._c2i(mouse_pos) 불변), 줌
+  레벨 실제 변경.
+- GitHub #9 회귀 확인(가장 중요한 포인트): pan 도구로 실제 드래그 시작 ->
+  드래그 유지 중 휠 줌(커서 아래 콘텐츠 고정 재확인) -> 계속 드래그했을 때 다음
+  move의 pan 변화량이 "화면 이동량(20,20px)"과 정확히 일치함을 확인
+  (wheelEvent()의 `if self._pan_active: self._pan_start_mouse = ...` 리싱크
+  블록이 살아있어야만 성립하는 불변식). 처음 설계한 "pan 절대값 jump 거리" 측정은
+  줌 자체로 인한 정상적인 pan 이동(의도된 동작)까지 "회귀"로 오판하는 잘못된
+  측정이었음 - "줌 시점 pan 대비 그 다음 move의 델타"로 재설계해 정확히 검증.
+- 리사이즈 시 fit-view 재계산(줌 값이 리사이즈 전후 달라짐 확인).
+- 전체초기화(clear, 확인 다이얼로그 Yes) -> 어노테이션 실제로 비워짐.
+- 자동라벨 버튼 -> AutoLabelDialog 실제 생성/오픈 호출 확인(모달 exec()만
+  패치해 헤드리스 행 방지, 생성 자체는 패치 없음).
+- OK 토글(단일, 실제 .trigger()) -> 라벨 비워지고 ok=True 디스크 저장까지 확인.
+- Delete 키 - 캔버스에 포커스(이미지 목록 아님) 상태에서는 선택된 어노테이션만
+  삭제되고 이미지 자체는 그대로 남는 분기 확인(has_list_focus()가 False일 때
+  _canvas._delete_selected_or_last() 경로).
+- 하위 폴더(images/sub/) 이미지도 트리에 표시됨 - 스펙 3.4절에 명시된 "재귀
+  스캔으로 전환, 데이터 손실 없는 의도된 개선"을 실측으로 재확인.
+
+### 3. 추론 탭 "완전 무변경" 회귀 - golden_path_check3.py (14/14 PASS)
+
+- InferenceImageList() 기본 생성자 경로(show_status_icons=False,
+  editable=False) 그대로: 상태 아이콘/추가삭제 버튼 없음, SingleSelection
+  유지, 정렬 5종(상태 정렬 모드 없음) - 플래그 기본값 무변경 확인.
+  하위 폴더 이미지도 재귀 스캔으로 보임(기존부터 재귀 구현이라 라벨링 탭과
+  달리 "변화" 아님).
+- 실제 트리 아이템 선택 -> image_selected 발행 -> 뷰어에 픽스맵 로드, 검색/정렬
+  실제 조작 모두 정상.
+- 오버레이 뷰어 pan/zoom: 휠 줌 커서 고정, 실제 마우스 press/move로 pan 드래그
+  (viewer._pan 정확히 이동량만큼 변함), release 시 _pan_active 해제, 리사이즈
+  시 fit-view 재계산.
+- 투명도 슬라이더 실제 조작 -> opacity 값 반영, F 키 오버레이 토글 확인.
+
+### 코드 리뷰(정적) 확인 사항
+
+- app/widgets/annotation_canvas.py 의 GitHub #9 수정 블록(wheelEvent() 내
+  `if self._pan_active:` 재동기화)이 view_transform.py 추출 후에도 그대로
+  보존돼 있음을 라인 단위로 확인(절대 삭제 금지 - 스펙 2.3절 명시 사항).
+- app/widgets/inference_image_list.py - 제목+버튼 행이 한 줄(QHBoxLayout)로
+  병합됨(디자인 리뷰 반영 포인트) 코드 확인.
+- app/widgets/inference_image_list.py 의 _on_add()/_on_add_folder() 둘 다
+  진입 즉시 self._mutation_guard()를 체크 - 학습 중 추가도 삭제와 동일하게
+  차단됨을 정적으로 확인(실제 클릭으로는 파일 다이얼로그가 모달이라 자동화하지
+  않음, 가드 체크가 다이얼로그 오픈보다 먼저라 버튼 자체가 무력화됨은 코드로 충분).
+
+### 결론
+
+전부 통과. BUG-002/003/005/009/010/014 등 기존 회귀 없음. 스펙 3.4절에 명시된
+"재귀 스캔 전환"과 "정렬 모드 7종 확대"는 의도된 개선으로 재확인(버그 아님).
+
+### 비고 - 이번 라운드와 무관한 발견(BUG-034로 별도 등록)
+
+전체 `pytest -q` 실행 후 매번 저장소의 data/annotations/b.json(gitignore 대상
+아님)이 남는 테스트 격리 결함을 발견. app/core/project.py 의 annotations_dir()
+CWD 폴백 경로가 원인으로 추정되나, 단일/2파일 조합으로는 재현 안 되고 전체 스위트
+에서만 재현되어(BUG-028과 같은 "전체 실행시에만 나타나는 순서 의존" 패턴) 정확한
+유발 조합은 특정하지 못함. 이번 라운드의 리팩토링과는 무관(해당 코드 경로는 변경
+대상이 아님), 실제 앱 사용에는 영향 없음(항상 프로젝트 선택 후 실행). 검증 중
+발견한 data/annotations/ 는 rm -rf로 정리했고 git status clean 확인함.
+
+검증 상태: 통과 (실제 UI 골든 패스 확인 완료, BUG-034는 이번 라운드와 무관한
+기존 테스트 인프라 결함으로 별도 등록, 블로커 아님)
+
+---
+
+## 2026-10-27 — 라벨링/추론 탭 회귀 확인(가볍게) + 스크린샷 캡처
+
+### 배경
+- 리더 요청: 존분석/R분석 탭(에디션 브랜치, `D:/segmentation model-zone-analysis-tab`)이 공유
+  `BrushToolbar`를 쓰도록 바뀐 라운드의 골든패스 검증이 주 목적. main의 라벨링/추론 탭은
+  지난 라운드에 이미 골든패스 검증을 마쳤으므로 이번엔 회귀 확인만 가볍게 + 스크린샷 캡처.
+  (존분석/R분석 탭 쪽 상세 검증 내역은 에디션 워크트리의
+  `docs/agents/verification-log.md` 2026-10-27 항목 참고 — 같은 세션.)
+
+### 확인
+- `pytest tests/` 97 passed(회귀 없음).
+- `QT_QPA_PLATFORM=offscreen`으로 `LabelingTab`/`InferenceTab`을 각각 직접 생성·`resize(1280,800)`·
+  `show()` 후 `grab().save()`로 스크린샷 캡처 — 둘 다 정상 렌더링(툴바/캔버스/이미지 리스트/
+  클래스 패널 레이아웃 전부 정상, 지난 라운드 대비 변화 없음).
+  - 라벨링 탭: 프로젝트 fallback `images_dir()`(`data/images/`)에 합성 샘플 이미지 2장을 넣고
+    자동 로드되는지 확인(정상). 캡처 후 샘플 이미지는 삭제해 원상복구.
+  - 추론 탭: `_img_list.load_files()`로 2장 로드 후 실제 버튼 핸들러와 동일한 `_after_load()`를
+    호출해야 이미지 리스트 패널이 노출됨을 확인(`_list_panel.setVisible(count>1)`이 버튼
+    핸들러에서만 호출되는 구조 — 직접 `load_files()`만 호출하면 패널이 안 보이는 건 테스트
+    하네스 쪽 호출 누락이었을 뿐 제품 버그 아님, `_after_load()` 추가 호출로 해결·확인).
+- 스크린샷 경로(스크래치패드, 리더가 Read로 확인):
+  - `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\01_labeling_tab.png`
+  - `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\6b53800f-db9c-49c0-9271-8b2319b265ef\scratchpad\02_inference_tab.png`
+- 캡처 후 `data/images/`에 남은 임시 샘플 파일 없음(`git status` clean, gitignore 대상 폴더도
+  빈 상태로 복귀) 확인.
+
+### 결론
+통과(PASS). main 라벨링/추론 탭 회귀 없음, 발견된 버그 없음.
+
+## 2026-10-27 — 공유 위젯 리팩토링 성능 집중 검증(버벅임/반응 지연 관점)
+
+### 배경
+브러시 도구/이미지 뷰어/이미지 리스트 공유 위젯화(main 커밋 `90a124f`..`7bd280e`, 에디션
+브랜치 `f7529a3`+`acb7277`+`73b369d`)의 골든패스 기능 검증은 이미 통과(위 2026-10-27
+"라벨링/추론 탭 회귀 확인" 항목). 이번엔 기능이 아니라 **정량적 성능** 관점으로만 재검토.
+
+### 측정 1 — `BrushToolbar` 양방향 set_tool()/tool_changed 동기화 루프 여부
+- `app/widgets/brush_toolbar.py`를 오프스크린 QApplication에서 생성, `_on_tool_clicked()`를
+  300회(브러시→지우개→pan 반복) 직접 호출해 `tool_changed` emit 횟수와 `set_tool()` 호출
+  횟수를 계측: 300클릭 → `tool_changed` 300회 emit, `set_tool()` 300회 호출(1:1, 누적/배수
+  증가 없음). 300회 총 소요 0.835ms(0.0028ms/클릭).
+- 호스트(labeling_tab/zone_analysis_tab/r_analysis_tab) `_set_tool()`은 클러스터 클릭 시
+  `tool_changed` 수신 후 `self._brush_tools.set_tool(tool)`을 1회 더 호출(이미 클릭 핸들러
+  내부에서 1회 호출된 뒤이므로 클릭당 총 2회) — `BrushToolbar.set_tool()`은 `tool_changed`를
+  재발행하지 않으므로 루프 불가능, 상한 2배로 고정. `QAction.setChecked()` 수준의 극히
+  가벼운 호출이라 체감 영향 없음.
+- 결론: 시그널 루프 없음, 콜 횟수 배수 증가 없음(상한 2배, 재귀 없음). 성능 리스크 없음.
+
+### 측정 2 — `InferenceImageList.load_folder()`의 `rglob()` 재귀 스캔(라벨링 탭 신규 사용)
+- 임시 디렉터리에 더미 PNG 800장(하위폴더 6개 분산) 생성 후 측정(py3.14, offscreen Qt):
+  - `show_status_icons=False`: `load_folder()` 31.5ms.
+  - `show_status_icons=True`(라벨링 탭 실제 설정, `get_label_status()` 800회 포함): 65~80ms
+    (steady state, 3회 반복 측정 65.2/65.9/76.2ms).
+  - `rglob` 스캔 자체만: 21.8~24.7ms (옛 `ImageBrowser`의 1단계 `iterdir()`는 동일 테스트에서
+    0.1ms지만 하위폴더 이미지를 전혀 찾지 못함 — 기능 차이이지 성능 베이스라인 아님).
+  - cProfile로 분해: `get_label_status` 800회 호출 57ms 중 대부분이 `Path.exists()`/파일
+    read, N번 호출이 선형으로 증가하지만 800장 기준 전체 100ms 미만.
+  - 폴더 정렬 모드 전환(`_apply_display()` 재호출) 20.5ms — 이 역시 1회성 사용자 액션.
+  - 주의: 더미 annotation JSON 400개를 생성한 직후(같은 프로세스 내에서 바로) 다시 읽는
+    측정에서 1회 413~1753ms로 튄 사례 발견 — cProfile/반복 측정으로 재현해보니 "방금 쓴
+    파일을 즉시 다시 여는" 경우에만 나타나는 디스크/OS 캐시(또는 백그라운드 스캐너) 관련
+    과도기적 현상이고, 이미 존재하는(정착된) annotation 파일을 읽는 steady-state 시나리오
+    (실제 사용자 흐름과 동일)에서는 재현되지 않음(65~104ms로 안정). 코드 구조상의 회귀는
+    아님으로 판단.
+- 결론: 800장/6단계 하위폴더 기준 폴더 열기 1회당 ~65~105ms, 사용자가 명시적으로 폴더를
+  선택하는 1회성 액션이라 "조작 1회 100ms 초과" 기준에 근접하지만 경미하게 하회~근접하는
+  수준. 체감 버벅임을 유발할 반복 호출/프레임마다 재계산되는 경로 아님. 성능 리스크로
+  등록하지 않음(다만 수천 장 규모 폴더에서는 선형 증가하므로 참고용 숫자로 남김).
+
+### 측정 3 — R 분석 탭 기존 성능 개선(`0eb148a`, zone-v1.6.2) 재회귀 여부
+- `git log --oneline -- app/widgets/r_roi_canvas.py app/core/zone_metrics.py` 확인: 두 파일
+  모두 `0eb148a` 이후 커밋 없음(2단계 `acb7277`은 `r_analysis_tab.py`/`zone_analysis_tab.py`
+  툴바 연결부만 수정, 캔버스/메트릭 로직 무관).
+- 코드 확인: `RRoiCanvas._mask_cache_base`/`_mask_cache_n_strokes`/`_mask_cache_result`
+  필드와 `effective_mask()`의 증분 캐시 로직(바뀐 적 없음), `zone_metrics.disk_mask()`의
+  바운딩박스 최적화 주석·구현 그대로 존재.
+- 결론: 2단계(BrushToolbar 교체, undo QPushButton→QAction) 작업이 캔버스/메트릭 파일을
+  건드리지 않았음을 git log로 직접 확인 — 428배 개선이 보존됨. 재회귀 없음.
+
+### 측정 4 — `view_transform.py` 추출이 pan/zoom 핫패스에 새 오버헤드를 추가했는지
+- `git show 90a124f -- app/widgets/annotation_canvas.py app/widgets/overlay_viewer.py`로
+  추출 전/후 diff 재검토: `wheelEvent`/`mouseMoveEvent`/`_c2i`/`_fit_view`의 인라인 수식을
+  동일한 연산의 외부 함수 호출로 1:1 치환한 것 뿐 — `QPointF` 생성 횟수 동일, 캐싱되던
+  값이 없었으므로(이전에도 이벤트마다 매번 재계산) "캐싱되던 값이 재계산되게 바뀐" 부분
+  없음. 함수 호출 1회 추가 오버헤드(~수십~백ns)는 Qt 이벤트 디스패치 비용(마이크로초~
+  밀리초 단위) 대비 무시 가능.
+- 결론: 성능 리스크 없음.
+
+### 측정 5 — `InferenceImageList.eventFilter()`(Ctrl+C 복사, 추론 탭에도 신규 적용)
+- 800개 항목 리스트에 대해 매칭 안 되는 키 이벤트(예: 아래쪽 화살표) 20,000회를
+  `eventFilter()`에 직접 주입해 측정: 총 15.99ms, 0.799us/call. 리스트 크기와 무관(매칭
+  안 되는 입력은 `selectedItems()` 등 리스트 순회를 전혀 하지 않음).
+- 결론: 체감 불가능한 수준, 성능 리스크 없음.
+
+### 결론
+**성능 리스크 없음 (PASS).** 5개 의심 지점 모두 정량 측정/정적 diff 재검토로 확인:
+시그널 루프 없음(상한 2배), 재귀 폴더 스캔은 800장 기준 65~105ms(1회성 액션), R분석 탭
+P0 성능 개선 파일 unchanged 확인, view_transform 추출은 순수 1:1 치환, eventFilter
+오버헤드는 1us 미만. `QA.md` 등록 대상 버그 없음.
+
+---
+
+## 2026-10-28 — 학습 중지(Stop) 버그 수정(작업 A) + 단계별 로그/시간 계측(작업 B/C) 검증
+
+### 배경·방법
+- 스펙: `docs/specs/training-progress-and-stop-fix-2026-10-28.md` (작업 A/B/C, 커밋 `0be9c31`,
+  `1eee61b`).
+- GUI 자동클릭 도구가 없어(screenshot/마우스 제어 불가) 실제 `QApplication` + `MainWindow` +
+  `TrainingTab` + `TrainingProgressDialog`를 인스턴스화하고, `QPushButton.click()`(실제 버튼과
+  동일한 `clicked` 시그널 경로)과 위젯 값 설정(`QSpinBox.setValue()` 등)으로 골든 패스를
+  구동하는 자동화 스크립트로 대체(= 실제 프로덕션 코드 경로를 그대로 타는 인-프로세스 UI 구동).
+- 테스트 프로젝트: 합성 이미지 8장(96×96, numpy 랜덤) + polygon 어노테이션 1개씩 + `classes.json`
+  (2 classes)을 스크립트로 직접 생성(`verify_proj`) — 라벨링 탭 UI 자체는 건드리지 않음(이번
+  라운드가 수정한 파일이 아니므로 범위 밖, 데이터만 계약에 맞게 준비).
+- 모델: Model 탭 로드 없이 학습 탭의 프리셋 콤보(`preset:simple_unet`)로 7.7M-param U-Net 사용
+  (프리셋 경로도 실제 프로덕션 코드 — `_resolve_model_for_job`).
+- 환경: `build/venv/Scripts/python.exe`(Python 3.12, torch 2.7.1+cu128), RTX 5060 CUDA 가용.
+  스크립트: `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\b1772599-9b7e-4104-94b4-59e147d13d10\scratchpad\{make_project.py, verify_ab.py, verify_cuda_coldstart.py}`
+  (읽기전용 대상 디렉터리는 `verify_proj`뿐 — 저장소 코드/데이터 무수정 확인).
+
+### 결과 — 17/17 PASS (verify_ab.py)
+1. **작업 A — epoch≥2 "현재 작업만 중지"**: epoch 1 완료(체크포인트 `best.pt`+`epoch_0001.pt`
+   생성) 후 epoch 2 배치 루프 진입 중 다이얼로그의 "현재 작업만 중지" 버튼 클릭 →
+   **0.11초**만에 작업 종료(status=`stopped`). `epoch_0002.pt` 생성 안 됨(새 체크포인트 없음),
+   이전 체크포인트(`epoch_0001.pt`, `best.pt`) 그대로 보존. 로그에 "중지 요청 반영 — 이전
+   체크포인트가 이미 존재해 이번 epoch의 validation/checkpoint 저장을 생략하고 즉시 종료"
+   확인(A-1 분기 실제 발동).
+2. **작업 A — `closeEvent()` 차단 해제**: 중지 후 `queue_active`가 `False`로 전환되는 즉시
+   `window.closeEvent()`를 호출 — "학습 진행 중" 경고(`QMessageBox.warning`) 호출 **0회**,
+   정상 종료 확인 다이얼로그(`QMessageBox.question`)로 바로 진행(1회) 확인. 원래 버그(중지
+   눌러도 창이 안 닫힘)의 핵심 재현 경로가 정상 동작함을 확인.
+3. **작업 A — epoch 1 중 중지 (회귀 없음)**: `training_started` 신호 수신 직후(= epoch 1 배치
+   루프 시작 직후, `history` 비어있는 상태) 중지 클릭 → A-2 조건(`history and
+   self._stop.is_set()`)이 항상 False이므로 **기존과 동일하게** validation이 끝까지 돌고
+   `epoch_0001.pt`/`best.pt`가 정상 생성됨을 확인(BUG-026 불변식 유지, 회귀 없음).
+4. **작업 A — 전체 큐 중지(stop_all)**: 2-job 큐에서 epoch 1 완료 직후 "전체 중지" 클릭 →
+   **0.16초**만에 현재 job 종료 + `queue_active=False`, 2번째 job은 `waiting` 상태로 시작 안 됨
+   확인.
+5. **작업 A — 정상 완주 회귀**: 중지 없이 3 epoch 완주 → status=`done`,
+   `training_metrics.json`(히스토리 3개 항목)/`.png` 정상 생성, `checkpoint_every` 간격
+   체크포인트(`epoch_0002.pt`) + `best.pt` 생성 확인.
+6. **작업 B — 단계별 로그 UI**: `stage_changed` 수신 순서가 스펙과 정확히 일치
+   (`device → dataset_train → dataset_val → dataloader → model_to_device → optimizer`),
+   다이얼로그 `_stage_list`에 `"[1/6] …"`~`"[6/6] …"` 6줄이 `q_box` 바로 아래 신규 위젯에
+   정확한 포맷으로 누적됨. job마다(총 5회) 깨끗하게 재현 — `_retire_trainer()`의
+   `stage_changed` disconnect가 실제로 stale-signal 누수 없이 동작함을 간접 확인(이전 job의
+   stage가 다음 job 캡처에 섞이지 않음).
+7. **작업 B — i18n**: `set_language("en")` 후 6개 stage 키 전부 영문 렌더링
+   (`"Selecting device…"` 등), 한글 잔존 0건(정규식 Hangul 범위로 전수 확인).
+8. **작업 C — `data/logs/app.log` 시간 계측**: `[단계 N/6] … : X.XXs` 형식의 로그 라인이
+   job마다 6줄씩(총 12줄 이상) 정상 기록됨.
+9. **작업 C — CUDA 콜드스타트 1회성 비용 가설 실측** (`verify_cuda_coldstart.py`, 별도 스크립트,
+   `device="auto"`→cuda 로 2-job 연속 실행): **중요한 보정 발견** — 스펙의 가설과 달리 콜드스타트
+   비용(~1.3~2초)은 `[단계 1/6] 디바이스 선택`이 아니라 **`[단계 6/6] 옵티마이저/스케쥴러
+   구성`**(`pick_device()`의 프로브 텐서 연산 자체는 0.00~0.02s로 가벼웠고, 실제 CUDA
+   컨텍스트/cuDNN 초기화 비용은 `GradScaler`/옵티마이저 생성 블록에서 처음으로 무거운 CUDA
+   연산이 호출될 때 지불되는 것으로 실측됨) — 두 번째 job에서는 같은 단계가 0.00s로 완전히
+   사라져 "프로세스 생애 1회성 비용" 가설 자체는 확인되나, **위치가 예상과 다름**. 이는
+   버그가 아니라(계측 자체는 정확히 동작) 리더가 "스파이크 필요 여부"를 판단할 때 참고할
+   실측 보정 정보로 보고.
+
+### 결론
+**통과(PASS).** 작업 A/B/C 모두 스펙의 검증 체크리스트 항목을 전부 충족, 새 버그 없음 —
+`QA.md` 신규 등록 없음. 다만 작업 C의 "어느 단계가 느린지"에 대한 가설은 `[단계 1/6]`이
+아니라 `[단계 6/6]`로 보정됨 — 리더에게 별도 보고(스파이크 필요 여부 판단 시 참고).
+
+### 미확인
+- 실제 마우스 클릭/스크린샷 기반 시각 확인은 이 환경에 GUI 자동화 도구가 없어 수행 못함
+  (대신 실제 프로덕션 위젯의 `.click()`/시그널 경로를 그대로 구동하는 인-프로세스 자동화로
+  대체). 위젯이 실제로 화면에 올바르게 렌더링되는지(피클셀 단위 육안 확인)는 미확인.
+- 이번 라운드는 `trainer.py`/`training_progress_dialog.py`/`training_tab.py`/`i18n.py`만
+  수정하는 범위였으므로 모델/라벨링/추론 탭의 실제 UI는 별도로 조작하지 않음(라벨링 데이터는
+  계약에 맞는 JSON을 스크립트로 직접 생성해 학습 가능 상태만 준비) — 해당 탭 코드가 이번
+  변경에 포함되지 않아 범위 밖으로 판단.
 ---
 
 ## 2026-10-27 — 존/R분석 탭 공유 BrushToolbar 반영 골든패스 검증(신규) + 4탭 스크린샷

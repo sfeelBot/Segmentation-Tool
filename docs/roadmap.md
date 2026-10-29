@@ -37,6 +37,42 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
 - [x] GitHub #23 — 최고 IoU `*_best.pt` 자동 선정 + 모델별 train/val loss·IoU JSON/PNG 저장
 - [x] LR 스케줄러 9종
 - [x] CUDA 종합 진단 팝업 (`cuda_diag.py`, `cuda_diag_dialog.py`) — 논블로킹
+- [ ] 학습 진행 다이얼로그 — 단계별 로그 UI + 느린 시작 구간 조사 + 중지 버그 수정
+      (2026-10-28 요청) — 아래 "학습 진행 다이얼로그 — 단계별 로그/느린시작/중지 버그
+      (2026-10-28)" 절 참고.
+
+## 학습 진행 다이얼로그 — 단계별 로그/느린시작/중지 버그 (2026-10-28)
+
+사용자 요청 3건: ① 학습 준비 단계(디바이스 선택→데이터셋 구성→DataLoader→
+`model.to(device)`→optimizer 생성)가 느릴 때 몇 번째 단계인지 알 수 없음 — "학습 진행
+상황" 다이얼로그의 "학습 대기열" 바로 아래에 단계별 로그 요청. ② 그 느린 구간의 원인
+조사 + 가능하면 개선. ③ 학습 중지(Stop)가 응답하지 않고 그로 인해 메인 창도 닫히지
+않는 버그.
+기획 완료: [docs/specs/training-progress-and-stop-fix-2026-10-28.md](specs/training-progress-and-stop-fix-2026-10-28.md).
+
+- **핵심 발견**: CUDA 컨텍스트 초기화는 리더가 지목한 `model.to(device)`가 아니라
+  `pick_device()`(`device_info.py`)의 GPU 생존 프로브(`torch.zeros(..., device="cuda")`+
+  `synchronize()`)에서 이미 발생함 — `_train()` 맨 앞, 아무 로그도 없는 지점. 중지 버그의
+  실제 원인은 `_train()`이 중지 요청 후에도 validation 전체+checkpoint 저장을 항상 끝까지
+  완료하는 것(BUG-026 보장을 위한 의도적 설계) — `main_window.py`/`training_tab.py`는
+  수정 불필요, 원인이 `trainer.py` 단독.
+- [ ] **작업 A(P1, 최우선)** — 중지 버그 수정: 이전 체크포인트가 이미 있으면
+      (`history` non-empty) validation/저장을 생략하고 즉시 종료 + validation 루프
+      자체에도 stop 체크 추가(epoch 1 케이스 대비, val_loss 분모 수정 필수 동반).
+      `trainer.py` 단독 수정.
+- [ ] **작업 B(P2)** — 학습 준비 6단계(`device`/`dataset_train`/`dataset_val`/
+      `dataloader`/`model_to_device`/`optimizer`) 시작 시점에 신규 시그널
+      `stage_changed` emit, 다이얼로그에 `q_box` 바로 아래 컴팩트 로그 뷰어 신설.
+      텍스트는 i18n 키로(로거 브리지 직접 재사용은 기각 — 이미 en 전환 완료된 다이얼로그에
+      한국어 전용 로그가 섞이는 회귀 방지). `trainer.py`/`training_progress_dialog.py`/
+      `training_tab.py`/`i18n.py` 4개 파일.
+- [ ] **작업 C(P3)** — 작업 B의 6단계 emit 지점에 `time.perf_counter()` 경과시간 로그를
+      함께 추가(별도 라운드 아님, B 구현 시 같이 포함)해 실측 가능하게 만드는 것까지만.
+      CUDA 프리워밍 등 알고리즘적 개선은 실측 데이터 없이 지금 결정하지 않음 — **리더
+      보고: 작업 B 배포 후 실측 로그 확인 뒤 필요하면 스파이크 에이전트에게 프리워밍
+      비용/이득 실측 요청.**
+- 실행 순서: **A(단독, 최우선) → B+C(순차, `trainer.py` 공유 파일이라 A 완료·검증 후
+  진행)**. 사용자 결정 필요 지점 없음(`docs/decisions-needed.md` 등록 없음).
 
 ## 추론 탭 (`app/tabs/inference_tab.py`)
 - [x] 체크포인트 선택 → 학습 당시 모델 자동 인스턴스화
@@ -559,6 +595,41 @@ append-only가 아니라 최신 상태로 덮어쓴다. 상세 이력은 [docs/C
       (`feature/zone-analysis-tab`)에도 두 파일이 동일 구조로 존재 — 이번 라운드는 main만,
       완료 후 별도 이식 라운드 필요(리더가 후속 판단)**.
 
+## 공유 위젯 추출 — 브러시 툴바 / 뷰어 pan·zoom / 이미지 리스트 (2026-10-27 요청)
+
+사용자 요청(3라운드 확인 완료): 라벨링 탭의 툴바·이미지 뷰어·이미지 리스트를 재사용
+가능한 위젯으로 뽑아 추론 탭 + 차후 존분석/R분석 탭(에디션 브랜치
+`feature/zone-analysis-tab`, 워크트리 `D:/segmentation model-zone-analysis-tab`)에도
+적용. 기획 완료: [docs/specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md](specs/shared-widgets-toolbar-viewer-imagelist-2026-10-27.md).
+결정 대기 없음(설계 재량 사항은 플래너가 전부 판단해 스펙에 근거와 함께 명시) — 구현
+바로 착수 가능.
+
+- [ ] **1단계(이번 라운드, main 브랜치만)**:
+  - 신규 `app/widgets/view_transform.py` — `AnnotationCanvas`/`OverlayViewer` 중복된
+    pan/zoom 순수 좌표계산 추출(두 클래스 구조·상태필드는 그대로 유지, 전체 재작성
+    아님). `wheelEvent`/`_c2i`/`_fit_view`/`mouseMoveEvent` 4곳만 교체, GitHub #9
+    수정 블록은 보존.
+  - 신규 `app/widgets/brush_toolbar.py`(`BrushToolbar`) — 브러시그리기/지우개/
+    영역삭제(flood-eraser·blob-delete 통합 개념, 툴바 계약 수준)/pan/undo/브러시크기
+    6종 공유. 1차 도형 도구(폴리곤/원/ROI)·select·bucket-fill·OK·clear·auto·eye·
+    fullscreen은 공유 안 함(각 탭 로컬 유지, 추론 탭은 편집 도구 자체가 없어 이
+    위젯을 쓰지 않음). `labeling_tab.py` 툴바를 이걸로 교체.
+  - `app/widgets/inference_image_list.py`(`InferenceImageList`) 확장 —
+    `show_status_icons`/`editable` 2개 생성자 플래그 추가해 `ImageBrowser`(라벨
+    상태 아이콘·파일/폴더 추가·다중선택 삭제·Ctrl+C 복사 등) 기능 완전 흡수.
+    `app/widgets/image_browser.py` 제거, `labeling_tab.py`가 `InferenceImageList`
+    사용으로 전환. `inference_tab.py`는 기본값 호환으로 **무변경**.
+  - 리스크: `annotation_canvas.py`/`overlay_viewer.py`는 핵심 편집 로직 파일이라
+    diff를 pan/zoom 4개 메서드로 엄격히 제한. `labeling_tab.py`가 가장 많이 바뀌는
+    파일이라 툴바/이미지리스트 작업은 병렬보다 순차 진행 권장(스펙 5절).
+- [ ] **2단계(다음 단계, 범위 밖 — 이번 라운드 구현 안 함)**: main 1단계 커밋 후
+  sync 브랜치+PR로 `feature/zone-analysis-tab`에 반영 → `zone_analysis_tab.py`/
+  `r_analysis_tab.py`가 `BrushToolbar` 사용하도록 교체(원/ROI만 로컬 유지), 존분석의
+  `set_blob_delete_mode()`를 공유 `tool_changed==TOOL_ERASER_FLOOD` 시그널에 연결해
+  flood-eraser/blob-delete 통합을 실질적으로 완성. `ZoneCanvas`/`RRoiCanvas`는
+  `OverlayViewer` 상속이라 1단계 `view_transform.py` 추출 이득을 코드 변경 없이 자동
+  수혜. 이미지 리스트는 두 탭 다 변경 없음(존분석은 이미 `InferenceImageList`
+  사용 중, R분석은 셀 패널 기반이라 계속 제외).
 ## 존(Zone) 분석 탭 — 배터리 캡 녹 검사 독립 도구 (2026-08-25 요청)
 
 브랜치 `feature/zone-analysis-tab`. 기존 4탭(모델/라벨링/학습/추론)과 완전히 독립된

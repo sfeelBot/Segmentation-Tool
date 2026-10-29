@@ -210,6 +210,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "train_progress.stop_all":      "■■ 전체 중지",
         "train_progress.close":         "창 닫기",
         "train_progress.all_done":      "모든 학습 완료",
+        "train_progress.stage.device":          "디바이스 선택 중…",
+        "train_progress.stage.dataset_train":   "학습 데이터셋 구성 중…",
+        "train_progress.stage.dataset_val":     "검증 데이터셋 구성 중…",
+        "train_progress.stage.dataloader":      "DataLoader 생성 중…",
+        "train_progress.stage.model_to_device": "모델을 디바이스로 이동 중…",
+        "train_progress.stage.optimizer":       "옵티마이저 구성 중…",
 
         # ── 설정 폼 ───────────────────────────────────────────────────────
         "cfg.data":               "데이터",
@@ -785,6 +791,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "train_progress.stop_all":      "■■ Stop All",
         "train_progress.close":         "Close",
         "train_progress.all_done":      "All Training Done",
+        "train_progress.stage.device":          "Selecting device…",
+        "train_progress.stage.dataset_train":   "Building training dataset…",
+        "train_progress.stage.dataset_val":     "Building validation dataset…",
+        "train_progress.stage.dataloader":      "Creating DataLoaders…",
+        "train_progress.stage.model_to_device": "Moving model to device…",
+        "train_progress.stage.optimizer":       "Building optimizer…",
 
         # ── Config form ───────────────────────────────────────────────────
         "cfg.data":               "Data",

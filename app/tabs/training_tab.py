@@ -524,6 +524,7 @@ class TrainingTab(QWidget):
         self._worker = TrainerWorker(model, job.config, num_classes,
                                      ckpt_prefix=job.name, model_source=job.model_source)
         self._worker.training_started.connect(self._on_training_started)
+        self._worker.stage_changed.connect(self._on_stage_changed)
         self._worker.batch_done.connect(self._on_batch_done)
         self._worker.epoch_done.connect(self._on_epoch_done)
         self._worker.checkpoint_saved.connect(self._on_checkpoint_saved)
@@ -561,6 +562,11 @@ class TrainingTab(QWidget):
         self._current_step    = 0
         self._train_start_time = time.monotonic()
         self._lbl_step.setText(f"Step 0 / {self._total_steps:,}")
+
+    def _on_stage_changed(self, key: str) -> None:
+        """학습 준비 단계 진입 알림 — 다이얼로그의 단계별 로그에 반영."""
+        if self._dialog:
+            self._dialog.append_stage(key)
 
     def _on_batch_done(self, epoch: int, batch_idx: int, loss: float) -> None:
         """배치마다 train loss 를 EMA 스무딩 후 차트에 실시간 반영.
@@ -649,7 +655,7 @@ class TrainingTab(QWidget):
             return
         # stale queued signal 이 새 worker 슬롯을 덮어쓰는 버그 방지
         for sig in (
-            worker.training_started, worker.batch_done,
+            worker.training_started, worker.stage_changed, worker.batch_done,
             worker.epoch_done, worker.checkpoint_saved,
             worker.training_finished, worker.training_error,
         ):
