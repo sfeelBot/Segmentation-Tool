@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QImage, QPixmap
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from app.widgets.inference_image_list import InferenceImageList
 from app.widgets.zone_canvas import ZoneCanvas
@@ -36,6 +36,20 @@ def _stat(zone_name: str, blob_id: int, pixel_count: int) -> ZoneBlobStat:
 
 def _save_png(path: Path) -> None:
     assert QImage(4, 4, QImage.Format.Format_RGB32).save(str(path))
+
+
+def _auto_click_role(role: QMessageBox.ButtonRole):
+    """`ZoneRecipeDialog._on_apply()`의 저장확인 QMessageBox(2026-10-30 추가)를
+    오프스크린 테스트에서 블로킹 없이 통과시킨다 — Qt의 실제 클릭 경로
+    (`QAbstractButton.click()`)를 그대로 타므로 `clickedButton()`이 정확히
+    세팅된다(모달 `exec()`을 흉내만 내는 대신 실제 버튼을 누르는 방식)."""
+    def _auto_exec(self):
+        for btn in self.buttons():
+            if self.buttonRole(btn) == role:
+                btn.click()
+                break
+        return self.result()
+    return _auto_exec
 
 
 # ── 라운드 D: append + 개별 삭제 ────────────────────────────────────────────
@@ -141,8 +155,9 @@ def test_align_centers_noop_with_fewer_than_two_circles() -> None:
     assert canvas.get_circles() == before
 
 
-def test_alt_wheel_resizes_selected_circle_plain_wheel_always_zooms() -> None:
-    """2026-10-03#6: Alt+휠=지름 조절, 일반 휠(원 선택 여부 무관)=항상 화면 줌."""
+def test_wheel_always_zooms_alt_wheel_resize_removed() -> None:
+    """2026-10-30 번복: Alt+휠(원 지름 조절) 기능 완전 제거 — 이제 Alt 여부와
+    무관하게 휠은 항상 화면 줌만 수행한다(2026-10-03#6 결정을 대체)."""
     canvas = ZoneCanvas()
     canvas.resize(200, 200)
     canvas.set_image_size(100, 100)
@@ -166,13 +181,15 @@ def test_alt_wheel_resizes_selected_circle_plain_wheel_always_zooms() -> None:
     canvas.wheelEvent(make_event(Qt.KeyboardModifier.NoModifier))
     _, _, r, _name, _hidden = canvas.get_circles()[0]
     assert r == 10.0   # 일반 휠은 지름을 건드리지 않는다
-    assert canvas._zoom != zoom_before   # 대신 화면 줌이 동작한다
+    assert canvas._zoom != zoom_before   # 화면 줌이 동작한다
     assert len(canvas._undo_stack) == undo_depth_before   # 줌은 undo 스택에 쌓이지 않는다
 
+    zoom_before2 = canvas._zoom
     canvas.wheelEvent(make_event(Qt.KeyboardModifier.AltModifier))
     _, _, r, _name, _hidden = canvas.get_circles()[0]
-    assert r > 10.0   # Alt+휠 위로 스크롤 -> 반지름(지름) 증가
-    assert canvas.can_undo()
+    assert r == 10.0   # Alt+휠도 더는 지름을 건드리지 않는다(기능 제거)
+    assert canvas._zoom != zoom_before2   # Alt+휠도 그냥 화면 줌으로 처리된다
+    assert len(canvas._undo_stack) == undo_depth_before   # undo 스택도 그대로
 
 
 def test_arrow_key_moves_selected_circle_with_gesture_debounced_undo() -> None:
@@ -234,6 +251,9 @@ def test_recipe_dialog_apply_button_gated_on_circle_count(tmp_path: Path, monkey
         assert not dialog._btn_apply.isEnabled()
 
         dialog._canvas.set_circles([(25.0, 25.0, 10.0)])
+        # 2026-10-30: "적용" 클릭 시 저장확인 팝업이 추가됐다 — "적용만 하기"를
+        # 눌러 레시피 저장 없이 통과시킨다(이 테스트의 원래 의도와 동일).
+        monkeypatch.setattr(QMessageBox, "exec", _auto_click_role(QMessageBox.ButtonRole.ActionRole))
         dialog._on_apply()
         assert dialog.result_circles() == [(25.0, 25.0, 10.0, None, False)]
         assert dialog.result_ref_size() == (50, 50)
@@ -253,18 +273,20 @@ def test_recipe_dialog_autoloads_most_recent_recipe(tmp_path: Path, monkeypatch)
         dialog.close()
 
 
-# ── 라운드 E: 활성화 조건 분리(7-2) — 원 편집은 추론 전에도 가능 ──────────────
+# ── 라운드 E (2026-10-30 번복): "원 설정" 아키텍처 전환 — 메인 캔버스는 조회
+# 전용, 원 편집은 "원(Zone) 설정..." 모달로 완전히 이관됐다(7-2 결정 번복).
 
-def test_circle_edit_enabled_right_after_image_load_before_inference(tmp_path: Path) -> None:
+def test_main_canvas_circle_edit_removed_after_image_load(tmp_path: Path) -> None:
     img_path = tmp_path / "img.png"
     assert QImage(20, 20, QImage.Format.Format_RGB32).save(str(img_path))
     tab = ZoneAnalysisTab()
     try:
-        assert not tab._act_circle.isEnabled()   # 이미지 로드 전
+        assert not hasattr(tab, "_act_circle")   # 액션 자체가 없음
+        assert not tab._canvas.editing_enabled()   # 메인 캔버스는 항상 조회 전용
 
         tab._on_list_image_selected(img_path)
 
-        assert tab._act_circle.isEnabled()   # 추론 없이도 바로 활성화(7-2)
+        assert not tab._canvas.editing_enabled()   # 이미지 로드 후에도 그대로
         for action in (tab._brush_tools.act_brush, tab._brush_tools.act_eraser,
                        tab._brush_tools.act_delete_region):
             assert not action.isEnabled()   # 블랍 기반 편집은 여전히 추론 후에만

@@ -164,8 +164,10 @@ def test_original_preview_and_failure_clear() -> None:
         assert tab._image_size == (3000, 1200)
         assert tab._canvas._pixmap is not None
         assert max(tab._canvas._pixmap.width(), tab._canvas._pixmap.height()) <= _PREVIEW_MAX_DIM
-        # 2026-10-01 재설계(7-2): 원 편집은 추론 결과와 무관하게 이미지 로드 직후 바로 활성화된다.
-        assert tab._act_circle.isEnabled()
+        # 2026-10-30: "원 설정" 아키텍처 전환(7-2 번복) — 원 편집 액션 자체가 메인
+        # 캔버스에서 제거됐다. 이미지 로드 직후 켜지는 건 pan뿐.
+        assert tab._brush_tools.act_pan.isEnabled()
+        assert not hasattr(tab, "_act_circle")
 
         broken_path = Path(tmp) / "broken.png"
         broken_path.write_bytes(b"not an image")

@@ -48,8 +48,11 @@ def test_zone_toolbar_is_exclusive_and_defaults_are_patch_based() -> None:
     # 2026-10-27: QActionGroup → BrushToolbar(공유) + 호스트 로컬 _set_tool() 수동
     # 상호배제로 교체(라벨링 탭과 동일 패턴) — 원편집이 기본이고 공유 클러스터는
     # 전부 unchecked.
+    # 2026-10-30: "원 설정" 아키텍처 전환 — `_act_circle` 액션 자체가 메인 캔버스
+    # 에서 제거됐다(원 편집은 "원(Zone) 설정..." 모달에서만 가능). `_active_tool`
+    # 은 "편집 도구 없음(조회 전용)" sentinel로 그대로 "circle" 값을 유지한다.
     assert zone._active_tool == "circle"
-    assert zone._act_circle.isChecked()
+    assert not hasattr(zone, "_act_circle")
     assert not zone._brush_tools.act_brush.isChecked()
     assert not zone._brush_tools.act_eraser.isChecked()
     assert not zone._brush_tools.act_delete_region.isChecked()
