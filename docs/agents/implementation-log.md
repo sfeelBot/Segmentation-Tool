@@ -7081,3 +7081,54 @@ QA.md의 cProfile 분해와 같은 단위로 두 targeted 연산만 직접 분�
   유발할 수 있다.
 - 검증 에이전트 확인 필요: 위 재검증은 내가 직접 수행한 것으로, 리더
   지침상 별도 검증 에이전트의 확인 전까지는 "완료"로 보지 않음.
+
+## 2026-10-30 — BUG-047 Zone "원 설정" — 의미 없어진 확인팝업 제거
+
+- 상태: 완료(검증 에이전트 확인 필요).
+- 대상: `feature/zone-analysis-tab` 브랜치, 워크트리
+  `D:/segmentation model-zone-analysis-tab`.
+- 배경: 검증 에이전트가 2026-10-30 레시피 아키텍처 전환 라운드(스펙
+  3번, `da25f5f`) 골든패스 검증 중 발견한 P3. `ZoneAnalysisTab.
+  _on_open_recipe_dialog()`가 메인 캔버스에 원이 있을 때 "기존 원
+  발견 / 기존 원을 레시피로 교체하시겠습니까?"
+  (`zone.existing_circles_title`/`_msg`) 확인팝업을 먼저 띄웠는데,
+  이 문구는 모달이 디스크의 "최근 레시피"를 자동 로드하던 구
+  아키텍처(2026-10-01 라운드 E) 시절 그대로였다. 이번 라운드로 모달이
+  항상 `initial_circles=existing`(현재 화면 원)으로 시작하도록
+  바뀌면서 "교체" 개념 자체가 없어져, "예"를 눌러도 레시피로 교체되지
+  않고 모달이 그냥 현재 원을 보여줄 뿐이었고, "아니오"를 누르면 모달
+  자체가 전혀 열리지 않아 스펙에 없는 의미 없는 게이트로 남아있었다.
+- 조사: `_on_open_recipe_dialog()` 코드와 `ZoneRecipeDialog` 생성자를
+  직접 읽고, 디스크 자동 로드 폴백이 다른 경로로 아직 남아있는지
+  grep으로 확인했다 — 모달 내부에 `initial_circles`가 빈 경우에만
+  쓰는 최근 레시피 폴백이 있지만, 이는 메인 탭의 "기존 원 있음"
+  분기와는 무관(메인 캔버스에 원이 있으면 항상 `existing`을 넘겨
+  그 폴백이 작동할 일이 없음). 확인팝업을 되돌릴 근거 있는 용도를
+  찾지 못해 YAGNI로 완전 제거를 선택(과설계 금지, 가장 단순한 수정).
+- 변경 내역:
+  - `app/tabs/zone_analysis_tab.py`: `_on_open_recipe_dialog()`에서
+    `QMessageBox.question` 확인 분기 삭제 — 버튼 클릭 시 바로
+    `ZoneRecipeDialog`를 연다.
+  - `app/core/i18n.py`: 다른 호출부가 없음을 grep으로 재확인 후
+    `zone.existing_circles_title`/`zone.existing_circles_msg`(한국어/
+    영어 양쪽) 키 삭제.
+  - `tests/test_zone_set_circles_architecture_2026_10_30.py`: 회귀
+    테스트 `test_open_recipe_dialog_skips_confirm_popup_when_circles_
+    exist` 추가 — `QMessageBox.question`이 호출되면 즉시 터지는
+    가드를 걸어두고, 캔버스에 원이 있는 상태로 `_on_open_recipe_
+    dialog()`를 호출해 팝업 없이 모달이 현재 화면 원(`initial_
+    circles`)으로 바로 열리는지 확인.
+  - `QA.md`: BUG-047을 Open Issues에서 Closed Issues로 이동, 근본
+    원인/수정 내용 기록.
+- 검증: `python -m py_compile app/tabs/zone_analysis_tab.py
+  app/core/i18n.py` 통과. `pytest tests/test_zone_set_circles_
+  architecture_2026_10_30.py -q` 11 passed(신규 회귀 테스트 포함).
+  `pytest tests/ -k zone -q` 85개 중 84 passed — 유일한 실패
+  `test_zone_step_indicator.py::test_steps_complete_in_order_as_ckpt_
+  image_circles_are_set`는 `git stash`로 수정 전 코드를 복원해 동일하게
+  재현됨을 직접 확인한 기존 무관 버그(이번 수정과 무관, 손대지 않음).
+- 커밋: `8dbcba2` — "fix: Zone "원 설정" 모달 — 의미 없어진 "기존 원
+  발견" 확인팝업 제거 (BUG-047)".
+- 검증 에이전트 확인 필요: 위 테스트/회귀 확인은 내가 직접 수행한
+  것으로, 리더 지침상 별도 검증 에이전트의 확인 전까지는 "완료"로
+  보지 않음. push는 하지 않았다 — 리더가 사용자 확인 후 직접 push.
