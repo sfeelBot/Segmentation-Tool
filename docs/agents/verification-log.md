@@ -7480,3 +7480,35 @@ exec()` 인스턴스 호출이라 정적 `QMessageBox.question()` 모킹만으�
 체크) PASS. 구현 에이전트가 보고한 "MainWindow 생성 블로커"는 실제 디스플레이
 환경에서 재현되지 않아 환경 특이 현상으로 결론. 리더가 버전/CHANGELOG/push만
 판단하면 됨.
+
+## 2026-10-30 — Zone 분석 탭 "레시피 아키텍처+레이아웃" 라운드 골든패스 검증 (feature/zone-analysis-tab)
+
+- 범위: 리더가 지정한 9건(체크포인트바 1행 통합, 패널 비율/폭 상한 제거, 메인
+  캔버스 원편집 제거→"원(Zone) 설정" 모달 일원화, 모달 내 링/중심부 직접
+  클릭 네이밍, "바깥쪽" 존 완전 제거, "전체 결과 보기" QThread 비동기화,
+  이미지 전환 캐싱 2건, "현재 이미지만 추론" 신규 버튼, QThread 워커
+  closeEvent 크래시 수정) — 스펙:
+  `docs/specs/zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md`.
+- 세션이 rate limit로 1회 중단됐다가 재개됨(이전 중단 시점엔 실제 작업이
+  전혀 진행되지 않았음을 세션 로그로 확인 후 처음부터 진행).
+- 방법: `python main.py` 직접 조작 대신(비대화형 환경 — 실 플랫폼 QApplication
+  생성 시 디스플레이 미부착으로 무한 대기하는 것을 확인해 `QT_QPA_PLATFORM=
+  offscreen`으로 전환) QTest 기반 실제 마우스 드래그/클릭 + 위젯 `grab()`
+  스크린샷으로 골든패스 11개 항목을 전부 조작 재현. 체크포인트/실모델 없이도
+  `engine.run_sliding_window`를 몽키패치해 `_ZoneInferenceWorker`/
+  `_ZoneViewAllWorker`(둘 다 실제 QThread) 경로를 그대로 태웠다(순수 로직
+  스킵 아님). 검증 스크립트: `C:/Users/Feel/AppData/Local/Temp/claude/
+  d--segmentation-model/7d22477b-1701-46e5-afbc-9a433ab94cb7/scratchpad/
+  zone_verify_2026_10_30.py` (PASS 41 / FAIL 0, 결과 JSON 같은 폴더
+  `zone_verify_result.json`), 스크린샷 6장 `.../scratchpad/zone_shots/`.
+- 체크리스트 11개 전부 PASS(세부 항목별 결과는 리더 보고 참고). 추가로
+  BUG-043~045와 달리 크래시/데이터유실은 없었으나, 항목 4("원(Zone) 설정"
+  모달 오픈) 검증 중 기존 원이 있을 때 뜨는 확인 팝업 문구가 구 아키텍처
+  시절("최근 레시피로 교체") 그대로 남아 실제 동작(현재 화면 원을 그대로
+  보여줄 뿐)과 어긋나고, "아니오" 응답 시 모달 자체가 열리지 않는 게
+  스펙에 없는 숨은 게이트임을 발견해 `QA.md` BUG-047(P3)로 등록.
+- 회귀 스모크: `MainWindow` 생성 후 6개 탭(상/하부분석·R분석·라벨링·학습·
+  추론·모델) 전부 전환 — 예외 없음, 종료 확인 팝업도 정상 동작.
+- 상태: PASS(블로커 없음) — BUG-047(P3, UX 문구/숨은 확인 게이트)만 신규
+  기록, 기능 자체는 전부 명세대로 동작. 커밋/push 가능 여부 판단은 리더
+  보고 참고.
