@@ -25,6 +25,62 @@
 > (`36a075d`) — 직전 (6)번 PPT 커밋(`96cd587`)과 동일한 관례. main →
 > `feature/zone-analysis-tab` 재동기화(이전 PR #39로 이미 들어간 구버전
 > PPT를 교체) 여부는 아직 사용자에게 안 물어봄, push 확인 시 같이 결정.
+> (이 라운드 자체가 바로 그 재동기화 — sync 브랜치 + PR #40으로 진행,
+> 아래 (8)/(7)번 항목도 함께 이 브랜치에 들어옴.)
+
+> **[2026-10-29 (8)] 학습 탭 모델/DataLoader 고정 (Attention U-Net +
+> workers=0) — 완료, 블로커 없음, commit+tag(`zone-v1.12.0`)+push까지 전부
+> 완료.** 사용자 요청: "zone branch에서는 학습 model을 Attention U-Net을
+> 고정으로 쓸 수 있게 해줘, DataLoader 0을 고정으로". 사용자가 "push까지
+> 한번에 진행"을 명시해 평소의 planner/implementer/verifier 서브에이전트
+> 분배 없이 **리더가 직접** 처리(AGENTS.md 리더 규칙 2의 "사소한 수정은
+> 리더가 직접" 예외 적용 — 2개 파일, 각각 한 군데씩의 국소 변경). 직전 라운드의
+> "고정" 해석 선례(배치모드 단순화 때 AskUserQuestion으로 확인한 "다른 선택지
+> 완전 제거, 하나만 남김")를 그대로 적용: `app/tabs/training_tab.py`의
+> `_model_combo`(현재 로드된 모델 + 전체 프리셋 선택)를 제거하고
+> `FIXED_MODEL_SOURCE = "preset:attention_unet"`로 고정(큐 추가 시 항상 이
+> 값 사용, UI엔 "Attention U-Net (2018) — 관심영역 집중 (고정)" 정적 라벨만
+> 표시), `app/widgets/config_form.py`의 `_num_workers` 스핀박스는
+> `setEnabled(False)`로 비활성화해 0 고정(완전히 숨기지 않고 "고정됨"을
+> 시각적으로 알 수 있게 유지). 헤드리스 스모크(큐에 작업 추가 →
+> `model_source == "preset:attention_unet"` 확인, `num_workers==0`+비활성화
+> 확인) 전부 PASS. `release.ini` 1.11.0→1.12.0 MINOR 버프(동작 고정은
+> main과 달라지는 에디션 전용 변경이라 기능 변경으로 취급) +
+> `generate_version_info.py` 통과, CHANGELOG `zone-v1.12.0` 추가, roadmap
+> "존(Zone) 분석 탭" 절에 항목 추가. **main에는 반영 안 함** — 에디션 전용
+> 고정값이라 역병합 대상 아님(AGENTS.md 원칙). 사용자가 미리 "push까지
+> 한번에" 승인해 커밋+태그 직후 바로 push까지 완료.
+
+> **[2026-10-29 (7)] 존 분석 탭 — 자동검출 버튼 삭제·배치 모드 단순화
+> (추론/모델 의존성 제거)·존 숨기기/이름변경·레시피 확장·결과 이미지 일괄 저장
+> 완료, 블로커 없음, commit+tag(`zone-v1.11.0`)까지 완료, push는 사용자 확인
+> 대기.** 사용자 요청 9건: ① 민감도 옆 자동검출 버튼 삭제 ② 배치 적용 시
+> 추론 선행 요구 제거 ③ 배치 옵션을 '고정'으로 통일 ④ 배치 후 개별 이미지
+> 수정 가능(확인 결과 이미 가능) ⑤ 존별 비율 패널에서 불필요 영역 삭제
+> ⑥ 중심부/링1/링2 이름 변경 ⑦ 레시피화+저장 ⑧ 최근 레시피 자동 선택(확인
+> 결과 이미 있음) ⑨ 레시피 이름 기본값 `날짜_recipe`. 중간에 추가 요청(결과
+> 이미지 일괄 저장 버튼)도 같은 라운드에 합류. 애매한 지점 2개는
+> AskUserQuestion으로 확인: (A) 배치 모드 3종 중 '장별 개별 자동검출'을
+> 완전히 제거하고 고정 배치 하나만 남기기로 결정 (B) 존 "삭제"는 원을 지우는
+> 파괴적 삭제가 아니라 원은 유지하고 패널/Excel 내보내기에서만 숨기는
+> 비파괴 방식으로 결정. planner가 스펙(`docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md`)
+> 작성 중 사전조사 오류 1건을 스스로 정정(레시피엔 이미 이름이 저장되고
+> 있었음, `hidden`만 추가하면 됨)과 설계 결정 1건(배치 완료 후 UX A/B)을
+> 남겨 사용자에게 재확인 — A(단순 확인 메시지) 선택, `decisions-needed.md`
+> 항목 즉시 삭제. implementer+designer를 병행 호출했고, 디자인 피드백 2건
+> (배치 그룹박스 제목 문구, 숨긴 존 행 표시 방식)을 구현 중인 에이전트에게
+> 전달. **운영 실수 1건**: 디자인 피드백을 전달할 때 SendMessage 대신 Agent
+> 도구로 새 implementer를 중복 기동했다가, 같은 파일을 동시에 건드릴 위험을
+> 깨닫고 코드 수정 전(.py 파일 미접촉 확인)에 즉시 TaskStop으로 중단 — 이후
+> 정상적으로 기존 에이전트에 SendMessage로 재전달. verifier가 실제 Qt
+> 플랫폼(오프스크린 아님)으로 골든패스 44개 항목 전부 재현 확인(PASS, 버그
+> 없음) — implementer가 보고한 "MainWindow 생성 120초 무응답" 블로커는
+> 재현 안 됨(원인: 검증 스크립트의 `close()` 호출이 종료 확인 모달을
+> 띄워 블로킹된 것, 앱 버그 아님). deployer가 `release.ini` 1.10.0→1.11.0
+> MINOR 버프 + CHANGELOG + 태그(`zone-v1.11.0`)까지 로컬 완료, push는 보류.
+> 구현 커밋 3개가 attribution 트레일러를 빠뜨린 걸 발견해 push 전 비대화형
+> `git rebase --exec`로 직접 수정(아직 미push라 히스토리 재작성 안전).
+> `docs/roadmap.md` "존(Zone) 분석 탭" 절에 이번 라운드 항목 추가 완료.
 
 > **[2026-10-28 (6)] 학습·추론·Top/Bottom분석·R분석 탭 — 버튼 순서
 > 가이드 MD + 도식화 PPT 작성 완료, 블로커 없음, commit만 완료(push는
@@ -363,71 +419,342 @@
 > **전부 통과**. BUG-016(무인제거 후 `data\logs` 잔존)도 같이 해결·확인. 커밋
 > `5730b6b`(feat)+`8e70d76`(docs). **QA.md Open은 BUG-004(P3)·BUG-026(P1)·
 > BUG-027(P2)·BUG-028(P3) — BUG-029/030/031/016은 전부 Closed.**
+> **[2026-10-26] "R 분석" 신규 탭 — 기획→디자인→구현→검증 전부 완료, 커밋+태그
+> 완료(`zone-v1.6.0`), push는 사용자 확인 필요.** 사용자 요청: 존 분석 탭과 나란히
+> 쓰일 신규 탭, 핵심은 여러 이미지를 "셀" 단위로 묶어 셀 내 면적 합계를 분자로
+> `R_cell = sum(area)/분모`를 셀당 1회만 계산해 스펙 상/하한과 비교한 합/불 판정.
+> Plan 서브에이전트로 재사용 패턴·데이터모델·파일목록 설계 → 핵심 결정 2건(ROI
+> 일괄적용 범위=전역, 셀 판정=면적합계 기준 1회계산) 사용자 확인 → designer가 Artifact
+> 목업 4라운드 반복(검사설정 팝업 분리, 중앙 이미지뷰어 확대+좌1:중3:우1, 캔버스 위
+> 역할별 플로팅 오버레이 3클러스터, 선택 셀 종속 결과블록) 후 사용자 최종 승인 →
+> planner가 `docs/specs/r-analysis-tab-2026-10-26.md` 작성 → implementer 2라운드
+> (①core+widgets 7개 파일 ②탭 조립+`main_window.py`/`i18n.py` 등록) → verifier
+> 독립검증에서 BUG-043(P0, 세션 "새로 만들기" 시 메모리 상태가 빈 세션으로 덮어써져
+> 자동저장까지 되는 데이터손실)/BUG-044(P1, 캔버스 플로팅 오버레이 겹침으로 Undo
+> 버튼 클릭 불가) 발견 → implementer 수정 → verifier 독립 재검증 PASS, `QA.md`
+> Closed. `docs/roadmap.md`에 신규 절 추가, `docs/CHANGELOG.md` zone-v1.6.0 항목
+> 작성, `release.ini` 1.5.2→1.6.0 MINOR 버프(신규 탭=기능추가) +
+> `generate_version_info.py` 검증 통과 후 리더가 직접 커밋(`a559695`)+태그
+> (`zone-v1.6.0`). 사용자 확인 후 push 완료(`3823479`까지).
 >
-> **다음 착수 후보 1순위: BUG-026(P1, 학습 Stop 시 1epoch 미만이면 체크포인트/지표
-> 전혀 저장 안 됨) / BUG-027(P2, 일괄추론 워커가 GUI스레드 아닌 곳에서 QPixmap
-> 생성)** — 둘 다 코드리뷰+통합회귀검증(2026-08-29)에서 실제 재현 확인된 회귀,
-> 아직 아무에게도 수정 위임 안 함. 그 외 GitHub 이슈는 전부 처리 완료(#12/13/14/
-> 15/16/17 Closed, #22 완료, #5는 보류 유지, #23은 모델탭분리 부분만 의도적 미착수).
-> zone→main 동기화 PR #30은 여전히 미병합.
+> **[갱신, 2026-10-26] push 후 사용자가 "사용성 추가 UI 검증" 요청 → 크래시 1건
+> 발견·수정·재검증·커밋+태그+push 완료.** verifier에게 골든패스 재반복이 아닌
+> 엣지케이스/파괴적 조작/비정상 입력/반복 조작 중심 검증을 명시적으로 요청 →
+> BUG-045(P1) 발견: 배치 검출 버튼을 처리 중 재클릭하면 워커 스레드가 교체되며
+> 기존 워커가 유령 상태로 계속 돌아 두 QThread가 같은 이미지를 동시 처리해
+> 크래시(3/3 결정적 재현). 그 외 파괴적 삭제/분모=0·스펙역전·ROI 경계 밖/반복
+> 클릭·셀 전환 레이스는 전부 PASS(사용성 개선 후보 3건은 QA.md 미등록, 참고용).
+> implementer가 `_run_batch_detect()`에 재진입 가드 + 배치 중 버튼 비활성화로
+> 수정 → verifier가 구현자의 스크립트 해석을 그대로 믿지 않고 신규 독립 스크립트로
+> 재확인(23체크 PASS, 정상 재실행 회귀 없음 확인) → PASS. `release.ini`
+> 1.6.0→1.6.1(PATCH, 버그수정) + `docs/CHANGELOG.md` 항목 + `generate_version_info.py`
+> 검증 후 커밋(`6ca3ab5`)+태그(`zone-v1.6.1`)+push 완료.
 
-> **[최신, 2026-08-29] 세션 인계 캐치업 → 전반적 코드리뷰 → 회귀 2건 발견 → GitHub
-> 이슈 정리 → 신규 이슈 기획+구현 착수, 진행 중.** 이번 세션에서 일어난 일을 시간순으로:
+> **[갱신, 2026-10-27] 사용자가 "딜레이/버벅임 확인 및 조치" 요청 → 실측 프로파일링으로
+> 심각한 성능 병목 2건 발견·수정·재검증·커밋+태그+push 완료.** verifier에게 느낌이
+> 아니라 실측 수치로 병목을 찾도록 지시 → **P0**: 브러시 스트로크를 커밋할 때마다
+> 누적된 모든 manual_strokes를 처음부터 재생 + 포인트마다 이미지 전체크기 배열 재할당
+> → 4000×3000 이미지 기준 스트로크 #30에서 단일 release가 14.5초 멈춤, 30개 누적
+> 191초. **P1**: 대형 이미지 전환 시 cv2/QPixmap 이중 디코드+캐시 없음(286~538ms/전환).
+> implementer가 `RRoiCanvas.effective_mask()`에 증분 캐시(전체 재생 금지, 새 스트로크
+> 1개만 추가 적용) + 공유 모듈 `zone_metrics.disk_mask()`를 바운딩박스 기반으로
+> 최적화(반환값 수학적으로 동일) + `_cv2_imread_cached` LRU(Zone R-PERF-1과 동일 관례)로
+> 수정. **공유 모듈을 건드렸으므로 Zone 탭 회귀가 최우선 리스크** — verifier가 신/구
+> `disk_mask()`를 12가지 좌표/반경 조합으로 직접 `np.array_equal` 비교(전부 일치) +
+> Zone 탭 QTest 55개 재실행(전부 통과)으로 독립 확인. 결과: 스트로크#30 14.5초→34ms
+> (428배), 누적 191.5초→1.0초, 이미지 전환 286~538ms→69.8ms(cold)/11ms(warm).
+> 캐시 무효화(undo/재검출) 경로의 "틀린 마스크 표시" 버그도 없음 확인. `release.ini`
+> 1.6.1→1.6.2(PATCH, 성능개선) + `docs/CHANGELOG.md` 항목 + `generate_version_info.py`
+> 검증 후 커밋(`0eb148a`)+태그(`zone-v1.6.2`)+push 완료.
+
+> **[2026-10-07, 이전] BUG-040 추가 개선(perf `0f1e995`) 독립검증 PASS(부분 개선,
+> Open 유지) — 이번 VOC 라운드 실질 종료, push는 사용자 재확인 필요.** verifier가
+> 실 GPU+실데이터로 재확인: 캐시 적중 상태 5472px 선택 지연 921ms→**462ms(-50%)**,
+> 2048px도 171→100ms로 회귀 없이 개선. `_recompute_zones`/`zones_from_circles`
+> 중복 호출 제거 + `np.unique` 교체 조치가 실측으로 확인됨. 결과 정합성 골든
+> 비교(대형 37건+소형 27건) diff 0건, `_suppress_recompute` 플래그 부작용 없음(실제
+> UI로 7개 경로 확인), 단일 Excel 내보내기 정상. 남은 ~0.46초는 `set_state()`가
+> 트리거하는 `_recompute_zones` 1회(0.22초, 구조적으로 더 줄이려면 sidecar 복원
+> 흐름 자체를 바꿔야 해 리스크 대비 이득이 작음) + `np.unique`(0.09초, verifier는
+> `np.bincount`나 `_target_cache`에 `detected_ids` 동봉 제안) + 원본 디코드/썸네일
+> (0.1초, 필수 비용) — **BUG-040은 P3 Open 유지**(완전 해소는 아니나 체감 개선은
+> 명확, 추가 작업은 사용자 판단에 맡김).
 >
-> 1. **세션 인계 캐치업 완료**: 다른 세션/도구로 진행되던 작업(라운드4 #12/#15/#16/#17,
->    GitHub #23, 일괄 양품화, main/zone 버전관리 분리, installer splash, Python 3.12
->    빌드 안정화 등)을 리더 로그·QA.md·decisions-needed.md로 재구성해 파악.
->    `docs/USER_MANUAL.md`에 커밋되지 않은 손상된 변경(가짜 36줄 매뉴얼로 통째 교체)을
->    발견해 `git checkout`으로 원복. 로컬 main이 origin보다 1커밋 앞선 상태를 push
->    (`c984f7e`까지 반영). `roadmap.md`의 "exe 패키징" 절이 실제로는 v1.9.0~v1.10.5에
->    걸쳐 대부분 완료됐는데 문서만 "추후 착수"로 방치돼있던 것을 발견해 최신화(`14f521a`).
-> 2. **zone 세션 점검 + main 동기화**: `fix/zone-voc-4-connectivity` 브랜치가
->    `feature/zone-analysis-tab`과 **바이트 단위로 완전히 동일한 수정을 중복 작업**한
->    것을 발견 → 사용자 확인 후 삭제. `feature/zone-analysis-tab`의 로컬 6커밋을
->    origin에 push, main의 신규 커밋 4개를 sync 브랜치+PR(#30, 미병합)로 zone에 전달
->    준비 완료(CLAUDE.md 에디션 브랜치 규칙 그대로 적용).
-> 3. **전반적 코드리뷰(`/code-review high v1.8.0..HEAD`) 완료**: 8개 파인더 에이전트가
->    정확성/재사용/효율/altitude 관점에서 main의 v1.8.0 이후 누적 변경 전체를 스캔.
->    다수 발견 중 핵심은 아래 4의 통합 검증에서 실제 재현 확인됨.
-> 4. **main 앱 통합 회귀 검증 + zone 앱/installer 검증(둘 다 verifier, 완료)**: main은
->    pytest 전체(77건, 개별 실행 시 전부 통과 — 단 전체를 한 프로세스로 돌리면 DLL
->    충돌로 수집이 깨지는 테스트-인프라 이슈 발견) + 골든패스 스모크 + 기존
->    `install-test-1.10.5` 재기동 확인, 전부 통과했으나 **회귀 2건 확정**: **BUG-026
->    (P1)** 학습 중 Stop 시 1 epoch도 못 채우면 체크포인트/지표 파일이 전혀 저장 안
->    됨(커밋 `450f520` 회귀), **BUG-027(P2)** 일괄 추론 워커가 GUI 스레드가 아닌
->    백그라운드 스레드에서 `QPixmap` 생성(커밋 `ca30948` 회귀, Qt 스레딩 규칙 위반,
->    이 환경에선 크래시 미재현이나 다른 백엔드에서 위험). **BUG-028(P3)** pytest
->    전체 스위트 실행 순서 의존 DLL 충돌(실제 앱은 무관). 3건 모두 `QA.md` 등록,
->    Open. zone은 **실제 `build.bat` 전체 완주로 zone installer(v1.3.1) 신규 빌드 +
->    무인설치+2분 이상 기동+Zone 분석 탭 GUI 골든패스(스크린샷 포함)까지 전부 통과**,
->    이전에 기록됐던 "MainWindow 40초 지연"은 자동화 환경의 Qt 이벤트루프 한계였을
->    뿐 실제 성능 문제가 아니었음을 재확인(오기 정정). 아직 미착수: 위 회귀 2건의
->    수정(다음 라운드 후보).
-> 5. **GitHub 이슈 전수 확인 + 정리**: Open 9건 확인 → **#12/#13/#14/#15/#16/#17 전부
->    이미 구현+검증 완료된 상태임을 확인해 클로즈**(해결 커밋 링크와 함께 코멘트 후
->    close). **#23**은 대부분 완료(일괄추론/원본선표시/Best model저장/zone
->    sliding-window 기본값), "모델 탭 분리" 부분만 #5와 동일 사유로 의도적 미착수.
->    **#5**는 기존 보류 결정 유지. **신규 발견 #22**(installer 기존버전 체크) —
->    사용자 결정(확인 후 구버전 자동제거+재설치, BUG-016 잔존파일 문제도 같이 고치기)
->    확보 후 planner→implementer로 착수. 코드리뷰에서 나온 **#16 후속**(retry 헬퍼가
->    export만 적용되고 import/image_browser/annotation_store/trainer의 다른 쓰기
->    경로엔 미적용)도 함께 기획→구현 착수. **zone 분석 탭에 라벨링 스타일 편집 도구
->    (원 편집+브러시+지우개+블랍삭제+Undo)가 이미 구현·검증돼 있음을 확인**(사용자
->    질의에 답변, 실제 스크린샷 4장 세션에 표시).
-> 6. **#16 후속 구현 완료(검증 대기)**: `app/core/file_io.py` 신설(`retry_on_permission_error`/
->    `atomic_write`) + `export_dialog.py`/`import_dialog.py`/`image_browser.py`(2곳)/
->    `annotation_store.save()`/`trainer.py`(체크포인트 2곳) 재시도·원자적쓰기 적용,
->    `set_ok_and_clear_annotations()`도 같은 헬퍼로 리팩터링해 중복 제거. 신규 테스트
->    `tests/test_file_io_retry.py`(8건, 실제 OS 파일락 스레드로 재시도 검증 포함).
->    구현자가 `build/venv` 인터프리터로 `pytest tests/` 전체(85건) 실행 — **DLL 충돌
->    없이 전부 통과**(BUG-028이 Anaconda의 잘못된 torch 버전 때문이었다는 가설을
->    추가로 뒷받침). 미커밋, verifier 위임 대기. **#22(installer 기존버전+BUG-016)는
->    아직 구현 진행 중**(implementer 완료 로그 전). **BUG-026/027 수정은 아직 누구에게도
->    위임 안 함 — 다음 착수 후보 1순위**(P1/P2, 실사용 영향 있음).
->    `decisions-needed.md` 비어있음(직전 #22 결정 완료로 삭제). 커밋 대기 중인 로컬
->    문서 커밋 2개(`9056b14`, `14f521a`)는 사용자가 "보류" 선택해 여전히 미push.
+> 부수 발견 — verifier가 전체 테스트 중 `tests/test_build_release.py`가
+> `generate_version_info._git()`의 `subprocess.run()` stdin 미지정으로 이 에이전트
+> 셸 환경에서 간헐적(5회 중 3~4회) `OSError: WinError 6` 플레이키를 일으키는 걸
+> 발견(이번 성능 수정과 무관, 수정 전 커밋으로도 재현 확인). **리더가 직접 1줄
+> 수정**(`stdin=subprocess.DEVNULL`, CLAUDE.md 2번 규칙 — 사소한 수정) + 5회 반복
+> 실행으로 전부 통과 확인, `QA.md`에 Closed 기록.
+>
+> **종합**: 사용자 VOC 2건(선택 딜레이/배치 응답없음) 전부 실측 개선 확인,
+> BUG-030 재발 없음, 이 라운드가 만든 회귀(037/038/039) 전부 수정+독립검증 PASS.
+> 남은 Open 항목(BUG-040/041/042, 전부 P3 — 표시/잔여성능, 데이터 손실·크래시
+> 없음)은 기존 프로젝트 관례대로 백로그 유지가 기본 판단.
+>
+> **[갱신, 2026-10-07] push 완료, 이번 VOC 라운드 종료.** 사용자 확인으로
+> `7ff8a4b..7b436c8`(perf `0f1e995`+docs `8f2987e`+stdin 플레이키 수정 `7b436c8`)를
+> `origin/feature/zone-analysis-tab`에 push 완료. BUG-040/041/042(P3) 백로그
+> 유지 여부는 사용자 답 대기 — 다음에 확인되면 그대로 두거나 추가 라운드 진행.
+>
+> **[2026-10-07, 이전] 상/하부 분석 탭 VOC 2건 — 구현+회귀수정+독립검증 전부 완료,
+> push 대기.** planner(스펙)→implementer(R-PERF-1 캐싱, R-PERF-2 2-워커 분리)→
+> verifier(실 GPU+실데이터, 20개 시나리오) 순서로 끝까지 진행. 결과:
+> - **이미지 선택 딜레이**: PASS. 2048px 330→164ms, 5472px 1.7→0.92초.
+> - **일괄 적용 간헐적 응답없음**: PASS. 최대 블로킹 575→124ms, BUG-030(과거
+>   CUDA+cv2 하드크래시) 재발 0건.
+> - 1차 검증에서 이번 수정이 만든 회귀 2건(BUG-037 취소 후 재시작 시 결과 중복 P2,
+>   BUG-038 취소 시 "처리 중" 아이콘 잔존 P3) + 캐시 메모리 무상한(BUG-039 P2) 발견
+>   → 즉시 추가 implementer 라운드로 수정(`a736334`) → 독립 verifier 재검증
+>   (`85ce996`)으로 PASS 확인, 회귀 0건.
+> - 재검증 중 새 P3 2건 추가 발견(둘 다 사소한 표시 오류, 데이터 손실·크래시 없음):
+>   **BUG-041**(이번 수정 부작용 — 취소 시 아직 처리 안 된 이미지 상태를 되돌릴 때
+>   "처리 중"만이 아니라 이미 "완료" 배지였던 이미지까지 함께 `pending`으로 리셋됨,
+>   표시만 틀리고 결과/사이드카는 보존됨) / **BUG-042**(R-PERF-2 때부터 있던 기존
+>   문제, 이번 회귀 아님 — 진행 막대가 간헐적으로 뒤로 감).
+> - 잔여 선택 딜레이(BUG-040, P3, 기획 단계에서 "2차 개선"으로 범위 밖 지정)와
+>   BUG-041/042(P3, 표시 오류만)는 기존 프로젝트 관례(BUG-003/004/029 등 P3 경미
+>   항목 Open 유지)대로 백로그에 남기는 게 기본 판단 — **사용자에게 041/042도 지금
+>   고칠지 백로그로 둘지, 그리고 push 여부 확인 필요** (다음 액션).
+> - 전체 자동화 테스트(zone 56건, 전체 166건) 전부 통과. 커밋 전부 완료.
+>
+> **[갱신, 2026-10-07] push 완료 + BUG-040(잔여 선택 딜레이) 추가 개선 착수.**
+> 사용자가 push 진행 확인 + "이미지 선택 딜레이 여전히 느린 것 같다, 더 개선할
+> 여지 없나" 질의 → `2c1aa70..7ff8a4b`를 `origin/feature/zone-analysis-tab`에 push
+> 완료. BUG-040은 verifier가 이미 cProfile로 원인을 정확히 특정해둠(QA.md) — 캐시
+> 적중 후에도 0.92초 중 `_recompute_zones()` 중복 호출(2회, 0.59초,
+> `zones_from_circles` 총 4회) + `_setup_target_classes()`의
+> `set(raw_class_map.ravel().tolist())`(0.13초+) + 원본 디코드(0.1초)가 남음. 추가
+> planner 불필요(원인·개선방향 이미 확정) — implementer에 직접 위임, 완료 후
+> verifier 재검증.
+>
+> **[2026-10-07, 이전] 사용자 VOC — 상/하부 분석 탭 일괄 적용 간헐적 응답없음 +
+> 이미지 선택 딜레이. 원인 조사 완료 → planner 위임.** 사용자가 "영역 지정 후 일괄
+> 적용 시 응답없음이 간헐적으로 발생하고, 이미지 선택할 때마다 딜레이가 있다"고 보고,
+> 검증은 "여러 테스트를 마친 뒤 사용자 불편 없도록" 확인해달라고 명시. 리더가 코드
+> 직접 확인(위임 전 필수 요약·확인 절차): `zone_analysis_tab.py:_on_list_image_selected()`
+> →`_setup_target_classes`→`_on_target_changed()`가 캐시된 추론 결과가 있는 이미지를
+> 선택할 때마다 `engine.refilter()` + `compute_blob_labels()`(`cv2.connectedComponentsWithStats`,
+> 원본 해상도)를 **메인 스레드에서 동기 재계산** — 이미지 선택 딜레이의 원인으로 추정.
+> `_on_batch_image_inferred()`도 BUG-030 제약(CUDA 추론과 같은 스레드에서 cv2 금지)
+> 때문에 같은 cv2/numpy 존·블랍 후처리를 **메인 스레드**에서 돌리는데, 배치 중 이미지별
+> 처리가 끝날 때마다 메인 스레드가 묶여 이미지 수/해상도/블랍 복잡도에 따라 블로킹
+> 구간이 길어지면 Windows가 "응답 없음"으로 표시 — "간헐적" 증상과 일치.
+> 사용자에게 원인 추정 + 작업 범위(planner→implementer→verifier, 워크트리
+> `D:\segmentation model-zone-analysis-tab`, `feature/zone-analysis-tab` 커밋, push는
+> 별도 확인) 요약 후 확인받음("진행해줘"). **다음 단계**: planner 서브에이전트에
+> 위 두 지점(파일/라인/원인 포함)을 전달해 스레딩 설계(두 블로킹 지점 모두 CUDA
+> 호출이 끝난 뒤의 순수 cv2/numpy라 BUG-030과 별개 워커 스레드로 옮겨도 안전할
+> 것으로 추정됨 — planner가 확인) + 스펙 작성 위임. 완료되면 구현(+필요시 디자인
+> 병행)→검증(사용자가 명시적으로 요청한 "여러 시나리오 반복 테스트" 포함) 순서로 진행.
+>
+> **[2026-08-31] push 상태 재확인 완료 + zone 사용자 매뉴얼 작업 진행 중(세션
+> 인계 메모).** 사용자가 "zone/main 변경점 전부 push 됐는지" 질의 → 재확인 결과 **main은
+> `origin/main`과 완전 동기화, zone(`feature/zone-analysis-tab`)도 `origin/feature/
+> zone-analysis-tab`과 완전 동기화**(둘 다 ahead/behind 0, `ba8bf5e` 기준 PR #33 반영분까지
+> 이미 push 완료 — 위 2026-08-31 항목 참고). 미커밋 상태인 것은 아래 매뉴얼 작업 산출물뿐.
+>
+> **진행 중인 작업 — Zone 에디션 사용자 매뉴얼**: 사용자 요청("zone 세션이라도 라벨링/학습/
+> 추론 전체 흐름 포함, 실제 UI 캡처+번호 마커, html, 검토 에이전트 피드백 최대 1회(맞춤법+
+> AI티만 확인) → 최종본 → README에 링크 → push")에 따라 implementer 서브에이전트(id
+> `a34a5f5ef24c40317`, model=opus, `run_in_background: true`)를 `D:\segmentation
+> model-zone-analysis-tab`(HEAD `8787b24` 기준)에서 백그라운드로 기동함. 지시 내용: 실제
+> `python main.py` 구동 → 5개 탭 실사용 순서(프로젝트 시작→모델→라벨링→학습→추론→존분석,
+> 존분석 최상세: 원 검출/편집(우클릭 지름변경 포함)/3단계 배치모드/5모드 배타 툴바/Undo/
+> threshold/사이드카 자동저장/배치 Excel 내보내기)로 조작하며 실캡처 → PIL로 정확한 위젯
+> 좌표 기반 번호 마커 합성(추측 좌표 금지) → `docs/USER_MANUAL_ZONE.html` +
+> `docs/manual_assets_zone/*.png`(상대경로 참조, base64 금지)로 조립. **README 수정과 push는
+> 하지 말라고 명시** — 검토 1라운드 후에 진행하는 단계이므로. 이 로그를 쓰는 시점 기준 해당
+> 에이전트는 여전히 `running`(30분+ 경과, 다른 백그라운드 에이전트 없음). **세션이 끊기고
+> 새 세션이 이어받는 경우**: `ListAgents`로 `a34a5f5ef24c40317` 상태 확인 → 완료돼 있으면
+> 산출물(`docs/USER_MANUAL_ZONE.html`, `docs/manual_assets_zone/`) 검토 → 아직 없으면
+> `SendMessage`로 같은 에이전트에 진행 상황 질의(새로 스폰 금지, 중복 방지) → 완료 시 다음
+> 순서: (1) 검토 전용 에이전트(스코프를 맞춤법/문법 + "AI가 쓴 티가 나는지"로만 한정, 그 외
+> 지적 금지) 1라운드 → (2) 피드백을 implementer에 SendMessage로 전달해 최종본 반영 → (3)
+> README.md에 매뉴얼 링크 추가 → (4) `feature/zone-analysis-tab`에 커밋+push(이 브랜치는
+> 이미 명확하므로 재확인 없이 진행 가능, 최근 패턴과 일치).
+>
+> **아직 미착수 — 사용자가 "추후 개발 방향성으로만 기록"이라 명시적으로 보류시킨 4건**
+> (`docs/roadmap.md` "향후 확장 후보" 절에 아직 기록 안 됨, 매뉴얼 작업 도중 컨텍스트
+> 정리로 미룬 상태): ①추론 도구에서 블랍 클릭 선택 ②Zone 편집 도구가 라벨링 탭과 같은
+> "annotation 수정 가능한 구조"인지 확인/정비 ③Excel 내보내기에 zone별 blob 크기+AI score
+> 추가 ④사람이 수동 편집(브러시 등)한 영역은 export 시 해당 blob 평균값으로 대체. **다음
+> 세션에서 매뉴얼 작업이 끝나면 이 4건을 roadmap.md에 기록하는 것도 마저 처리할 것.**
+>
+> **[갱신, 2026-08-31] 매뉴얼 초안 완료 → 검토 1라운드 착수.** implementer 에이전트
+> (`a34a5f5ef24c40317`)가 세션 리밋 이후 재개돼 마무리 완료(커밋 `73c9606`, push/README
+> 미반영). PNG 32장(HTML 참조와 1:1), 존 분석만 21장으로 최상세. 배치 결과 모달
+> `exec()`가 캡처 자동화 이벤트루프와 충돌하는 문제는 **앱 코드 수정 없이** 하네스 쪽에서
+> 비모달 우회로 해결(사용자 실사용에는 영향 없는 자동화 한계일 뿐, 버그 아님). 미촬영 1건
+> (`30_zone_batch_progress`, 진행창 — 캐시로 배치가 즉시 끝나 표시 임계시간 미달)은 텍스트
+> 설명으로 대체. **사용자 지시대로 검토 에이전트 1라운드 착수** — 스코프를 맞춤법/문법 +
+> "AI가 쓴 티가 나는지" 이 둘로만 엄격히 제한(스크린샷 정확성·구조·기능 설명은 검토 대상
+> 아님을 프롬프트에 명시)한 general-purpose 에이전트(`ab2184a2623559c68`, 백그라운드) 기동.
+> 결과 도착 시: (1) 피드백을 implementer에 SendMessage로 전달해 최종본 반영 → (2)
+> README.md에 매뉴얼 링크 추가 → (3) 커밋+push. **1라운드 제한이므로 이 결과가 반영된
+> 이후엔 추가 검토 라운드를 새로 열지 않는다.**
+>
+> **[갱신, 2026-08-31] 검토 완료 → 최종본 반영 → README 링크 → push까지 전부 완료.**
+> 검토 에이전트(`ab2184a2623559c68`) 결과: 조사 오류 1건(“%” 뒤 “이”→“가”, 문서 내 다른
+> 3곳과 표기 불일치) 외 발견 사항 없음("AI가 쓴 티" 없다고 판정 — 구어체 지시문 일관,
+> 상투적 전환구·번역투 없음). 1줄 수정이라 implementer 재위임 없이 **리더가 직접 수정**
+> (CLAUDE.md 2번 규칙 — 사소한 1~2줄 수정은 리더 직접 처리). README.md에 매뉴얼 링크
+> 추가. 커밋 후 `origin/feature/zone-analysis-tab`에 push 완료. **Zone 에디션 사용자
+> 매뉴얼 작업 전체 종료.**
+>
+> **[최신, 2026-08-31] 보류했던 4건 착수 확정 — 기획 착수.** 사용자가 "기록하지말고
+> 그대로 계획, 개발, 구현해줘"로 명시 확정, 보류 해제. 4건: ①추론 탭 블랍 클릭 선택
+> ②Zone 편집 도구의 라벨링탭식 수정가능 구조 감사 ③Excel 내보내기에 zone별 blob 크기+
+> AI score 추가 ④수동 편집 영역은 blob 평균값으로 대체해서 export. planner 에이전트
+> (`a8386cdf84b2d3ae5`, 백그라운드)에 기존 관련 코드 위치(`BlobStat`/`InferenceResult`,
+> `zone_metrics.compute_blob_labels`/`apply_manual_strokes`/`export_zone_percentages_
+> to_excel`, `zone_canvas.py` blob_delete 모드, `inference_engine.export_blobs_to_excel`)
+> 전부 프롬프트에 포함해 위임. 스펙 산출물: `docs/specs/zone-blob-select-and-export-
+> 2026-08-31.md`. 완료 시 구현+디자인 병행 착수 예정.
+>
+> **[갱신, 2026-08-31] 기획 완료 → R1/R3 구현 병렬 착수, R2는 감사만으로 종료.**
+> planner(`a8386cdf84b2d3ae5`) 산출물: `docs/specs/zone-blob-select-and-export-
+> 2026-08-31.md`. **R2 결론: 이미 라벨링 탭과 구조적으로 동등(오히려 Undo 캡 없음·
+> 저장실패 알림 더 명시적이라 일부 우위) — 구현 불필요, 감사만으로 종료.** R1(추론 탭
+> 블랍 클릭 선택, `overlay_viewer.py`/`inference_engine.py`/`inference_tab.py`)과
+> R3(Zone Excel에 blob 크기+AI점수, 수동편집은 blob 평균으로 대체 —
+> `zone_metrics.py`/`zone_analysis_tab.py`/`zone_batch_result_dialog.py`)는 파일이
+> 겹치지 않아 implementer 2개를 병렬 기동(`a3accad59a8067192`=R1,
+> `a6a66cba72d95e270`=R3, 둘 다 백그라운드, 상세 설계를 스펙에서 그대로 따르도록
+> 지시, 자체 테스트 포함, push는 보류하고 커밋까지만). 둘 다 "주요 기능 추가"로
+> 분류돼 완료 후 실GUI 골든패스 검증 필요.
+>
+> **[갱신, 2026-08-31] R1/R3 구현 완료 → 검증 착수.** R1(`06dbd6a`+`5d6f9c1`)·R3
+> (`48f844e`+`d30d360`) 둘 다 구현 에이전트가 pytest 통과 확인 후 커밋 완료(push 안 함).
+> planner 산출물(스펙/roadmap/기획로그, planner는 git 권한 없어 리더가 대신 커밋
+> `ebda864`). verifier(`ad9ef53e73873089a`, 백그라운드)에 두 라운드 동시 검증 위임 —
+> 스펙의 완료기준 그대로, `python main.py` 실구동+QTest 실이벤트 기반(직접 메서드 호출
+> 검증 금지, BUG-022 전례 언급), R1은 Zone 탭 5모드 회귀까지, R3는 실앱에서 AI blob과
+> 순수수동 blob 둘 다 만들어 "N/A" 처리 확인, 기존 zones/zones_wide 시트 무회귀까지.
+> 통과 시 사용자 확인 후 push 예정.
+>
+> **[갱신, 2026-09-01] 검증 완료(세션리밋 재개) → R1/R3 push 완료 + BUG-030 원인 확정.**
+> verifier(`ad9ef53e73873089a`)가 재개 후 마무리: R1 전항목 통과, R3는 단일이미지 export
+> 전항목 통과했지만 배치 export가 결과 다이얼로그 오픈 직후 하드크래시(`BUG-030`,
+> P0 잠정 — 헤드리스 샌드박스 탓일 수도 있다며 대화형 재확인 필요로 등록)로 끝까지
+> 검증 못함. **리더가 직접 이어받아 원인 확정**: (1) `QT_QPA_PLATFORM` 미지정 실플랫폼
+> 재현 → 동일 크래시(`LASTEXITCODE=-1073740791`=`0xC0000409` STATUS_STACK_BUFFER_OVERRUN)
+> — 샌드박스 가설 기각. (2) `git worktree add`로 R3 이전 커밋(`5d6f9c1`, R1만 적용)
+> 재현 → 동일 크래시 — **R1/R3 회귀 아니라 배치처리→결과다이얼로그 경로의 선재
+> 버그로 확정**. QA.md BUG-030 갱신(P0 확정, 원인 조사 별도 착수 필요 명시).
+> **push 완료**(`19fd48f..6600fb6`, R1/R3 구현+기획산출물+검증기록 전부 반영).
+> **남은 것**: BUG-030 근본원인 조사·수정은 이번 4건 요청과 무관한 별도 이슈라 사용자에게
+> 우선순위 확인 후 착수 여부 결정 예정.
+>
+> **[갱신, 2026-09-01] BUG-030 근본원인 리더가 직접 격리 → 구현 위임.** 리더가 5개
+> 재현 스크립트(`scratchpad/repro_*.py`)로 원인을 결정적으로 좁힘: 트리거는 "①1번째
+> 실 CUDA 추론과 다른 스레드에서 2번째 실 CUDA 추론 → ②같은 스레드 안에서 곧바로 cv2
+> connected-components 등 후처리"의 조합뿐(셋 중 하나만 있으면 무재현, 3개 격리
+> 실험으로 각각 확인). `_ZoneInferenceWorker`(추론만, 후처리 없음, 안전)와
+> `_ZoneBatchWorker`(같은 스레드에서 추론 직후 cv2/numpy 후처리, 위험)의 유일한
+> 구조 차이가 바로 이것. `wait+sync+gc`/`deleteLater`/`del+sync`/
+> `KMP_DUPLICATE_LIB_OK` 4개 수정 시도는 전부 무효 확인(시간 낭비 방지 위해 QA.md에
+> 기록, 구현자가 반복 안 하도록). implementer(`aadc7a5bbfecf21b3`, 백그라운드)에
+> "cv2/numpy 후처리를 메인 스레드로 이동" 방향 권장 + 재현 스크립트 경로 + PowerShell
+> `$LASTEXITCODE` 확인법까지 정확히 전달(pytest로는 하드크래시를 못 잡으므로 실행
+> 재현이 유일한 검증 수단임을 명시). 완료 후 검증 에이전트가 다시 확인 후 push.
+>
+> **[갱신, 2026-09-01] BUG-030 구현 완료(`147ce67`+`0f0e63d`, push 안 함) → 독립 검증
+> 착수.** implementer가 리더의 원인 격리를 그대로 따라 `_ZoneBatchWorker`를 CUDA 추론
+> 전용으로 축소하고 cv2/numpy 후처리를 메인 스레드(`_on_batch_image_inferred`)로 이전,
+> 완료 판정을 `completed` 대신 `QThread.finished`로 통합. 검증 중 부수 발견한 재진입
+> 버그(`QProgressDialog.setValue()`의 내부 `processEvents()`가 큐드 `finished`를
+> 재진입 처리해 `self._batch_progress`가 중간에 `None`이 되는 경합)도 로컬 스냅샷으로
+> 함께 수정. 리더의 크래시 재현 스크립트로 자체 검증(수정 전 크래시 재현 → 수정 후
+> `LASTEXITCODE=0`) 완료했지만 CLAUDE.md 규칙상 독립 검증 필수 — verifier
+> (`a59db6bf6a73e6484`, 백그라운드)에 같은 재현 스크립트 독립 재실행 + 실GUI 골든패스
+> (배치 버튼 클릭/진행률/취소/에러배지/결과다이얼로그) + 회귀 전체 위임. **통과 시
+> 사용자 지시대로 push → 버전 재점검 → build.bat → GitHub Release(zone-v*) 순서로
+> 진행 예정.**
+>
+> **[갱신, 2026-09-01] 신규 요청 — Zone 편집 UX 개선 6건 + v1.5.0 확정.** 사용자가
+> 브러시 그리기 파란색 표시/지우기 회색+실제 블랍삭제/브러시 영역도 지우기 가능/AI+브러시
+> 블랍 둘 다 클릭선택/도구버튼 재클릭 시 토글 비활성화/자동검출 후 브러시 편집 안 먹히는
+> 버그까지 6건 요청, 전부 `1.5.0`으로 묶기로 확정. planner(`a2644273cfc2a5706`,
+> 백그라운드)에 위임 — 코드 감사부터(요청 2·3은 `apply_manual_strokes()` last-write-wins
+> 구조상 이미 부분 충족일 가능성 높아 추측 금지, 실제 추적 지시) 스펙 작성까지. BUG-030
+> 검증(`a59db6bf6a73e6484`)과 파일 겹칠 수 있음(둘 다 `zone_analysis_tab.py`/
+> `zone_canvas.py` 근처) — planner는 이번 라운드에서 코드를 고치지 않고 감사+스펙만
+> 하므로 충돌 없음, 구현은 BUG-030 검증 완료·push 이후로 순서 조정 예정.
+>
+> **[갱신, 2026-09-01] 사용자가 build+GitHub Release 업로드 요청을 취소함.** BUG-030
+> 수정 후 "push → 버전 재점검 → build.bat → zone-v* Release 업로드" 순서로 하기로
+> 했던 계획은 폐기 — 이후 라운드들은 **push까지만** 하고 별도 지시 없이 빌드/릴리스는
+> 진행하지 않는다. Zone 편집 UX 개선 6건(v1.5.0) 스펙은 계속 진행.
+>
+> **[갱신, 2026-09-01] BUG-030 검증 재시도.** 이전 verifier(`a59db6bf6a73e6484`)가
+> 세션 인터럽트로 중단·취소된 것을 확인(`SendMessage`로 재개 시도 시 "stopped by the
+> user, won't be resumed" 응답). 사용자에게 상황 보고 후 "이어서 진행해" 확인받아 새
+> verifier(`a1d3da4f357523247`, 백그라운드)를 동일 브리핑으로 재기동. 통과 시
+> push(build/release는 사용자가 취소함, push까지만).
+>
+> **[갱신, 2026-09-01] BUG-030 독립 재검증 통과 → push 완료(`326c3fc..656c838`).**
+> verifier(`a1d3da4f357523247`)가 크래시 재현 스크립트 독립 재실행(`LASTEXITCODE=0`)
+> + 실GUI 골든패스(진행률/취소/에러배지/결과다이얼로그, 구현자 테스트 재사용 안 하고
+> 별도 합성데이터로 재현) + 회귀 25건 전부 통과 확인. **BUG-030 완전 종료.** 이제
+> Zone 편집 UX 개선 6건(v1.5.0) 구현 착수 — 스펙(`docs/specs/zone-edit-ux-and-brush-
+> fix-2026-09-01.md`)의 실행순서 권고대로 R1(색상, zone_canvas.py 단독)·R2(도구
+> 토글, zone_analysis_tab.py 단독)·R4(버그 라이브 재현, 파일 무관)를 병렬 위임하고,
+> R3(블랍 클릭선택, 두 파일 다 건드림)는 R1/R2 완료 후 이어서 착수 예정.
+>
+> **[갱신, 2026-09-01] Zone 편집 UX R1/R2/R4 병렬 구현 착수.** R1(색상,
+> `a5733328bd665a949`, `zone_canvas.py` 단독)·R2(도구 토글, `a2612dae3498737e6`,
+> `zone_analysis_tab.py`의 `_on_edit_tool_changed` 근처만)·R4(자동검출 후 브러시
+> 안 먹히는 버그 라이브 재현, `a31490ddfd672a15f`, `_setup_target_classes()` 근처)를
+> 백그라운드 병렬 위임. R3(블랍 클릭선택, 두 파일 다 건드림)는 R1/R2 완료 후 착수.
+>
+> **[갱신, 2026-09-01] R1/R2/R4 검증 통과(`d697f49`) → R3 구현 완료(`0589058`+
+> `e68fff7`) → R3 검증 착수.** R1/R2/BUG-031 전부 실GUI 골든패스+회귀 통과(verifier가
+> 별도 워크트리로 R3와 격리해 검증). R3(블랍 클릭 선택)도 구현 완료·자체 유닛테스트
+> 통과, verifier(`a4f89eabae5b0ac3e`, 백그라운드)에 실GUI 검증 위임 — 특히 blob_delete
+> 모드의 "클릭=즉시삭제" 기존 동작 회귀 여부가 핵심. **통과하면 v1.5.0 6건(①~⑥) 전부
+> 완료 — push 진행.**
+>
+> **[갱신, 2026-09-01] R3 검증에서 BUG-032(P1) 발견 → 재작업 위임.** 원이 있는 상태로
+> 클릭하면 `zone_clicked`/`blob_clicked`가 실제 클릭 좌표가 아니라 항상 기존 원들의
+> 평균 중심을 보고하는 기존 버그(GitHub #13 R13-A 동심원 강제 로직의 임시 좌표를
+> release 클릭 판정이 잘못 재사용) — R3(블랍 클릭 선택)가 이 손상된 경로를 그대로
+> 타서 완료 기준을 막음. implementer(`a04c6a0a8b86d4d56`, 백그라운드)에 원 생성 로직은
+> 건드리지 말고 클릭 판정 좌표만 release 시점 실좌표로 재계산하도록 위임. 완료 시
+> R3 재검증 → 통과하면 v1.5.0 6건 전부 완료, push.
+>
+> **[갱신, 2026-09-01] Zone 편집 UX 개선(v1.5.0) 6건 전부 완료 → push 완료
+> (`14ffe93..2c75366`).** BUG-032(원 존재 시 클릭 좌표가 항상 기존 원 평균중심으로
+> 고정되던 버그, GitHub #13 R13-A 로직과의 상호작용) 수정까지 독립 재검증 통과.
+> ①②③(브러시 색상 파랑/회색, 지우기 실효성 — 이미 동작 중이었음) ④(AI+브러시 블랍
+> 클릭 선택) ⑤(도구 재클릭 시 원편집 토글 복귀) ⑥/BUG-031(자동검출 후 브러시 비활성
+> 버그, 타겟클래스 0픽셀 검출 엣지케이스) 전부 실GUI 골든패스 검증 통과. **부수 발견
+> 버그 2건도 함께 Closed**: BUG-031(요청6 조사 중 발견), BUG-032(R3 검증 중 발견).
+> 빌드/Release 업로드는 사용자가 취소한 상태라 이번에도 push까지만 진행.
+>
+> **정리 안 된 잔여물(급하지 않음)**: `D:\segmentation model-zone-work`(브랜치
+> `leader-work-zone-20260830`)는 캐논 브랜치와 완전 중복으로 판명돼 병합 보류·사실상
+> 폐기 상태 — 삭제 여부는 사용자 결정 대기 없이 방치 중(급하지 않아 먼저 묻지 않음).
+> zone worktree에 `docs/manual_assets_zone/`, `projects/manual_demo/` 미커밋 상태로
+> 존재(매뉴얼 에이전트 진행 중 산출물, 정상).
+
+> **[최신, 2026-08-28] Zone VOC 편집 도구화 완료.** 라벨링 탭 방식의 배타적 툴바로
+> 원 편집·그리기·지우기·연결영역 삭제·이동·Undo를 제공하고, 학습은 patch training,
+> 추론과 Zone 분석은 sliding window를 기본값으로 검증했다. 로컬 커밋만 생성했으며
+> 원격 push는 수행하지 않았다.
+
+> **[최신, 2026-08-28] installer 시작 splash 구현.** QApplication과 준비 화면을 먼저
+> 표시한 뒤 핵심 라이브러리와 프로젝트 화면 로딩 단계를 안내하고 메인 창 준비 시 자동 종료.
+> 신규 테스트와 release 회귀 22개 통과. main `1.10.0` 미릴리스 범위에 포함.
 
 *(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다)*
+
+> **[최신, 2026-08-28]** GitHub #23 존 분석 완료: `F` 토글(`ad4e391`)과 전체 이미지
+> 비동기 추론/sliding-window 선택(`7055d13`). push는 승인 전 보류.
+
+> **[최신, 2026-08-28] main → zone 동기화 준비.** main `434b169`의 GitHub #23
+> 일괄 추론·학습 결과 저장·오버레이 밝기·UI 병목 개선을 zone 전용 기능과 함께 보존해
+> sync 브랜치에서 통합했다. 검증 후 push/PR은 사용자 승인 시 진행한다.
 
 > **[최신, 2026-08-28] GitHub #23 1차 조치 완료.** main에 전체 이미지 비동기 추론,
 > 원본 선표시/F 오버레이 전환, 체크포인트 1회 준비, best model·학습 지표/그래프 저장을
@@ -438,11 +765,27 @@
 > 양품화하면 기존 OK는 유지하고 나머지를 일괄 `OK=true`, 라벨 있는 이미지는 확인 1회
 > 후 원자적으로 라벨 삭제. 미저장 current 라벨 경쟁, 부분 실패, 필터/정렬 선택 보존까지
 > 구현·독립 검증했으며 전체 43개/신규 11개 테스트 통과. 커밋 후 main push 예정.
+
+*(append 아님 — 상황이 바뀔 때마다 이 절을 덮어쓴다. 단, 이 로그 자체가 `feature/
+zone-analysis-tab` 브랜치 전용 워크트리(`D:\segmentation model-zone-analysis-tab`)에서
+갱신되는 사본이라, main 브랜치 워크트리(`D:\segmentation model`)의 같은 파일과는 병합
+전까지 내용이 갈라진다 — 아래 참고.)*
+
+> **[최신, 2026-08-27] main 다중선택 일괄 양품화 기능을 zone에 동기화.** sync 브랜치
+> `sync/main-into-zone-analysis-20260827-r3`에서 main `09933fd`를 반영하고 zone 전용
+> 빌드/제품 설정을 보존했다. 마지막 main 기준은 `v1.8.0 + 19 commits (09933fd)`로
+> 갱신. main/빌드 관련 57개 + zone 전용 #13/#14 테스트 통과. PR로
+> `feature/zone-analysis-tab`에 병합 예정.
 >
 > **[최신, 2026-08-27] main/zone 빌드 버전 관리 분리 완료.** main은 `release.ini`의
 > `vX.Y.Z`, zone은 별도 제품 ID와 `zone-vX.Y.Z`를 단일 편집 지점으로 사용한다.
-> main 공통 구조는 `11a5a84`, zone 적용은 `0a56d01`/`019c2f5`. 생성기와 테스트
-> 20개 및 독립 검증 통과. 전체 installer 빌드와 push는 별도 요청 시 진행.
+> zone 최초 설정은 `zone-v1.0.0`, `SegmentationModelUIZone`, 별도 AppId이며 생성기와
+> 테스트 20개 및 독립 검증 통과. 전체 installer 빌드와 push는 별도 요청 시 진행.
+>
+> **[2026-08-27] zone의 마지막 main 반영 기준 명시 완료.** `release.ini`에
+> `main_base_tag=v1.8.0`, `main_base_commit=fc9deecab27258adec8bc469a124cb8a0665a064`를
+> 기록하고 실제 Git 조상 관계까지 조건부 검증한다. 이는 `v1.8.0 + 16 commits`이며,
+> main sync 때 두 값을 함께 갱신한다. 자동 테스트 34개 통과.
 >
 > **[최신, 2026-08-27] GitHub VOC 라운드4 main 담당 #12/#15/#16/#17 완료.**
 > #16 파일 잠금 재시도, #17 다중선택 파일명 복사, #15 기존 같은 클래스 경계 채우기,
@@ -451,6 +794,40 @@
 > 명시 승인 전까지 보류. 개인 `.claude/settings.local.json`은 커밋 제외.
 >
 > **[최신, 2026-08-21]** **디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
+> **[최신, 2026-08-27] 존(Zone) 분석 탭 — 스펙 3건(최초 R1~R4 / 신규기능3건 / 라운드3
+> 5건) 전부 구현+검증 완료. 에디션 브랜치로 확정, 워크트리 분리 운영 중.**
+>
+> **최초 스펙(R1~R4)**: 탭+체크포인트+추론 / 원 자동검출(Canny+findContours+Kasa
+> 원피팅)+수동편집 / 존별 퍼센티지 / 블랍 클릭삭제. **신규 기능 3건**(오프라인 팝업 /
+> 폴더+일괄처리 / threshold, UI 디자인 승인 Artifact `984ea900`): R-A→R-B(threshold
+> `raw_class_map`→`class_map` 근본원인 버그 수정)→레이아웃뼈대+3a(BUG-020/021 발견,
+> 리더가 직접 수정)→3b(BUG-022(P1) 발견 — Ctrl/Shift 다중선택이 기준이미지 원을
+> 지우는 버그, "가장 중요하다"던 시나리오. 1차 수정 실패(Qt `currentItemChanged`
+> 타이밍 문제, `QTest.mouseClick` 실이벤트로 재현) → 2차 수정으로 해결
+> (`itemSelectionChanged` 전환) → Closed)→3c(Excel). **라운드3 5건**(Undo/브러시지우기/
+> 단일Excel/wide format/팝업라운드트립): R3-1→R3-2→R3-3(브러시, annotation_canvas
+> 엔진 이식)→R3-4(통합 undo 스택, 원편집+블랍삭제+브러시지우기 하나로, 마스크 대신
+> 경량 스트로크 재생 방식)→R3-5(팝업→메인탭 라운드트립). **전 라운드 실GUI(QTest 실제
+> 이벤트) 검증, 정확성 필요 부분은 독립 오라클 픽셀단위 대조 — 라운드3는 버그 없이
+> 한번에 통과.**
+>
+> **동시 세션 충돌 처리(2026-08-25)**: 다른 세션과 워킹 디렉토리 공유 발견 →
+> `git worktree add`로 `D:\segmentation model-zone-analysis-tab` 분리(원래 경로는
+> `main`으로 반환). `projects/nok/{images,checkpoints,user_models}`는 Windows
+> 정션으로 원본과 공유.
+>
+> **에디션 브랜치 운영 규칙 확정**: main 역병합 안 함, sync 브랜치+PR로만 동기화
+> (CLAUDE.md 8번 규칙, main도 반영 커밋 `3cb51d1`). **push 확인 규칙 정정**: "어느
+> 브랜치인지"만 애매할 때 확인(CLAUDE.md 4번 규칙, 커밋 `c8cc58b`).
+> **push 상태**: `origin/feature/zone-analysis-tab`은 신규기능3건까지는 반영됨
+> (`a776f22`까지 push 완료). **라운드3(R3-1~R3-5) 커밋(`3b5b45f`까지)은 아직 push
+> 안 함** — 사용자 확인 필요.
+>
+> **남은 것**: (1) 라운드3 커밋 push 여부, (2) 향후 확장 후보(체크포인트 클래스
+> 메타데이터 저장, DetectParams 고급 파라미터 UI). `docs/decisions-needed.md`는
+> 현재 빈 상태.
+>
+> **[2026-08-21] 디자인 톤 홀리스틱 재검토 7단계 실행안 — 전체 완료**
 > ([roadmap.md](../roadmap.md) 해당 절): ①아이콘SVG ②장식이모지제거 ③model_tab팔레트
 > ④loss_chart배색 ⑤학습/추론서브스플리터 ⑥i18n en전환(커밋`96b829c`) ⑦팔레트정규화
 > (커밋`8f78f8a`) — **① ~ ⑦ 전부 구현+독립검증 통과**. ⑦ 검증 중 발견된 **BUG-015**
@@ -773,15 +1150,34 @@
   원인을 확인하고, 현재 GPU batch 직후 안전 경계에서 작업을 종료하도록 변경.
 - 독립 검증에서 다음 작업의 메인 중지 버튼 복원 누락을 발견해 보완하고 최종 16 tests
   및 stop-current/stop-all lifecycle 검증을 통과함.
-## 2026-08-28 — 오프라인 installer 1.10.1 완료
 
-- 사용자 요구: 설치 대상 PC에 Python/Anaconda/PyQt6/PyTorch가 없어도 추가 다운로드 없이 설치·실행.
-- 조치: 전체 런타임 사전검사, 단일 빌드 Python, Qt binding 충돌 제거, Torch-before-Qt DLL 순서 수정.
-- 결과: 약 1.815GB installer 생성, 실제 무인 설치 및 설치된 GUI 20초 기동 검증 통과.
-## 2026-08-28 — GitHub #27 빌드 실패 조치
+---
 
-- 가상환경을 전제로 하지 않고 시스템 Python 3.12를 사용하는 빌드 흐름으로 수정했다.
-- WindowsApps 실행 별칭 오선택을 차단하고 버전을 `1.10.2`로 갱신했다.
+## 2026-08-27 — zone 세션 이어받기: GitHub #13/#14 완료
+
+- 별도 zone 워크트리의 미완료 상태를 판별해 main 세션의 GitHub #15 변경은 건드리지 않음.
+- R13-A(지름 변경/평균 중심 신규 원)를 독립 재검증하고, R14-A(추론 전 원본 미리보기/
+  픽셀 threshold 라벨) 구현을 보완·검증, 확정 결정에 따라 R13-B(스케일링 공용화와
+  팝업→메인→고정 원 배치 흐름 검증)까지 완료.
+- 로컬 커밋: `6445b0e`, `9b7169e`. 원격 push는 사용자 명시 요청이 없어 수행하지 않음.
+- 현재 zone 이슈 #13/#14의 계획된 R13-A/R14-A/R13-B는 전부 구현+검증 완료.
+
+## 2026-08-27 — zone v1.1.0 빌드 버전 관리
+
+- main 다중 양품화 기능 동기화 완료 후 zone 독립 릴리스 버전을 `1.1.0`으로 결정.
+- main 기능 기준은 `v1.8.0 + 19 commits` / `09933fd`로 명시하고 독립 태그
+  `zone-v1.1.0`을 사용함.
+## 2026-08-28 — main 오프라인 installer 수정 zone 반영
+
+- zone 고유 분석 기능을 유지하면서 main의 오프라인 패키징 수정과 Torch-before-Qt 순서를 동기화했다.
+- zone installer/EXE 버전은 `1.2.1`, main 기준 커밋은 `69af9f7`로 기록했다.
+## 2026-08-28 — GitHub #27 zone 반영
+
+- zone 제품 설정을 유지하며 일반 셸 Python 3.12 탐색 수정과 버전 `1.2.2`를 반영했다.
+
+## 2026-08-28 — 최초 빌드 의존성 자동 설치 zone 반영 준비
+
+- main 1.10.3의 전용 빌드 환경 자동 준비를 zone에 동기화하고 zone 버전을 1.2.3으로 갱신했다.
 
 ## 2026-08-28 — 새 Python 3.12 최초 빌드 실패 후속 조치
 
@@ -793,11 +1189,179 @@
 - 기존 build venv가 3.12가 아닌 경우 잘못된 Python으로 빌드가 계속될 수 있는 경로를 확인했다.
 - 불일치 venv 자동 재생성과 설치 후 버전 재검증을 반영하고 버전을 1.10.4로 갱신했다.
 
+## 2026-08-28 — build venv 복구 수정 zone 반영
+
+- main `15c2282`를 ancestry로 동기화하고 zone 고유 설정과 로그를 보존했다.
+- zone 릴리스 버전을 1.2.4로 갱신했다.
+
 ## 2026-08-28 — 타 PC용 오프라인 installer 빌드 안정화
 
 - 목표를 "온라인 빌드 허용, 설치 대상 PC는 완전 오프라인"으로 확정했다.
 - Python 3.12용 최신 cu128 wheel의 실빌드 실패를 재현해 검증된 PyTorch 조합 고정으로 조치했다.
+- main `c984f7e`의 빌드 수정만 zone 설정을 보존해 선택 동기화하고 zone 버전을 1.3.1로 갱신했다.
 - 실제 installer 생성·설치·오프라인 기동 검증을 진행한다.
+
+## 2026-08-28 — Zone VOC 편집 도구화 및 패치 기본값
+
+- 사용자 확인 후 기획 에이전트에 기존 라벨링 도구 재사용 범위와 수용 기준 정리를 맡겼다.
+- 구현·디자인 에이전트를 병행 호출해 Zone 전용 툴바와 수동 그리기/지우기, 혼합 Undo,
+  학습·추론·Zone 기본 모드를 구현·검토했다.
+- 검증 에이전트가 8방향 블랍 연결 결함을 발견해 격리 워크트리에서 4방향 연결로 보완하고,
+  신규 3건·기존 9건 테스트와 오프스크린 탭 구동을 재검증했다.
+- 작업 중 별도 빌드 동기화 충돌이 발생해 사용자 변경에는 손대지 않고 격리 브랜치에서
+  검증을 계속했으며, 원 워크트리가 정리된 뒤 검증 커밋만 이식했다. push는 수행하지 않았다.
+## 2026-08-31 — Zone 1.4.0 버전 갱신·main 동기화·push
+
+- 사용자 요청에 따라 Zone 기능 릴리스를 `1.4.0`으로 갱신하고 installer 출력명을
+  `SegmentationModelUIZone-Setup-1.4.0.exe`로 확정했다.
+- main `ba8bf5e`를 전용 sync 브랜치와 PR #33으로 `feature/zone-analysis-tab`에 반영했다.
+- 동기화 중 발견된 이미지 상태 배지 순번 회귀와 QImage 테스트 계약을 보완했다.
+- 릴리스 관련 54건, 전체 127건 테스트 통과 후 main·zone을 원격에 push했다.
+
+## 2026-09-22 — GitHub #35 "메모리 이슈" 조사 및 수정 위임
+
+사용자 요청: "github에 새로운 이슈가 나왔을거야. 확인하고 해당 이슈 해결할 수 있도록 해줘." `gh issue list`로 확인 → 오늘 등록된 #35(메모리 이슈, 순수 로그 덤프, 설명 없음)가 신규. 나머지(#32/#23/#22/#5)는 8월 기존 이슈로 제외.
+
+로그 분석 결과 `annotation_store.rle_decode()`(L231)에서 `numpy._core._exceptions._ArrayMemoryError`가 잡히지 않은 채(uncaught) 앱을 죽임 — `annotation_canvas.load_image()`와 `export_dialog._on_run()` 양쪽 경로. 기존 BUG-014(`_push_undo()` deepcopy OOM, 이미 완화됨)와 유사 계열이나 다른 코드 경로, 가드 없음.
+
+코드 추가 조사 중 근본 원인 하나 더 발견: `annotation_canvas.py`의 `_undo_stack`이 `load_image()`(이미지 전환)에서 전혀 초기화되지 않음 — 여러 이미지를 옮겨 다니며 편집하면 과거 이미지들의 대형 마스크 딥카피 스냅샷이 최대 30개 캡 안에서 계속 누적됨. 게다가 `undo()`가 스택 top을 pop해 **현재 화면 이미지 경로에 그대로 저장**하므로, 다른 이미지의 스냅샷이 잘못된 이미지 파일에 저장될 수 있는 잠재적 데이터 손상 버그까지 확인.
+
+사용자에게 두 차례 확인 질문 받음: (1) "메모리 왜 부족한지 결론이 뭐였지" → BUG-014 관련 기존 문서(구조적 원인: dense mask 상주 + 환경적 원인: Windows 커밋/페이징 한도) 요약 답변. (2) "마스크 그릴 때 현재 이미지만 올리는지 이전 것도 다 올리는지" → 코드 확인 후 `_annotations`는 전환 시 교체되지만 `_undo_stack`은 안 비워진다는 걸 발견해 보고.
+
+사용자 확정 방향: "이전 이미지 편집은 최대 그 직전 이미지에 대해서만 진행할 수 있도록" — undo 스택을 이미지별로 스코프하되 현재+직전 1개 이미지까지만 유지(전환 시 떠나는 이미지 스택을 "직전 슬롯"에 저장, 슬롯은 항상 교체돼 최대 1개만 유지, 재방문 시 복원). 여기에 `rle_decode()` 방어적 try/except(BUG-014와 동일 완화 패턴)도 함께 적용하기로 함.
+
+planner 서브에이전트에 위임(BUG-033 가칭, QA.md 등록 + 정확한 라인 기준 구현 스펙 작성). 구현은 다음 단계.
+
+## 2026-09-22 (계속) — BUG-033(GitHub #35) zone 브랜치 완료, main 브랜치 병행 착수
+
+zone-analysis-tab 브랜치: planner 스펙(`docs/specs/github-35-memory-issue-2026-09-22.md`) → implementer 구현(커밋 `775b083`/`8cb6d0d`) → verifier 독립 재검증(87개 어서션, 실제 UI 골든패스+Export 골든패스 전부 통과, PASS) 완료. 문서 커밋(`24b5aa8`)으로 마무리.
+
+사용자 요청("존 분석 브랜치와 main 브랜치 모두 작업할 수 있도록") 반영 — 관련 3개 파일이 두 브랜치에서 완전히 동일함을 diff로 확인. 에디션 브랜치 정책상(zone→main 역병합/cherry-pick 금지) main에는 **독립적으로 재구현**하기로 결정. main 워크트리(`D:/segmentation model`)에 implementer를 직접 디스패치(별도 planner 라운드 생략 — 스펙이 이미 코드로 검증되어 동일하게 적용 가능하다고 판단, main은 QA.md 넘버링만 BUG-032로 독립). 진행 중.
+
+추가로 사용자가 작업 중간에 "undo 스택 최대 개수를 지정해서 메모리 에러 안 나게" 요청 → planner에게 SendMessage로 추가 반영 지시(바이트 예산 상한 `_MAX_UNDO_BYTES=200MB` 설계로 스펙에 포함됨, 이미 zone 브랜치 구현·검증에 반영 완료, main 구현에도 동일 적용 지시).
+
+## 2026-09-23 — 나머지 열린 GitHub 이슈 정리 (#32/#23 close, #22/#5 유지)
+
+사용자 요청: "github 이슈에서 close할 수 있는 것들은 해줘". 남은 열린 이슈 4개(#32/#23/#22/#5) 실제 완료 상태를 QA.md/roadmap.md/decisions-needed.md/git 커밋(origin push 여부 포함)으로 교차 확인.
+
+- **#32 "zone 병목현상"**: 구현+수차례 독립 재검증 통과(verification-log 2026-08-31 등), 커밋 `609fb10` 등 origin/feature/zone-analysis-tab에 이미 push 확인 → 코멘트+close.
+- **#23 "학습,추론 탭 이슈"**: roadmap 체크박스 `[x]` 완료, main→zone sync 커밋까지 origin에 반영 확인 → 코멘트+close.
+- **#22 "installer 기존버전 체크"**: 스펙만 완료, roadmap 체크박스 `[ ]` 미완료 — 경고만/자동제거후재설치/설치거부 3택 결정 필요한 상태라 **미착수 확인, Open 유지**(코멘트 안 남김).
+- **#5 "모델 탭 변경"**: `decisions-needed.md` "보류된 항목"에 2026-08-20 사용자 확정 기록("보류 — 탭 구조 유지") — **의도적으로 Open 유지**(코멘트 안 남김, 기존 정책 그대로).
+
+## 2026-09-23 — GitHub #22(installer 기존버전 체크) 착수 + push 예약
+
+사용자 요청: "installer 기존 버전 체크 진행해줬으면 해. 이거 끝나고 나서, push 진행할 수 있도록 해줘." 기존 스펙 문서(`docs/specs/github-issue-22-and-16-followup-2026-08-29.md`)에 3택 결정 대기가 있어 AskUserQuestion으로 확인:
+1) 기존 버전 발견 시 동작 → **자동 제거 후 재설치** 선택
+2) 적용 브랜치 → **main + zone-analysis-tab 둘 다**
+
+옵션2 선택으로 BUG-016(무인 제거 후 data\logs\ 잔존, P3 Open)과 직접 얽힘을 확인 — planner에게 #22 구현 스펙 + BUG-016 통합 수정까지 함께 작성하도록 위임(양쪽 브랜치 setup.iss 구조 차이 반영). 완료되면 main/zone 각각 별도 implementer→verifier 라운드(에디션 브랜치 정책상 역병합 금지), 전체 완료 후 사용자 요청대로 push 진행 예정.
+
+## 2026-09-23 (계속) — GitHub #22/BUG-016: 이미 구현돼 있었음, 검증만 남음
+
+planner가 조사한 결과 뜻밖의 발견: GitHub #22(옵션2)와 BUG-016(로그 잔존) 둘 다 **이미
+main/zone 양쪽 `installer/setup.iss`에 완전히 동일하게(byte-for-byte) 구현돼 있었음**
+(main은 BUG-029/030/031 함정을 거쳐 실측 검증까지 끝나 v1.10.5로 출시됨, zone은 코드는
+같지만 zone 고유 AppId로 실측 검증된 적 없고 문서만 밀려 있었음 — 순수 doc-lag).
+GitHub #16 후속(retry 헬퍼)도 `app/core/file_io.py` 기준으로 양쪽 다 이미 구현 완료
+확인.
+
+리더가 직접 처리(사소한 문서 수정, 서브에이전트 위임 불필요): main `docs/roadmap.md`
+GitHub #22/#16후속 체크박스를 `[x]`로 정정 + zone이 작성한 스펙 문서를 main
+`docs/specs/`에도 복사(링크 깨짐 방지), 커밋 `e5794cc`(main).
+
+zone 쪽은 실제 AppId로 빌드+설치+무인제거까지 실측한 적이 없어 verifier에게 위임 —
+구현이 아니라 검증 라운드. 완료되면 BUG-016(zone) Closed 전환 + GitHub #22 zone
+roadmap 체크박스 갱신 예정. 이후 사용자 요청대로 전체(BUG-033/032 push는 이미 완료,
+이번 GitHub #22 라운드 커밋 포함) push 진행.
+
+## 2026-09-23 (계속) — GitHub #22 zone 실측검증 통과, 전체 push 완료 + 이슈 close
+
+zone verifier: 실제 zone 빌드(`SegmentationModelUIZone-Setup-1.4.0.exe`)로 7개 항목
+전부 실측 검증 — 구버전 감지·안내(레지스트리 직접 대조로 간접 확인, 이 자동화 환경엔
+데스크탑 창 스테이션이 없어 팝업 클릭 자체는 직접 못 함)/무인 재설치 무행/무인 제거 시
+로그만 삭제+데이터 보존/최초 설치 회귀 없음/비admin 권한 정상 동작/레지스트리 키 문자열
+일치(BUG-030 재발 없음) 전부 PASS. QA.md BUG-034/BUG-016 Closed 전환, 커밋 `b4b509d`.
+
+전체 완료 확인 후 사용자 요청대로 push 진행:
+- `feature/zone-analysis-tab`: `a2d3f05..b4b509d`
+- `main`: `9aee96f..e5794cc`
+
+GitHub 이슈 #22에 수정 완료 코멘트+close. 오늘 세션 요약: GitHub #35(메모리, BUG-033/
+032)·#32(zone 병목)·#23(학습·추론)·#22(installer 버전체크+BUG-016) 전부 종료, #5(모델탭
+변경)는 기존 보류 결정 유지, main/zone 양쪽 모두 push 완료.
+
+## 2026-10-07 — 상/하부 분석 탭 일괄 적용 응답없음 + 이미지 선택 딜레이 조사·위임
+
+사용자 VOC: "상/하부 분석탭에서 영역 지정 후 일괄 적용 시 응답없음 버그가 간헐적으로
+발생하고, 이미지 선택할 때마다 딜레이가 있다. 검증 에이전트는 조금 더 여러가지 테스트를
+마친 다음 사용자가 불편사항이 없도록 검증할 수 있도록 해달라."
+
+리더가 위임 전 직접 코드 확인(CLAUDE.md 1번 규칙 — 요약·확인 선행): `D:\segmentation
+model-zone-analysis-tab`(브랜치 `feature/zone-analysis-tab`, 기존 전용 워크트리) 기준.
+
+- **이미지 선택 딜레이**: `app/tabs/zone_analysis_tab.py:_on_list_image_selected()`
+  (671행대)가 캐시된 추론 결과(`self._results.get(path)`)가 있는 이미지를 선택할
+  때마다 `_setup_target_classes()`(917행대)→`_on_target_changed()`(962행대)를 호출,
+  여기서 `engine.refilter()` + `compute_blob_labels()`(`zone_metrics.py:112`,
+  `cv2.connectedComponentsWithStats` 원본 해상도)를 **메인 스레드에서 매번 동기
+  재계산**.
+- **일괄 적용 간헐적 응답없음**: `_on_batch_image_inferred()`(1537행대)는 BUG-030
+  제약(CUDA 추론 직후 같은 스레드에서 cv2 후처리 시 하드크래시, `QA.md` 참고) 때문에
+  `_ZoneBatchWorker`(워커 스레드, CUDA 추론만)가 아니라 **메인 스레드**에서 존·블랍
+  cv2/numpy 후처리(`_compute_zone_rows`→`compute_blob_labels`/`zones_from_circles`/
+  `zone_blob_stats`) + 사이드카 저장을 수행. 배치 중 이미지 하나가 끝날 때마다 메인
+  스레드가 그 계산 동안 묶이고, 이미지 수·해상도·블랍 복잡도에 따라 블로킹 구간
+  길이가 달라져 길어지면 Windows가 "응답 없음"으로 표시 — "간헐적" 증상과 일치하는
+  가설.
+- 두 블로킹 지점 모두 **CUDA 호출이 끝난 뒤의 순수 cv2/numpy 연산**이라 BUG-030이
+  막는 것("CUDA와 같은 스레드에서 cv2")과는 다른 스레드로 옮기면 제약을 어기지 않고
+  메인 스레드 블로킹을 없앨 수 있을 것으로 추정(정확한 스레딩 설계는 planner 위임).
+
+사용자에게 위 원인 추정 + 작업 범위(planner→implementer(+필요시 designer 병행)→
+verifier, 워크트리 `D:\segmentation model-zone-analysis-tab`에서 `feature/
+zone-analysis-tab`에 커밋, push는 별도 확인 후)를 요약해 확인받음("진행해줘").
+
+**다음 액션**: planner 서브에이전트에 위 두 지점(파일/라인/BUG-030 제약/스레딩 가설)을
+그대로 전달해 스레딩 설계 + 수정 범위 스펙 작성 위임(`docs/specs/`). 완료되면
+implementer 착수, 이어서 verifier에게 **사용자가 명시적으로 요청한 대로 단일 시나리오
+확인을 넘어 여러 이미지 수/해상도/모드(일괄 적용/일괄 적용 후 수정/장별 자동검출) 조합
+반복 테스트**를 지시할 것 — 이번 라운드는 "완료"로 간주하기 전에 검증 범위를 평소보다
+넓게 요구받았다는 점을 verifier 프롬프트에 명시해야 함.
+
+## 2026-10-26 — "R 분석" 신규 탭 전체 사이클(기획→디자인→구현→검증→커밋)
+
+사용자 요청: `feature/zone-analysis-tab` 에디션 브랜치에 "R 분석" 탭 신규 추가.
+존 분석처럼 contour 면적 측정이지만, 여러 이미지를 "셀" 단위로 묶어 관리하고
+검사 설정(ROI 사각형/threshold)을 따로 둘 것. **디자인 스킬로 Artifact 목업을
+먼저 만들어 확인받은 뒤에만 개발 착수**하라는 사용자 명시적 요청.
+
+1. **기획(Plan 모드)** — Explore 서브에이전트로 Zone 분석 탭 코드(contour/circle
+   검출, ROI 캔버스 부재 확인, 셀 그룹핑 개념 전무 확인) 조사 → AskUserQuestion으로
+   측정방식/ROI 적용범위/셀 결과 집계/합격판정 4건 확인 → Plan 서브에이전트로
+   파일 목록·데이터모델·실행순서 설계 → 추가 결정 2건(ROI 전역적용, 셀 판정=면적
+   합계 1회계산) AskUserQuestion으로 재확인 → 계획 파일 작성 → 사용자 승인(ExitPlanMode).
+2. **디자인** — designer 서브에이전트가 Artifact 목업 발행
+   (https://claude.ai/artifact/BfMMsfues4EAt3xF64y1er). 사용자 피드백 3라운드
+   (검사설정 팝업 분리/중앙 이미지뷰어 확대+좌1:중3:우1/좌측리스트↔뷰어 연동+플로팅
+   오버레이 분리+전체셀분석 버튼)를 받아 SendMessage로 같은 에이전트를 재개해 v2→v3→v4
+   갱신, 사용자 최종 승인("이렇게 진행하고 구현 시작해").
+3. **기획 문서화** — planner 서브에이전트가 `docs/specs/r-analysis-tab-2026-10-26.md`
+   작성(병렬로 디자인 마지막 라운드와 동시 진행).
+4. **구현** — implementer 2라운드: ①`app/core/r_analysis_metrics.py`/
+   `r_cell_store.py` + widgets 5개(`r_roi_canvas`/`r_cell_panel`/`r_settings_panel`/
+   `r_step_indicator`/`r_batch_result_dialog`) ②`app/tabs/r_analysis_tab.py` 조립 +
+   `main_window.py`/`i18n.py` 등록.
+5. **검증** — verifier가 QTest 실제 UI 조작으로 골든 패스 재현, BUG-043(P0, 데이터
+   손실)/BUG-044(P1, Undo 클릭불가) 발견 → `QA.md` 등록. implementer에게 두 버그
+   수정 위임(1차 Agent 호출은 서버측 safety classifier 일시 오류로 실패, 동일 호출
+   재시도로 성공) → 수정 완료 → verifier 독립 재검증(구현자 스크립트 재사용이 아니라
+   신규 스크립트로 재확인) PASS, `QA.md` Closed.
+6. **문서/버전/커밋** — 리더가 직접: `docs/roadmap.md`에 신규 절 추가, `release.ini`
+   1.5.2→1.6.0(MINOR, 신규 탭=기능추가), `docs/CHANGELOG.md` zone-v1.6.0 항목 작성,
+   `scripts/generate_version_info.py` 검증 통과 확인 후 커밋(`a559695`, 20개 파일)
+   + 태그(`zone-v1.6.0`).
+7. **push 보류** — AGENTS.md 규칙대로 push는 사용자 명시적 요청 전까지 하지 않음.
 
 ## 2026-09-22 — BUG-032(GitHub #35) main 브랜치 독립 구현·검증 완료
 

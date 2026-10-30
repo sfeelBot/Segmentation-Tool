@@ -90,8 +90,10 @@ def test_stop_mid_epoch_skips_remaining_batches_but_preserves_epoch(monkeypatch,
 
     assert list(tmp_path.glob("*.pt")), \
         "1 epoch도 못 채우고 중지해도 체크포인트는 최소 1개 저장돼야 한다"
-    assert (tmp_path / "training_metrics.json").exists()
-    assert (tmp_path / "training_metrics.png").exists()
+    # 파일명에 학습 시작 날짜(YYYYMMDD) 접두가 붙으므로(2026-10-01 재설계) 정확한
+    # 날짜 문자열에 의존하지 않고 글롭으로 존재만 확인한다.
+    assert list(tmp_path.glob("*training_metrics.json"))
+    assert list(tmp_path.glob("*training_metrics.png"))
 
 
 def test_training_completes_without_stop_saves_each_epoch(monkeypatch, tmp_path):
@@ -119,11 +121,14 @@ def test_training_completes_without_stop_saves_each_epoch(monkeypatch, tmp_path)
 
     worker._train()
 
-    assert sorted(p.name for p in tmp_path.glob("epoch_*.pt")) == [
-        "epoch_0001.pt", "epoch_0002.pt",
-    ]
-    assert (tmp_path / "best.pt").exists()
-    history = json.loads((tmp_path / "training_metrics.json").read_text())
+    # 파일명에 학습 시작 날짜(YYYYMMDD) 접두가 붙는다(2026-10-01 재설계) — 정확한
+    # 날짜 문자열 대신 접미사만 확인.
+    saved = sorted(p.name for p in tmp_path.glob("*_epoch_*.pt"))
+    assert len(saved) == 2
+    assert saved[0].endswith("epoch_0001.pt") and saved[1].endswith("epoch_0002.pt")
+    assert list(tmp_path.glob("*best.pt"))
+    [metrics_path] = tmp_path.glob("*training_metrics.json")
+    history = json.loads(metrics_path.read_text())
     assert [row["epoch"] for row in history] == [1, 2]
 
 
@@ -169,8 +174,11 @@ def test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third(
     # 배치 1개만 이어서 처리 → 총 forward 호출 6회 (epoch1: 4 + epoch2: 2).
     assert model.calls == 6
 
-    history = json.loads((tmp_path / "training_metrics.json").read_text())
+    [metrics_path] = tmp_path.glob("*training_metrics.json")
+    history = json.loads(metrics_path.read_text())
     assert [row["epoch"] for row in history] == [1, 2]
-    assert (tmp_path / "epoch_0001.pt").exists()
-    assert (tmp_path / "epoch_0002.pt").exists()
-    assert not (tmp_path / "epoch_0003.pt").exists()
+    # 파일명에 학습 시작 날짜(YYYYMMDD) 접두가 붙는다(2026-10-01 재설계).
+    saved = sorted(p.name for p in tmp_path.glob("*_epoch_*.pt"))
+    assert len(saved) == 2
+    assert saved[0].endswith("epoch_0001.pt") and saved[1].endswith("epoch_0002.pt")
+    assert not list(tmp_path.glob("*epoch_0003.pt"))

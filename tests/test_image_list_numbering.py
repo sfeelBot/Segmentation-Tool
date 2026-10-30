@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QApplication
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core import project
-from app.widgets.inference_image_list import InferenceImageList
+from app.widgets.inference_image_list import InferenceImageList, _SORT_MODES
 
 _APP = QApplication.instance() or QApplication(sys.argv)
 
@@ -105,3 +105,39 @@ def test_inference_list_folder_mode_headers_unnumbered_leaves_continuous(
     # folder header items must not carry a numeric prefix
     root_item = widget._tree.topLevelItem(0)
     assert not root_item.text(0)[0].isdigit()
+
+
+def test_inference_list_folder_mode_uses_continuous_numbering(tmp_path: Path) -> None:
+    """존 분석 탭 등 editable=False 기본 구성 — 중첩 폴더(rglob) 경로에서도 통번호 유지."""
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    p1 = root / "a.png"
+    p2 = root / "sub" / "b.png"
+    for p in (p1, p2):
+        assert QImage(4, 4, QImage.Format.Format_RGB32).save(str(p))
+
+    lst = InferenceImageList()
+    lst.load_folder(root)
+    folder_idx = [m[0] for m in _SORT_MODES].index("folder")
+    lst._sort_combo.setCurrentIndex(folder_idx)
+
+    assert lst._path_to_item[p1].text(0) == "1. a.png"
+    assert lst._path_to_item[p2].text(0) == "2. b.png"
+
+
+def test_inference_list_status_update_keeps_number(tmp_path: Path) -> None:
+    """존 분석 탭의 배치 처리 상태 아이콘(set_item_status)도 번호 접두를 깨지 않아야 함."""
+    root = tmp_path / "root"
+    root.mkdir()
+    p1 = root / "a.png"
+    p2 = root / "b.png"
+    for p in (p1, p2):
+        assert QImage(4, 4, QImage.Format.Format_RGB32).save(str(p))
+
+    lst = InferenceImageList()
+    lst.load_folder(root)
+    assert lst._path_to_item[p2].text(0) == "2. b.png"
+
+    lst.set_item_status(p2, "done", badge="완료")
+
+    assert lst._path_to_item[p2].text(0) == "2. b.png  [완료]"

@@ -1,7 +1,534 @@
 # Changelog — Segmentation Model UI
 
 버전 구분 기준: 사용자 요청 단위로 묶어 릴리즈.  
-형식: `[vX.Y.Z] YYYY-MM-DD` — Major.Minor.Patch
+main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
+
+---
+
+## [zone-v1.12.0] 2026-10-29
+
+사용자 요청 2건: 학습 탭의 모델/DataLoader 설정을 이 에디션 전용으로 고정.
+
+### 변경
+- 학습 탭 "모델" 선택을 **Attention U-Net (2018) 고정**으로 변경 — 기존
+  "현재 로드된 모델"/다른 프리셋을 고르는 콤보박스를 제거하고, 모든 학습 작업이
+  항상 `preset:attention_unet`을 쓰도록 고정(`app/tabs/training_tab.py`
+  `FIXED_MODEL_SOURCE`). 큐 추가 행엔 고른 모델명을 "(고정)" 표시로만 보여준다.
+- `DataLoader Workers`를 **0 고정**으로 변경 — 스핀박스는 그대로 보이되
+  `setEnabled(False)`로 비활성화(`app/widgets/config_form.py`), 값은 항상 0.
+
+### 영향 범위
+이 라운드는 `feature/zone-analysis-tab` 전용 변경이며 main에는 반영하지 않는다
+(에디션 전용 고정값 — AGENTS.md "에디션 브랜치 → main 역병합 금지" 원칙).
+
+---
+
+## [zone-v1.11.0] 2026-10-29
+
+사용자 요청 9건(스펙 `docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md`):
+(1) 자동검출 버튼 삭제, (2) 배치 모드를 '고정' 하나로 단순화, (3) 민감도 슬라이더
+제거, (4) 배치 영역 적용을 추론/모델 요구사항과 완전히 분리, (5) 배치 적용 후
+개별 이미지 수정 가능(회귀 확인), (6) 존별 비율 패널에서 "삭제"는 숨기기(비파괴),
+(7) 존 이름 변경을 패널에서 직접(바깥쪽 포함), (8) 레시피에 hidden/outer_name
+확장 + 기본 이름 `YYYYMMDD_recipe`, (9) "결과보기" 아래 결과 이미지 일괄 저장(PNG).
+
+### 추가
+- `_CircleItem.hidden: bool` 필드 — `ZoneCanvas.get_circles()`/`circles_with_ids()`/
+  `get_state()`/`set_state()` 전부로 전파(5요소/6요소로 확장, 역호환 유지). 우클릭
+  메뉴에 "숨기기"/"보이기" 토글 추가(비파괴, 즉시 반영).
+- `ZoneCanvas.outer_name()`/`rename_outer_zone()` — 바깥쪽(가장 큰) 존 전용 이름,
+  원에 귀속되지 않는 스칼라 값. `get_state()`/`set_state()`/`zone_state_store.py`/
+  `zone_recipe_store.py`에 `outer_name` 키로 영속화(구버전 파일은 `None` 기본값으로
+  자동 역호환). `zones_from_circles()`에 `outer_name` 파라미터 추가.
+- 존별 비율 패널(`_zone_list`)에서 각 행 우클릭 → "이름 변경..."으로 중심부/링
+  존은 물론 바깥쪽 존(circle_id 없음)까지 직접 이름 변경 가능.
+- 존별 비율 패널에서 "숨기기" 토글 시 패널에서 사라지지 않고 회색조 + "(숨김)"
+  표시로 유지, 단일/전체 이미지 Excel 내보내기는 `zone_metrics.drop_hidden()`
+  (신규 공유 순수 함수, `_recompute_zones()`/`_on_export_single()`/
+  `_compute_zone_rows()` 3곳이 공유)로 숨겨진 존을 걸러냄.
+- `ZoneRecipeDialog` 이름 입력란 기본값을 `f"{date.today():%Y%m%d}_recipe"`로
+  미리 채움(최근 레시피가 있으면 그 이름으로 덮어씀). 레시피 저장/로드가
+  hidden/outer_name을 포함해 왕복(구버전 3-tuple 레거시 포맷도 안전 로드,
+  자가진단에 케이스 추가).
+- "결과보기" 버튼 바로 아래 "결과 이미지 일괄 저장" 버튼 추가 — 세션 중 추론을
+  실행한 이미지의 `overlay_image`(최신 브러시 보정 반영분)를 선택한 폴더에
+  PNG로 일괄 저장, 추론 안 한 이미지는 자동 제외.
+
+### 변경
+- 배치 "영역 적용"(`_on_batch_process()`)이 더 이상 모델/체크포인트/추론 결과를
+  요구하지 않음 — 게이팅을 기준 원 1개 이상 + 대상 이미지로 축소. CUDA 추론
+  워커(`_ZoneBatchWorker`)와 추론-원복사 2단 파이프라인(`_ZoneBatchPostWorker`)을
+  삭제하고, CUDA를 전혀 호출하지 않는 단일 워커(`_ZoneCircleLayoutWorker`)로
+  교체 — 각 대상 이미지 크기만 읽어 원을 스케일링하고 기존 사이드카
+  (`removed_blob_ids`/`erase_strokes`/`manual_strokes`는 보존)에 반영.
+- 배치 모드 콤보박스('고정'/'이미지별 재검출')와 민감도 슬라이더, 자동검출 버튼
+  삭제 — 배치는 이제 항상 "고정"(기준 원을 복사) 방식 하나뿐. 레시피 버튼은
+  모드와 무관하게 항상 노출.
+- 배치 완료 다이얼로그가 퍼센티지 결과표(`ZoneBatchResultDialog`) 대신 단순 확인
+  메시지("N장에 영역 적용 완료 — 개별 이미지를 열어 추론을 실행하면...")로 교체
+  — 추론-무관 요구사항과 일치(비율은 "결과보기" 버튼으로 별도 확인).
+
+### 삭제
+- i18n 키(ko/en): `zone.sensitivity_label`, `zone.sensitivity_tip`,
+  `zone.btn_detect`, `zone.detect_tip`, `zone.not_ready_msg2`.
+  (`zone_recipe_dialog.py`가 쓰는 `zone_recipe.*` 네임스페이스는 별개 코드라
+  그대로 유지.)
+
+## [zone-v1.10.0] 2026-10-28
+
+사용자 요청: (1) "브러시로 그린 것도 검출 결과와 동일하게(불투명도 포함) 화면에
+보이게, Top/Bottom도 동일하게" — 브러시는 검출 결과를 수정하는 도구이지 별도
+레이어가 아니라는 원칙 확인. (2) "R 검사 세팅에 자동 검출 on/off 추가, 꺼지면
+ROI 지정 없이 브러시로 그린 영역만 사용".
+
+### 수정
+- 브러시로 수정한 결과가 검출 결과와 별도 색(파란/회색)으로 덧칠돼 보이던 버그
+  수정 — 커밋 후엔 검출 결과와 완전히 동일한 레이어 하나로만 보이도록 변경.
+  - R분석(`r_roi_canvas.py`): 커밋된 전체 스트로크 래스터(`_stroke_overlay`)는
+    검출 마스크(`effective_mask()`)가 없을 때만 그리고, 있으면 초록 마스크
+    레이어 하나로 통일. 드래그 중(커밋 전) 스트로크는 그대로 파란/회색 미리보기.
+  - 존분석(`zone_canvas.py`/`zone_analysis_tab.py`/`inference_engine.py`): 신규
+    `engine.colorize_class_map()`(임의 class_map을 직접 컬러화, `InferenceResult`
+    불필요)을 추가하고, `_reblend_overlay()`가 브러시로 지운/그린 영역을
+    `class_map` 사본에 반영(지우기→배경 0, 그리기→타겟 클래스 id)한 뒤 다시
+    컬러화하도록 변경 — 원본 `class_map`은 변형하지 않음. 커밋된 스트로크의
+    파란/회색 덧칠(`_paint_erase_preview`)은 제거하고 드래그 중 스트로크만
+    유지. 재합성은 `_recompute_zones()`(브러시 커밋/Undo/블랍삭제 공유 funnel)
+    와 타겟 클래스 전환 시점에 호출.
+
+### 추가
+- R분석 탭: 검사 설정에 "자동 검출 사용" 체크박스 추가(기본 켜짐, 하위호환).
+  꺼면 ROI를 지정하지 않아도 되고, 검출 버튼 3개(현재/셀/전체)는 비활성화되며
+  브러시로 그린 영역만으로 면적이 계산된다 — 이전엔 ROI/검출 결과가 없으면
+  `effective_mask()`가 `None`을 반환해 브러시만으로는 면적을 절대 만들 수
+  없던 버그를 함께 고쳤다(`_compute_detected_mask()`가 빈 numpy bool 마스크를
+  반환하도록 통일, `None`과의 구분이 핵심). `app/core/i18n.py`에
+  `r_settings.auto_detect_checkbox`/`r_settings.auto_detect_off_suffix`
+  신규 키(ko/en).
+
+---
+
+## [zone-v1.9.0] 2026-10-28
+
+사용자 요청: 존분석/R분석 탭의 검출 결과 오버레이가 고정 불투명도라 라벨링/보정
+중 조절이 안 되던 것을, main 추론 탭(`OverlayViewerPanel`)과 동일한 패턴의
+슬라이더로 조절 가능하게 변경.
+
+### 추가
+- `app/core/i18n.py`에 `common.overlay_opacity_label` 신규 키(ko/en) — 두 탭이
+  동일 문구를 공유(라벨마다 별도 키를 만들지 않음).
+- 존분석 탭: 캔버스 상단 툴바 바로 아래에 불투명도 슬라이더(0~100%, 기본 50%)
+  행 추가. 값 변경 시 75ms 디바운스 후 `inference_engine.reblend()`로 모델
+  재실행 없이 오버레이만 재합성(main 추론 탭 opacity 패턴과 동일). 슬라이더
+  값은 이미지 전환/재추론에도 유지된다(`_show_overlay_state()` 호출마다 항상
+  현재 슬라이더 opacity로 재합성).
+- R분석 탭: `RRoiCanvas.set_mask_opacity()`/`mask_opacity()` 추가 — 고정
+  alpha(90/255)였던 검출 마스크 오버레이를 캔버스 좌측 하단 플로팅 슬라이더
+  (기본 35%, 90/255에 해당)로 조절. 메모리의 numpy 마스크만 재합성해 디바운스
+  불필요.
+- 라벨링/존분석/R분석 탭 공통: 선택된 도구를 알아보기 쉽게 툴바 버튼
+  `:checked` 상태에 활성 강조 색(`#1e3a5f` 배경 + `#60a5fa` 테두리/글자) 적용.
+- R분석 탭: ROI 편집 툴바 아이콘을 화살표 모양(`tool_select`)에서 사각형
+  아웃라인(`tool_rect`, 신규 SVG)으로 교체 — 영역이 사각형임을 더 명확히 표시.
+- R분석 탭: 라벨링 탭과 동일한 패턴으로 검출 결과(마스크) show/hide 토글 추가
+  (눈 아이콘, `[F]` 단축키). `app/widgets/r_roi_canvas.py`에
+  `overlay_toggle_requested` 시그널 + `set_mask_overlay_visible()` 추가 —
+  화면 표시 여부만 끄고 마스크 데이터/boundary 편집·면적 계산은 그대로 동작.
+  `app/core/i18n.py`에 `r.overlay_visible_tip` 신규 키(ko/en).
+
+---
+
+## [zone-v1.8.0] 2026-10-28
+
+사용자 요청: 존분석("TOP/BOTTOM ANALYSIS")/R분석 탭에 영어(en) 언어 지원 적용
+— 탭 제목만 번역돼 있던 것을 탭 내부 전체(버튼/라벨/툴팁/다이얼로그)로 확장,
+같은 한국어 문구가 탭마다 다르게 번역되지 않도록 전체 탭 기준 용어 일관성도
+감사.
+
+### 추가
+- `app/core/i18n.py`에 `zone.*`/`zone_canvas.*`/`zone_recipe.*`/`zone_batch.*`/
+  `zone_step.*`/`r.*`/`r_cell.*`/`r_settings.*`/`r_batch.*`/`r_step.*` 신규 키
+  242개(ko/en) 추가.
+- 11개 파일(`zone_analysis_tab.py`/`zone_canvas.py`/`zone_recipe_dialog.py`/
+  `zone_batch_result_dialog.py`/`zone_step_indicator.py`/`r_analysis_tab.py`/
+  `r_cell_panel.py`/`r_settings_panel.py`/`r_batch_result_dialog.py`/
+  `r_step_indicator.py`, `r_roi_canvas.py`는 UI 문자열 없어 변경 없음)의
+  하드코딩 한국어 UI 문자열을 `t()` 호출로 교체.
+
+### 수정
+- `zone.running` 영문을 main의 기존 `infer.running`과 통일("Inferring…").
+- **BUG-046**: 공용 `InferenceImageList` 위젯(`editable=False`)의 제목 라벨/
+  검색창 placeholder/정렬 라벨이 `t()`를 거치지 않고 한국어로 하드코딩돼
+  있던 것을 기존 키 재사용으로 수정 — 존/R분석 탭(및 추론 탭)의 이미지 목록
+  패널도 영어 설정에서 정상 표시됨.
+
+### 참고
+- main 공용 탭(라벨링/추론/학습/모델)의 기존 영문 번역 자체에 내부 불일치
+  4건(선택→Select/Choose 등)을 발견했으나 이번 라운드 범위 밖 — main
+  `docs/decisions-needed.md`에 등록.
+
+---
+
+## [zone-v1.7.0] 2026-10-28
+
+사용자 요청: 존분석/R분석 탭의 이미지 목록에서 Shift(범위)/Ctrl(개별) 다중선택 +
+Delete 일괄 제거가 두 탭에서 동일하게 동작하도록.
+
+### 변경
+- R분석 탭 "선택한 셀의 이미지" 목록(`RCellPanel._image_list`)에
+  `set_multi_select(True)` 적용 — Zone 탭(`ZoneAnalysisTab._img_list`)과
+  동일하게 Shift 범위선택/Ctrl 개별선택 + Delete 일괄 제거(목록에서만 제거,
+  원본 파일 보존) 지원. Zone 탭은 이미 동일 기능이 있어 변경 없음(확인만).
+
+---
+
+## [zone-v1.6.3] 2026-10-27
+
+사용자 요청: main v1.11.0(공유 위젯 추출: view_transform/brush_toolbar/
+inference_image_list)을 sync 브랜치+PR로 반영하고, Zone/R분석 탭의 편집
+툴바(브러시/지우개/영역삭제/pan/undo/브러시크기)를 공유 `BrushToolbar`로
+교체.
+
+### 변경
+- main sync 반영(`view_transform.py` 공용 좌표변환, `inference_image_list.py`
+  통합, `image_browser.py` 제거) — "양쪽 다 살리기"로 append-only 문서 충돌
+  해결, 기능 동작 변경 없음.
+- Zone/R분석 탭 편집 툴바를 `app/widgets/brush_toolbar.py` 공용
+  컨트롤러로 교체. 아이콘 순서·단축키·동작은 그대로 유지, R분석 탭
+  undo가 버튼에서 액션(단축키 대응)으로 UI 위치 소폭 변경.
+- `main_base_tag`를 `v1.11.0`, `main_base_commit`을 `7bd280e3`로 갱신.
+
+---
+
+## [zone-v1.6.2] 2026-10-27
+
+### 성능
+- "R 분석" 탭 브러시 보정 시 메인스레드 블로킹 기하급수적 증가 수정. 스트로크를
+  커밋할 때마다 누적된 모든 manual_strokes를 처음부터 재생하던 것을 증분 캐시
+  (`RRoiCanvas.effective_mask()`)로 바꿔 매 커밋 상수 시간으로 개선 + `zone_metrics.
+  disk_mask()`를 바운딩박스 기반으로 최적화(반환값 수학적으로 동일, Zone 탭 55개
+  UI 테스트로 회귀 없음 확인). 4000×3000 이미지·반경15px 브러시·30스트로크 기준
+  스트로크 #30 14.5초→34ms(428배), 30개 누적 191.5초→1.0초.
+- "R 분석" 탭 대형 이미지 전환 시 이중 디코드(`cv2.imread`+`QPixmap` 별도 디코드)
+  제거 + LRU 캐시(8장, Zone 탭 R-PERF-1과 동일 관례) 추가. 4000×3000 기준
+  전환 286~538ms→69.8ms(cold)/11~12ms(warm, 캐시 적중).
+- 사용자가 요청한 추가 사용성 UI 검증(엣지케이스/파괴적 조작/반복 조작) 중
+  실측 프로파일링으로 발견, 수정+독립 재검증(Zone 탭 회귀 없음, 증분 캐시
+  결과가 전체 재생 결과와 완전 일치) 통과.
+
+## [zone-v1.6.1] 2026-10-26
+
+### 수정
+- BUG-045(P1): "R 분석" 탭 배치 검출 버튼(현재 이미지/선택 셀 전체/전체 셀 분석)을
+  처리 중 재클릭하면 `_detect_worker`가 새 인스턴스로 교체돼 기존 QThread 참조가
+  끊기고 두 워커가 동시에 같은 이미지를 처리해 크래시하는 문제. `_run_batch_detect()`
+  시작부에 재진입 가드 추가 + 배치 진행 중 검출 버튼 3개 비활성화(완료 시 복구).
+  추가 사용성 검증(엣지케이스/파괴적 조작/반복 조작)에서 발견, 수정+독립 재검증 통과.
+
+## [zone-v1.6.0] 2026-10-26
+
+### 추가
+- "R 분석" 신규 탭 — 존(Zone) 분석 탭과 나란히 쓰이는 사각형 ROI+threshold 기반
+  contour 면적 측정 도구. 핵심은 여러 이미지를 "셀(cell)" 단위로 묶어 관리하고,
+  셀 내 이미지 면적 합계를 분자로 `R_cell = sum(area)/분모`를 셀당 1회만 계산해
+  스펙 상/하한과 비교한 합/불 판정을 낸다(이미지별 개별 판정 없음).
+  - 폴더 일괄 업로드(하위폴더명=셀 ID) / 파일 단위로 특정 셀에 추가, 셀 선택 후
+    이미지 삭제·추가.
+  - 검사 설정 팝업: 사각형 ROI(전역 1회 지정 + 이미지별 보정), threshold 슬라이더,
+    분모·스펙 상/하한 입력.
+  - Contour 자동 검출(현재 이미지 / 선택 셀 전체 / 전체 셀 일괄), 브러시 그리기·
+    지우기 + undo로 마스크 수동 보정.
+  - 좌1:중3:우1 레이아웃, 캔버스 위 역할별 플로팅 오버레이(편집 도구/검출 실행/
+    이미지 탐색), 선택된 셀에 종속된 결과 블록 + 전체 셀 요약 + Excel 내보내기.
+  - 신규: `app/tabs/r_analysis_tab.py`, `app/core/r_analysis_metrics.py`,
+    `app/core/r_cell_store.py`, `app/widgets/r_roi_canvas.py`,
+    `app/widgets/r_cell_panel.py`, `app/widgets/r_settings_panel.py`,
+    `app/widgets/r_step_indicator.py`, `app/widgets/r_batch_result_dialog.py`.
+  - 기획: [docs/specs/r-analysis-tab-2026-10-26.md](specs/r-analysis-tab-2026-10-26.md).
+    디자인 Artifact 4라운드 반복 후 사용자 최종 승인, 구현 2라운드(core+widgets →
+    탭 조립/등록) + 검증 과정에서 BUG-043(P0, 세션 "새로 만들기" 시 데이터 손실)/
+    BUG-044(P1, 캔버스 오버레이 겹침으로 Undo 클릭 불가) 발견·수정·재검증 Closed.
+
+## [zone-v1.5.2] 2026-10-07
+
+Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
+
+### 수정
+- R-PERF-1: 상/하부 분석 탭에서 캐시된 이미지를 재선택할 때마다 `engine.refilter()`
+  (디스크 재디코딩 포함)와 `compute_blob_labels()`(cv2 connected-components)를
+  매번 처음부터 재계산하던 딜레이를 수정. `(target_cid, min_confidence,
+  min_pixel_size)` 키 기반 캐시(`_target_cache`)를 추가해 같은 조합으로 같은
+  이미지를 재방문하면 재계산을 스킵하도록 변경(기능 변경 없음, 캐시 미스 시 동작
+  동일). 전체 추론 재실행/이미지 삭제 시 캐시 무효화.
+- R-PERF-2: 상/하부 분석 탭 일괄 처리 중 간헐적 "응답없음"을 수정. 배치 cv2/numpy
+  존·블랍 후처리(`compute_blob_labels`+`zones_from_circles`+`zone_stats`+
+  `zone_blob_stats`)와 사이드카 저장을 메인 스레드에서 동기 실행하던 것을, 전용
+  QThread `_ZoneBatchPostWorker`(producer-consumer 큐 기반, CUDA 비호출)로 분리.
+  `_ZoneBatchWorker`(CUDA 추론 전용)는 결과를 가벼운 중계 슬롯으로 큐에 넘기기만
+  하고 즉시 반환, 무거운 계산은 두 번째 워커가 전담해 메인 스레드 블로킹을 없앰.
+  최종 완료 판정은 더 늦게 끝나는 `_ZoneBatchPostWorker.finished` 기준으로 변경,
+  취소 시 두 워커 모두 `requestInterruption`. BUG-030(다른 스레드의 실 CUDA
+  추론 직후 같은 스레드 cv2 후처리가 트리거) 재발 조건 불성립 확인(두 번째 워커는
+  CUDA를 전혀 호출하지 않음). 기능 변경 없음(배치 모드 3종/사이드카 자동 저장/
+  진행률/결과 다이얼로그 전부 동일).
+- BUG-037/038(R-PERF-2 회귀): 일괄 처리 취소 직후 바로 재시작하면 아직 살아 있던
+  옛 CUDA 워커의 지연 신호가 새 배치에 섞여 같은 이미지가 중복 처리되던 문제와,
+  취소 시 미완료 이미지의 목록 아이콘이 "처리 중"으로 영구히 남던 문제를 수정.
+  `_on_batch_image_ready`/`_on_batch_row_computed`/`_on_batch_progress`가
+  `self.sender()`로 발신자가 현재 활성 워커인지 확인해 옛 배치의 지연 신호를
+  무시하고, `_on_batch_finished`가 미완료 대상의 상태를 `pending`으로 리셋.
+- BUG-039(R-PERF-1 후속): `_target_cache`에 상한이 없어 대형 이미지를 수십 장
+  훑으면 메모리가 수 GB까지 늘어날 수 있던 문제를 수정. `OrderedDict` 기반 LRU
+  (상한 20, 적중 시 `move_to_end`)로 변경.
+
+### 성능
+- BUG-040(R-PERF-1 후속): `_target_cache` 적중 상태에서도 대형 이미지 선택이
+  여전히 느리던 잔여 지연을 수정. (1) 이미지 전환 시 `_setup_target_classes()`→
+  `_on_target_changed()`가 트리거하는 `_recompute_zones()`와, 곧바로 뒤따르는
+  `ZoneCanvas.set_state()`(사이드카 복원)가 다시 트리거하는 `_recompute_zones()`가
+  중복 실행되며 전자의 결과가 그대로 버려지던 것을 `_suppress_recompute` 플래그로
+  억제해 최종 1회만 계산하도록 변경. (2) `_compute_zone_percentages()`/
+  `_compute_zone_blob_rows()`가 각자 `zones_from_circles()`를 호출해 한 번의
+  재계산에 4회(2함수 × 중복 트리거 2회) 호출되던 것을, 신규 헬퍼 `_current_zones()`로
+  1회만 계산해 양쪽이 공유하도록 리팩터링(`_recompute_zones()`/`_on_export_single()`
+  양쪽 호출부 적용). (3) `_setup_target_classes()`의 `detected_ids` 계산을
+  `set(raw_class_map.ravel().tolist())`에서 `np.unique(raw_class_map)`로 교체해
+  numpy 배열 전체를 python list/set으로 변환하는 비용을 제거. 기능 변경 없음(존
+  퍼센티지/블랍 집계·오버레이·undo 스택 결과 전부 동일, 회귀 테스트 166건 통과).
+  합성 5472×3648 입력(캐시 적중, cProfile) 계측: 재선택 소요시간 약 1795.7ms →
+  약 749.8ms(약 58% 감소, `_recompute_zones` 중복 실행 제거 + `zones_from_circles`
+  호출 24회→6회(disk_mask 기준) 감소). 실 GPU+실 체크포인트 독립 검증(2026-10-07):
+  5472px 선택 지연 921ms→462ms(약 50% 감소), 2048px도 171ms→100ms, 결과 정합성
+  골든 비교(대형 37건+소형 27건) diff 0건. 남은 ~0.46초는 체감 가능한 수준이라
+  BUG-040은 P3 Open으로 유지(추가 개선 방향은 QA.md 참고).
+
+### 기타
+- `scripts/generate_version_info.py`의 `_git()`이 `subprocess.run()`에 `stdin`을
+  지정하지 않아 일부 에이전트 셸 환경에서 `tests/test_build_release.py`가 간헐적으로
+  `OSError: WinError 6`로 실패하던 문제 수정(`stdin=subprocess.DEVNULL` 추가). 앱
+  동작과 무관, 테스트 환경 안정성만 개선.
+
+---
+
+## [zone-v1.5.1] 2026-10-02
+
+Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
+
+### 수정
+- 상/하부 분석 탭을 확정 디자인 Artifact에 맞춰 비주얼 조정(기능 변경 없음): 7단계
+  진행 안내 스텝 인디케이터 신설, 체크포인트 카드형 UI + 자동선택 배지, 편집 툴바를
+  캔버스 전용 헤더로 이동, 좌측 이미지 목록에 상시 삭제 아이콘, 우측 존 비율 색상바,
+  레시피·결과분석·진행상황 팝업 스타일 정비.
+
+---
+
+## [zone-v1.5.0] 2026-10-01
+
+Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
+
+### 추가
+- 존 분석 탭을 "상/하부 분석"으로 명칭 변경, 탭 순서를 맨 앞으로 이동.
+- 추론 탭에서 마지막 선택한 체크포인트를 상/하부 분석 탭이 자동 승계해 기본값으로 제안.
+- 이미지 업로드 시 기존 목록에 이어서 추가(append)하고, 개별 이미지를 "목록에서 제거"
+  (원본 파일은 보존)하는 기능.
+- 영역(zone) 설정을 일괄적용 전용 레시피 팝업으로 재편 — 자동검출, 수동편집, 레시피
+  저장·불러오기, 최근 레시피 자동 로드를 지원.
+- 원 중심 정렬 버튼, 방향키 이동(1px/Shift 10px), 마우스 휠 지름 조절(5px/Shift 20px).
+- 영역 설정을 추론 실행 전에도 할 수 있도록 활성화 조건 분리(브러시 보정 도구만 추론
+  후 활성화 유지).
+- 결과 분석 테이블에 "최대 blob 픽셀수" 열 추가, 같은 이미지의 존별 행을 그룹화 표시,
+  이미지명/존 필터 바, 클립보드 복사(TSV) 기능.
+- 체크포인트(.pt) 파일명에 학습 시작 날짜 포함.
+
+### 수정
+- 추론 방식을 sliding window로 고정(resize/sliding window 선택 UI 제거)하면서, 배치
+  처리가 지금까지 선택과 무관하게 항상 resize 방식만 쓰던 숨은 버그를 함께 수정.
+- BUG-035(GitHub 없음, P3): 상/하부 분석 탭이 기본 탭으로 뜨는 상태에서 앱 기동 직후
+  체크포인트 자동 선택이 반영되지 않던 문제 수정.
+
+---
+
+## [zone-v1.4.0] 2026-08-31
+
+Main 기준: v1.10.4 이후 main 1.10.5 / ba8bf5e
+
+### 추가
+- Zone 결정 방법을 일괄 적용, 일괄 적용 후 수정, 장별 적용의 3모드로 제공.
+- 이미지별 원·블랍 삭제·브러시 편집 상태를 `.zone.json` 사이드카에 자동 저장하고
+  이미지 재진입과 앱 재시작 후 복원.
+- 기존 Zone이 있는 배치 대상은 전체 대체, Zone 없는 이미지만 적용, 취소 중 선택.
+
+### 개선
+- Zone 일괄 처리를 백그라운드 스레드로 이동하고 준비된 추론 컨텍스트를 배치당 한 번만
+  생성해 재사용.
+- 배치 전용 대형 추론 결과를 즉시 해제해 20MP 다중 이미지 처리의 메모리 누적 제거.
+- 수동 브러시 스트로크를 rasterize-on-commit 캐시로 렌더링해 편집 응답성 개선.
+- CPU 추론 시 GPU 사용 가능 여부를 단일 추론과 배치 처리 전에 안내.
+
+### 빌드
+- Zone installer 및 EXE 버전을 `1.4.0`으로 갱신.
+- installer 출력 파일명: `SegmentationModelUIZone-Setup-1.4.0.exe`.
+
+---
+
+## [zone-v1.3.1] 2026-08-28
+
+Main 기준: v1.9.0 이후 빌드 수정 c984f7e 선택 동기화
+
+### 수정
+- Python 3.12 installer 빌드에서 `c10.dll` WinError 1114를 일으킨 PyTorch wheel 대신
+  검증된 PyTorch 2.7.1 cu128과 torchvision 0.22.1 조합으로 고정.
+- 빌드 의존성 설치와 버전 검사를 통합해 다른 빌드 PC에서도 같은 CUDA 런타임을 패키징.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.3.1`로 갱신.
+
+---
+
+## [zone-v1.3.0] 2026-08-28
+
+### 추가
+- Zone 분석 VOC 편집을 원 편집, 브러시 그리기, 브러시 지우기, 연결 블랍 삭제,
+  화면 이동, Undo의 라벨링 스타일 배타 툴바로 통합.
+- 수동 그리기·지우기를 시간순으로 적용해 마지막 스트로크가 우선하며 혼합 Undo 지원.
+
+### 변경
+- 학습은 기존 patch training(`random_crop`) 기본값을 유지하고, 추론과 Zone 분석의
+  기본 추론 방식을 `sliding_window`로 변경.
+
+---
+
+## [zone-v1.2.4] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.4 커밋 / 15c2282
+
+### 수정
+- 기존 `build\venv`가 Python 3.12가 아니거나 Python 실행 파일이 손상된 경우 자동 삭제 후 재생성.
+- 의존성 설치 후에도 정확한 Python 3.12인지 재검증해 잘못된 환경의 빌드 진행 차단.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.4`로 갱신.
+
+---
+
+## [zone-v1.2.3] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.3 커밋 / 1518c01
+
+### 수정
+- 일반 PowerShell/CMD에서 `build\venv`를 자동 생성하고 CUDA PyTorch, 런타임 패키지,
+  PyInstaller를 최초 1회 설치한 뒤 재사용.
+- 사용자가 conda 또는 venv를 직접 활성화하지 않아도 zone installer를 빌드하도록 변경.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.3`으로 갱신.
+
+---
+
+## [zone-v1.2.2] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.2 커밋 / ac83412
+
+### 수정
+- GitHub #27: 일반 PowerShell/CMD에서 `WindowsApps\\python.exe` 실행 별칭을
+  빌드 Python으로 오인하지 않도록 수정.
+- 가상환경 활성화 없이 Windows Python Launcher의 시스템 Python 3.12를 우선 사용.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.2`로 갱신.
+
+---
+
+## [zone-v1.2.1] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.1 커밋 / 69af9f7
+
+### 수정
+- 빌드 전 전체 오프라인 런타임 패키지를 검사하고 동일한 Python으로 PyInstaller를 실행.
+- 다른 Qt binding과 불필요한 Anaconda 개발 패키지 수집을 제외.
+- Windows 설치본에서 CUDA Torch를 PyQt6보다 먼저 초기화해 `c10.dll` WinError 1114 방지.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.1`로 갱신.
+
+---
+
+## [zone-v1.2.0] 2026-08-28
+
+Main 기준: v1.9.0 이후 1.10.0 대상 커밋 (94a74f9)
+
+### 추가
+- main의 GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
+- zone 전체 이미지 비동기 추론과 resize/sliding-window 선택, `F` 오버레이 전환.
+- installer 실행 직후 로딩 단계를 표시하는 시작 splash 화면.
+
+### 수정 및 성능
+- 추론·zone 오버레이 배경 밝기 유지.
+- threshold 디바운스, 원 편집 완료 시 1회 존 계산, 줌·팬 보존과 대형 미리보기 복사 제거.
+- 접근할 수 없는 최근 프로젝트 경로가 시작 창을 막지 않도록 안전 처리.
+
+### 빌드
+- zone installer 및 EXE 버전을 `1.2.0`으로 갱신.
+
+---
+
+## 동기화 준비 2026-08-28
+
+Main 기준: v1.9.0 + 8 commits (434b169)
+
+- GitHub #23 전체 이미지 비동기 추론, Best Model 및 학습 지표/그래프 저장 반영.
+- 추론 오버레이 배경 밝기 유지와 슬라이더·줌/팬 UI 병목 개선 반영.
+- zone 전용 전체 이미지/sliding-window 추론과 원·threshold 성능 개선은 그대로 유지.
+
+---
+
+## [zone-v1.1.0] 2026-08-27
+
+Main 기준: v1.9.0 + 4 commits (450f520)
+
+### 추가
+- 라벨링 탭에서 여러 이미지를 선택해 한 번에 양품화하는 main 공통 기능.
+- 원 우클릭 지름 변경, 신규 원의 중심 공유와 좌표 스케일링 경로 통합 (GitHub #13).
+- 이미지 선택 즉시 원본 미리보기와 `픽셀 threshold` 명칭 제공 (GitHub #14).
+- 기존 라벨 경계 채우기, 도구 타입과 무관한 동일 클래스 병합, 파일명 복사와
+  내보내기 잠금 재시도 등 main 공통 개선 (GitHub #12, #15, #16, #17).
+- 오토라벨링 원본 해상도 패치 추론, 학습 데이터 변경 잠금·병목 개선, 학습 설정
+  휠 변경 차단과 학습 큐 중지 응답 개선.
+
+### 빌드
+- zone 버전을 `1.1.0`으로 갱신하고 main과 분리된 제품명·EXE·설치 폴더·AppId 및
+  `zone-vX.Y.Z` 태그 체계를 유지.
+- 동기화된 최신 main 기능 기준을 `v1.9.0 + 4 commits` / `450f520`으로 명시.
+
+---
+
+## [zone-v1.0.0] 2026-08-27
+
+Main 기준: v1.8.0 + 19 commits (09933fd)
+
+### 추가
+- 존 분석 전용 탭과 원 검출·수동 편집·존별 통계·Excel 내보내기.
+- main과 독립된 제품명, EXE, 설치 폴더, installer 파일명 및 Inno Setup AppId.
+- main의 라벨링 이미지 다중선택 일괄 양품화 기능.
+
+### 빌드
+- `release.ini`에서 zone 버전과 제품 정보를 단일 관리.
+- Windows EXE `FileVersion`/`ProductVersion`과 installer 버전을 자동 생성.
+- zone 태그는 main의 `vX.Y.Z`와 구분되는 `zone-vX.Y.Z` 체계 사용.
+
+---
+
+## [v1.10.5] 2026-08-28
+
+### 수정
+- Python 3.12 빌드 환경에서 최신 CUDA PyTorch wheel의 `c10.dll`이 WinError 1114로
+  초기화되지 않아 installer 빌드가 중단되던 문제 수정.
+- Windows/Python 3.12/RTX 50 계열을 지원하는 검증 조합인 PyTorch 2.7.1 cu128과
+  torchvision 0.22.1로 installer 런타임을 고정.
+- 빌드 의존성 설치를 한 번의 해석 과정으로 통합해 torch/torchvision 호환 조합 유지.
+
+### 빌드
+- installer 및 EXE 버전을 `1.10.5`로 갱신.
 
 ---
 

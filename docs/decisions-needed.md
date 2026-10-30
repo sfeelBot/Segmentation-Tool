@@ -23,12 +23,36 @@
 결정. 상세: [docs/specs/github-issue-22-and-16-followup-2026-08-29.md](specs/github-issue-22-and-16-followup-2026-08-29.md)
 "GitHub #22" 절)*
 
+*(참고 기록 — 결정 대기 아님) 상/하부 분석 탭 실사용 피드백(2026-10-03) 4번 — 우측
+존별 비율 패널에 "퍼센티지 + 최대 blob 픽셀수" 2개만 우선 추가한다. 사용자 원문
+"등등"이 구체적으로 어떤 추가 지표를 가리키는지 불명확해 임의로 확장하지 않음(YAGNI)
+— 추가로 필요한 지표(예: blob 개수, AI 평균 점수 등)가 있으면 알려달라. 상세:
+[docs/specs/zone-tab-fixes-2026-10-03.md](specs/zone-tab-fixes-2026-10-03.md) 4절.
+
+*(참고 기록 — 결정 대기 아님) 상/하부 분석 탭 재설계(2026-10-01) "결과 분석 테이블"의
+최대 blob 픽셀수 컬럼은 **지금은 픽셀 수만 표시**한다. 사용자가 추후 pixel-to-mm
+해상도 계수를 제공하면 그때 mm 환산 컬럼/설정을 추가할 예정 — 계수가 없는 지금
+미리 "단위 변환 프레임워크"를 만들지 않음(YAGNI). 상세:
+[docs/specs/zone-tab-redesign-2026-10-01.md](specs/zone-tab-redesign-2026-10-01.md) 9절.
+
+*(Zone 분석 탭 배치 모드 3종 저장 범위 결정 완료 — 2026-08-30 사용자 확정: **디스크에
+저장돼 앱 재시작 후에도 남아야 함**(세션 메모리만으로는 부족). 사이드카 파일
+위치/형식 설계는 후속 기획에서 진행. 상세:
+[docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md](specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md))*
+
 *(GitHub #15/#12 라운드4 결정 2026-08-27 완료 — 아래 "완료된 결정" 절 참고)*
 
 *(GitHub #2 관련 3건은 2026-08-20 사용자 확인 완료. 요청1은 exe 패키징 항목으로
 편입, 요청2는 라운드 A+B 함께 진행 확정. 결과는
 [docs/specs/voc-github-issues-2026-08-20.md](specs/voc-github-issues-2026-08-20.md)
 "사용자 결정 — 전부 완료" 절에 기록됨)*
+
+*(현재 없음 — 아래 2건은 리더가 GitHub 이슈 #13 원문을 직접 재확인해 결정 완료:
+1) 신규 원 대표 중심은 "기존 원들의 평균 중심"으로 확정(기획 제안 그대로). 2) 요구사항4는
+해석 A+B 병행 — 배치처리/팝업라운드트립의 중복 비례스케일 로직을 공용 헬퍼로 통합(A)
+하면서 두 경로가 동일 결과를 내는지 검증(B)까지 함께 진행. 근거는
+[docs/specs/zone-analysis-tab-github-issues-13-14-2026-08-27.md](specs/zone-analysis-tab-github-issues-13-14-2026-08-27.md)
+"판단 2/4" 절 + `docs/agents/leader-log.md` 참고)*
 
 ## 보류된 항목
 

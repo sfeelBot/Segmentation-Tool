@@ -72,14 +72,18 @@ def run(
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
     prepared: PreparedInference | None = None,
+    classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """
     Returns InferenceResult.
     opacity: 0.0 = 원본만, 1.0 = 마스크만
     min_confidence: blob 평균 신뢰도 하한 (0~1) — 미달 blob은 배경으로 제거
     min_pixel_size: blob 최소 픽셀 수 — 미달 blob은 배경으로 제거
+    classes: None이면 현재 프로젝트의 classes.json (load_classes()) 사용 — 기존 호출부는
+        인자를 넘기지 않으므로 동작 변화 없음. 프로젝트 독립적으로 클래스를 지정하고 싶으면
+        (예: 존 분석 탭) 직접 채워서 넘긴다.
     """
-    classes  = load_classes()
+    classes  = classes if classes is not None else load_classes()
     cls_map  = {c.class_id: c for c in classes}
     ckpt, device = prepared or prepare_inference(model, checkpoint_path)
 
@@ -155,6 +159,7 @@ def run_sliding_window(
     min_confidence: float = 0.0,
     min_pixel_size: int = 0,
     prepared: PreparedInference | None = None,
+    classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """패치 학습 모델용 슬라이딩 윈도우 추론.
 
@@ -163,8 +168,10 @@ def run_sliding_window(
     3) 각 패치 추론 → 소프트맥스 확률 누적
     4) 겹치는 영역 평균(weighted blend) → argmax → class_map
     5) 결과를 원본 해상도로 오버레이 합성
+
+    classes: None이면 load_classes() 폴백 (run()과 동일 규약).
     """
-    classes = load_classes()
+    classes = classes if classes is not None else load_classes()
     cls_map = {c.class_id: c for c in classes}
     ckpt, device = prepared or prepare_inference(model, checkpoint_path)
 
@@ -248,14 +255,17 @@ def refilter(
     min_confidence: float,
     min_pixel_size: int,
     opacity: float,
+    classes: list[ClassDef] | None = None,
 ) -> InferenceResult:
     """모델 재실행 없이 threshold 만 바꿔 InferenceResult를 재계산.
 
     UI(추론 탭)에서 min_confidence/min_pixel_size 슬라이더·스핀박스 값이 바뀔 때
     호출한다 — numpy/cv2 연산만 수행하므로 opacity 슬라이더처럼 forward pass를
     다시 돌리지 않는다.
+
+    classes: None이면 load_classes() 폴백 (run()과 동일 규약).
     """
-    classes = load_classes()
+    classes = classes if classes is not None else load_classes()
     cls_map = {c.class_id: c for c in classes}
     pil_img = (
         image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
@@ -302,6 +312,53 @@ def reblend(
         pil_img, result.class_map,
         {c.class_id: c for c in load_classes()}, opacity,
     )
+
+
+def colorize_class_map(
+    class_map: np.ndarray,
+    image_path_or_pil: "Path | str | Image.Image",
+    opacity: float,
+) -> QImage:
+    """임의의 class_map 배열로 직접 합성 — InferenceResult를 요구하지 않는다.
+
+    호출자가 수동 보정(브러시) 등을 반영한 class_map 사본을 만들어 넘기는 용도.
+    원본 result.class_map 등은 건드리지 않는다(호출자 책임).
+    """
+    pil_img = (
+        image_path_or_pil if isinstance(image_path_or_pil, Image.Image)
+        else Image.open(str(image_path_or_pil)).convert("RGB")
+    )
+    return _colorize_and_blend(
+        pil_img, class_map,
+        {c.class_id: c for c in load_classes()}, opacity,
+    )
+
+
+def blob_at(result: InferenceResult, x: int, y: int) -> BlobStat | None:
+    """class_map(원본 해상도) 위의 정수 픽셀 좌표 (x, y)가 속한 blob을 반환한다.
+
+    result.blobs는 _compute_blobs_and_filter()가 filtered class_map(거부된 blob은
+    이미 배경 0으로 지워진 상태) 위에서 클래스별로 순서대로(래스터 스캔 순서) 담아둔
+    것이다. 여기서 같은 filtered class_map을 동일 클래스·8-connectivity로 다시
+    라벨링하면, 로컬 라벨 번호(1..n)는 거부된 blob이 이미 없으므로 result.blobs의
+    (같은 class_id로 필터링한) 순서와 1:1 대응한다 — 별도 매칭/캐시 구조 불필요.
+    """
+    h, w = result.class_map.shape
+    if not (0 <= x < w and 0 <= y < h):
+        return None
+    cid = int(result.class_map[y, x])
+    if cid == 0:
+        return None
+    mask = (result.class_map == cid).astype(np.uint8)
+    n_labels, labels = cv2.connectedComponentsWithStats(mask, connectivity=8)[:2]
+    local_label = int(labels[y, x])
+    if local_label == 0:
+        return None
+    same_class = [b for b in result.blobs if b.class_id == cid]
+    idx = local_label - 1
+    if not (0 <= idx < len(same_class)):
+        return None
+    return same_class[idx]
 
 
 def export_blobs_to_excel(rows: list[tuple[str, BlobStat]], out_path: Path) -> None:

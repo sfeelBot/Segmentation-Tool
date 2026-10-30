@@ -126,15 +126,10 @@ class ConfigForm(QWidget):
         self._num_workers = QSpinBox()
         self._num_workers.setRange(0, 8)
         self._num_workers.setValue(0)
+        self._num_workers.setEnabled(False)   # 존 분석 에디션 고정값 — 2026-10-29 사용자 요청
         self._num_workers.setToolTip(
-            "이미지 로딩 병렬 프로세스 수 (persistent_workers 적용 — 워커는\n"
-            "학습 내내 재사용되며 최초 epoch에만 기동 비용 발생).\n"
-            "기본값 0 = 메인 프로세스만 사용 (가장 안전·예측 가능, 워커 기동\n"
-            "비용 없음).\n"
-            f"1 이상으로 올리면 I/O 병렬화로 빨라질 수 있으나(권장 상한 2,"
-            f" 이 PC 코어 수: {os.cpu_count()}), 시스템(특히 Windows) 페이징\n"
-            "파일이 작으면 워커 프로세스가 OSError/MemoryError 로 실패할 수\n"
-            "있음(가상 메모리 크기를 늘리면 완화 가능)."
+            "존 분석 에디션은 DataLoader Workers를 0으로 고정합니다\n"
+            "(가장 안전·예측 가능, 워커 기동 비용 없음)."
         )
 
         data_form.addRow(t("cfg.img_w"),   self._img_w)

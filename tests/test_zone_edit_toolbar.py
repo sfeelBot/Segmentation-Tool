@@ -1,0 +1,183 @@
+"""Zone 편집 도구와 patch/sliding-window 기본값 회귀 테스트."""
+import importlib
+import os
+from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import numpy as np
+import pytest
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtTest import QSignalSpy, QTest
+from PyQt6.QtWidgets import QApplication, QGroupBox
+
+from app.tabs.inference_tab import InferenceTab
+from app.tabs.zone_analysis_tab import ZoneAnalysisTab
+from app.core.zone_metrics import compute_blob_labels
+from app.widgets.config_form import ConfigForm
+from app.widgets.zone_canvas import ZoneCanvas
+
+
+def _app() -> QApplication:
+    return QApplication.instance() or QApplication([])
+
+
+def test_manual_strokes_are_last_write_wins_and_undo_is_lifo() -> None:
+    _app_ref = _app()
+    canvas = ZoneCanvas()
+    canvas.set_image_size(9, 9)
+    canvas._manual_strokes = [(True, [(4.0, 4.0, 2.0)])]
+    canvas._push_undo()
+    canvas._manual_strokes.append((False, [(4.0, 4.0, 1.0)]))
+
+    edited = canvas.apply_manual_strokes(np.zeros((9, 9), dtype=bool))
+    assert edited[4, 2]
+    assert not edited[4, 4]
+
+    canvas.undo()
+    assert canvas.apply_manual_strokes(np.zeros((9, 9), dtype=bool))[4, 4]
+
+
+def test_zone_toolbar_is_exclusive_and_defaults_are_patch_based() -> None:
+    _app_ref = _app()
+    zone = ZoneAnalysisTab()
+    inference = InferenceTab()
+    training = ConfigForm()
+
+    # 2026-10-27: QActionGroup → BrushToolbar(공유) + 호스트 로컬 _set_tool() 수동
+    # 상호배제로 교체(라벨링 탭과 동일 패턴) — 원편집이 기본이고 공유 클러스터는
+    # 전부 unchecked.
+    assert zone._active_tool == "circle"
+    assert zone._act_circle.isChecked()
+    assert not zone._brush_tools.act_brush.isChecked()
+    assert not zone._brush_tools.act_eraser.isChecked()
+    assert not zone._brush_tools.act_delete_region.isChecked()
+    assert not zone._brush_tools.act_pan.isChecked()
+    # 2026-10-01 재설계: Zone 탭은 추론 방식 선택 UI 자체가 제거되고 sliding
+    # window로 고정됐다(_ZoneInferenceWorker가 항상 run_sliding_window()만 호출)
+    # — 선택 콤보(_infer_mode)는 더 이상 존재하지 않음.
+    assert not hasattr(zone, "_infer_mode")
+    assert inference._infer_mode.currentData() == "sliding_window"
+    assert training._sample_mode.currentData() == "random_crop"
+
+
+def test_diagonally_touching_pixels_are_separate_blobs() -> None:
+    mask = np.array([[1, 0], [0, 1]], dtype=np.uint8)
+
+    labels, stats, _ = compute_blob_labels(mask)
+
+    assert set(labels.ravel()) == {0, 1, 2}
+    assert sorted(stats[1:, 4].tolist()) == [1, 1]
+
+
+def test_offline_circle_detect_test_feature_fully_removed() -> None:
+    """2026-08-30: 오프라인 원 검출 테스트 기능 삭제(사용자 요청) 회귀 확인."""
+    _app_ref = _app()
+    zone = ZoneAnalysisTab()
+    assert not hasattr(zone, "_btn_offline_test")
+    assert not hasattr(zone, "_on_open_offline_test")
+    assert not hasattr(zone, "_apply_circles_from_popup")
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.widgets.circle_detect_preview_dialog")
+    zone.close()
+
+
+def test_batch_apply_groupbox_present_and_still_gated() -> None:
+    """존 일괄 적용 발견성 개선(그룹박스) — 로직(_update_batch_button_state)은 그대로.
+
+    2026-10-29 배치 단순화: 배치 모드 콤보(`_mode_combo`)가 제거되고 "고정 배치"
+    동작 하나만 남았다 — 그룹박스 제목도 더 이상 모드 선택을 가리키지 않도록
+    "배치 처리"로 바뀜(디자인 검토)."""
+    _app_ref = _app()
+    zone = ZoneAnalysisTab()
+    assert isinstance(zone._batch_box, QGroupBox)
+    assert "배치 처리" in zone._batch_box.title()
+    assert not hasattr(zone, "_mode_combo")
+    assert not zone._btn_batch.isEnabled()   # 초기: 원 없음 + 이미지 1장 이하
+
+    zone._img_list.load_files([Path("a.png"), Path("b.png")])
+    zone._update_batch_button_state()
+    assert not zone._btn_batch.isEnabled()   # 이미지는 2장이지만 원이 아직 없음
+
+    zone._canvas.set_circles([(10.0, 10.0, 5.0)])
+    zone._update_batch_button_state()
+    assert zone._btn_batch.isEnabled()   # 원 1개 이상 + 이미지 2장 이상 → 활성화
+    zone.close()
+
+
+def test_blob_clicked_only_in_circle_mode_and_blob_delete_unaffected() -> None:
+    """요청4 회귀 확인 — blob_clicked는 circle 모드에서만 emit되고, 다른 모드
+    (특히 blob_delete의 클릭=즉시삭제)는 전혀 영향받지 않는다."""
+    app = _app()
+    canvas = ZoneCanvas()
+    canvas.resize(200, 200)
+    canvas.set_image_size(100, 100)
+    canvas.set_pixmap(QPixmap(100, 100))
+    labels = np.zeros((100, 100), dtype=np.int32)
+    labels[40:60, 40:60] = 1
+    stats = np.array([[0, 0, 0, 0, 0], [40, 40, 20, 20, 400]])
+    canvas.set_blob_data(labels, stats)
+    canvas.show()
+    app.processEvents()
+
+    center, _ = canvas._orig_to_screen(50.0, 50.0, 0.0)
+    click_pt = QPoint(round(center.x()), round(center.y()))
+
+    # circle 모드(기본) — 클릭 시 blob_clicked가 원본 이미지 좌표로 1회 emit.
+    spy = QSignalSpy(canvas.blob_clicked)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    assert len(spy) == 1
+    x, y = spy[0]
+    assert abs(x - 50) <= 1 and abs(y - 50) <= 1
+
+    # blob_delete 모드 — blob_clicked는 emit되지 않고, 기존 클릭=즉시삭제 동작은 그대로.
+    canvas.set_blob_delete_mode(True)
+    spy_click = QSignalSpy(canvas.blob_clicked)
+    spy_delete = QSignalSpy(canvas.blob_deleted)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    assert len(spy_click) == 0
+    assert len(spy_delete) == 1
+    assert canvas._removed_blob_ids == {1}
+    canvas.set_blob_delete_mode(False)
+
+    # brush_draw/brush_erase/pan 모드 — blob_clicked 미emit(모드별 조기 return 경로).
+    for setter in (canvas.set_brush_draw_mode, canvas.set_brush_erase_mode):
+        setter(True)
+        spy_mode = QSignalSpy(canvas.blob_clicked)
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+        assert len(spy_mode) == 0
+        setter(False)
+    canvas.set_pan_mode(True)
+    spy_pan = QSignalSpy(canvas.blob_clicked)
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    assert len(spy_pan) == 0
+    canvas.close()
+
+
+def test_zone_overlay_opacity_slider_updates_and_persists() -> None:
+    """오버레이 불투명도 슬라이더 — 값이 _overlay_opacity에 반영되고 이미지 전환 후에도
+    유지돼야 한다(사용자 요구사항: 0.5로 리셋되면 안 됨)."""
+    _app_ref = _app()
+    zone = ZoneAnalysisTab()
+    assert zone._overlay_opacity_slider.value() == 50
+    assert zone._overlay_opacity == 0.5
+
+    zone._overlay_opacity_slider.setValue(80)
+    assert zone._overlay_opacity == 0.8
+    assert zone._lbl_overlay_opacity_pct.text() == "80%"
+
+    # _last_result가 없을 때도 예외 없이(조기 return) 동작해야 한다.
+    zone._opacity_timer.stop()
+    zone._show_overlay_state()
+
+    # 이미지 전환을 흉내(새 _image_path)내도 슬라이더 값은 그대로 유지된다.
+    zone._image_path = Path("dummy.png")
+    zone._show_overlay_state()
+    assert zone._overlay_opacity == 0.8
+    zone.close()
+
