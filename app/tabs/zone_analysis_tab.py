@@ -156,6 +156,57 @@ class _ZoneCircleLayoutWorker(QThread):
                 self.progress.emit(path, "error", str(exc), done, total)
 
 
+class _ZoneViewAllWorker(QThread):
+    """"전체 결과 보기"(req6, `_on_view_all_results`) 비동기화 전용 워커 —
+    `_compute_zone_rows()`(순수 함수, Qt 의존성 없음)를 이미지마다 백그라운드
+    스레드에서 호출해 누적한다. 디스크/모델에 쓰기 작업이 없는 순수 조회라
+    취소해도 잃을 게 없음 — `requestInterruption()` 시 결과를 버리고 그냥
+    끝난다(`_ZoneCircleLayoutWorker`와 달리 완료 시그널에 데이터를 함께 싣는다,
+    배치 쪽은 사이드카 저장이 "결과"라 상태만 알리면 됐지만 여긴 그 자체가
+    데이터라 시그널로 직접 전달 필요)."""
+    progress = pyqtSignal(int, int)   # done, total
+    result_ready = pyqtSignal(list, list, list)   # all_rows, all_blob_rows, skipped names
+
+    def __init__(self, paths: list[Path], results: dict[Path, InferenceResult],
+                 target_cid: int, current_path: Path | None,
+                 current_circles: list[tuple]) -> None:
+        super().__init__()
+        self._paths = paths
+        self._results = results
+        self._target_cid = target_cid
+        self._current_path = current_path
+        self._current_circles = current_circles
+
+    def run(self) -> None:
+        all_rows: list[tuple[str, str, float]] = []
+        all_blob_rows: list[tuple[str, ZoneBlobStat]] = []
+        skipped: list[str] = []
+        total = len(self._paths)
+        for done, path in enumerate(self._paths, 1):
+            if self.isInterruptionRequested():
+                return
+            result = self._results.get(path)
+            if result is None:
+                skipped.append(path.name)
+                self.progress.emit(done, total)
+                continue
+            previous = zstate.load_state(path)
+            # BUG-036: 사이드카의 "circles"는 (id, cx, cy, r, name, hidden) — id를
+            # 자르지 않고 그대로 넘기면 _compute_zone_rows()가 크래시한다(동기
+            # 버전과 동일한 가드, zone_analysis_tab.py 참고).
+            circles = (self._current_circles if path == self._current_path
+                       else [c[1:] for c in (previous or {}).get("circles", [])])
+            computed = _compute_zone_rows(path, result, self._target_cid, circles, previous)
+            if computed is not None:
+                rows, blob_rows = computed
+                all_rows.extend(rows)
+                all_blob_rows.extend(blob_rows)
+            self.progress.emit(done, total)
+        if self.isInterruptionRequested():
+            return
+        self.result_ready.emit(all_rows, all_blob_rows, skipped)
+
+
 def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
     """플레인 RGB numpy 배열을 QPixmap으로 변환 — 추론 전 원본 미리보기 전용 (GH#14)."""
     rgb = np.ascontiguousarray(rgb)
@@ -225,6 +276,8 @@ class ZoneAnalysisTab(QWidget):
         self._worker: _ZoneInferenceWorker | None = None
         self._post_worker: _ZoneCircleLayoutWorker | None = None   # 배치 '영역 적용' 전용 워커
         self._batch_progress: QProgressDialog | None = None
+        self._view_all_worker: _ZoneViewAllWorker | None = None   # "전체 결과 보기" 전용 워커(req6)
+        self._view_all_progress: QProgressDialog | None = None
         # BUG-038: 이번 배치의 대상 목록 + 상태가 "done"/"error"로 확정된 경로 —
         # 취소 시 둘의 차집합(아직 processing 아이콘이 남은 이미지)을 pending으로 리셋.
         self._batch_targets: list[Path] = []
@@ -1431,33 +1484,45 @@ class ZoneAnalysisTab(QWidget):
         """2026-10-03#8 — 이번 세션에서 추론을 실행한 모든 이미지를 모아서 본다.
         AI 마스크(InferenceResult)는 세션 메모리에만 있어 과거 세션/미추론 이미지는
         집계할 수 없다(재추론 자동 트리거 없음, YAGNI) — 그런 이미지는 제외하고
-        안내 팝업 1회만 띄운다."""
+        안내 팝업 1회만 띄운다.
+
+        2026-10-30(req6): 계산(`_compute_zone_rows()` — cv2 connected-components
+        포함)을 메인 스레드 동기 for문 대신 `_ZoneViewAllWorker`(QThread)로
+        옮겨 GUI 블로킹을 없앤다. `QProgressDialog.setMinimumDuration()`이
+        이미 "짧으면 안 보임"을 네이티브로 처리해주므로 별도 타이머는 불필요."""
         if self._target_class_id is None:
             QMessageBox.information(self, t("zone.not_ready_title"), t("zone.not_ready_msg1"))
             return
         self._flush_state()   # 현재 이미지의 편집 상태를 사이드카에 먼저 반영(비교 대상 최신화)
-        all_rows: list[tuple[str, str, float]] = []
-        all_blob_rows: list[tuple[str, ZoneBlobStat]] = []
-        skipped: list[str] = []
-        for path in self._img_list.paths():
-            result = self._results.get(path)
-            if result is None:
-                skipped.append(path.name)
-                continue
-            previous = zstate.load_state(path)
-            # BUG-036: 사이드카의 "circles"는 (id, cx, cy, r, name, hidden) — ZoneCanvas.get_state()/
-            # _ZoneCircleLayoutWorker.run()이 항상 id를 맨 앞에 저장한다(get_circles()와 다른
-            # 스키마). id를 자르지 않고 그대로 넘기면 _compute_zone_rows()가 cx 자리에
-            # id를, name 자리에 실제 반지름(float)을 받아 zone_name_sort_key()에서
-            # TypeError로 크래시한다(QA.md BUG-036).
-            circles = (self._canvas.get_circles() if path == self._image_path
-                       else [c[1:] for c in (previous or {}).get("circles", [])])
-            computed = _compute_zone_rows(path, result, self._target_class_id, circles, previous)
-            if computed is None:
-                continue
-            rows, blob_rows = computed
-            all_rows.extend(rows)
-            all_blob_rows.extend(blob_rows)
+        paths = self._img_list.paths()
+        self._btn_view_all.setEnabled(False)
+        self._view_all_worker = _ZoneViewAllWorker(
+            paths, self._results, self._target_class_id, self._image_path,
+            self._canvas.get_circles(),
+        )
+        progress = QProgressDialog(
+            t("zone.view_all_progress_label"), t("common.cancel"), 0, len(paths), self
+        )
+        progress.setWindowTitle(t("zone.view_all_progress_title"))
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(400)   # 400ms 이내에 끝나면 아예 표시 안 됨(Qt 네이티브)
+        self._view_all_progress = progress
+        progress.canceled.connect(self._view_all_worker.requestInterruption)
+        self._view_all_worker.progress.connect(self._on_view_all_progress)
+        self._view_all_worker.result_ready.connect(self._on_view_all_ready)
+        self._view_all_worker.finished.connect(self._on_view_all_worker_finished)
+        self._view_all_worker.start()
+
+    def _on_view_all_progress(self, done: int, total: int) -> None:
+        if self._view_all_progress is not None:
+            self._view_all_progress.setValue(done)
+
+    def _on_view_all_ready(
+        self, all_rows: list[tuple[str, str, float]],
+        all_blob_rows: list[tuple[str, ZoneBlobStat]], skipped: list[str],
+    ) -> None:
+        """워커가 취소 없이 끝났을 때만 emit 됨(`result_ready`) — 결과 표시만
+        담당, 워커 자체 정리는 `finished`(QThread 내장 시그널) 쪽에서 한다."""
         if not all_rows:
             QMessageBox.information(self, t("zone.no_results_title"), t("zone.no_results_session_msg"))
             return
@@ -1469,6 +1534,13 @@ class ZoneAnalysisTab(QWidget):
         self._result_viewed = True
         self._refresh_step_indicator()
         ZoneBatchResultDialog(all_rows, all_blob_rows, self).exec()
+
+    def _on_view_all_worker_finished(self) -> None:
+        if self._view_all_progress is not None:
+            self._view_all_progress.close()
+            self._view_all_progress = None
+        self._view_all_worker = None
+        self._btn_view_all.setEnabled(bool(self._results))
 
     # ── 슬롯 — 결과 이미지 일괄 저장 (요구사항 9) ───────────────────────────
 
