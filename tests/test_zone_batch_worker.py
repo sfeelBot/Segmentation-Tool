@@ -337,6 +337,18 @@ def test_view_all_results_with_inactive_image_sidecar_does_not_crash():
         module.ZoneBatchResultDialog = _NoExecDialog
         try:
             tab._on_view_all_results()   # 수정 전엔 다이얼로그 생성 중 TypeError로 크래시했음
+            # 2026-10-30(req6): 계산이 QThread 워커로 옮겨져 비동기화됐다 — 워커가
+            # 끝나고 메인 스레드로 큐드 시그널이 전달될 때까지 펌핑해야 한다
+            # (test_zone_batch_worker.py의 다른 워커 테스트와 동일 패턴).
+            worker = tab._view_all_worker
+            assert worker is not None
+            assert worker.wait(10000)
+            for _ in range(200):
+                if tab._view_all_worker is None:
+                    break
+                QTest.qWait(20)
+            else:
+                raise AssertionError("view_all_worker가 제한 시간 내에 종료되지 않음")
         finally:
             module.ZoneBatchResultDialog = old_dialog
             tab.close()
