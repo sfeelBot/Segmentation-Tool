@@ -84,6 +84,11 @@ _DEFAULT_MIN_PIXEL_SIZE = 0
 _PREVIEW_MAX_DIM = 2048
 # BUG-039: _target_cache LRU 상한(장당 약 240MB — 적당히 넉넉한 고정값, 설정 불필요)
 _TARGET_CACHE_MAX = 20
+# BUG-040 후속: _preview_cache LRU 상한(썸네일 최대 2048x2048x3 ≈ 12.6MB/장 — _target_cache와 동일 패턴)
+_PREVIEW_CACHE_MAX = 20
+# BUG-040 후속: _detected_ids_cache는 정수 리스트뿐이라 메모리 부담은 무시 가능하지만,
+# 상한 없는 캐시를 새로 들이지 않는다는 원칙(BUG-039)을 그대로 따른다.
+_DETECTED_IDS_CACHE_MAX = 20
 
 
 class _ZoneInferenceWorker(QThread):
@@ -208,6 +213,15 @@ class ZoneAnalysisTab(QWidget):
         # 늘어남 — OrderedDict로 LRU 흉내(적중 시 move_to_end, 초과 시 가장 오래된
         # 항목 제거), 상한은 적당히 넉넉한 고정값.
         self._target_cache: OrderedDict[Path, tuple[tuple, InferenceResult, np.ndarray, list]] = OrderedDict()
+        # BUG-040 후속: 원본 디코드(Image.open+convert)+썸네일(thumbnail) 결과를
+        # Path 기준으로 캐시 — 신뢰도/threshold와 무관한 "이미지 자체" 캐시라
+        # _target_cache(추론 파라미터 의존)와 별개로 둔다. 재추론해도 무효화되지
+        # 않음(원본 픽셀은 바뀌지 않으므로) — _on_run()에서 clear하지 않는다.
+        self._preview_cache: OrderedDict[Path, tuple[tuple[int, int], QPixmap]] = OrderedDict()
+        # BUG-040 후속: np.unique(raw_class_map) 결과(배경 제외 클래스 id 목록)를
+        # Path 기준으로 캐시. self._results와 생명주기를 맞춰 _on_run()에서 함께
+        # clear, _on_images_removed()에서 함께 evict.
+        self._detected_ids_cache: OrderedDict[Path, list[int]] = OrderedDict()
         self._worker: _ZoneInferenceWorker | None = None
         self._post_worker: _ZoneCircleLayoutWorker | None = None   # 배치 '영역 적용' 전용 워커
         self._batch_progress: QProgressDialog | None = None
@@ -667,6 +681,8 @@ class ZoneAnalysisTab(QWidget):
         for p in removed:
             self._results.pop(p, None)
             self._target_cache.pop(p, None)
+            self._preview_cache.pop(p, None)
+            self._detected_ids_cache.pop(p, None)
         if self._image_path in removed:
             self._image_path = None
             self._last_result = None
@@ -696,13 +712,23 @@ class ZoneAnalysisTab(QWidget):
         self._image_path = path
         self._last_result = self._results.get(path)
         try:
-            with Image.open(str(path)) as im:
-                rgb_im = im.convert("RGB")
-                self._image_size = rgb_im.size   # (w, h)
-                rgb_im.thumbnail((_PREVIEW_MAX_DIM, _PREVIEW_MAX_DIM), Image.BILINEAR)
-                preview_rgb = np.array(rgb_im)
+            cached_preview = self._preview_cache.get(path)
+            if cached_preview is not None:
+                # BUG-040 후속: 같은 이미지 재선택 — 디코드+리사이즈 스킵
+                self._image_size, self._original_pixmap = cached_preview
+                self._preview_cache.move_to_end(path)
+            else:
+                with Image.open(str(path)) as im:
+                    rgb_im = im.convert("RGB")
+                    self._image_size = rgb_im.size   # (w, h)
+                    rgb_im.thumbnail((_PREVIEW_MAX_DIM, _PREVIEW_MAX_DIM), Image.BILINEAR)
+                    preview_rgb = np.array(rgb_im)
+                self._original_pixmap = _rgb_to_qpixmap(preview_rgb)
+                self._preview_cache[path] = (self._image_size, self._original_pixmap)
+                self._preview_cache.move_to_end(path)
+                if len(self._preview_cache) > _PREVIEW_CACHE_MAX:
+                    self._preview_cache.popitem(last=False)
             self._canvas.set_image_size(*self._image_size)
-            self._original_pixmap = _rgb_to_qpixmap(preview_rgb)
             self._canvas.set_pixmap(self._original_pixmap)
             self._act_circle.setEnabled(True)
             self._brush_tools.act_pan.setEnabled(True)
@@ -882,6 +908,9 @@ class ZoneAnalysisTab(QWidget):
         paths = self._img_list.paths() or [self._image_path]
         self._results.clear()
         self._target_cache.clear()   # R-PERF-1: 새 추론 세션 — 이전 캐시는 전부 무의미
+        # BUG-040 후속: detected_ids는 raw_class_map(추론 결과) 의존 — 재추론 시
+        # 무효화 필요. _preview_cache(원본 디코드)는 원본 픽셀이 안 바뀌므로 유지.
+        self._detected_ids_cache.clear()
         self._btn_view_all.setEnabled(bool(self._results))
         self._btn_run.setEnabled(False)
         self._btn_run.setText(t("zone.running"))
@@ -934,7 +963,20 @@ class ZoneAnalysisTab(QWidget):
         # BUG-040 C: set()+ravel().tolist()는 numpy 배열 전체를 python list/set으로
         # 변환해 느리다 — np.unique()는 순수 numpy 연산이라 훨씬 빠르고 이미 정렬된
         # 결과를 반환한다(동작 동일, sorted() 불필요해짐).
-        ids = [int(i) for i in np.unique(result.raw_class_map) if i != 0]
+        # BUG-040 후속: 호출 시점에 self._image_path는 항상 이 result에 대응하는
+        # 경로다(두 호출부 모두 _setup_target_classes() 전에 self._image_path를
+        # 먼저 맞춰둔다) — 같은 이미지를 재방문하면 np.unique() 재계산을 스킵.
+        cached_ids = self._detected_ids_cache.get(self._image_path)
+        if cached_ids is not None:
+            ids = cached_ids
+            self._detected_ids_cache.move_to_end(self._image_path)
+        else:
+            ids = [int(i) for i in np.unique(result.raw_class_map) if i != 0]
+            if self._image_path is not None:
+                self._detected_ids_cache[self._image_path] = ids
+                self._detected_ids_cache.move_to_end(self._image_path)
+                if len(self._detected_ids_cache) > _DETECTED_IDS_CACHE_MAX:
+                    self._detected_ids_cache.popitem(last=False)
         self._detected_ids = ids
 
         self._target_name_edit.hide()
