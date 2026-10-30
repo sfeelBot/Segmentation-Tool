@@ -176,6 +176,11 @@ class ZoneBatchResultDialog(QDialog):
         ])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        # req6 후속: 행이 많으면(이미지 수십 장 x 존) setItem/setSpan 반복이 매번
+        # 화면을 갱신해 메인 스레드에서 체감되게 느려질 수 있다 — 채우는 동안
+        # 갱신을 끄고 끝난 뒤 한 번만 다시 켠다(가장 단순한 개선, 가상화/지연
+        # 로딩 같은 과설계는 하지 않음).
+        table.setUpdatesEnabled(False)
         for r, (img_name, zone_name, pct) in enumerate(sorted_rows):
             table.setItem(r, 0, QTableWidgetItem(img_name))
             table.setItem(r, 1, QTableWidgetItem(zone_name))
@@ -198,6 +203,7 @@ class ZoneBatchResultDialog(QDialog):
                     table.setSpan(start, 0, r - start, 1)
                 group_idx += 1
                 start = r
+        table.setUpdatesEnabled(True)
 
         container = QWidget()
         v = QVBoxLayout(container)
@@ -230,11 +236,13 @@ class ZoneBatchResultDialog(QDialog):
         table.setHorizontalHeaderLabels([t("zone_batch.col_image")] + zone_cols)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setUpdatesEnabled(False)   # req6 후속: long 탭과 동일한 이유로 채우는 동안 갱신 끔
         for r, img in enumerate(images):
             table.setItem(r, 0, QTableWidgetItem(img))
             for c, zone_name in enumerate(zone_cols, start=1):
                 pct = values.get((img, zone_name))
                 table.setItem(r, c, _NumericTableWidgetItem(f"{pct:.2f}" if pct is not None else ""))
+        table.setUpdatesEnabled(True)
         # Wide 탭만 정렬 지원(Long 탭은 이미지별 그룹화 목적과 상충해 비채택,
         # 디자인 확인 2026-10-03#8) — 데이터를 다 채운 뒤에 켜야 삽입 순서가 안 꼬인다.
         table.setSortingEnabled(True)
