@@ -1539,8 +1539,13 @@ AI신뢰도/픽셀threshold/편집툴바 2행→1행 통합(BUG-021 재발 방�
       `ZoneRecipeDialog`가 선택 라벨+"이름 변경..." 버튼으로 노출, 기존
       `_prompt_name_change()` 재사용) — 구현 완료(2026-10-30), **검증
       에이전트 확인 대기**.
-- [ ] 6 — "전체 결과 보기" QThread 비동기화(`zone_analysis_tab.py`,
-      신규 워커) — 구현 대기.
+- [x] 6 — "전체 결과 보기" QThread 비동기화(`zone_analysis_tab.py` 신규
+      워커 `_ZoneViewAllWorker` + `QProgressDialog.setMinimumDuration(400)`로
+      "짧으면 안 보임" 네이티브 처리, `zone_batch_result_dialog.py`
+      Long/Wide 탭 `setUpdatesEnabled(False)` 래핑) — 구현 완료(2026-10-30).
+      합성 30장(900×900) 실측: 동기 for문 254.3ms → 워커 `.start()` 메인
+      스레드 블로킹 0.0ms(전체 계산 264.0ms는 워커 스레드로 이동). **검증
+      에이전트 확인 대기**.
 - [x] 7 — BUG-040 잔여 지연 캐싱 2종 추가(`zone_analysis_tab.py`,
       `_preview_cache`/`_detected_ids_cache`) — 구현 완료(2026-10-30). 합성
       5472×3648 실측(해당 두 함수 직접 콜드/웜 비교): 디코드+썸네일

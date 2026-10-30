@@ -6857,3 +6857,68 @@ QA.md의 cProfile 분해와 같은 단위로 두 targeted 연산만 직접 분�
 정말 아무 반응이 없는지(테스트는 `QContextMenuEvent`를 직접 호출해 확인했지만
 실제 우클릭 제스처 경로 재확인 권장), (3) 레이아웃(좌측 "원(Zone) 설정 &
 배치 처리" 그룹박스) 폭이 BUG-021 재발 없이 보이는지.
+
+## 2026-10-30 — "전체 결과 보기" QThread 비동기화 (Zone 탭, 스펙 6번)
+
+### 배경
+`_on_view_all_results()`(`zone_analysis_tab.py`)가 `self._img_list.paths()`
+전체를 메인 스레드 동기 for문으로 순회하며 이미지마다 `_compute_zone_rows()`
+(cv2 connected-components 포함)를 호출한 뒤 `ZoneBatchResultDialog(...).exec()`
+를 모달로 띄웠다 — 이미지가 많으면 그 루프 동안 GUI가 멈춘다. 스펙
+`zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md` 6절.
+
+### 변경 내용
+- `app/tabs/zone_analysis_tab.py`: 신규 `_ZoneViewAllWorker(QThread)` 추가
+  — `_compute_zone_rows()`(이미 순수 함수, 변경 없음)를 이미지마다 백그라운드
+  스레드에서 호출해 `all_rows`/`all_blob_rows`/`skipped` 누적, `result_ready`
+  시그널로 전달. 취소(`requestInterruption()`) 시 결과를 버리고 조용히
+  끝남(디스크 쓰기 없는 순수 조회라 잃을 게 없음). `_on_view_all_results()`
+  를 "가드(타겟 클래스 확인 + `_flush_state()`) → 워커 생성/시작"으로
+  축소하고, 결과 표시는 `_on_view_all_ready()`(not-ready/skipped 안내 팝업 +
+  `ZoneBatchResultDialog` 생성)로, 정리는 `_on_view_all_worker_finished()`
+  (진행률 다이얼로그 close + 버튼 재활성화)로 분리.
+- `QProgressDialog.setMinimumDuration(400)`을 써서 "오래 걸릴 경우에만
+  표시"를 네이티브로 처리 — 스펙이 제안한 커스텀 타이머(300~500ms 지연)는
+  불필요(Qt 기본 기능이 이미 제공, YAGNI로 생략).
+- 취소 버튼은 기존 `_on_batch_process()`의 `QProgressDialog` 패턴을 그대로
+  재사용(동일하게 cancelButtonText 전달 + `canceled` → `requestInterruption()`
+  연결).
+- `app/widgets/zone_batch_result_dialog.py`: `_build_long_tab()`/
+  `_build_wide_tab()`의 `QTableWidgetItem` 채우기 루프를
+  `table.setUpdatesEnabled(False)`로 감싸 행이 많을 때 메인 스레드 렌더링
+  비용을 줄임(가상화/지연로딩 같은 과설계는 하지 않음).
+- `app/core/i18n.py`: `zone.view_all_progress_label`/
+  `zone.view_all_progress_title` 신규 키 2개(ko/en).
+
+### 테스트
+- `tests/test_zone_batch_worker.py::test_view_all_results_with_inactive_image_sidecar_does_not_crash`
+  (BUG-036 회귀 테스트) — `_on_view_all_results()`가 비동기화되며 다이얼로그가
+  더는 호출 직후 즉시 생성되지 않아 깨졌던 걸, `worker.wait()` + `QTest.qWait()`
+  펌핑으로 기존 다른 워커 테스트와 동일한 패턴으로 수정(BUG-036 자체의 회귀
+  검증 내용은 그대로 유지).
+- 신규 `tests/test_zone_view_all_async_2026_10_30.py`:
+  - `_ZoneViewAllWorker`가 직접 `.run()` 호출 시 옛 동기 for문(`_sync_reference`
+    로 재현)과 바이트 단위로 동일한 `all_rows`/`all_blob_rows`를 내는지 확인.
+  - 추론 결과 없는 이미지가 `skipped`에 들어가는지, 취소 시(`.start()` 후
+    실제 실행 중 `requestInterruption()` — `_ZoneCircleLayoutWorker` 테스트와
+    동일 전제: `.start()` 전에 걸면 플래그가 리셋돼 무효) `result_ready`가
+    emit되지 않는지 확인.
+  - `_on_view_all_results()` 호출 자체가 이미지 20장(120×120)에도 0.3초 이내
+    즉시 리턴하는지(메인 스레드 블로킹 없음), 워커 완료 후에만 다이얼로그가
+    뜨는지 확인.
+  - 합성 30장(900×900) 실측: 동기 for문 254.3ms vs 워커 `.start()` 블로킹
+    0.0ms(전체 계산 264.0ms는 워커 스레드로 이동) — "메인 스레드 블로킹 시간 <
+    동기 버전 전체 계산 시간"을 단언.
+- `pytest tests/ -k zone` — 78 passed(기존 73 + 신규 5).
+- `pytest tests/` 전체 — 188 passed, 2 failed. 두 실패
+  (`test_training_performance.py::test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`,
+  `test_zone_step_indicator.py::test_steps_complete_in_order_as_ckpt_image_circles_are_set`)
+  모두 `git stash`로 이번 변경분을 제거한 베이스라인에서도 동일하게
+  재현됨을 확인 — **내 범위 밖, 다른 implementer의 동시 작업(레이아웃/
+  스테퍼) 또는 기존 이슈로 추정, 손대지 않음**.
+
+### 상태
+구현 완료. 사소한 성능/비동기화 작업이라 AGENTS.md 기준 "실행 확인" 수준이면
+충분하지만, 검증 에이전트가 실제 앱에서 이미지 다수(가능하면 20장 이상)
+로드 후 "전체 결과 보기" 클릭 시 UI가 멈추지 않는지, 결과 값이 기존과 동일한지
+확인하기 전까지 완료로 간주하지 않음.
