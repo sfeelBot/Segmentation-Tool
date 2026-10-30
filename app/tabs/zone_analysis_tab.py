@@ -1631,14 +1631,6 @@ class ZoneAnalysisTab(QWidget):
             QMessageBox.warning(self, t("infer.no_image_title"), t("zone.no_image_msg"))
             return
         existing = self._canvas.get_circles()
-        if existing:
-            reply = QMessageBox.question(
-                self, t("zone.existing_circles_title"), t("zone.existing_circles_msg"),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
         dialog = ZoneRecipeDialog(
             self._original_pixmap, self._image_size, self,
             initial_circles=existing, image_name=self._image_path.name,

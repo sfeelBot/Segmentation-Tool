@@ -178,6 +178,45 @@ def test_recipe_dialog_zone_click_enables_rename_and_updates_label(tmp_path, mon
         dialog.close()
 
 
+# ── BUG-047 회귀 — "기존 원 발견" 확인팝업 제거 ─────────────────────────────
+
+def test_open_recipe_dialog_skips_confirm_popup_when_circles_exist(tmp_path, monkeypatch) -> None:
+    """모달이 '최근 레시피'가 아니라 현재 화면 원으로 시작하도록 바뀐 이후
+    (스펙 3번, 커밋 da25f5f), 구 아키텍처용 "기존 원 발견" 확인팝업은 더는
+    의미가 없다 — 버튼 클릭 시 팝업 없이 곧바로 모달이 열려야 한다(BUG-047)."""
+    monkeypatch.chdir(tmp_path)
+    from app.tabs.zone_analysis_tab import ZoneAnalysisTab
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("BUG-047: 확인팝업이 다시 나타나면 안 됨")
+    monkeypatch.setattr(QMessageBox, "question", _boom)
+
+    opened_with = {}
+    original_init = ZoneRecipeDialog.__init__
+
+    def _capture_init(self, *args, **kwargs):
+        opened_with["initial_circles"] = kwargs.get("initial_circles")
+        return original_init(self, *args, **kwargs)
+    monkeypatch.setattr(ZoneRecipeDialog, "__init__", _capture_init)
+    monkeypatch.setattr(ZoneRecipeDialog, "exec", lambda self: 0)
+
+    tab = ZoneAnalysisTab()
+    try:
+        pixmap = QPixmap(400, 300)
+        pixmap.fill(QColor("white"))
+        tab._image_path = Path("dummy.png")
+        tab._original_pixmap = pixmap
+        tab._image_size = (400, 300)
+        tab._canvas.set_image_size(400, 300)
+        tab._canvas.set_circles([(200.0, 150.0, 20.0)])
+
+        tab._on_open_recipe_dialog()   # 팝업 없이 바로 모달 생성(위 _boom 이 안 터지면 통과)
+
+        assert opened_with["initial_circles"] == [(200.0, 150.0, 20.0, None, False)]
+    finally:
+        tab.close()
+
+
 def test_recipe_dialog_apply_shows_save_confirm_popup(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     pixmap = QPixmap(50, 50)
