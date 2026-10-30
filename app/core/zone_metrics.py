@@ -6,7 +6,10 @@ Qt 의존성 없음(core 규칙) — 순수 numpy 함수.
 원을 반지름 오름차순 [C_0(최소), ..., C_{N-1}(최대)]로 정렬했을 때:
     Zone_center = mask(C_0)
     Zone_i      = mask(C_{i+1}) AND NOT mask(C_i)   (i = 0..N-2)
-    Zone_outside = 전체 이미지 AND NOT mask(C_{N-1})
+가장 큰 원 밖(이전의 "바깥쪽" 존)은 2026-10-30에 완전히 제거됐다 — 화면 표시/
+Excel export/배치 결과표/전체 결과 보기/비율 계산 분모 전부에서 더는 생성되지
+않는다(docs/specs/zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md
+5절, 기존 설계 결정 번복). 원 N개 -> 존 N개(중심부 1 + 링 N-1개).
 전제: 원들이 대략 nested(중첩)돼 있다 — 배터리 캡 실제 구조상 항상 성립. 수동 편집으로
 원을 교차시키는 비정상 입력은 v1에서 방지하지 않는다(스펙 명시, YAGNI).
 """
@@ -30,10 +33,10 @@ class Circle:
 
 @dataclass
 class Zone:
-    index: int          # 0=중심부, 1..N-1=링, N=바깥쪽 (원 N개 기준)
+    index: int          # 0=중심부, 1..N-1=링 (원 N개 기준, 가장 큰 원 밖은 어떤 존에도 속하지 않음)
     name: str
     mask: np.ndarray     # (H, W) bool
-    hidden: bool = False   # 귀속 원의 hidden 그대로 상속(바깥쪽 존은 원이 없어 항상 False)
+    hidden: bool = False   # 귀속 원의 hidden 그대로 상속
 
 
 def disk_mask(cx: float, cy: float, r: float, img_shape: tuple[int, int]) -> np.ndarray:
@@ -83,13 +86,13 @@ def scale_circles(
 
 
 def zones_from_circles(
-    circles: list[Circle], img_shape: tuple[int, int], outer_name: str | None = None,
+    circles: list[Circle], img_shape: tuple[int, int],
 ) -> list[Zone]:
     """반지름 오름차순 정렬 후 원판 마스크 차집합으로 존 목록 생성.
 
-    원이 없으면 빈 리스트(존 개념 자체가 성립하지 않음). 원 N개면 존 N+1개.
-    `outer_name`은 맨 바깥 존 전용 이름(원에 귀속되지 않는 스칼라 값, 2026-10-29) —
-    지정하지 않으면 기존처럼 "바깥쪽" 자동 이름을 쓴다.
+    원이 없으면 빈 리스트(존 개념 자체가 성립하지 않음). 원 N개면 존 N개
+    (중심부 1 + 링 N-1개) — 가장 큰 원 밖("바깥쪽" 존)은 2026-10-30에 생성
+    자체를 하지 않는 쪽으로 번복됐다(화면/Excel/계산 전부에서 제외).
     """
     if not circles:
         return []
@@ -103,7 +106,6 @@ def zones_from_circles(
             i + 1, sorted_c[i + 1].name or f"링 {i + 1}", masks[i + 1] & ~masks[i],
             sorted_c[i + 1].hidden,
         ))
-    zones.append(Zone(n, outer_name or "바깥쪽", ~masks[-1], False))   # 바깥쪽은 hidden 토글 범위 밖(의도적 축소)
     return zones
 
 
@@ -205,7 +207,8 @@ def zone_blob_stats(
         cx, cy = centroids[lbl]
         px = min(max(int(round(cx)), 0), w - 1)
         py = min(max(int(round(cy)), 0), h - 1)
-        zone_name = "미분류"   # 존들이 전체 이미지를 파티션하므로 실제로는 발생하지 않음
+        zone_name = "미분류"   # 가장 큰 원 밖("바깥쪽" 존, 2026-10-30 제거)이거나 수동 그리기로
+        # 원 밖에 찍힌 blob — 어떤 존에도 속하지 않으면 여기로 떨어진다(이제 실제로 도달 가능).
         for zone in zones:
             if zone.mask[py, px]:
                 zone_name = zone.name
@@ -366,30 +369,32 @@ if __name__ == "__main__":
 
     # ── self-check: 5x5 합성 이미지, 원 1개(cx=2, cy=2, r=1) — 손계산 검산 ──────
     # (x-2)^2+(y-2)^2<=1 만족 픽셀: (2,1)(1,2)(2,2)(3,2)(2,3) = 5개 (전체 25개 중)
+    # 2026-10-30: "바깥쪽" 존 완전 제거 — 원 N개면 존 N개(중심부 + 링 N-1개).
     shape = (5, 5)
     circles = [Circle(1, 2, 2, 1)]
     zones = zones_from_circles(circles, shape)
-    assert len(zones) == 2, "원 1개 -> 존 2개(중심부/바깥쪽)"
-    assert zones[0].name == "중심부" and zones[1].name == "바깥쪽"
+    assert len(zones) == 1, "원 1개 -> 존 1개(중심부, 바깥쪽 없음)"
+    assert zones[0].name == "중심부"
     assert zones[0].mask.sum() == 5, f"중심부 면적 5 예상, 실측 {zones[0].mask.sum()}"
-    assert zones[1].mask.sum() == 20, f"바깥쪽 면적 20 예상, 실측 {zones[1].mask.sum()}"
 
-    # 타겟 마스크 = 중심부와 정확히 일치 -> 중심부 100%, 바깥쪽 0%
+    # 타겟 마스크 = 중심부와 정확히 일치 -> 중심부 100%
     target = zones[0].mask
     assert zone_stats(zones[0].mask, target) == 100.0
-    assert zone_stats(zones[1].mask, target) == 0.0
 
-    # ── 원 2개 중첩 — 파티션 불변식: 존들의 합집합 = 전체 이미지, 겹침 없음 ──────
+    # ── 원 2개 중첩 — 파티션 불변식(2026-10-30 갱신): 존들의 합집합 = 가장 큰
+    # 원 안쪽 전체(원 밖은 어떤 존에도 속하지 않는 게 의도된 동작), 겹침 없음 ──
     circles2 = [Circle(1, 4, 4, 1), Circle(2, 4, 4, 3)]
     zones2 = zones_from_circles(circles2, shape)
-    assert len(zones2) == 3
-    assert [z.name for z in zones2] == ["중심부", "링 1", "바깥쪽"]
+    assert len(zones2) == 2, "원 2개 -> 존 2개(중심부/링 1, 바깥쪽 없음)"
+    assert [z.name for z in zones2] == ["중심부", "링 1"]
+    outer_mask = disk_mask(4, 4, 3, shape)
     total = sum(int(z.mask.sum()) for z in zones2)
-    assert total == shape[0] * shape[1], "존 면적 합 = 전체 픽셀 수(겹침/누락 없음)"
+    assert total == int(outer_mask.sum()), "존 면적 합 = 가장 큰 원 안쪽 면적(원 밖 제외, 겹침/누락 없음)"
     for a in zones2:
         for b in zones2:
             if a is not b:
                 assert not (a.mask & b.mask).any(), "존끼리 겹치면 안 됨"
+        assert not (a.mask & ~outer_mask).any(), "존은 가장 큰 원 안쪽에만 있어야 함(원 밖은 어느 존에도 없음)"
 
     # 타겟 마스크 = 전체 이미지(전부 녹) -> 모든 존 100%
     all_ones = np.ones(shape, dtype=bool)
@@ -432,13 +437,14 @@ if __name__ == "__main__":
     assert edited[4, 2], "그리기 스트로크 반경 밖(x=2)은 True로 남아야 함"
     assert not edited[4, 4], "지우기 스트로크가 마지막이라 중심(4,4)은 False여야 함"
 
-    # ── zone_blob_stats: AI blob 1개(교집합 있음) + 순수 수동 blob 1개(교집합
-    # 없음) + zone 2개(중심부/바깥쪽)에 걸친 배정 확인(R3) ──────────────────────
+    # ── zone_blob_stats: AI blob 1개(중심부, 교집합 있음) + 원 밖 순수 수동 blob
+    # 1개(2026-10-30: "바깥쪽" 존 제거로 "미분류" 폴백이 실제로 도달 가능해짐,
+    # 전엔 전체 이미지를 파티션해 도달 불가능한 코드였음) ─────────────────────
     shape2 = (10, 10)
-    zones3 = zones_from_circles([Circle(1, 2, 2, 1)], shape2)   # 중심부(2,2 부근)/바깥쪽
+    zones3 = zones_from_circles([Circle(1, 2, 2, 1)], shape2)   # 중심부(2,2 부근)만
     final2 = np.zeros(shape2, dtype=bool)
     final2[2, 2] = True                      # blob A: 중심부 zone, AI 예측 픽셀
-    final2[8, 8] = True                      # blob B: 바깥쪽 zone, 순수 수동(AI 교집합 없음)
+    final2[8, 8] = True                      # blob B: 원 밖, 순수 수동(AI 교집합 없음)
     ai_mask2 = np.zeros(shape2, dtype=bool)
     ai_mask2[2, 2] = True                    # blob A만 AI가 실제로 예측
     conf_map2 = np.zeros(shape2, dtype=np.float32)
@@ -452,32 +458,27 @@ if __name__ == "__main__":
     assert blob_a.zone_name == "중심부", f"blob A는 중심부 배정 예상, 실측 {blob_a.zone_name}"
     assert blob_a.ai_score is not None and abs(blob_a.ai_score - 0.75) < 1e-6, \
         f"blob A AI 점수 0.75 예상, 실측 {blob_a.ai_score}"
-    assert blob_b.zone_name == "바깥쪽", f"blob B는 바깥쪽 배정 예상, 실측 {blob_b.zone_name}"
+    assert blob_b.zone_name == "미분류", f"원 밖 blob은 미분류 배정 예상, 실측 {blob_b.zone_name}"
     assert blob_b.ai_score is None, f"순수 수동 blob은 AI 점수 None(N/A) 예상, 실측 {blob_b.ai_score}"
     assert blob_a.pixel_count == 1 and blob_b.pixel_count == 1
 
     # ── 존 이름 커스터마이즈(2026-10-03#5): 지정하면 그 이름, 없으면 자동 이름 ──
-    circles3 = [Circle(1, 2, 2, 1, "상부")]
-    zones3 = zones_from_circles(circles3, shape)
-    assert zones3[0].name == "상부"
-    assert zones3[1].name == "바깥쪽"   # 바깥쪽은 커스터마이즈 범위 밖(의도된 설계)
+    circles4 = [Circle(1, 2, 2, 1, "상부")]
+    zones4 = zones_from_circles(circles4, shape)
+    assert len(zones4) == 1
+    assert zones4[0].name == "상부"
 
-    # ── outer_name(2026-10-29): 지정하면 바깥쪽 존 이름에 반영 ──────────────────
-    zones4 = zones_from_circles([Circle(1, 2, 2, 1)], shape, outer_name="가장자리")
-    assert zones4[1].name == "가장자리"
-    zones4b = zones_from_circles([Circle(1, 2, 2, 1)], shape, outer_name=None)
-    assert zones4b[1].name == "바깥쪽"   # outer_name 미지정 -> 기존 기본값 유지
-
-    # ── hidden(2026-10-29): 원의 hidden이 해당 존에 그대로 전파, 바깥쪽은 항상 False ──
+    # ── hidden(2026-10-29): 원의 hidden이 해당 존에 그대로 전파 ───────────────
     circles5 = [Circle(1, 2, 2, 1, hidden=True), Circle(2, 2, 2, 3, hidden=False)]
     zones5 = zones_from_circles(circles5, shape)
-    assert zones5[0].hidden is True and zones5[1].hidden is False and zones5[2].hidden is False
+    assert len(zones5) == 2
+    assert zones5[0].hidden is True and zones5[1].hidden is False
 
     # ── drop_hidden: 숨긴 존은 rows에서, 그 이름의 blob은 blob_rows에서 제외 ──────
-    rows5 = [("중심부", 10.0), ("링 1", 20.0), ("바깥쪽", 30.0)]
+    rows5 = [("중심부", 10.0), ("링 1", 20.0)]
     blob_rows5 = [("img.png", _stat("중심부", 1, 5)), ("img.png", _stat("링 1", 2, 7))]
     visible_rows, visible_blob_rows = drop_hidden(zones5, rows5, blob_rows5)
-    assert visible_rows == [("링 1", 20.0), ("바깥쪽", 30.0)], "숨긴 중심부가 제외돼야 함"
+    assert visible_rows == [("링 1", 20.0)], "숨긴 중심부가 제외돼야 함"
     assert [s.blob_id for _img, s in visible_blob_rows] == [2], "숨긴 존 이름(중심부)의 blob도 제외"
 
     print("zone_metrics self-check OK")

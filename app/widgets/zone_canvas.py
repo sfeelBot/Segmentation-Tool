@@ -94,9 +94,8 @@ class ZoneCanvas(OverlayViewer):
         self._press_orig_pt: QPointF | None = None  # BUG-032: press 시점 실제 원본 좌표(클릭 판정용)
         self._img_orig_w = 0
         self._img_orig_h = 0
-        self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링, N=바깥쪽
+        self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링(바깥쪽 존 2026-10-30 제거)
         self._mode: str = "circle"
-        self._outer_name: str | None = None   # 바깥쪽 존 전용 이름(원에 귀속 안 됨, 2026-10-29)
         self._blob_labels: np.ndarray | None = None   # (H, W) int32 라벨맵, 원본 이미지 좌표계
         self._blob_stats: np.ndarray | None = None     # [label] = [x, y, w, h, area]
         self._removed_blob_ids: set[int] = set()
@@ -139,7 +138,6 @@ class ZoneCanvas(OverlayViewer):
         self._circles = []
         self._selected_id = None
         self._highlighted_zone = None
-        self._outer_name = None
         self.update()
         self.circles_changed.emit()
         self.circles_committed.emit()
@@ -171,26 +169,6 @@ class ZoneCanvas(OverlayViewer):
     def circles_with_ids(self) -> list[tuple[int, float, float, float, str | None, bool]]:
         """사이드 패널 등 id가 필요한 UI용 — 반지름 오름차순 (id, cx, cy, r, name, hidden)."""
         return [(c.id, c.cx, c.cy, c.r, c.name, c.hidden) for c in sorted(self._circles, key=lambda c: c.r)]
-
-    def outer_name(self) -> str | None:
-        """바깥쪽 존 전용 이름(원에 귀속되지 않는 스칼라 값) — 없으면 None(기본 이름 사용)."""
-        return self._outer_name
-
-    def set_outer_name(self, name: str | None) -> None:
-        """이미지 전환/레시피 로드 등 비대화형 복원 — undo/시그널 없음
-        (`set_image_size()`와 동일한 plain setter 패턴). 사용자가 직접 트리거하는
-        변경은 `rename_outer_zone()`을 쓴다."""
-        self._outer_name = name
-
-    def rename_outer_zone(self, name: str | None) -> None:
-        """사용자가 트리거하는 바깥쪽 존 이름 변경 — `_prompt_name_change()`와 동일
-        패턴(push_undo -> 필드 설정 -> update() -> 시그널 emit), 원 선택이 필요
-        없다는 점만 다르다."""
-        self._push_undo()
-        self._outer_name = name
-        self.update()
-        self.circles_changed.emit()
-        self.circles_committed.emit()
 
     def select_circle(self, circle_id: int | None) -> None:
         """사이드 패널 클릭 등 외부에서 선택 상태만 동기화(드래그 없음)."""
@@ -448,7 +426,6 @@ class ZoneCanvas(OverlayViewer):
             "removed_blob_ids": set(self._removed_blob_ids),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
-            "outer_name": self._outer_name,
         })
 
     def can_undo(self) -> bool:
@@ -471,7 +448,6 @@ class ZoneCanvas(OverlayViewer):
             "removed_blob_ids": set(self._removed_blob_ids),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
-            "outer_name": self._outer_name,
         }
 
     def set_state(self, state: dict) -> None:
@@ -490,7 +466,8 @@ class ZoneCanvas(OverlayViewer):
         self._removed_blob_ids = set(state["removed_blob_ids"])
         self._erase_strokes = list(state["erase_strokes"])
         self._manual_strokes = list(state.get("manual_strokes", []))
-        self._outer_name = state.get("outer_name")   # 구버전 스냅샷(키 없음) -> None 기본값
+        # 2026-10-30: "outer_name" 키는 더 이상 쓰지 않는다 — 구버전(2026-10-29) 스냅샷에
+        # 그 키가 남아있어도 그냥 무시(하위 호환, 역마이그레이션 불필요).
         self._replay_erase_strokes()   # 스트로크 좌표에서 지우기 마스크를 재생(스펙 판단 1)
         self._rebuild_stroke_overlay()  # 화면 렌더링 캐시도 스냅샷 기준으로 재구성(R-ZONE-1)
         self._selected_id = None
@@ -577,16 +554,19 @@ class ZoneCanvas(OverlayViewer):
                 return c
         return None
 
-    def _zone_index_at(self, x: float, y: float) -> int:
-        """원본 이미지 좌표 (x, y)가 속한 존 인덱스. 존 개수 정의는
+    def _zone_index_at(self, x: float, y: float) -> int | None:
+        """원본 이미지 좌표 (x, y)가 속한 존 인덱스(없으면 None). 존 개수 정의는
         `zone_metrics.zones_from_circles`와 동일한 규칙(반지름 오름차순 정렬,
-        0=중심부, N=바깥쪽) — 원을 포함한 개수만 세면 되므로 마스크 배열 없이
-        기하 조건만으로 계산 가능(원이 nested라는 전제는 core 모듈과 동일)."""
+        0=중심부, 1..N-1=링) — 원을 포함한 개수만 세면 되므로 마스크 배열 없이
+        기하 조건만으로 계산 가능(원이 nested라는 전제는 core 모듈과 동일).
+        2026-10-30: "바깥쪽" 존 제거로 가장 큰 원 밖은 존이 없다 — 그 경우
+        None을 반환한다(호출부가 `zone_clicked`를 emit하지 않아야 함)."""
         n = len(self._circles)
         contained = sum(
             1 for c in self._circles if (x - c.cx) ** 2 + (y - c.cy) ** 2 <= c.r ** 2
         )
-        return n - contained
+        zone_idx = n - contained
+        return zone_idx if zone_idx < n else None
 
     # ── paintEvent ───────────────────────────────────────────────────────────
 
@@ -624,16 +604,12 @@ class ZoneCanvas(OverlayViewer):
         sorted_c = sorted(self._circles, key=lambda c: c.r)
         n = len(sorted_c)
         idx = self._highlighted_zone
-        if idx is None or not (0 <= idx <= n):
+        if idx is None or not (0 <= idx < n):
             return
         path = QPainterPath()
         path.setFillRule(Qt.FillRule.OddEvenFill)
         if idx == 0:
             center, r = self._orig_to_screen(sorted_c[0].cx, sorted_c[0].cy, sorted_c[0].r)
-            path.addEllipse(center, r, r)
-        elif idx == n:
-            path.addRect(QRectF(self.rect()))
-            center, r = self._orig_to_screen(sorted_c[-1].cx, sorted_c[-1].cy, sorted_c[-1].r)
             path.addEllipse(center, r, r)
         else:
             outer, inner = sorted_c[idx], sorted_c[idx - 1]
@@ -821,11 +797,13 @@ class ZoneCanvas(OverlayViewer):
                     self.blob_clicked.emit(int(click_x), int(click_y))   # 요청4 — 원 유무와 무관하게 항상 emit
                     # 드래그 없는 단순 클릭이었던 것으로 간주 -- 원 생성 대신
                     # 클릭 위치가 속한 존을 선택한다(원이 하나도 없으면 존 개념이
-                    # 성립하지 않으므로 발생시키지 않음).
+                    # 성립하지 않으므로 발생시키지 않음, 2026-10-30: 가장 큰 원
+                    # 밖을 클릭한 경우도 존이 없으므로 emit하지 않음).
                     if self._circles:
                         zone_idx = self._zone_index_at(click_x, click_y)
-                        self.set_highlighted_zone(zone_idx)
-                        self.zone_clicked.emit(zone_idx)
+                        if zone_idx is not None:
+                            self.set_highlighted_zone(zone_idx)
+                            self.zone_clicked.emit(zone_idx)
         self._drag_mode = None
         super().mouseReleaseEvent(event)
         self.update()
@@ -949,17 +927,6 @@ class ZoneCanvas(OverlayViewer):
         self.update()
         self.circles_changed.emit()
         self.circles_committed.emit()
-
-    def _prompt_rename_outer_zone(self) -> None:
-        """바깥쪽 존(원에 귀속되지 않는 스칼라 값) 이름 변경 다이얼로그 —
-        `_prompt_name_change()`와 동일한 UX, `_find(circle_id)` 단계만 없다."""
-        text, ok = QInputDialog.getText(
-            self, t("zone_canvas.rename_dialog_title"), t("zone_canvas.rename_dialog_label"),
-            text=self._outer_name or "",
-        )
-        if not ok:
-            return
-        self.rename_outer_zone(text.strip() or None)
 
     def _toggle_hidden(self, circle_id: int) -> None:
         """존별 비율 패널/Excel 내보내기에서만 해당 원의 존을 제외/복원한다

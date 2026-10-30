@@ -31,13 +31,13 @@ def _result(size=20):
 # 추론/모델과 완전히 무관 — CUDA를 전혀 호출하지 않으므로 BUG-030류 스레드
 # 제약 자체가 성립하지 않는다(단일 워커, 2단 파이프라인 불필요).
 
-def test_layout_worker_scales_circles_and_persists_outer_name():
+def test_layout_worker_scales_circles():
     with tempfile.TemporaryDirectory() as tmp:
         paths = [Path(tmp) / f"{i}.png" for i in range(3)]
         for path in paths:
             Image.new("RGB", (20, 20)).save(path)
         worker = _ZoneCircleLayoutWorker(
-            [(5.0, 5.0, 2.0, "inner", False)], (10, 10), "가장자리", paths,
+            [(5.0, 5.0, 2.0, "inner", False)], (10, 10), paths,
         )
         events = []
         worker.progress.connect(lambda *a: events.append(a))
@@ -46,7 +46,6 @@ def test_layout_worker_scales_circles_and_persists_outer_name():
         for path in paths:
             state = zstate.load_state(path)
             assert state["circles"] == [(0, 10.0, 10.0, 4.0, "inner", False)]   # (10,10)->(20,20) 2배 스케일
-            assert state["outer_name"] == "가장자리"
 
 
 def test_layout_worker_never_calls_inference():
@@ -60,7 +59,7 @@ def test_layout_worker_never_calls_inference():
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "x.png"
             Image.new("RGB", (20, 20)).save(path)
-            worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (20, 20), None, [path])
+            worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (20, 20), [path])
             worker.run()
             assert zstate.load_state(path) is not None
     finally:
@@ -74,15 +73,13 @@ def test_layout_worker_preserves_existing_edits_on_circle_replacement():
         zstate.save_state(path, {
             "circles": [(7, 1.0, 1.0, 1.0)], "removed_blob_ids": {3},
             "erase_strokes": [], "manual_strokes": [(True, [(2.0, 2.0, 1.0)])],
-            "outer_name": "옛이름",
         })
-        worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (20, 20), "새이름", [path])
+        worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (20, 20), [path])
         worker.run()
         saved = zstate.load_state(path)
         assert saved["removed_blob_ids"] == {3}
         assert saved["manual_strokes"] == [(True, [(2.0, 2.0, 1.0)])]
         assert saved["circles"] == [(0, 5.0, 5.0, 2.0)]
-        assert saved["outer_name"] == "새이름"
 
 
 def test_layout_worker_stops_mid_batch_on_interruption():
@@ -94,7 +91,7 @@ def test_layout_worker_stops_mid_batch_on_interruption():
         paths = [Path(tmp) / f"{i}.png" for i in range(3)]
         for p in paths:
             Image.new("RGB", (10, 10)).save(p)
-        worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (10, 10), None, paths)
+        worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (10, 10), paths)
         started = threading.Event()
         proceed = threading.Event()
         real_open = module.Image.open
@@ -128,7 +125,7 @@ def test_layout_worker_emits_error_on_unreadable_image():
         bad = Path(tmp) / "bad.png"
         Image.new("RGB", (20, 20)).save(good)
         bad.write_bytes(b"not an image")
-        worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (20, 20), None, [good, bad])
+        worker = _ZoneCircleLayoutWorker([(5.0, 5.0, 2.0)], (20, 20), [good, bad])
         events = []
         worker.progress.connect(lambda *a: events.append(a))
         worker.run()
@@ -269,23 +266,27 @@ def test_compute_zone_rows_returns_none_without_circles():
 
 def test_compute_zone_rows_matches_batch_path_output():
     """배치 경로(`_ZoneCircleLayoutWorker`가 저장한 circles)와 "전체 결과 보기"
-    둘 다 이 순수 함수를 공유한다 — class_map이 전부 타겟(1)이면 모든 존이 100%여야 한다."""
+    둘 다 이 순수 함수를 공유한다 — class_map이 전부 타겟(1)이면 모든 존이 100%여야 한다.
+    2026-10-30: "바깥쪽" 존 제거로 원 1개 -> 존 1개(중심부만)."""
     path = Path("img.png")
     result = _result(size=10)
     rows, blob_rows = _compute_zone_rows(path, result, 1, [(5.0, 5.0, 2.0)], None)
-    assert [name for _, name, _pct in rows] == ["중심부", "바깥쪽"]
+    assert [name for _, name, _pct in rows] == ["중심부"]
     assert all(pct == 100.0 for _, _name, pct in rows)
     assert all(img == "img.png" for img, _name, _pct in rows)
     assert len(blob_rows) == 1   # 전체가 하나로 이어진 블랍 1개
 
 
-def test_compute_zone_rows_applies_outer_name_and_drops_hidden():
+def test_compute_zone_rows_drops_hidden():
+    """2026-10-30: outer_name 매개변수 제거 — 숨긴 존(hidden=True)만 걸러지는지
+    원 2개(중심부 숨김/링 1 비숨김)로 확인한다."""
     path = Path("img.png")
     result = _result(size=10)
     rows, _blob_rows = _compute_zone_rows(
-        path, result, 1, [(5.0, 5.0, 2.0, "inner", True)], None, outer_name="가장자리",
+        path, result, 1,
+        [(5.0, 5.0, 1.0, "inner", True), (5.0, 5.0, 2.0, "outer", False)], None,
     )
-    assert [name for _, name, _pct in rows] == ["가장자리"]   # 숨긴 중심부는 제외
+    assert [name for _, name, _pct in rows] == ["outer"]   # 숨긴 중심부(inner)는 제외
 
 
 # ── BUG-036 회귀 방지 — 전체 결과 보기 + 비활성 이미지 사이드카 circles ─────────
@@ -311,7 +312,6 @@ def test_view_all_results_with_inactive_image_sidecar_does_not_crash():
         zstate.save_state(path2, {
             "circles": [(1, 3.0, 3.0, 1.0, "커스텀", False)],
             "removed_blob_ids": set(), "erase_strokes": [], "manual_strokes": [],
-            "outer_name": "가장자리2",
         })
 
         created: list[ZoneBatchResultDialog] = []
@@ -346,7 +346,7 @@ def test_view_all_results_with_inactive_image_sidecar_does_not_crash():
         assert all(isinstance(name, str) for _, name, _pct in rows), \
             "존 이름 자리에 float(반지름)이 섞이면 안 됨(BUG-036 핵심 증상)"
         zone_names = {name for _, name, _pct in rows}
-        assert zone_names == {"중심부", "바깥쪽", "커스텀", "가장자리2"}   # path2의 커스텀 이름/outer_name 보존
+        assert zone_names == {"중심부", "커스텀"}   # path2의 커스텀 이름 보존(바깥쪽 존 2026-10-30 제거)
 
 
 # ── BUG-039 — `_target_cache` LRU 상한 ──────────────────────────────────────

@@ -26,9 +26,12 @@ docs/specs/zone-analysis-tab-batch-modes-and-perf-2026-08-30.md "요청 A" 참�
 2026-10-29 배치 단순화: 민감도 슬라이더/자동검출 버튼 및 3-way 배치 모드 콤보를
 삭제하고 "고정 배치"(기준 원을 각 이미지 크기로 스케일만) 하나로 통일 — 배치가
 더 이상 추론/모델과 무관하게 동작한다(`_ZoneCircleLayoutWorker`, CUDA 미호출).
-존 숨기기(`hidden`)/바깥쪽 존 이름(`outer_name`) 필드 추가 + 패널에서 직접
-이름 변경/숨기기 + "결과 이미지 일괄 저장" 버튼 추가.
+존 숨기기(`hidden`) 필드 추가 + 패널에서 직접 이름 변경/숨기기 + "결과 이미지
+일괄 저장" 버튼 추가.
 docs/specs/zone-analysis-tab-batch-simplify-2026-10-29.md 참고.
+2026-10-30: "바깥쪽"(가장 큰 원 밖) 존을 화면/Excel/배치결과표/비율 계산
+전부에서 완전히 제거(`outer_name` 필드도 함께 제거) — 기존 설계 결정 번복,
+docs/specs/zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md 5절.
 """
 from collections import OrderedDict
 from pathlib import Path
@@ -118,11 +121,10 @@ class _ZoneCircleLayoutWorker(QThread):
     progress = pyqtSignal(object, str, object, int, int)   # path, status, detail, done, total
 
     def __init__(self, circles_ref: list[tuple], ref_size: tuple[int, int],
-                 outer_name: str | None, target_paths: list[Path]) -> None:
+                 target_paths: list[Path]) -> None:
         super().__init__()
         self._circles_ref = circles_ref
         self._ref_size = ref_size
-        self._outer_name = outer_name
         self._target_paths = target_paths
 
     def run(self) -> None:
@@ -142,7 +144,6 @@ class _ZoneCircleLayoutWorker(QThread):
                 state["circles"] = [
                     (idx, cx, cy, r, *rest) for idx, (cx, cy, r, *rest) in enumerate(circles)
                 ]
-                state["outer_name"] = self._outer_name
                 zstate.save_state(path, state)
                 self.progress.emit(path, "done", t("zone.badge_applied"), done, total)
             except Exception as exc:
@@ -160,7 +161,7 @@ def _rgb_to_qpixmap(rgb: np.ndarray) -> QPixmap:
 
 def _compute_zone_rows(
     path: Path, result: InferenceResult, target_cid: int,
-    circles: list[tuple], previous: dict | None, outer_name: str | None = None,
+    circles: list[tuple], previous: dict | None,
 ) -> tuple[list[tuple[str, str, float]], list[tuple[str, ZoneBlobStat]]] | None:
     """(rows, blob_rows) — side effect 없음(저장은 호출부 책임). 숨긴(hidden=True)
     존은 반환 전에 걸러진다(`drop_hidden()`, 요구사항 6 — export 레이어 공유 필터).
@@ -178,7 +179,7 @@ def _compute_zone_rows(
     zones = zones_from_circles(
         [Circle(idx, cx, cy, r, rest[0] if len(rest) > 0 else None,
                 bool(rest[1]) if len(rest) > 1 else False)
-         for idx, (cx, cy, r, *rest) in enumerate(circles)], (h, w), outer_name,
+         for idx, (cx, cy, r, *rest) in enumerate(circles)], (h, w),
     )
     percentages = [zone_stats(zone.mask, final_mask) for zone in zones]
     rows = [(path.name, zone.name, pct) for zone, pct in zip(zones, percentages)]
@@ -1189,7 +1190,7 @@ class ZoneAnalysisTab(QWidget):
             return None
         circles = [Circle(cid, cx, cy, r, name, hidden) for cid, cx, cy, r, name, hidden in circles_raw]
         h, w = self._last_result.raw_class_map.shape
-        return zones_from_circles(circles, (h, w), self._canvas.outer_name())
+        return zones_from_circles(circles, (h, w))
 
     def _compute_zone_percentages(self, zones: list[Zone] | None = None) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
@@ -1289,14 +1290,15 @@ class ZoneAnalysisTab(QWidget):
         image_name = self._image_path.name if self._image_path else ""
         # 숨긴 존도 행은 유지(디자인 검토) -> 행 개수가 zones와 1:1이라 row == zone_index.
         # 요구사항 7(패널에서 이름 변경)을 위해 각 행에 대응하는 circle_id를 함께
-        # 보관(바깥쪽 존은 원이 없어 None) — zones_from_circles()가 반지름 오름차순
-        # 정렬이므로 circles_with_ids()(동일 정렬 기준)의 같은 인덱스가 그 원이다.
+        # 보관 — zones_from_circles()가 반지름 오름차순 정렬이므로 circles_with_ids()
+        # (동일 정렬 기준)의 같은 인덱스가 그 원이다. 2026-10-30: "바깥쪽" 존 제거로
+        # zones 개수가 circles_raw와 항상 1:1이라(이전엔 zones가 1개 더 많아 마지막
+        # 행만 circle_id=None이었음) 예외 분기가 더 이상 필요 없다.
         circles_raw = self._canvas.circles_with_ids()
-        n = len(circles_raw)
         for zone_index, (zone, (zone_name, pct)) in enumerate(zip(zones, pct_rows)):
             item = QListWidgetItem()
             item.setSizeHint(QSize(0, 48))
-            circle_id = circles_raw[zone_index][0] if zone_index < n else None
+            circle_id = circles_raw[zone_index][0]
             item.setData(Qt.ItemDataRole.UserRole, circle_id)
             max_px = max_blobs.get((image_name, zone_name), 0)
             self._zone_list.addItem(item)
@@ -1322,25 +1324,22 @@ class ZoneAnalysisTab(QWidget):
     def _on_zone_list_context_menu(self, pos) -> None:
         """요구사항 6/7 — 존별 비율 패널에서 직접 이름 변경 + 숨기기/보이기 토글.
         캔버스의 기존 원 우클릭 메뉴(`ZoneCanvas.contextMenuEvent`)와 동일한
-        로직을 재사용한다(신규 core 로직 없음, 캔버스가 상태의 단일 출처)."""
+        로직을 재사용한다(신규 core 로직 없음, 캔버스가 상태의 단일 출처).
+        2026-10-30: "바깥쪽" 존 제거로 모든 행이 circle_id를 가지므로
+        circle_id가 None인 분기는 더 이상 발생하지 않는다(단순화)."""
         item = self._zone_list.itemAt(pos)
         if item is None:
             return
         circle_id = item.data(Qt.ItemDataRole.UserRole)
+        hidden_map = {cid: hidden for cid, _cx, _cy, _r, _name, hidden in self._canvas.circles_with_ids()}
+        is_hidden = hidden_map.get(circle_id, False)
         menu = QMenu(self)
         rename_action = menu.addAction(t("zone_canvas.menu_rename"))
-        toggle_action = None
-        if circle_id is not None:
-            hidden_map = {cid: hidden for cid, _cx, _cy, _r, _name, hidden in self._canvas.circles_with_ids()}
-            is_hidden = hidden_map.get(circle_id, False)
-            toggle_action = menu.addAction(t("zone_canvas.menu_show") if is_hidden else t("zone_canvas.menu_hide"))
+        toggle_action = menu.addAction(t("zone_canvas.menu_show") if is_hidden else t("zone_canvas.menu_hide"))
         chosen = menu.exec(self._zone_list.viewport().mapToGlobal(pos))
         if chosen == rename_action:
-            if circle_id is not None:
-                self._canvas._prompt_name_change(circle_id)
-            else:
-                self._canvas._prompt_rename_outer_zone()
-        elif toggle_action is not None and chosen == toggle_action:
+            self._canvas._prompt_name_change(circle_id)
+        elif chosen == toggle_action:
             self._canvas._toggle_hidden(circle_id)
 
     def _on_canvas_blob_clicked(self, x: int, y: int) -> None:
@@ -1360,7 +1359,7 @@ class ZoneAnalysisTab(QWidget):
             return
         circles = [Circle(cid, cx, cy, r, name, hidden)
                    for cid, cx, cy, r, name, hidden in self._canvas.circles_with_ids()]
-        zones = zones_from_circles(circles, (h, w), self._canvas.outer_name())
+        zones = zones_from_circles(circles, (h, w))
         blob_rows = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
         blob = next((b for b in blob_rows if b.blob_id == label_id), None)
         if blob is None:
@@ -1419,9 +1418,7 @@ class ZoneAnalysisTab(QWidget):
             # TypeError로 크래시한다(QA.md BUG-036).
             circles = (self._canvas.get_circles() if path == self._image_path
                        else [c[1:] for c in (previous or {}).get("circles", [])])
-            outer_name = (self._canvas.outer_name() if path == self._image_path
-                          else (previous or {}).get("outer_name"))
-            computed = _compute_zone_rows(path, result, self._target_class_id, circles, previous, outer_name)
+            computed = _compute_zone_rows(path, result, self._target_class_id, circles, previous)
             if computed is None:
                 continue
             rows, blob_rows = computed
@@ -1485,15 +1482,12 @@ class ZoneAnalysisTab(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        dialog = ZoneRecipeDialog(
-            self._original_pixmap, self._image_size, self._canvas.outer_name(), self
-        )
+        dialog = ZoneRecipeDialog(self._original_pixmap, self._image_size, self)
         if dialog.exec():
             scaled = scale_circles(
                 dialog.result_circles(), dialog.result_ref_size(), self._image_size
             )
             self._canvas.set_circles(scaled)
-            self._canvas.rename_outer_zone(dialog.result_outer_name())
 
     # ── 슬롯 — 원 목록 사이드 패널 <-> 캔버스 선택 동기화 ───────────────────
 
@@ -1584,7 +1578,6 @@ class ZoneAnalysisTab(QWidget):
             QMessageBox.warning(self, t("zone.no_circle_title"), t("zone.no_circle_msg"))
             return
 
-        outer_name = self._canvas.outer_name()
         ref_w, ref_h = self._image_size
 
         targets = self._img_list.selected_paths()
@@ -1614,7 +1607,7 @@ class ZoneAnalysisTab(QWidget):
         self._batch_progress.setMinimumDuration(0)
         self._batch_elapsed = QElapsedTimer()
         self._batch_elapsed.start()
-        self._post_worker = _ZoneCircleLayoutWorker(circles_ref, (ref_w, ref_h), outer_name, targets)
+        self._post_worker = _ZoneCircleLayoutWorker(circles_ref, (ref_w, ref_h), targets)
         self._batch_progress.canceled.connect(self._post_worker.requestInterruption)
         self._post_worker.progress.connect(self._on_batch_progress)
         self._post_worker.finished.connect(self._on_batch_finished)
