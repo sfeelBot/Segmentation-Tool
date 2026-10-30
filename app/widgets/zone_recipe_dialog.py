@@ -47,15 +47,30 @@ class ZoneRecipeDialog(QDialog):
     이미 만들어둔 미리보기 pixmap)를 기준 이미지로 그대로 받는다."""
 
     def __init__(self, reference_pixmap: QPixmap, ref_size: tuple[int, int],
-                 parent=None) -> None:
+                 parent=None, *, initial_circles: list[tuple] | None = None,
+                 image_name: str | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(t("zone_recipe.window_title"))
+        self.setWindowTitle(
+            t("zone_recipe.window_title_with_image").format(name=image_name)
+            if image_name else t("zone_recipe.window_title")
+        )
         self._ref_pixmap = reference_pixmap
         self._ref_size = ref_size   # (w, h) 원본 이미지 픽셀 크기
+        self._initial_circles = initial_circles or []
         self._recipe_paths: list = []
         self._result_circles: list[tuple[float, float, float]] = []
+        self._selected_zone_index: int | None = None
+        self._selected_zone_circle_id: int | None = None
         self._build_ui()
-        self._load_most_recent()
+        if self._initial_circles:
+            # 2026-10-30: "원 설정" 아키텍처 전환 — 모달이 유일한 편집 창구가
+            # 되므로, 디스크의 "가장 최근 레시피"가 아니라 호출부(메인 탭)가
+            # 전달한 "현재 화면에 표시된 실제 원"을 우선한다(스펙 3-5). 현재
+            # 이미지에 원이 하나도 없을 때만(완전히 새 이미지) 기존처럼 최근
+            # 레시피 자동 로드로 폴백.
+            self._canvas.set_circles(self._initial_circles)
+        else:
+            self._load_most_recent()
 
     def _build_ui(self) -> None:
         self.resize(760, 720)
@@ -73,9 +88,20 @@ class ZoneRecipeDialog(QDialog):
         self._canvas.set_pixmap(self._ref_pixmap)
         root.addWidget(self._canvas, stretch=1)
 
+        stats_row = QHBoxLayout()
         self._lbl_stats = QLabel(t("zone_recipe.circle_count").format(n=0))
         self._lbl_stats.setStyleSheet("color:#e5e7eb;")
-        root.addWidget(self._lbl_stats)
+        stats_row.addWidget(self._lbl_stats)
+        # 2026-10-30: 링/중심부 직접 클릭 네이밍(스펙 4번) — 캔버스의 존 영역을
+        # 드래그 없이 클릭(`zone_clicked`)하면 아래 라벨+버튼이 활성화된다.
+        self._lbl_selected_zone = QLabel(t("zone_recipe.selected_zone_label").format(name=""))
+        self._lbl_selected_zone.setStyleSheet("color:#fbbf24;")
+        stats_row.addWidget(self._lbl_selected_zone)
+        stats_row.addStretch()
+        self._btn_rename_zone = QPushButton(t("zone_canvas.menu_rename"))
+        self._btn_rename_zone.setEnabled(False)
+        stats_row.addWidget(self._btn_rename_zone)
+        root.addLayout(stats_row)
 
         detect_row = QHBoxLayout()
         detect_row.addWidget(QLabel(t("zone_recipe.sensitivity_label")))
@@ -148,6 +174,8 @@ class ZoneRecipeDialog(QDialog):
         self._btn_cancel.clicked.connect(self.reject)
         self._btn_apply.clicked.connect(self._on_apply)
         self._canvas.circles_changed.connect(self._on_circles_changed)
+        self._canvas.zone_clicked.connect(self._on_zone_clicked)
+        self._btn_rename_zone.clicked.connect(self._on_rename_zone_clicked)
 
         self._refresh_recipe_list()
 
@@ -227,8 +255,51 @@ class ZoneRecipeDialog(QDialog):
         count = len(self._canvas.get_circles())
         self._lbl_stats.setText(t("zone_recipe.circle_count").format(n=count))
         self._btn_apply.setEnabled(count >= 1)
+        self._refresh_selected_zone_label()   # 원 추가/삭제/재검출로 인덱스가 틀어졌을 수 있음
+
+    # ── 링/중심부 직접 클릭 네이밍 (스펙 4번) ────────────────────────────────
+
+    def _on_zone_clicked(self, zone_index: int) -> None:
+        self._selected_zone_index = zone_index
+        self._refresh_selected_zone_label()
+
+    def _refresh_selected_zone_label(self) -> None:
+        """선택된 존 인덱스 -> (circle_id, 표시 이름)을 다시 계산해 라벨/버튼
+        상태를 갱신한다. 이름 계산 규칙은 `zone_metrics.zones_from_circles()`와
+        동일한 폴백을 따른다(결과표/Excel과 일치, 스펙 4번)."""
+        circles = self._canvas.circles_with_ids()   # 반지름 오름차순 (id,cx,cy,r,name,hidden)
+        idx = self._selected_zone_index
+        if idx is None or not (0 <= idx < len(circles)):
+            self._selected_zone_index = None
+            self._selected_zone_circle_id = None
+            self._lbl_selected_zone.setText(t("zone_recipe.selected_zone_label").format(name=""))
+            self._btn_rename_zone.setEnabled(False)
+            return
+        circle_id, _cx, _cy, _r, name, _hidden = circles[idx]
+        self._selected_zone_circle_id = circle_id
+        display_name = name or ("중심부" if idx == 0 else f"링 {idx}")
+        self._lbl_selected_zone.setText(t("zone_recipe.selected_zone_label").format(name=display_name))
+        self._btn_rename_zone.setEnabled(True)
+
+    def _on_rename_zone_clicked(self) -> None:
+        """"이름 변경..." 버튼 — 우클릭 메뉴가 쓰는 기존 내부 메서드를 그대로
+        재사용한다(`zone_analysis_tab._on_zone_list_context_menu`와 동일 호출
+        패턴, 신규 UI 신설 없음)."""
+        if self._selected_zone_circle_id is not None:
+            self._canvas._prompt_name_change(self._selected_zone_circle_id)
 
     def _on_apply(self) -> None:
+        box = QMessageBox(QMessageBox.Icon.Question, t("zone_recipe.save_confirm_title"),
+                           t("zone_recipe.save_confirm_msg"), parent=self)
+        save_btn = box.addButton(t("zone_recipe.btn_save_and_apply"), QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = box.addButton(t("zone_recipe.btn_apply_without_save"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(t("common.cancel"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(save_btn)
+        box.exec()
+        if box.clickedButton() is save_btn:
+            self._on_save_recipe()          # 기존 로직 재사용, 실패해도(이름없음 경고 등) 아래로 진행
+        elif box.clickedButton() is not skip_btn:
+            return                           # 취소 — 모달에 머무름
         self._result_circles = self._canvas.get_circles()
         self.accept()
 

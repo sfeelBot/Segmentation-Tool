@@ -32,6 +32,14 @@ bbox 증분 갱신 + 화면 리페인트만 수행(성능 요구사항, 스펙 �
 annotation_canvas.py의 BUG-014(대형 마스크 deepcopy로 인한 메모리 문제)가
 재발하지 않는다 — 캡도 필요 없다(무제한 스택). `Ctrl+Z`(`keyPressEvent`
 최상단)와 `undo()`/`can_undo()` 공개 API로 노출.
+
+2026-10-30: "원 설정" 아키텍처 전환 — `set_editing_enabled(False)`(기본값은
+True, 역호환)를 켜면 원 생성/이동/반지름조절/우클릭 메뉴가 전부 비활성화되고
+조회(드래그 없는 클릭 -> `zone_clicked`/`blob_clicked`)만 남는다. 메인 탭
+캔버스가 이 플래그를 끄고, `ZoneRecipeDialog`가 생성하는 캔버스는 기본값을
+그대로 유지해 완전한 편집 기능을 보존한다 — 이제 모달이 유일한 편집 창구.
+같은 라운드에서 Alt+휠(원 지름 조절) 기능은 플래그와 무관하게 완전히 제거
+(일반 휠=화면 줌은 유지).
 """
 import math
 from dataclasses import dataclass
@@ -52,8 +60,6 @@ _MIN_CREATE_R_PX = 6.0  # 이보다 작게 드래그하고 놓으면 생성 취�
 
 _ARROW_STEP_PX = 1.0
 _ARROW_STEP_PX_SHIFT = 10.0
-_WHEEL_STEP_PX = 5.0
-_WHEEL_STEP_PX_SHIFT = 20.0
 _GESTURE_DEBOUNCE_MS = 500
 
 _COLOR_NORMAL = QColor(0, 230, 140)
@@ -96,6 +102,12 @@ class ZoneCanvas(OverlayViewer):
         self._img_orig_h = 0
         self._highlighted_zone: int | None = None   # 0=중심부, 1..N-1=링(바깥쪽 존 2026-10-30 제거)
         self._mode: str = "circle"
+        # 2026-10-30: "원 설정" 아키텍처 전환 — 메인 탭 캔버스는 원 편집을 완전히
+        # 제거하고 조회 전용으로 바뀐다(`ZoneRecipeDialog`가 유일한 편집 창구).
+        # 기본값 True(=편집 가능)를 유지해 모달 쪽 인스턴스는 역호환 — 메인 탭만
+        # `set_editing_enabled(False)`를 명시적으로 호출한다.
+        self._editing_enabled = True
+        self._view_press_pt: QPointF | None = None   # 조회 전용 모드의 클릭-vs-드래그 판정용
         self._blob_labels: np.ndarray | None = None   # (H, W) int32 라벨맵, 원본 이미지 좌표계
         self._blob_stats: np.ndarray | None = None     # [label] = [x, y, w, h, area]
         self._removed_blob_ids: set[int] = set()
@@ -128,6 +140,18 @@ class ZoneCanvas(OverlayViewer):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # 클릭 후 Delete 키 삭제를 받으려면 필요
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
+
+    def set_editing_enabled(self, enabled: bool) -> None:
+        """False면 원 생성/이동/반지름조절/우클릭 메뉴를 전부 비활성화하고
+        조회(블랍/존 클릭)만 남긴다 — 메인 탭 캔버스가 "원 설정" 모달로 편집을
+        위임할 때 사용(2026-10-30, `set_blob_delete_mode`류와 동일한 플래그 패턴)."""
+        self._editing_enabled = enabled
+        self._selected_id = None
+        self.circle_selected.emit(None)
+        self.update()
+
+    def editing_enabled(self) -> bool:
+        return self._editing_enabled
 
     def set_image_size(self, orig_w: int, orig_h: int) -> None:
         """원본 이미지 픽셀 크기 — 원 좌표(원본 스케일) <-> 오버레이 픽스맵 좌표 변환에 사용."""
@@ -684,6 +708,16 @@ class ZoneCanvas(OverlayViewer):
             else:
                 super().mousePressEvent(event)   # 좌클릭 외(중클릭 팬 등)는 기존 동작 유지
             return
+        if not self._editing_enabled:
+            # 2026-10-30: "원 설정" 모달로 편집이 이관된 조회 전용 모드 — 원을
+            # 생성/선택하지 않고, 클릭-vs-드래그 판정에 쓸 좌표만 기록한다
+            # (`mouseReleaseEvent`가 드래그 없었음을 확인하면 zone_clicked/
+            # blob_clicked만 emit).
+            if self._pixmap is not None and event.button() == Qt.MouseButton.LeftButton:
+                self._view_press_pt = QPointF(event.position())
+            else:
+                super().mousePressEvent(event)   # 좌클릭 외(중클릭 팬 등)는 기존 동작 유지
+            return
         if self._pixmap is None or event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
@@ -734,6 +768,9 @@ class ZoneCanvas(OverlayViewer):
             else:
                 super().mouseMoveEvent(event)   # 팬 드래그(중클릭)는 계속 동작해야 함
             return
+        if not self._editing_enabled:
+            super().mouseMoveEvent(event)   # 조회 전용 — 이동/리사이즈 없음, 중클릭 팬만 상속
+            return
         if self._drag_mode is None or self._selected_id is None:
             super().mouseMoveEvent(event)
             return
@@ -773,6 +810,28 @@ class ZoneCanvas(OverlayViewer):
                 self.erase_changed.emit()   # 존 재계산은 스트로크 종료 시 1회만(성능, 스펙 판단 2)
             else:
                 super().mouseReleaseEvent(event)   # 팬 종료 처리(커서 복원 등)
+            return
+        if not self._editing_enabled:
+            # 2026-10-30: 투기적 원 생성 후 되무르는 기존 우회 경로 대신, press/
+            # release 화면 좌표 거리만으로 클릭-vs-드래그를 판정한다(스펙 3-1 —
+            # "오히려 코드가 단순해짐"). 드래그였으면(화면을 손댄 게 아니라 아무
+            # 일도 없었던 것) 조용히 무시.
+            if self._view_press_pt is not None:
+                pt = QPointF(event.position())
+                moved = math.hypot(pt.x() - self._view_press_pt.x(), pt.y() - self._view_press_pt.y())
+                if moved < _MIN_CREATE_R_PX:
+                    click = self._screen_to_orig(pt)
+                    click_x, click_y = click.x(), click.y()
+                    self.blob_clicked.emit(int(click_x), int(click_y))   # 원 유무와 무관하게 항상 emit
+                    if self._circles:
+                        zone_idx = self._zone_index_at(click_x, click_y)
+                        if zone_idx is not None:
+                            self.set_highlighted_zone(zone_idx)
+                            self.zone_clicked.emit(zone_idx)
+                self._view_press_pt = None
+            else:
+                super().mouseReleaseEvent(event)   # 좌클릭 외(중클릭 팬 등) 종료 처리
+            self.update()
             return
         if self._drag_mode == "create" and self._selected_id is not None:
             item = self._find(self._selected_id)
@@ -823,6 +882,9 @@ class ZoneCanvas(OverlayViewer):
         if self._mode != "circle":
             super().keyPressEvent(event)
             return
+        # 2026-10-30: 조회 전용 모드(`not self._editing_enabled`)에서는 원이
+        # 선택될 일이 없어(`_selected_id`가 항상 None) 아래 Delete/방향키 분기가
+        # 자연히 no-op가 된다 — 별도 가드 불필요(스펙 3-1).
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self._selected_id is not None:
             self.remove_selected()
         elif (self._selected_id is not None
@@ -845,24 +907,12 @@ class ZoneCanvas(OverlayViewer):
             super().keyPressEvent(event)
 
     def wheelEvent(self, event) -> None:
-        if (self._mode == "circle" and self._selected_id is not None
-                and event.modifiers() & Qt.KeyboardModifier.AltModifier):
-            item = self._find(self._selected_id)
-            if item is not None:
-                self._begin_edit_gesture()
-                step = (_WHEEL_STEP_PX_SHIFT if event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-                        else _WHEEL_STEP_PX)
-                delta = step if event.angleDelta().y() > 0 else -step
-                item.r = max(0.0, item.r + delta)
-                self.update()
-                self.circles_changed.emit()
-                self.circles_committed.emit()
-                event.accept()
-                return
-        super().wheelEvent(event)   # Alt 없으면(원 선택 여부 무관) 항상 화면 줌
+        # 2026-10-30: Alt+휠(선택한 원 지름 조절) 기능 제거 — "원 설정" 모달로
+        # 편집이 이관되며 더는 필요 없어짐(일반 휠=화면 줌은 그대로 유지).
+        super().wheelEvent(event)
 
     def contextMenuEvent(self, event) -> None:
-        if self._pixmap is None or self._mode != "circle":
+        if self._pixmap is None or self._mode != "circle" or not self._editing_enabled:
             return
         pt = QPointF(event.pos())
         hit = self._hit_test(pt)

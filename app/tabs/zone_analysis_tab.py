@@ -357,15 +357,10 @@ class ZoneAnalysisTab(QWidget):
 
         # 공유 클러스터(브러시그리기/브러시지우기/영역삭제/pan/undo/브러시크기)는
         # app/widgets/brush_toolbar.py 의 BrushToolbar(show_delete_region=True)에서
-        # 가져온다 — 원(circle) 편집만 호스트 로컬로 유지(Zone 전용 도구, 공유 계약
-        # 밖). 라벨링 탭(`labeling_tab._build_toolbar`/`_set_tool`)과 동일한 "양방향
-        # set_tool()/tool_changed 수동 동기화" 패턴을 그대로 따른다(QActionGroup 대신).
-        self._act_circle = QAction(svg_icon("tool_polygon"), "", self)
-        self._act_circle.setToolTip(t("zone.tool_circle_tip"))
-        self._act_circle.setCheckable(True)
-        self._act_circle.setChecked(True)
-        self._act_circle.triggered.connect(lambda: self._set_tool(_TOOL_CIRCLE))
-
+        # 가져온다. 2026-10-30: 원(circle) 편집 액션(`_act_circle`)은 "원 설정"
+        # 아키텍처 전환으로 메인 캔버스에서 완전히 제거됐다 — 원 편집은 이제
+        # "원(Zone) 설정..." 모달(`ZoneRecipeDialog`)에서만 가능. `_TOOL_CIRCLE`은
+        # "편집 도구 없음(조회 전용)" 기본 상태를 가리키는 sentinel로만 남는다.
         self._brush_tools = BrushToolbar(self._edit_toolbar, show_delete_region=True)
         self._brush_tools.act_brush.setToolTip(t("zone.tool_brush_tip"))
         self._brush_tools.act_eraser.setToolTip(t("zone.tool_eraser_tip"))
@@ -377,14 +372,13 @@ class ZoneAnalysisTab(QWidget):
         self._brush_tools.spin_brush_size.setEnabled(False)
         self._erase_brush_spin = self._brush_tools.spin_brush_size   # 기존 호출부 호환용 별칭
 
-        self._edit_toolbar.addAction(self._act_circle)
         self._edit_toolbar.addAction(self._brush_tools.act_brush)
         self._edit_toolbar.addAction(self._brush_tools.act_eraser)
         self._edit_toolbar.addAction(self._brush_tools.act_delete_region)
         self._edit_toolbar.addAction(self._brush_tools.act_pan)
 
         self._edit_tool_actions: tuple[QAction, ...] = (
-            self._act_circle, self._brush_tools.act_brush, self._brush_tools.act_eraser,
+            self._brush_tools.act_brush, self._brush_tools.act_eraser,
             self._brush_tools.act_delete_region, self._brush_tools.act_pan,
         )
         self._active_tool: str = _TOOL_CIRCLE
@@ -494,8 +488,11 @@ class ZoneAnalysisTab(QWidget):
         left.setMaximumWidth(260)
         splitter.addWidget(left)
 
-        # 중앙 — 캔버스 전용 헤더(편집 툴바 + 정렬 버튼) + 캔버스 (가능한 한 크게)
+        # 중앙 — 캔버스 전용 헤더(편집 툴바) + 캔버스 (가능한 한 크게)
         self._canvas = ZoneCanvas()
+        # 2026-10-30: 메인 캔버스는 조회 전용 — 원 편집은 "원(Zone) 설정..."
+        # 모달(`ZoneRecipeDialog`)로 이관(해당 모달의 캔버스는 기본값 True 유지).
+        self._canvas.set_editing_enabled(False)
 
         canvas_panel = QWidget()
         canvas_layout = QVBoxLayout(canvas_panel)
@@ -514,9 +511,6 @@ class ZoneAnalysisTab(QWidget):
         self._lbl_wheel_hint.setStyleSheet("color:#9ca3af;font-size:10.5px;")
         toolbar_header_layout.addWidget(self._lbl_wheel_hint)
         toolbar_header_layout.addStretch()
-        self._btn_align = QPushButton(t("zone.btn_align"))
-        self._btn_align.setToolTip(t("zone.align_tip"))
-        toolbar_header_layout.addWidget(self._btn_align)
         canvas_layout.addWidget(toolbar_header)
 
         opacity_row = QWidget()
@@ -602,7 +596,6 @@ class ZoneAnalysisTab(QWidget):
         )
         self._conf_slider.valueChanged.connect(lambda _v: self._threshold_timer.start())
         self._min_px_spin.valueChanged.connect(lambda _v: self._threshold_timer.start())
-        self._btn_align.clicked.connect(self._canvas.align_centers)
         self._canvas.circles_changed.connect(self._refresh_circle_list)
         self._canvas.circles_committed.connect(self._recompute_zones)
         self._canvas.circles_changed.connect(self._update_batch_button_state)
@@ -730,10 +723,9 @@ class ZoneAnalysisTab(QWidget):
                     self._preview_cache.popitem(last=False)
             self._canvas.set_image_size(*self._image_size)
             self._canvas.set_pixmap(self._original_pixmap)
-            self._act_circle.setEnabled(True)
             self._brush_tools.act_pan.setEnabled(True)
-            # 7-2: 원 편집은 추론 결과와 무관하게 이미지만 로드되면 바로 쓸 수
-            # 있다 — 영역 설정을 추론 전에 할 수 있어야 한다는 재설계 요구사항과 일치.
+            # 2026-10-30: 원(circle) 편집은 더 이상 메인 캔버스에서 하지 않는다
+            # (아키텍처 전환, 번복 — "원(Zone) 설정..." 모달에서만 가능).
         except Exception:
             self._image_size = (0, 0)
             self._original_pixmap = None
@@ -1171,18 +1163,18 @@ class ZoneAnalysisTab(QWidget):
         # (라운드 3의 circles_changed와 동일하게, 여기선 재계산만 트리거).
         self._recompute_zones()
 
-    # ── 슬롯 — 도구 전환(원편집/브러시그리기/브러시지우기/영역삭제/pan, R3-3) ────
-    # 공유 클러스터(브러시그리기/지우기/영역삭제/pan)는 BrushToolbar가 소유하고,
-    # 원(circle) 편집만 호스트 로컬 — 라벨링 탭의 "양방향 set_tool()/tool_changed
-    # 수동 동기화" 패턴을 그대로 따른다(QActionGroup 대신 수동 상호배제).
+    # ── 슬롯 — 도구 전환(브러시그리기/브러시지우기/영역삭제/pan, R3-3) ──────────
+    # 공유 클러스터(브러시그리기/지우기/영역삭제/pan)는 BrushToolbar가 소유.
+    # 2026-10-30: 원(circle) 편집 액션은 메인 캔버스에서 제거됐지만, `_TOOL_CIRCLE`
+    # 은 "편집 도구 없음(조회 전용)" 기본 상태를 가리키는 sentinel로 그대로 쓰인다
+    # (토글 복귀 대상값 — 아래 분기 참고).
 
     def _set_tool(self, tool: str) -> None:
-        # 요청5 — 활성 도구를 다시 클릭하면 토글 비활성화, 기본(원편집)으로 복귀.
+        # 요청5 — 활성 도구를 다시 클릭하면 토글 비활성화, 기본(도구 없음)으로 복귀.
         if tool == self._active_tool and tool != _TOOL_CIRCLE:
             tool = _TOOL_CIRCLE
         self._active_tool = tool
-        self._act_circle.setChecked(tool == _TOOL_CIRCLE)
-        self._brush_tools.set_tool(tool)   # 클러스터 소속 아니면(원편집) 전체 unchecked
+        self._brush_tools.set_tool(tool)   # 클러스터 소속 아니면(도구 없음) 전체 unchecked
         self._canvas.set_blob_delete_mode(tool == TOOL_ERASER_FLOOD)
         if tool != TOOL_ERASER_FLOOD:
             self._canvas.set_brush_draw_mode(tool == TOOL_BRUSH)
@@ -1524,7 +1516,10 @@ class ZoneAnalysisTab(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        dialog = ZoneRecipeDialog(self._original_pixmap, self._image_size, self)
+        dialog = ZoneRecipeDialog(
+            self._original_pixmap, self._image_size, self,
+            initial_circles=existing, image_name=self._image_path.name,
+        )
         if dialog.exec():
             scaled = scale_circles(
                 dialog.result_circles(), dialog.result_ref_size(), self._image_size

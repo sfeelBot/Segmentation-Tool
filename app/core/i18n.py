@@ -339,15 +339,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "zone.images_header":        "② 이미지",
         "zone.images_header_count":  "② 이미지 ({n})",
         "zone.no_image_selected":    "선택된 이미지 없음",
-        "zone.batch_mode_group":     "배치 처리",
+        "zone.batch_mode_group":     "원(Zone) 설정 & 배치 처리",
         "zone.btn_recipe":           "원(Zone) 설정...",
-        "zone.recipe_tip":           "레시피(저장된 원 집합)를 불러오거나 새로 만들어 기준 이미지에 적용합니다.",
+        "zone.recipe_tip":           "레시피(저장된 원 집합)를 불러오거나 새로 만들어 기준 이미지에 적용합니다. "
+                                     "캔버스에서는 보기만 가능합니다. 원 추가/이동/크기조절은 여기서 하세요.",
         "zone.btn_batch":            "▶ 선택 이미지 일괄 처리 ({n}장)",
         "zone.btn_batch_tip":        "목록에 2장 이상 있고, 기준(현재 로드된) 이미지에 원이 1개 이상 정의돼 있어야 합니다\n"
                                      "(Ctrl/Shift로 여러 장 고르면 그 부분집합만 처리 — 정확히 1장만 골라도 목록 전체가 "
                                      "처리됩니다. 1장만 확인하려면 그 이미지를 클릭해 캔버스에서 직접 확인하세요.)",
         "zone.batch_condition_label": "필요 조건: 원 1개 이상 · 이미지 2장 이상",
-        "zone.wheel_hint":           "휠: 화면 줌 · Alt+휠: 선택한 원 지름 조절",
+        "zone.wheel_hint":           "원 모양을 바꾸려면 좌측 '원(Zone) 설정...'을 누르세요 · 휠: 화면 줌",
         "zone.btn_align":            "정렬(중심 맞추기)",
         "zone.align_tip":            "모든 원의 중심을 평균 중심으로 맞춥니다(반지름은 그대로).",
         "zone.circle_list_label":    "검출된 원 (반지름 오름차순)",
@@ -441,8 +442,17 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "zone_canvas.rename_dialog_label": "존 이름(비우면 자동 이름 사용):",
 
         # ── Zone 레시피 다이얼로그 (zone_recipe_dialog.py) ───────────────────
-        "zone_recipe.window_title":  "영역(Zone) 설정 — 레시피",
-        "zone_recipe.title_label":   "영역(Zone) 설정 — 레시피 불러오기/새로 만들기",
+        # 2026-10-30: "원 설정" 아키텍처 전환 — 이 모달이 유일한 편집 창구가
+        # 되므로 "— 레시피" 접미사를 떼고 단순화, 이미지명이 있으면 그 쪽을 우선.
+        "zone_recipe.window_title":  "원(Zone) 설정",
+        "zone_recipe.window_title_with_image": "원(Zone) 설정 — {name}",
+        "zone_recipe.title_label":   "원(Zone) 설정",
+        "zone_recipe.selected_zone_label": "선택한 존: {name}",
+        "zone_recipe.save_confirm_title": "레시피로 저장",
+        "zone_recipe.save_confirm_msg": "이 설정을 레시피로 저장하시겠습니까?\n저장하면 다른 이미지에서도 "
+                                     "똑같이 불러와 쓸 수 있습니다.",
+        "zone_recipe.btn_save_and_apply": "저장하고 적용",
+        "zone_recipe.btn_apply_without_save": "적용만 하기",
         "zone_recipe.circle_count":  "원 개수: {n}",
         "zone_recipe.circle_count_with_time": "원 개수: {n}    검출 소요시간: {ms}ms",
         "zone_recipe.sensitivity_label": "민감도:",
@@ -920,15 +930,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "zone.images_header":        "② Images",
         "zone.images_header_count":  "② Images ({n})",
         "zone.no_image_selected":    "No image selected",
-        "zone.batch_mode_group":     "Batch Processing",
+        "zone.batch_mode_group":     "Set Circles (Zone) & Batch Processing",
         "zone.btn_recipe":           "Set Circles (Zone)...",
-        "zone.recipe_tip":           "Load a recipe (a saved set of circles) or create a new one and apply it to the reference image.",
+        "zone.recipe_tip":           "Load a recipe (a saved set of circles) or create a new one and apply it to the "
+                                     "reference image. The canvas is view-only — add/move/resize circles here instead.",
         "zone.btn_batch":            "▶ Batch Process Selected Images ({n})",
         "zone.btn_batch_tip":        "Requires 2+ images in the list and at least 1 circle defined on the reference (currently loaded) image.\n"
                                      "(Select multiple with Ctrl/Shift to process only that subset — picking exactly 1 image still processes the whole list. "
                                      "To check just one image, click it and view it directly on the canvas.)",
         "zone.batch_condition_label": "Requirements: 1+ circle · 2+ images",
-        "zone.wheel_hint":           "Wheel: zoom view · Alt+Wheel: resize selected circle's diameter",
+        "zone.wheel_hint":           "To change circle shapes, use 'Set Circles (Zone)...' on the left · Wheel: zoom view",
         "zone.btn_align":            "Align (Center)",
         "zone.align_tip":            "Aligns the center of all circles to their average center (radii unchanged).",
         "zone.circle_list_label":    "Detected Circles (ascending radius)",
@@ -1022,8 +1033,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "zone_canvas.rename_dialog_label": "Zone name (leave empty for automatic name):",
 
         # ── Zone recipe dialog (zone_recipe_dialog.py) ───────────────────
-        "zone_recipe.window_title":  "Set Region (Zone) — Recipe",
-        "zone_recipe.title_label":   "Set Region (Zone) — Load or Create Recipe",
+        "zone_recipe.window_title":  "Set Circles (Zone)",
+        "zone_recipe.window_title_with_image": "Set Circles (Zone) — {name}",
+        "zone_recipe.title_label":   "Set Circles (Zone)",
+        "zone_recipe.selected_zone_label": "Selected zone: {name}",
+        "zone_recipe.save_confirm_title": "Save as Recipe",
+        "zone_recipe.save_confirm_msg": "Save this setup as a recipe?\nSaved recipes can be loaded and reused "
+                                     "identically on other images.",
+        "zone_recipe.btn_save_and_apply": "Save & Apply",
+        "zone_recipe.btn_apply_without_save": "Apply Only",
         "zone_recipe.circle_count":  "Circle count: {n}",
         "zone_recipe.circle_count_with_time": "Circle count: {n}    Detection time: {ms}ms",
         "zone_recipe.sensitivity_label": "Sensitivity:",
