@@ -321,6 +321,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "zone.run":                  "▶  추론 실행",
         "zone.running":              "추론 중…",
         "zone.run_all":              "▶  전체 추론 실행",
+        "zone.btn_run_current":      "현재 이미지만 추론",
+        "zone.run_current_tip":      "목록에 이미지가 여러 장 있어도 지금 화면에 보이는 이미지 1장만 추론합니다.\n"
+                                     "다른 이미지의 기존 추론 결과는 그대로 유지됩니다.",
         "zone.ai_confidence_label":  "AI 신뢰도:",
         "zone.confidence_tip":       "blob(연결 영역)의 평균 신뢰도가 이 값 미만이면 배경으로 제거",
         "zone.pixel_threshold_label": "픽셀 threshold:",
@@ -914,6 +917,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "zone.run":                  "▶  Run Inference",
         "zone.running":              "Inferring…",
         "zone.run_all":              "▶  Run All Inference",
+        "zone.btn_run_current":      "Current Image Only",
+        "zone.run_current_tip":      "Runs inference on only the currently displayed image, even if the list "
+                                     "has more loaded.\nExisting results for other images are left untouched.",
         "zone.ai_confidence_label":  "AI confidence:",
         "zone.confidence_tip":       "If a blob's (connected region) average confidence is below this value, it is removed as background",
         "zone.pixel_threshold_label": "Pixel threshold:",

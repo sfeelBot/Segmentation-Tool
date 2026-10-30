@@ -328,16 +328,17 @@ class ZoneAnalysisTab(QWidget):
         #    블랍삭제모드. (오프라인 원 검출 테스트는 2026-08-30 요청으로 삭제됨,
         #    민감도 슬라이더/자동검출 버튼은 2026-10-29 배치 단순화로 삭제됨.)
         #    이미지 열기는 좌측 패널로 이동(C-1). ─
-        # 두 줄로 분리(BUG-021 수정) — 한 줄에 다 욱여넣으면 최소폭이 1588px까지
-        # 벌어져 MainWindow 코딩된 기본 크기(1280x800)를 조용히 무시하고 더 넓게
-        # 뜸(main_window.py의 resize() 호출과 실제 동작이 어긋나는 버그였음).
+        # 2026-10-30(스펙 1번): 1행으로 재병합 — 텍스트 라벨들을 전부 툴팁으로
+        # 옮기고 `_act_circle`(원편집 액션)이 "원 설정" 아키텍처 전환으로 먼저
+        # 빠져 폭 여유가 생겨, BUG-021(2026-08-26, 2행 분리 전 최소폭 1588px
+        # 초과) 재발 없이 1행으로 되돌릴 수 있게 됐다. 측정 게이트는
+        # tests/test_zone_layout_compact_2026_10_30.py 참고.
         ckpt_card = QFrame()
         ckpt_card.setStyleSheet(
             "background:#1f2329;border:1px solid #374151;border-radius:8px;"
         )
         toolbar_row1 = QHBoxLayout(ckpt_card)
         toolbar_row1.setContentsMargins(14, 7, 14, 7)
-        toolbar_row2 = QHBoxLayout()
 
         self._btn_ckpt = QPushButton(t("zone.btn_ckpt_open"))
         toolbar_row1.addWidget(self._btn_ckpt)
@@ -346,6 +347,7 @@ class ZoneAnalysisTab(QWidget):
         toolbar_row1.addWidget(self._lbl_ckpt_dot)
         self._lbl_ckpt = QLabel(t("zone.ckpt_none"))
         self._lbl_ckpt.setStyleSheet("color:#9ca3af;")
+        self._lbl_ckpt.setMaximumWidth(140)   # 2026-10-30: 긴 파일명이 행을 밀어내는 것 방지 — elide는 _apply_checkpoint()에서
         toolbar_row1.addWidget(self._lbl_ckpt)
         self._lbl_ckpt_badge = QLabel(t("zone.ckpt_auto_badge"))
         self._lbl_ckpt_badge.setStyleSheet(
@@ -360,46 +362,43 @@ class ZoneAnalysisTab(QWidget):
         self._infer_progress.hide()
         toolbar_row1.addWidget(self._infer_progress)
 
-        toolbar_row1.addWidget(QLabel(t("zone.target_class_label")))
         self._target_name_edit = QLineEdit()
         self._target_name_edit.setPlaceholderText(t("zone.target_name_placeholder"))
         self._target_name_edit.setFixedWidth(120)
+        self._target_name_edit.setToolTip(t("zone.target_class_label"))   # 2026-10-30: 라벨 제거, 툴팁으로 흡수
         self._target_name_edit.hide()
         toolbar_row1.addWidget(self._target_name_edit)
         self._target_combo = QComboBox()
         self._target_combo.setFixedWidth(160)
+        self._target_combo.setToolTip(t("zone.target_class_label"))
         self._target_combo.hide()
         toolbar_row1.addWidget(self._target_combo)
         toolbar_row1.addStretch()
-        lbl_mode = QLabel(t("zone.infer_mode_fixed"))
-        lbl_mode.setStyleSheet("color:#9ca3af;font-size:11px;background:transparent;border:none;")
-        toolbar_row1.addWidget(lbl_mode)
-        self._btn_run = QPushButton(t("zone.run"))
-        self._btn_run.setStyleSheet(
-            "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
-            "padding:6px 18px;color:#93c5fd;font-weight:bold;font-size:13.5px;"
-        )
-        toolbar_row1.addWidget(self._btn_run)
 
-        toolbar_row2.addWidget(QLabel(t("zone.ai_confidence_label")))
+        # 2026-10-30(스펙 8번): "현재 이미지만 추론" — 리스트가 로드돼 있어도
+        # 지금 화면의 이미지 1장만 추론한다(_run_inference(current_only=True)).
+        # 다른 이미지의 기존 결과는 보존(핵심 회귀 포인트, _run_inference 참고).
+        self._btn_run_current = QPushButton(t("zone.btn_run_current"))
+        self._btn_run_current.setToolTip(t("zone.run_current_tip"))
+        toolbar_row1.addWidget(self._btn_run_current)
+
         self._conf_slider = QSlider(Qt.Orientation.Horizontal)
         self._conf_slider.setRange(0, 100)
         self._conf_slider.setValue(int(_DEFAULT_MIN_CONFIDENCE * 100))
         self._conf_slider.setFixedWidth(90)
-        self._conf_slider.setToolTip(t("zone.confidence_tip"))
-        toolbar_row2.addWidget(self._conf_slider)
+        self._conf_slider.setToolTip(t("zone.confidence_tip"))   # 2026-10-30: 라벨 제거, 툴팁만 유지
+        toolbar_row1.addWidget(self._conf_slider)
         self._lbl_confidence = QLabel(f"{self._conf_slider.value()}%")
         self._lbl_confidence.setFixedWidth(32)
-        toolbar_row2.addWidget(self._lbl_confidence)
+        toolbar_row1.addWidget(self._lbl_confidence)
 
-        toolbar_row2.addWidget(QLabel(t("zone.pixel_threshold_label")))
         self._min_px_spin = QSpinBox()
         self._min_px_spin.setRange(0, 100000)
         self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
         self._min_px_spin.setSuffix(" px")
         self._min_px_spin.setFixedWidth(90)
-        self._min_px_spin.setToolTip(t("zone.pixel_threshold_tip"))
-        toolbar_row2.addWidget(self._min_px_spin)
+        self._min_px_spin.setToolTip(t("zone.pixel_threshold_tip"))   # 2026-10-30: 라벨 제거, 툴팁만 유지
+        toolbar_row1.addWidget(self._min_px_spin)
 
         self._edit_toolbar = QToolBar()
         self._edit_toolbar.setIconSize(QSize(20, 20))
@@ -439,18 +438,24 @@ class ZoneAnalysisTab(QWidget):
             action.setEnabled(False)
 
         self._edit_toolbar.addSeparator()
-        self._edit_toolbar.addWidget(QLabel(t("tool.brush_size")))
-        self._edit_toolbar.addWidget(self._brush_tools.spin_brush_size)
+        self._edit_toolbar.addWidget(self._brush_tools.spin_brush_size)   # 2026-10-30: 라벨 제거, spin 자체의 brush_size_tip 툴팁만 유지
 
         self._edit_toolbar.addSeparator()
         self._act_undo = self._brush_tools.act_undo
         self._act_undo.setToolTip(t("zone.undo_tip"))
         self._act_undo.setEnabled(False)
         self._edit_toolbar.addAction(self._act_undo)
+        toolbar_row1.addWidget(self._edit_toolbar)
 
-        toolbar_row2.addStretch()
+        self._btn_run = QPushButton(t("zone.run"))
+        self._btn_run.setStyleSheet(
+            "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
+            "padding:6px 18px;color:#93c5fd;font-weight:bold;font-size:13.5px;"
+        )
+        self._btn_run.setToolTip(t("zone.infer_mode_fixed"))   # 2026-10-30: 상시 라벨이던 추론방식 고정 문구를 툴팁으로 이동
+        toolbar_row1.addWidget(self._btn_run)
+
         root.addWidget(ckpt_card)
-        root.addLayout(toolbar_row2)
 
         self._lbl_model_info = QLabel("")
         self._lbl_model_info.setStyleSheet(
@@ -537,8 +542,7 @@ class ZoneAnalysisTab(QWidget):
         batch_layout.addWidget(self._lbl_batch_condition)
         left_layout.addWidget(self._batch_box)
 
-        left.setMinimumWidth(180)
-        left.setMaximumWidth(260)
+        left.setMinimumWidth(180)   # 2026-10-30(스펙 2번): 다른 탭과 통일 — 폭 상한 제거, 하한만 유지
         splitter.addWidget(left)
 
         # 중앙 — 캔버스 전용 헤더(편집 툴바) + 캔버스 (가능한 한 크게)
@@ -559,7 +563,9 @@ class ZoneAnalysisTab(QWidget):
         toolbar_header.setStyleSheet("background:#1f2329;border:none;border-bottom:1px solid #374151;")
         toolbar_header_layout = QHBoxLayout(toolbar_header)
         toolbar_header_layout.setContentsMargins(8, 5, 8, 5)
-        toolbar_header_layout.addWidget(self._edit_toolbar)
+        # 2026-10-30(스펙 1번): `_edit_toolbar`는 이제 ckpt_card(상단 1행)에
+        # 배치된다 — 여기(캔버스 헤더)에는 더 이상 추가하지 않는다(위젯은 한
+        # 레이아웃에만 속할 수 있어 중복 addWidget은 의미 없음).
         self._lbl_wheel_hint = QLabel(t("zone.wheel_hint"))
         self._lbl_wheel_hint.setStyleSheet("color:#9ca3af;font-size:10.5px;")
         toolbar_header_layout.addWidget(self._lbl_wheel_hint)
@@ -599,7 +605,7 @@ class ZoneAnalysisTab(QWidget):
         self._zone_list.setToolTip(t("zone.zone_list_tip"))
         self._zone_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._zone_list.customContextMenuRequested.connect(self._on_zone_list_context_menu)
-        side_layout.addWidget(self._zone_list, stretch=1)
+        side_layout.addWidget(self._zone_list, stretch=2)   # 2026-10-30(스펙 2번): 1:2 — 존별 비율이 더 자주 쓰임
         self._lbl_selected_blob = QLabel("")
         self._lbl_selected_blob.setWordWrap(True)
         self._lbl_selected_blob.setStyleSheet("color:#fbbf24; font-size:11px;")
@@ -618,8 +624,7 @@ class ZoneAnalysisTab(QWidget):
         self._btn_save_all_images = QPushButton(svg_icon("export"), t("zone.btn_save_all_images"))
         self._btn_save_all_images.setToolTip(t("zone.save_all_images_tip"))
         side_layout.addWidget(self._btn_save_all_images)
-        side.setMinimumWidth(160)
-        side.setMaximumWidth(220)
+        side.setMinimumWidth(160)   # 2026-10-30(스펙 2번): 폭 상한 제거, 하한만 유지
         splitter.addWidget(side)
 
         splitter.setStretchFactor(0, 0)
@@ -642,6 +647,7 @@ class ZoneAnalysisTab(QWidget):
         self._btn_validate.clicked.connect(self._on_validate)
         self._btn_load_code.clicked.connect(self._on_load_code)
         self._btn_run.clicked.connect(self._on_run)
+        self._btn_run_current.clicked.connect(self._on_run_current)
         self._target_name_edit.editingFinished.connect(self._on_target_changed)
         self._target_combo.currentIndexChanged.connect(self._on_target_changed)
         self._conf_slider.valueChanged.connect(
@@ -848,7 +854,14 @@ class ZoneAnalysisTab(QWidget):
 
     def _apply_checkpoint(self, path: Path) -> None:
         self._ckpt_path = path
-        self._lbl_ckpt.setText(self._ckpt_path.name)
+        # 2026-10-30(스펙 1번): lbl_ckpt는 폭 상한(140px)이 있어 긴 파일명을 elide —
+        # 풀네임은 툴팁으로.
+        fm = self._lbl_ckpt.fontMetrics()
+        elided = fm.elidedText(
+            self._ckpt_path.name, Qt.TextElideMode.ElideMiddle, self._lbl_ckpt.maximumWidth()
+        )
+        self._lbl_ckpt.setText(elided)
+        self._lbl_ckpt.setToolTip(self._ckpt_path.name)
         self._lbl_ckpt.setStyleSheet("color:#e5e7eb;")
         self._model = None
         self._code_box.hide()
@@ -860,24 +873,34 @@ class ZoneAnalysisTab(QWidget):
             model = load_model_from_ckpt(self._ckpt_path)
             if model is not None:
                 self._model = model
-                self._lbl_model_info.setText(t("zone.ckpt_auto_ready").format(label=label))
+                # 2026-10-30(스펙 1번): 성공(초록) 상태는 본문 안내줄을 숨기고
+                # 같은 문구를 상시 노출되는 상태점(●) 툴팁으로 흡수한다 —
+                # "자동" 배지와 나란히 중복 노출되던 걸 제거(auto/manual 무관).
+                info_text = t("zone.ckpt_auto_ready").format(label=label)
+                self._lbl_model_info.setText(info_text)
                 self._lbl_model_info.setStyleSheet(
                     "color:#34d399; font-size:11px; padding:2px 4px;"
                 )
+                self._lbl_model_info.hide()
+                self._lbl_ckpt_dot.setToolTip(info_text)
             else:
+                self._lbl_model_info.show()
                 self._lbl_model_info.setText(t("zone.preset_load_failed").format(label=label))
                 self._lbl_model_info.setStyleSheet(
                     "color:#f87171; font-size:11px; padding:2px 4px;"
                 )
+                self._lbl_ckpt_dot.setToolTip("")
                 self._code_box.show()
         else:
             reason = t("zone.reason_custom_model") if meta.model_source == "loaded" else t("zone.reason_no_model_info")
+            self._lbl_model_info.show()
             self._lbl_model_info.setText(
                 t("zone.paste_code_hint").format(reason=reason)
             )
             self._lbl_model_info.setStyleSheet(
                 "color:#fbbf24; font-size:11px; padding:2px 4px;"
             )
+            self._lbl_ckpt_dot.setToolTip("")
             self._code_box.show()
 
         self._lbl_ckpt_badge.setVisible(self._ckpt_auto_selected)
@@ -925,6 +948,15 @@ class ZoneAnalysisTab(QWidget):
     # ── 슬롯 — 추론 실행 ──────────────────────────────────────────────────────
 
     def _on_run(self) -> None:
+        self._run_inference(current_only=False)
+
+    def _on_run_current(self) -> None:
+        """"현재 이미지만 추론"(스펙 8번) — 리스트가 로드돼 있어도 지금 화면의
+        이미지 1장만 대상으로 한다. 공유 가드/워커 배선은 `_run_inference()`에
+        위임해 `_on_run()`과 완전히 동일한 경로를 재사용한다(DRY)."""
+        self._run_inference(current_only=True)
+
+    def _run_inference(self, current_only: bool) -> None:
         if self._image_path is None:
             QMessageBox.warning(self, t("infer.no_image_title"), t("zone.no_image_msg"))
             return
@@ -950,14 +982,18 @@ class ZoneAnalysisTab(QWidget):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        paths = self._img_list.paths() or [self._image_path]
-        self._results.clear()
-        self._target_cache.clear()   # R-PERF-1: 새 추론 세션 — 이전 캐시는 전부 무의미
-        # BUG-040 후속: detected_ids는 raw_class_map(추론 결과) 의존 — 재추론 시
-        # 무효화 필요. _preview_cache(원본 디코드)는 원본 픽셀이 안 바뀌므로 유지.
-        self._detected_ids_cache.clear()
+        paths = [self._image_path] if current_only else (self._img_list.paths() or [self._image_path])
+        # 2026-10-30(스펙 8번): 예전엔 항상 .clear()로 전체를 비웠지만, "현재
+        # 이미지만 추론"은 이름대로 다른 이미지의 기존 결과를 건드리면 안 된다 —
+        # 재추론 대상 경로만 선택적으로 evict(전체 추론도 paths가 곧 전체
+        # 목록이라 결과는 기존 .clear()와 동일, 회귀 없음).
+        for p in paths:
+            self._results.pop(p, None)
+            self._target_cache.pop(p, None)   # R-PERF-1: 재추론 대상은 이전 캐시가 무의미
+            self._detected_ids_cache.pop(p, None)   # BUG-040 후속: raw_class_map 의존 — 재추론 시 무효화
         self._btn_view_all.setEnabled(bool(self._results))
         self._btn_run.setEnabled(False)
+        self._btn_run_current.setEnabled(False)
         self._btn_run.setText(t("zone.running"))
         self._infer_progress.setRange(0, len(paths))
         self._infer_progress.setValue(0)
@@ -995,6 +1031,7 @@ class ZoneAnalysisTab(QWidget):
 
     def _on_inference_finished(self) -> None:
         self._btn_run.setEnabled(True)
+        self._btn_run_current.setEnabled(True)
         self._btn_run.setText(t("zone.run_all"))
         self._infer_progress.setFormat(
             t("zone.infer_done_format").format(done=len(self._results), total=self._infer_progress.maximum())
