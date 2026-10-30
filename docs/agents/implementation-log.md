@@ -7017,3 +7017,67 @@ QA.md의 cProfile 분해와 같은 단위로 두 targeted 연산만 직접 분�
 "실행 확인" 수준이면 충분하나, 검증 에이전트가 실제 앱에서 체크포인트
 열기 → 1행 레이아웃 확인 → "현재 이미지만 추론" 클릭 후 다른 이미지
 결과가 남아있는지 확인하기 전까지 완료로 간주하지 않음.
+
+## 2026-10-30 — zone 테스트 access violation(QThread 잔류 시그널) 수정
+
+- 상태: 완료(검증 에이전트 확인 전까지 미완료로 간주).
+- 재현: `pytest tests/ -k zone -v`를 한 프로세스로 실행하면
+  `test_zone_set_circles_architecture_2026_10_30.py::
+  test_editing_disabled_blocks_circle_creation_by_drag`의 `_make_canvas`가
+  `_APP.processEvents()`를 호출하는 순간 Windows fatal exception:
+  access violation으로 pytest 프로세스 자체가 죽음. 단독 실행(해당
+  파일만)하면 10개 전부 통과 — 선행 테스트와의 상호작용으로만 재현.
+- **범인 특정**: `tests/test_zone_layout_compact_2026_10_30.py::
+  test_run_current_only_sends_single_path_to_worker`. `engine.run_sliding_window`를
+  모킹하지 않은 채 `tab._on_run_current()`를 호출해 실제
+  `_ZoneInferenceWorker`(QThread)를 `.start()`시키고, `tab._model = object()`
+  (유효하지 않은 모델)이라 워커가 `run_sliding_window()` 호출 중 예외를
+  던져 `failed` 시그널을 emit함. 테스트는 `finally`에서
+  `tab._worker.wait(5000)`로 **OS 스레드 종료만** 기다리고, 큐드
+  시그널(`failed`/`finished`)을 펌핑하는 `QTest.qWait()`/
+  `_APP.processEvents()`를 호출하지 않은 채 바로 `tab.close()`로
+  테스트를 끝냈다(바로 위 테스트
+  `test_run_current_only_preserves_other_images_results`는 동일 상황에서
+  `QTest.qWait(50)`로 정확히 펌핑하고 있어서 대조군이 됨).
+- **근본 원인**: `QThread.wait()`는 스레드가 멈추는 것만 보장하고, 그 전에
+  이미 포스팅된 큐드 시그널 이벤트가 메인 스레드 이벤트 루프에서
+  **삭제·전달되는 것까지는 보장하지 않는다**. 범인 테스트가 끝나고
+  `tab`(및 `tab._worker`)이 GC된 뒤에도, 해당 큐드 시그널은 애플리케이션
+  이벤트 큐에 그대로 남아있다가, 한참 뒤(다른 테스트 파일) 아무
+  관련 없는 `_APP.processEvents()` 호출에 의해 비로소 전달되면서 이미
+  해제된 객체를 건드려 access violation을 냈다. 추가로 프로덕션 코드
+  점검: `ZoneAnalysisTab`은 `_worker`/`_post_worker`/`_view_all_worker`
+  생성 시 `super().__init__()`에 parent를 전달하지 않아 Qt의 부모-자식
+  소유권으로도 보호되지 않았고, `closeEvent` 오버라이드가 전혀 없어
+  탭/창이 추론 중에 닫히면 실제 앱에서도 동일 패턴의 잠재 실버그가
+  있었음(테스트만의 문제가 아니었음).
+- **수정**:
+  - 테스트(`tests/test_zone_layout_compact_2026_10_30.py`): `worker.wait(5000)`
+    뒤에 `QTest.qWait(50)` 추가해 큐드 시그널을 테스트 안에서 즉시
+    펌핑(기존 `test_run_current_only_preserves_other_images_results`와
+    동일 패턴 재사용, 새 패턴 발명하지 않음).
+  - 프로덕션(`app/tabs/zone_analysis_tab.py`): `ZoneAnalysisTab.closeEvent()`를
+    `keyPressEvent()` 바로 뒤에 추가 — 닫힐 때 `_worker`/`_post_worker`/
+    `_view_all_worker` 중 실행 중인 게 있으면 (취소 가능한 워커는
+    `requestInterruption()` 먼저 호출한 뒤) `wait()`로 완전히 끝날 때까지
+    기다리고 `super().closeEvent(event)` 호출. 새 스레드 관리 프레임워크
+    등 과설계 없이 최소 방어만 추가.
+- **재검증**: `pytest tests/ -k zone -v` 4회 연속 실행 — 전부 84 passed,
+  크래시 없음. `pytest tests/` 전체 2회 실행 — `test_training_performance.py::
+  test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`
+  1건만 실패(기존에 알려진 트레이너 관련 무관 flaky, 이번 수정과 무관,
+  범위 밖이라 손대지 않음). `test_zone_edit_toolbar.py`/
+  `test_zone_step_indicator.py`의 `Path("a.png")` 공유 파일 오염 flaky는
+  이번 실행에서 재현되지 않았고, 내 수정이 그 경로를 건드리지 않아
+  영향 없음.
+- 커밋: `f4e5a36` — "fix: zone QThread 워커 잔류 시그널이 다른 테스트에서
+  access violation 유발하는 버그 수정" (`feature/zone-analysis-tab` 브랜치,
+  워크트리 `D:/segmentation model-zone-analysis-tab`).
+- 참고(향후 비슷한 QThread 테스트 작성 시): `QThread.start()`로 실제
+  스레드를 돌리는 테스트는 `.wait()`만으로 끝내지 말고, 큐드 시그널을
+  소비할 `QTest.qWait(N)`(또는 동등한 이벤트 루프 펌핑)을 반드시 함께
+  호출해야 한다 — 그렇지 않으면 테스트 자체는 통과해도 잔류 시그널이
+  프로세스 전역 이벤트 큐에 남아 전혀 무관한 나중 테스트에서 크래시를
+  유발할 수 있다.
+- 검증 에이전트 확인 필요: 위 재검증은 내가 직접 수행한 것으로, 리더
+  지침상 별도 검증 에이전트의 확인 전까지는 "완료"로 보지 않음.
