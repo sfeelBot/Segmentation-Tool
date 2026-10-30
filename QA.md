@@ -1,5 +1,30 @@
 # QA — 버그 및 VOC 추적
 
+## 2026-10-30 — zone QThread 잔류 시그널 access violation (Closed)
+
+- 우선순위: P2(테스트 프로세스 크래시 + 실제 앱 잠재 실버그).
+- 증상: `pytest tests/ -k zone -v`를 한 프로세스로 실행하면
+  `test_zone_set_circles_architecture_2026_10_30.py`의 테스트에서 Windows
+  fatal exception: access violation으로 pytest 자체가 죽음. 개별 실행하면
+  통과 — 선행 테스트와의 상호작용으로만 재현.
+- 원인: `test_zone_layout_compact_2026_10_30.py::
+  test_run_current_only_sends_single_path_to_worker`가 실제
+  `_ZoneInferenceWorker`(QThread)를 `.start()`한 뒤 `worker.wait()`로 OS
+  스레드 종료만 기다리고, 그전에 포스팅된 큐드 `failed` 시그널을 펌핑
+  (`QTest.qWait()`)하지 않은 채 종료 — 그 시그널이 애플리케이션 이벤트
+  큐에 남아있다가 한참 뒤 전혀 다른 테스트의 `processEvents()` 호출 때
+  전달되며 이미 GC된 객체를 건드려 크래시. 프로덕션 코드도 점검해보니
+  `ZoneAnalysisTab`의 워커들이 `self`에 parent로 묶여있지 않고
+  `closeEvent`도 없어, 추론 중 탭/창을 닫으면 실제 앱에서도 같은 패턴의
+  잠재 실버그가 있었음.
+- 조치: 범인 테스트에 `QTest.qWait(50)` 추가(큐드 시그널 즉시 펌핑),
+  `ZoneAnalysisTab.closeEvent()` 신규 추가(닫힐 때 실행 중인 워커를
+  끝까지 기다림).
+- 재검증: `pytest tests/ -k zone -v` 4회 연속 84 passed(크래시 없음).
+  `pytest tests/` 전체 2회 — 기존에 알려진 무관 flaky
+  (`test_training_performance.py`) 1건만 재현, 그 외 영향 없음.
+- 커밋: `f4e5a36`(fix), `611ff3c`(docs).
+
 ## 2026-10-07 — `generate_version_info._git()` subprocess stdin 플레이키 (Closed)
 
 - BUG-040 재검증 중 verifier가 `pytest tests/` 전체 실행 시 `tests/test_build_release.py`가
