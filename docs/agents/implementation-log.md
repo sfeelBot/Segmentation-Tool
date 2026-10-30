@@ -6768,3 +6768,92 @@ QA.md의 cProfile 분해와 같은 단위로 두 targeted 연산만 직접 분�
 가 비워지되 `_preview_cache`는 유지되는지, (4) 이미지 제거(`_on_images_removed`)
 시 두 캐시 모두 evict되는지. BUG-040은 **부분 개선으로 Open 유지** — 완전
 해소는 `_recompute_zones()` 내부 최적화(스펙 3번, 범위 밖)가 필요.
+
+## 2026-10-30 — Zone "원(Zone) 설정" 아키텍처 전환(스펙 3번) + 링/중심부 직접 클릭 네이밍(4번)
+
+- 작업 위치: `D:/segmentation model-zone-analysis-tab` (브랜치 `feature/zone-analysis-tab`).
+- 스펙: `docs/specs/zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md` 3번/4번.
+- 커밋: `da25f5f`(feat — 앱 코드), `6729d88`(test — 테스트 갱신/추가).
+
+### 변경 내용
+- `app/widgets/zone_canvas.py`: `set_editing_enabled(bool)`(기본 True, 역호환)
+  추가. False일 때 `mousePressEvent`/`mouseMoveEvent`/`mouseReleaseEvent`의
+  "circle" 모드 분기를 편집(생성/이동/리사이즈)과 조회(드래그 없는 클릭 ->
+  `zone_clicked`/`blob_clicked`)로 분리 — 기존 "투기적 원 생성 후 되무르기"
+  우회 경로 대신 press/release 화면 좌표 거리만으로 클릭-vs-드래그를 판정하는
+  더 단순한 경로를 신설(스펙 3-1 "오히려 코드가 단순해짐"). `contextMenuEvent`
+  도 플래그로 가드. **Alt+휠(원 지름 조절) 기능은 플래그와 무관하게 완전히
+  제거**(`_WHEEL_STEP_PX`류 상수도 제거) — 일반 휠(화면 줌)은 유지(사용자
+  2026-10-30 확정, `docs/decisions-needed.md` 이미 해소됨).
+- `app/tabs/zone_analysis_tab.py`: `_act_circle` 툴바 액션 완전 제거(에디트
+  툴바는 브러시그리기/지우기/영역삭제/pan 4개만 남음), `_on_list_image_selected`
+  의 "원 편집은 추론 결과와 무관하게 이미지만 로드되면 바로 쓸 수 있다"(7-2)
+  결정 번복, `ZoneCanvas` 생성 직후 `set_editing_enabled(False)` 호출,
+  캔버스 헤더 `_btn_align`/구 `_lbl_wheel_hint` 문구 제거·교체,
+  `_on_open_recipe_dialog()`가 `self._canvas.get_circles()`(이미 있던 `existing`
+  변수)를 `ZoneRecipeDialog`에 `initial_circles=`/`image_name=`로 전달.
+- `app/widgets/zone_recipe_dialog.py`: `__init__`에 `initial_circles`/
+  `image_name` 키워드 매개변수 추가 — 있으면 `_load_most_recent()` 대신
+  그 값으로 캔버스를 채우고(현재 화면 원 우선, 스펙 3-5), 없으면(새 이미지)
+  기존처럼 최근 레시피 자동 로드로 폴백. 창 제목에 이미지명 반영.
+  `_on_apply()` 맨 앞에 "저장하고 적용(AcceptRole)/적용만 하기(ActionRole)/
+  취소(RejectRole)" 3버튼 QMessageBox 추가(취소 시 모달에 머무름, 저장 선택
+  시 기존 `_on_save_recipe()` 재사용). `zone_clicked` 신호를 구독해 선택된
+  존 이름(중심부/링 N, `zone_metrics.zones_from_circles()`와 동일 폴백 규칙)
+  라벨 + "이름 변경..." 버튼을 노출 — 클릭 시 기존 `ZoneCanvas._prompt_name_change()`
+  를 그대로 재사용(신규 UI 신설 없음, 기존 우클릭 메뉴 호출부와 동일 패턴).
+- `app/core/i18n.py`: `zone.batch_mode_group`(ko "원(Zone) 설정 & 배치 처리"),
+  `zone.recipe_tip`(캔버스는 보기만 가능하다는 문장 추가), `zone.wheel_hint`
+  (Alt+휠 문구 제거, "원 설정..." 안내로 교체) 갱신. `zone_recipe.window_title`
+  단순화("— 레시피" 접미사 제거), 신규 `zone_recipe.window_title_with_image`/
+  `selected_zone_label`/`save_confirm_title`/`save_confirm_msg`/
+  `btn_save_and_apply`/`btn_apply_without_save` ko/en 추가.
+- `docs/roadmap.md` 3번/4번 체크 완료 — **주의**: 이 편집은 동시 작업 중인
+  다른 에이전트(BUG-040 캐싱, 7번)의 커밋 `c5138e9`에 함께 커밋됐다(공용
+  워크트리에서 두 에이전트가 같은 파일을 편집 중일 때 `git add -A` 계열
+  명령이 서로의 미반영 변경까지 같이 묶어간 것으로 추정) — 내용은 정확하나
+  별도 커밋으로 분리되지 않았음을 기록해둔다.
+
+### 테스트
+- `tests/test_zone_edit_toolbar.py`/`test_zone_github_13_14.py`/
+  `test_zone_redesign_2026_10_01.py` — 번복된 동작(원 편집 제거, Alt+휠 제거)
+  에 맞춰 기존 단언 재작성.
+- 신규 `tests/test_zone_set_circles_architecture_2026_10_30.py` — 편집
+  비활성 상태에서 드래그로 원 생성/이동 불가, 우클릭 메뉴 안 열림(QMenu.exec
+  호출 자체가 없음을 단언), 드래그 없는 클릭은 `zone_clicked`/`blob_clicked`
+  정상 발생 + `highlighted_zone()` 갱신, 모달 생성자가 `initial_circles`
+  전달 시 디스크 최근 레시피 대신 그 값을 우선 로드(없으면 폴백), 창 제목에
+  이미지명 반영, 존 클릭 -> 이름변경 버튼 활성화/라벨 텍스트 갱신(+ 실제
+  `_prompt_name_change()` 경로로 이름 변경 후 라벨 재갱신 확인), `_on_apply()`
+  저장확인 팝업 3갈래(취소=accept 안 됨/적용만 하기=저장 없이 결과 반영) 검증.
+- `pytest tests/ -k zone` — 73 passed.
+- `pytest tests/` 전체 — 184 passed, 1 failed(`test_training_performance.py::
+  test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`,
+  `git stash`로 변경분 제거 후에도 동일하게 실패함을 확인 — **내 변경과
+  무관한 기존 실패**). `tests/test_zone_edit_toolbar.py::
+  test_batch_apply_groupbox_present_and_still_gated`,
+  `tests/test_zone_step_indicator.py::
+  test_steps_complete_in_order_as_ckpt_image_circles_are_set` 도 전체 스위트
+  동시 실행 시 실패하지만 **스택과 무관하게 pre-existing**(동일하게 stash
+  제거 후에도 실패) — 테스트 간 전역 상태 누수로 추정, 내 범위 밖이라
+  손대지 않음(단독 실행 시에도 재현되므로 순서 의존 문제).
+- 헤드리스 스모크(임시 스크립트, 프로젝트 미포함): `ZoneAnalysisTab` 생성 →
+  이미지 로드 → 메인 캔버스 드래그로 원 생성/이동 불가 확인 → `_canvas.set_circles()`
+  로 원 2개 배치(모달 없이 상태만 구성) → `_on_open_recipe_dialog()`를
+  `QMessageBox.question`/`ZoneRecipeDialog.exec` 몽키패치로 통과시켜 모달이
+  **현재 화면 원과 동일한 원**으로 시작함을 확인 → 모달 내 존 클릭 ->
+  이름변경 버튼 활성화 확인 → 저장확인 팝업에서 "적용만 하기" 선택 -> 메인
+  탭 캔버스 원이 그대로(무손실) 반영됨을 확인. `MainWindow()` 생성 시 창
+  크기 1280×800 유지(BUG-021 회귀 없음)도 함께 확인.
+
+### 상태
+구현 완료. **검증 에이전트가 실제 앱(`python main.py`)을 구동해 골든패스
+(이미지 로드 → 메인 캔버스 원 편집 불가 확인 → "원(Zone) 설정" 모달 열기 →
+현재 원이 그대로 보이는지 → 원 이동/링 영역 클릭→이름변경 → 적용 → 저장확인
+팝업 3갈래 → 레시피 저장 → 메인 화면 반영)을 확인하기 전까지 완료로 간주하지
+않음**(AGENTS.md "주요 기능 추가" 분류, 이 작업도 해당). 특히 확인 요청:
+(1) 실제 UI 클릭(드래그 vs 클릭 판정이 테스트의 합성 이벤트와 실제 OS 이벤트
+간 차이로 다르게 동작하지 않는지), (2) 우클릭 컨텍스트 메뉴가 메인 캔버스에서
+정말 아무 반응이 없는지(테스트는 `QContextMenuEvent`를 직접 호출해 확인했지만
+실제 우클릭 제스처 경로 재확인 권장), (3) 레이아웃(좌측 "원(Zone) 설정 &
+배치 처리" 그룹박스) 폭이 BUG-021 재발 없이 보이는지.
