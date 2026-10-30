@@ -158,6 +158,11 @@ def test_run_current_only_sends_single_path_to_worker(tmp_path) -> None:
             module.prompt_gpu_availability = prev_gpu
             if tab._worker is not None:
                 tab._worker.wait(5000)
+                # 워커 스레드 종료(wait)만으론 부족 — failed/finished 큐드 시그널이
+                # 메인 스레드 이벤트 루프에 남아있으면 tab이 이후 GC돼도 시그널이
+                # 나중에(다른 테스트 파일에서) 전달되며 access violation을 유발한다
+                # (2026-10-30 access violation 조사 — 범인 테스트였음).
+                QTest.qWait(50)
     finally:
         tab.close()
 

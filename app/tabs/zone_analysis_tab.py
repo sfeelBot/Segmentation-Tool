@@ -1223,6 +1223,20 @@ class ZoneAnalysisTab(QWidget):
             return
         super().keyPressEvent(event)
 
+    def closeEvent(self, event) -> None:
+        # 2026-10-30 access violation 조사: 워커(QThread)들이 self에 parent로
+        # 묶여있지 않아 Qt의 부모-자식 소유권으로 보호되지 않는다 — 탭이 실행 중인
+        # 워커를 기다리지 않고 닫히면, 스레드가 끝난 뒤에도 메인 스레드로 올
+        # 큐드 시그널(failed/finished)이 이미 소멸된 위젯을 참조해 전달 시점에
+        # access violation을 낼 수 있다. 닫을 때 끝까지 기다려 방지(취소 가능한
+        # 워커는 먼저 interruption 요청).
+        for worker in (self._worker, self._post_worker, self._view_all_worker):
+            if worker is not None and worker.isRunning():
+                if hasattr(worker, "requestInterruption"):
+                    worker.requestInterruption()
+                worker.wait()
+        super().closeEvent(event)
+
     # ── 슬롯 — 존(zone) 퍼센티지 계산/표시 (라운드 3) ────────────────────────
 
     def _ai_and_final_masks(self) -> tuple[np.ndarray | None, np.ndarray | None]:
