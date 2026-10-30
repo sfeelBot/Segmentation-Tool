@@ -6922,3 +6922,98 @@ QA.md의 cProfile 분해와 같은 단위로 두 targeted 연산만 직접 분�
 충분하지만, 검증 에이전트가 실제 앱에서 이미지 다수(가능하면 20장 이상)
 로드 후 "전체 결과 보기" 클릭 시 UI가 멈추지 않는지, 결과 값이 기존과 동일한지
 확인하기 전까지 완료로 간주하지 않음.
+
+## 2026-10-30 — Zone 분석 탭 레이아웃 압축(1행 통합) + 패널 비율 + "현재 이미지만 추론"
+
+스펙: docs/specs/zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md
+(1번/2번/8번) — 다른 implementer가 같은 워크트리에서 동시에 6번("전체 결과
+보기" 비동기화)을 작업 중이라, 해당 영역(`_on_view_all_results`/
+`ZoneBatchResultDialog`/`_ZoneViewAllWorker`)은 건들지 않았다.
+
+### 변경 내용
+
+- `app/tabs/zone_analysis_tab.py` `_build_ui()`:
+  - **1번(레이아웃 1행 통합)**: 기존 `toolbar_row1`/`toolbar_row2` 2행을
+    `ckpt_card`의 단일 `QHBoxLayout`(`toolbar_row1`)으로 합침. 순서:
+    체크포인트 열기 → 상태점(●) → 파일명(elide) → "자동" 배지 → 진행바 →
+    타겟클래스 입력/콤보 → stretch → **"현재 이미지만 추론"**(8번, 신규) →
+    AI신뢰도 슬라이더 → 픽셀threshold 스핀 → 편집 툴바(브러시그리기/
+    브러시지우기/영역삭제/pan + 브러시크기 스핀 + undo) → 추론 실행 버튼.
+  - "AI 신뢰도:"/"픽셀 threshold:"/"타겟(녹) 클래스:"/브러시크기 텍스트
+    라벨을 전부 제거하고 위젯 자체의 기존 `setToolTip()`(또는 신규
+    `zone.target_class_label` 툴팁)으로 흡수. `lbl_mode`("추론 방식:
+    sliding window (고정)") 상시 라벨도 제거하고 `_btn_run.setToolTip()`으로
+    이동.
+  - `_edit_toolbar`는 원래 캔버스 헤더(`toolbar_header_layout`)에
+    배치돼 있었음을 코드 대조로 확인(스펙의 "row2에 있다"는 서술은 실제
+    코드와 달랐음) — ckpt_card로 옮기며 캔버스 헤더 쪽의 중복
+    `addWidget(self._edit_toolbar)` 호출을 제거(위젯은 레이아웃 1곳에만
+    속할 수 있어, 제거하지 않으면 마지막 addWidget이 실제 배치를 덮어씀).
+  - `_lbl_ckpt`에 `setMaximumWidth(140)` 추가, `_apply_checkpoint()`에서
+    `QFontMetrics.elidedText(..., ElideMiddle, 140)`로 축약 + 풀네임은
+    `setToolTip()`.
+  - `_lbl_model_info` 중복 제거: `_apply_checkpoint()`의 **성공(초록)**
+    분기(프리셋 모델 로드 성공)에서만 `.hide()`하고 같은 문구를
+    `_lbl_ckpt_dot.setToolTip()`으로 이동. 에러(빨강)/커스텀코드필요(노랑)
+    분기는 `.show()`를 추가해 기존처럼 노출(성공 분기에서 숨긴 뒤 다시
+    보여야 하므로 필요한 최소 변경).
+  - **2번(패널 비율/확장)**: `side_layout.addWidget(self._zone_list,
+    stretch=2)`(기존 1 → 2, `_circle_list`는 1 유지). `left`/`side`
+    위젯의 `setMaximumWidth(...)` 호출 삭제(다른 탭과 동일한 "폭 상한
+    없음" 원칙), `setMinimumWidth`(180/160)만 유지. `splitter` 초기
+    `setSizes`/`setStretchFactor`는 스펙 명시대로 그대로 둠.
+  - **8번("현재 이미지만 추론")**: `_btn_run_current` 신규 버튼. `_on_run()`
+    본문을 `_run_inference(current_only: bool)` 공유 헬퍼로 추출 —
+    `_on_run()`은 `current_only=False`, 신규 `_on_run_current()`는
+    `current_only=True`로 각각 호출만 위임(가드/워커 배선 완전히 동일 경로
+    재사용). 핵심 회귀 포인트: 기존엔 `_on_run()`이 `self._results`/
+    `_target_cache`/`_detected_ids_cache`를 **전체 `.clear()`** 했는데,
+    "현재 이미지만 추론"은 이름대로 다른 이미지 결과를 건드리면 안 되므로
+    재추론 대상 `paths`(1장 또는 전체)에 대해서만 `.pop(p, None)`으로
+    선택적 evict하도록 변경. 전체 추론(`_on_run`)의 `paths`는 항상
+    목록 전체라 기존 `.clear()`와 동일한 결과가 나와 회귀 없음.
+    `_on_inference_finished()`에 `_btn_run_current.setEnabled(True)` 추가.
+- `app/core/i18n.py`: `zone.btn_run_current`/`zone.run_current_tip`
+  신규 키 2개(ko/en).
+
+### 테스트
+
+- 신규 `tests/test_zone_layout_compact_2026_10_30.py`:
+  - BUG-021 폭 회귀 게이트 — `ZoneAnalysisTab().minimumSizeHint().width()`
+    실측 990px(≤1280 통과, 폴백 압축 불필요).
+  - ckpt_card 1행 통합 확인(주요 위젯들의 `parentWidget()`이 전부
+    `ckpt_card`인지).
+  - 패널 stretch 1:2 확인(`side_layout.stretch(circle_idx/zone_idx)`).
+  - `left`/`side` `maximumWidth()`가 `QWIDGETSIZE_MAX`(무제한)인지,
+    `minimumWidth()`는 180/160 유지되는지.
+  - "현재 이미지만 추론" 핵심 회귀: 다른 이미지(`p2`)의 `_results`/
+    `_target_cache`/`_detected_ids_cache` 항목이 재추론 후에도 보존되는지
+    (동일 객체 identity까지 확인).
+  - "현재 이미지만 추론"이 워커에 현재 이미지 1장만(`[p2]`) 전달하는지
+    (리스트에 3장 로드된 상태에서 확인).
+- `pytest tests/test_zone_layout_compact_2026_10_30.py` — 6 passed.
+- `pytest tests/ -k zone` 2회 실행 — 둘 다 내 변경과 무관한 기존 플레이키
+  1건(`test_zone_step_indicator.py::test_steps_complete_in_order_as_ckpt_image_circles_are_set`,
+  1회차엔 `test_zone_edit_toolbar.py`의 동일 증상도 같이 실패) 외엔 전부
+  통과. 원인 조사: 두 테스트 모두 `Path("a.png")` 리터럴(비-tmp_path)을
+  재사용하는데, `test_zone_edit_toolbar.py::test_batch_apply_groupbox_present_and_still_gated`
+  (106행)가 `zone._canvas.set_circles(...)`로 실제 원을 세팅한 뒤
+  `circles_changed`가 디바운스 `_save_timer`(500ms)를 건드리고, 테스트
+  종료 후에도 타이머가 나중에(다른 테스트의 이벤트루프 펌핑 중) 발화해
+  저장소 경로(repo 루트)에 `a.zone.json`을 비결정적으로 남긴다 —
+  `_on_list_image_selected()`가 사이드카를 자동 복원하므로, 같은 리터럴
+  경로를 쓰는 `test_zone_step_indicator.py`가 그 잔재를 주워 원이 이미
+  있는 것처럼 동작해 스텝 상태가 달라짐. **단독 실행 시 두 테스트 모두
+  통과**(격리 확인), 내 변경이 원인이 아님을 확인(`_on_list_image_selected`/
+  `_save_timer`/해당 테스트 파일 전부 이번 라운드에서 건드리지 않음) —
+  다른 implementer도 같은 날 로그에 동일 증상을 `git stash` 베이스라인
+  대조로 재확인함(기존 이슈, 내 범위 밖, 손대지 않음). 테스트 실행 중
+  생성된 `a.zone.json`/`b.zone.json` 잔재 파일은 매번 정리(git 미추적
+  상태로 복원).
+
+### 상태
+
+구현 완료. 레이아웃/버튼 추가 수준(사소한 변경)이라 AGENTS.md 기준
+"실행 확인" 수준이면 충분하나, 검증 에이전트가 실제 앱에서 체크포인트
+열기 → 1행 레이아웃 확인 → "현재 이미지만 추론" 클릭 후 다른 이미지
+결과가 남아있는지 확인하기 전까지 완료로 간주하지 않음.
