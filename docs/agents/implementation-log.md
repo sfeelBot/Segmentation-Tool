@@ -6607,3 +6607,82 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
   (6) 레시피 저장 다이얼로그 이름 입력란에 날짜 기본값이 채워지는지 + 저장한
   레시피를 다시 불러왔을 때 outer_name/hidden이 복원되는지, (7) "결과 이미지
   일괄 저장" 버튼으로 실제 PNG 파일들이 지정 폴더에 저장되는지.
+
+## 2026-10-30 — "바깥쪽" 존 완전 제거 (Zone 탭, 스펙 5번)
+
+### 배경
+`docs/specs/zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md` 5절 지시대로,
+가장 큰 원 밖(이전의 "바깥쪽" 존)을 화면 표시/Excel export/배치 결과표/전체 결과 보기/
+비율 계산 분모 전부에서 완전히 제거했다(2026-10-29 "hidden 토글 범위 밖(의도적 유지)"
+결정을 명시적으로 번복). 데이터 모델 자체에서 더는 생성하지 않는다 — 단순 화면 숨김이 아님.
+
+### 변경 내역
+- `app/core/zone_metrics.py`: `zones_from_circles()`에서 `outer_name` 매개변수와
+  맨 바깥 `Zone` append 로직 삭제(원 N개 -> 존 N개, 중심부+링 N-1개). `Zone`/`Circle`
+  docstring, 모듈 docstring(파티션 공식)도 갱신. `zone_blob_stats()`의 "미분류" 폴백
+  주석을 "이제 실제로 도달 가능"으로 갱신(원 밖 blob이 자동으로 이쪽에 떨어짐,
+  신규 로직 불필요 — 스펙이 언급한 "자연스럽게 의미를 갖게 되는" 부분). `__main__`
+  self-check 전면 재작성(파티션 불변식을 "원 안쪽만 파티션, 원 밖은 어느 존에도
+  없음"으로 재정의, outer_name 케이스 삭제, 바깥쪽 zone 배정 테스트를 미분류 배정
+  테스트로 교체). `zone_name_sort_key()`의 "바깥쪽" 리터럴 케이스는 스펙 8번 권고대로
+  YAGNI 관점에서 그대로 둠(도달 불가능하지만 무해, 커스텀 이름 "바깥쪽" 대응).
+- `app/widgets/zone_canvas.py`: `_outer_name` 필드 + `outer_name()`/`set_outer_name()`/
+  `rename_outer_zone()`/`_prompt_rename_outer_zone()` 전부 삭제. `_zone_index_at()`를
+  `int | None` 반환으로 변경(가장 큰 원 밖이면 None — 존이 없다는 뜻). `mouseReleaseEvent`
+  의 존 클릭 판정에 `zone_idx is not None` 가드 추가(원 밖 클릭 시 `zone_clicked` emit
+  안 함). `_paint_zone_highlight()`의 `idx == n`(바깥쪽 하이라이트) 분기 삭제,
+  범위 체크를 `0 <= idx < n`으로 좁힘. `_push_undo()`/`get_state()`/`set_state()`에서
+  `outer_name` 키 제거(역호환: 구버전 스냅샷에 그 키가 남아있어도 `state.get()`을
+  안 쓰므로 그냥 무시됨).
+- `app/core/zone_recipe_store.py`: `save_recipe()`/`load_recipe()`의 `outer_name`
+  매개변수/키 제거. self-check에 구버전(outer_name 키가 남은) 레시피 파일을 역호환
+  로드하는 케이스 추가(키를 무시하고 정상 로드되는지 확인).
+- `app/core/zone_state_store.py`: `save_state()`/`load_state()`의 `outer_name` 키 및
+  `is_empty` 판정의 `outer_name` 조건 제거. self-check에 구버전 사이드카 역호환
+  케이스 추가.
+- `app/widgets/zone_recipe_dialog.py`: `__init__`의 `outer_name` 매개변수/
+  `_initial_outer_name`, `set_outer_name()` 호출, `result_outer_name()` 전부 삭제.
+- `app/tabs/zone_analysis_tab.py`: `_ZoneCircleLayoutWorker`의 `outer_name` 매개변수/
+  저장 삭제. `_compute_zone_rows()`의 `outer_name` 매개변수 삭제(모든 `zones_from_circles`
+  호출부 인자 정리: `_current_zones()`, `_on_canvas_blob_clicked()`,
+  `_on_view_all_results()`). `_on_open_recipe_dialog()`/`_on_batch_process()`의
+  `outer_name` 전달 코드 삭제. `_on_zone_list_context_menu()`의 `circle_id is None`
+  (바깥쪽) 분기 삭제(이제 모든 `_zone_list` 행이 circle_id를 가지므로 분기 자체가
+  불필요 — 단순화). `_recompute_zones()`의 `circle_id = ... if zone_index < n else None`
+  분기도 동일하게 단순화.
+- `tests/test_zone_batch_worker.py`: `_ZoneCircleLayoutWorker` 생성자 호출 전부에서
+  `outer_name` 인자 제거. `test_layout_worker_scales_circles_and_persists_outer_name`
+  -> `test_layout_worker_scales_circles`(outer_name 검증 제거), `test_compute_zone_rows_
+  matches_batch_path_output`의 기대 존 이름을 `["중심부", "바깥쪽"]` -> `["중심부"]`로
+  수정, `test_compute_zone_rows_applies_outer_name_and_drops_hidden` ->
+  `test_compute_zone_rows_drops_hidden`(원 2개로 hidden 필터링만 검증하도록 재설계),
+  `test_view_all_results_with_inactive_image_sidecar_does_not_crash`의 기대 zone_names를
+  `{"중심부","바깥쪽","커스텀","가장자리2"}` -> `{"중심부","커스텀"}`로 갱신.
+
+### 역호환
+2026-10-29 포맷으로 저장된 레시피(`data/zone_recipes/*.json`)/사이드카(`*.zone.json`)에
+`outer_name` 키가 남아있어도 `load_recipe()`/`load_state()`가 그 키를 그냥 읽지 않고
+무시하므로 KeyError 없이 정상 로드된다(역마이그레이션 스크립트 불필요, 스펙 명시 YAGNI).
+
+### 테스트/스모크
+- `app/core/zone_metrics.py`/`zone_recipe_store.py`/`zone_state_store.py` 각각
+  `__main__` self-check 전부 OK(venv: `build/venv/Scripts/python.exe`).
+- `pytest tests/ -k zone` — 58 passed(모든 zone 관련 테스트, 신규/수정 테스트 포함).
+- `pytest tests/` 전체 — 169 passed, 1 failed(`test_training_performance.py::
+  test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`, 이번
+  변경과 무관한 trainer 쪽 기존 실패로 보임 — Zone 탭/`app/core/zone_*`/
+  `app/widgets/zone_*`를 전혀 건드리지 않는 테스트).
+- 헤드리스 스모크(직접 작성): `ZoneAnalysisTab()` 생성 → 원 2개 설정 →
+  `_recompute_zones()` 후 `_zone_list.count() == 2`(바깥쪽 없음) 확인 →
+  `_compute_zone_rows()` 결과 이름 목록에 "바깥쪽" 없음 확인 →
+  `export_zone_percentages_to_excel()`로 생성한 xlsx 3개 시트(`zones`/`zones_wide`/
+  `zone_blobs`) 전부에 "바깥쪽" 행 없음 확인.
+
+### 상태
+구현 완료. **검증 에이전트 확인 필요** — 특히:
+(1) 원 N개 이미지에서 `_zone_list`/원 목록이 정확히 N개(바깥쪽 없음)인지 실제 UI로
+확인, (2) "전체 결과 보기"/단일 Excel export 양쪽 전부에서 "바깥쪽" 행이 없는지,
+(3) 2026-10-29 당시 저장된 구버전 레시피/사이드카 파일(outer_name 키 포함)이 있다면
+그걸 실제로 로드해 깨지지 않는지, (4) 원 밖에 브러시로 그린 영역이 크래시 없이
+"미분류"로 집계되는지, (5) 존별 비율 패널 우클릭 메뉴에서 "바깥쪽" 전용 이름변경
+옵션이 더는 뜨지 않고 모든 행이 동일하게 동작하는지.
