@@ -6686,3 +6686,85 @@ main의 `view_transform`/`inference_image_list`/`brush_toolbar` 추출 커밋들
 그걸 실제로 로드해 깨지지 않는지, (4) 원 밖에 브러시로 그린 영역이 크래시 없이
 "미분류"로 집계되는지, (5) 존별 비율 패널 우클릭 메뉴에서 "바깥쪽" 전용 이름변경
 옵션이 더는 뜨지 않고 모든 행이 동일하게 동작하는지.
+
+## 2026-10-30 — BUG-040 후속: 이미지 전환 캐시 2종 (원본 디코드/썸네일 + detected_ids)
+
+스펙: `docs/specs/zone-analysis-tab-recipe-architecture-and-layout-2026-10-30.md`
+7번. QA.md BUG-040 cProfile 분해(디코드+썸네일 ~0.1s, `np.unique` ~0.09s, 재계산
+~0.22s)의 저위험 캐싱 2건만 범위로 한정(YAGNI, 3번 numpy 연산 자체 최적화는
+별도 과제로 범위 밖).
+
+**중요 — 동시 작업 충돌 주의**: 같은 워크트리(`D:/segmentation model-zone-analysis-tab`)
+에서 다른 implementer 에이전트가 "원 설정" 아키텍처 전환(스펙 3/4번)을
+`app/tabs/zone_analysis_tab.py`/`app/widgets/zone_canvas.py`에서 실시간으로
+병행 수정 중이었다. 작업 중 `_on_list_image_selected()` 데코드 블록이 두
+작업과 라인 단위로 겹쳐(상대 agent가 `self._act_circle.setEnabled(True)` 제거 +
+주변 주석 교체) `git diff`가 혼재된 상태로 나타남을 확인. `git add -A`/파일
+단위 스테이징으로는 안전하게 분리할 수 없어, HEAD 스냅샷을 스크래치패드에
+복사해 내 변경만 재현한 버전을 만들고 `diff -u`로 격리된 패치를 생성 →
+`git apply --check --cached`로 검증 → `git apply --cached`로 인덱스에만 스테이징
+(워킹트리는 건드리지 않음) → 커밋하는 방식으로 상대 에이전트의 미완성/진행중
+변경(워킹트리에만 존재)을 전혀 건드리지 않고 내 변경만 분리 커밋했다
+(`git status`로 다른 에이전트 쪽 변경(`zone_canvas.py`/`zone_recipe_dialog.py`/
+`i18n.py` 등)이 여전히 unstaged로 남아있음을 확인).
+
+### 변경
+- `app/tabs/zone_analysis_tab.py`:
+  - `_preview_cache: OrderedDict[Path, tuple[tuple[int,int], QPixmap]]` 신설
+    (LRU cap `_PREVIEW_CACHE_MAX=20`, `_target_cache`/BUG-039와 동일 패턴).
+    `_on_list_image_selected()`가 `Image.open`+`convert`+`thumbnail` 대신 캐시
+    적중 시 `(image_size, pixmap)`을 바로 복원 — 디스크 재디코딩 스킵. 재추론
+    (`_on_run()`)해도 clear하지 않음(원본 픽셀은 추론과 무관).
+  - `_detected_ids_cache: OrderedDict[Path, list[int]]` 신설(LRU cap
+    `_DETECTED_IDS_CACHE_MAX=20`). `_setup_target_classes()`가 `np.unique
+    (raw_class_map)` 전에 `self._image_path` 키로 캐시를 먼저 조회 — 두
+    호출부(`_on_list_image_selected`/`_on_inference_result`) 모두 호출 시점에
+    `self._image_path`가 해당 `result`와 일치함을 확인하고 그 키로 사용.
+    `_on_run()`에서 `self._results.clear()`와 함께 clear(재추론 시 raw_class_map이
+    바뀔 수 있으므로 무효화 필요), `_on_images_removed()`에서 함께 evict.
+- `tests/test_zone_perf_cache_2026_10_30.py`(신규): 캐시 적중 시
+  `Image.open`/`np.unique`가 **호출되지 않는지** `unittest.mock.patch`로 확인
+  (`test_preview_cache_skips_decode_on_revisit`,
+  `test_detected_ids_cache_skips_np_unique_on_revisit`), LRU eviction
+  (`test_preview_cache_lru_evicts_oldest`), `_on_run`/`_on_images_removed` 무효화
+  규칙(두 캐시의 생명주기가 다름을 검증하는 2건) — 5건 전부 통과.
+- `QA.md` BUG-040 행에 이번 라운드 실측·조치 내용 추가(Open 유지, 부분 개선).
+- `docs/roadmap.md` 7번 체크 완료(부분 개선 명시).
+
+### 실측
+전체 `_on_list_image_selected()`/`_setup_target_classes()`를 그대로 콜드/웜
+비교하면 `_recompute_zones()`/오버레이 재합성 등 범위 밖 비용이 뒤섞여 두
+캐시의 순효과가 묻혀버려(예비 측정에서 둘 다 ~700ms로 거의 동일하게 나옴),
+QA.md의 cProfile 분해와 같은 단위로 두 targeted 연산만 직접 분리 측정했다
+(합성 5472×3648 랜덤 노이즈 PNG, CPU만 사용, 10회 평균):
+- 디코드+썸네일(`Image.open`+`convert`+`thumbnail`+`_rgb_to_qpixmap`): 콜드
+  228.8ms(min 226.8/max 234.6) → 캐시 적중(dict `get`) 0.0017ms.
+- `np.unique(raw_class_map)`: 콜드 110.1ms(min 104.3/max 123.5) → 캐시 적중
+  0.0015ms.
+- 두 구간 모두 사실상 제거(dict 조회 수준). QA.md가 기록한 cProfile 추정치
+  (0.1s/0.09s)와 같은 자릿수로 일치.
+- 462ms 중 남은 `_recompute_zones()`(~0.22s, `zone_blob_stats`/`zone_stats`/
+  `disk_mask`)는 스펙이 이미 "범위 밖, 실측 후 재판단"으로 명시한 3번 항목이라
+  이번에 손대지 않았다 — 따라서 **BUG-040은 완전히 해소되지 않음**(부분
+  개선). 실 GPU/실 체크포인트 기준 전체 종단간(end-to-end) 재검증은 verifier
+  몫으로 남긴다.
+
+### 테스트
+- `pytest tests/test_zone_perf_cache_2026_10_30.py` — 5 passed.
+- `pytest tests/ -k zone` — 62 passed, 1 failed
+  (`test_alt_wheel_resizes_selected_circle_plain_wheel_always_zooms`,
+  `app/widgets/zone_canvas.py`를 건드리지 않았음에도 실패 — 동시 작업 중인
+  다른 에이전트의 "원 설정" 전환(Alt+휠 제거, 스펙 3번)으로 인한 **기존
+  테스트 쪽 미반영**으로 확인(`git diff`로 `wheelEvent()`의 Alt+휠 분기가
+  이미 제거됐음을 확인) — 이번 캐싱 변경과 무관, 내가 수정할 범위 밖(해당
+  에이전트가 자신의 커밋에서 테스트도 갱신할 것으로 예상).
+
+### 상태
+구현 완료(저위험 캐싱 2건, 범위 한정). **검증 에이전트 확인 필요** —
+특히 (1) 실 GPU/실 체크포인트로 같은 이미지 재선택 시 462ms 대비 실제
+개선폭(이번 구현은 디코드+np.unique 구간만 격리 측정했으므로 종단간 수치
+재확인 필요), (2) `_preview_cache`/`_detected_ids_cache` 적중 시 디스크
+재읽기 0회(I/O 모니터링 또는 mock), (3) 재추론(`_on_run`) 후 `_detected_ids_cache`
+가 비워지되 `_preview_cache`는 유지되는지, (4) 이미지 제거(`_on_images_removed`)
+시 두 캐시 모두 evict되는지. BUG-040은 **부분 개선으로 Open 유지** — 완전
+해소는 `_recompute_zones()` 내부 최적화(스펙 3번, 범위 밖)가 필요.

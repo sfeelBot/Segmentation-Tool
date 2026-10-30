@@ -1528,16 +1528,26 @@ AI신뢰도/픽셀threshold/편집툴바 2행→1행 통합(BUG-021 재발 방�
       `zone_recipe_store.py`/`zone_state_store.py`/`zone_recipe_dialog.py`/
       `zone_analysis_tab.py` 호출부 전수) — 구현 완료(2026-10-30), **검증
       에이전트 확인 대기**.
-- [ ] 3 — 원 설정 아키텍처 전환(`zone_canvas.py` 편집/조회 분리 + 역호환
-      플래그, `zone_recipe_dialog.py` 초기상태+저장확인팝업,
-      `zone_analysis_tab.py` 배선) — **주요 기능 추가로 분류, 골든패스
-      검증 필요** — 구현 대기.
-- [ ] 4 — 모달 내 영역 직접 클릭 네이밍(디자이너 인터랙션 확정 필요,
-      기술적 매핑은 기획 완료) — 디자인 확인 후 구현 대기.
+- [x] 3 — 원 설정 아키텍처 전환(`zone_canvas.py` 편집/조회 분리
+      `set_editing_enabled()` 역호환 플래그 + Alt+휠 완전 제거,
+      `zone_recipe_dialog.py` 초기상태(현재 화면 원 우선, 없으면 최근
+      레시피 폴백)+저장확인팝업 3갈래, `zone_analysis_tab.py` 배선 —
+      `_act_circle`/`_btn_align` 제거, `_lbl_wheel_hint` 문구 교체) —
+      구현 완료(2026-10-30). **주요 기능 추가로 분류, 검증 에이전트의
+      실제 앱 구동 골든패스 확인 전까지 완료 아님**.
+- [x] 4 — 모달 내 영역 직접 클릭 네이밍(`ZoneCanvas.zone_clicked` ->
+      `ZoneRecipeDialog`가 선택 라벨+"이름 변경..." 버튼으로 노출, 기존
+      `_prompt_name_change()` 재사용) — 구현 완료(2026-10-30), **검증
+      에이전트 확인 대기**.
 - [ ] 6 — "전체 결과 보기" QThread 비동기화(`zone_analysis_tab.py`,
       신규 워커) — 구현 대기.
-- [ ] 7 — BUG-040 잔여 지연 캐싱 2종 추가(`zone_analysis_tab.py`) —
-      구현 대기, QA.md BUG-040 갱신 동반.
+- [x] 7 — BUG-040 잔여 지연 캐싱 2종 추가(`zone_analysis_tab.py`,
+      `_preview_cache`/`_detected_ids_cache`) — 구현 완료(2026-10-30). 합성
+      5472×3648 실측(해당 두 함수 직접 콜드/웜 비교): 디코드+썸네일
+      228.8ms→0.0017ms, `np.unique` 110.1ms→0.0015ms — 두 구간 모두 사실상
+      제거. 다만 462ms 중 남은 `_recompute_zones()`(~0.22s)는 범위 밖(스펙
+      3번 항목)이라 손대지 않아 **부분 개선**(QA.md BUG-040 Open 유지) —
+      **검증 에이전트 확인 대기**.
 - [ ] 1 — 체크포인트/AI신뢰도/픽셀threshold/편집툴바 1행 통합(BUG-021
       회귀 방지 압축 포함) — 구현 대기.
 - [ ] 2 — 우측 패널 1:2 비율 + 좌우 폭 상한 완화 — 구현 대기.
