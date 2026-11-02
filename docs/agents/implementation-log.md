@@ -7132,3 +7132,80 @@ QA.md의 cProfile 분해와 같은 단위로 두 targeted 연산만 직접 분�
 - 검증 에이전트 확인 필요: 위 테스트/회귀 확인은 내가 직접 수행한
   것으로, 리더 지침상 별도 검증 에이전트의 확인 전까지는 "완료"로
   보지 않음. push는 하지 않았다 — 리더가 사용자 확인 후 직접 push.
+
+## 2026-11-02 — Zone 분석 탭 레이아웃 미세조정 + 오버레이 토글 + 바깥쪽 클릭 선택해제 (5건)
+
+기획 스펙: `docs/specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md`.
+디자이너와 병행 작업 — 디자이너가 작업 중 캔버스 헤더 배치 권장안(휠 안내 문구는
+별도 얇은 행으로 분리 유지, eye 토글은 undo 바로 뒤 구분선 없이)을 전달해 그대로
+반영했다(근거: `docs/agents/design-log.md` 2026-11-02 항목, Artifact
+https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
+
+- 상태: 구현 완료, **검증 에이전트 확인 대기**.
+- 변경 파일:
+  - `app/widgets/zone_canvas.py` — req5. `mouseReleaseEvent()`의 두 클릭 분기
+    (편집비활성 814~835행대, 원생성취소 836~865행대)에 `zone_idx is None`이고
+    `self._circles`가 있을 때 `set_highlighted_zone(None)` +
+    `zone_clicked.emit(-1)` 추가. `zone_clicked` 시그널 docstring에 "-1 =
+    바깥쪽/선택 해제" 명시.
+  - `app/tabs/zone_analysis_tab.py` — req1/2/3/4.
+    - req1: `_btn_run_current`를 `_btn_run` 바로 앞으로 이동(두 버튼 인접).
+    - req2: `_edit_toolbar`를 `ckpt_card`(1행)에서 빼내 캔버스 헤더의
+      `opacity_row`(오버레이 불투명도와 같은 QHBoxLayout)로 이동. `toolbar_header`
+      (휠 안내 문구)는 디자인 권장안에 따라 별도 행으로 분리 유지 — 1행 완전
+      통합은 창 축소 시 보조설명이 핵심 컨트롤보다 먼저 깨지는 문제로 비권장.
+    - req3: `_conf_slider`/`_min_px_spin` 앞에 각각
+      `zone.ai_confidence_label`/`zone.pixel_threshold_label` `QLabel` 재추가
+      (기존 i18n 키 재사용, 신규 키 없음).
+    - req4: `_act_overlay_visible`(체크 가능 눈 아이콘 QAction) 신규 —
+      `r_analysis_tab.py` 289~295행 패턴 이식, 디자이너 권장 위치(undo 바로
+      뒤, 구분선 없음)에 배치. `_toggle_overlay()`를 반전 로직만 남기고
+      `_set_overlay_visible(bool)`(값을 정하는 로직, QAction 체크 상태 동기화
+      포함)로 분리해 버튼↔F키(기존 이중 경로 — 캔버스 `overlay_toggle_requested`,
+      탭 자신의 `keyPressEvent`) 양방향 동기화 확보. `BrushToolbar` 클래스 자체는
+      수정하지 않음(Zone 탭 전용 로컬 액션).
+  - `app/core/i18n.py` — req4용 신규 키 1쌍 `zone.overlay_visible_tip`(ko/en).
+  - `tests/test_zone_layout_compact_2026_10_30.py` —
+    `test_ckpt_card_is_single_row_no_second_toolbar_layout()`을 `_edit_toolbar`의
+    새 부모(오버레이 불투명도 슬라이더와 공통 부모) 기준으로 갱신.
+  - `tests/test_zone_set_circles_architecture_2026_10_30.py` — req5 회귀 테스트
+    `test_editing_disabled_click_outside_all_circles_deselects` 추가(중심부 클릭
+    후 바깥쪽 클릭 -> 하이라이트 해제 + `zone_clicked(-1)` 확인).
+  - `tests/test_zone_overlay_toggle_2026_11_02.py`(신규) — req4 양방향 동기화
+    4종(초기 체크 상태, 캔버스 F키 신호, 버튼 토글, 탭 자신의 keyPressEvent 경로)
+    회귀 테스트.
+  - `release.ini`(1.12.0 → 1.13.0, MINOR), `docs/CHANGELOG.md`([zone-v1.13.0]
+    항목 추가), `docs/roadmap.md`(해당 라운드 체크박스 5/1+2+3/4 완료 처리).
+- 검증:
+  - `pytest tests/test_zone_set_circles_architecture_2026_10_30.py -q` 12
+    passed(신규 포함).
+  - `pytest tests/test_zone_layout_compact_2026_10_30.py -q` 6 passed
+    (BUG-021 게이트 포함).
+  - `pytest tests/test_zone_overlay_toggle_2026_11_02.py -q` 4 passed.
+  - `pytest tests/ -k zone -q` 89 passed, 1 failed —
+    `test_zone_step_indicator.py::test_steps_complete_in_order_as_ckpt_image_
+    circles_are_set`. `git stash`로 이번 변경 전 코드로 되돌려 동일하게
+    재현됨을 직접 확인(이번 수정과 무관한 기존 버그, 손대지 않음).
+  - BUG-021 실측: `ZoneAnalysisTab().minimumSizeHint().width()` = **1191px**
+    (≤ 1280, 안전 — 2번 항목으로 `_edit_toolbar`가 빠지며 생긴 폭 여유가
+    3번 라벨 재노출분을 상쇄하고도 충분히 남음).
+  - 버튼↔F키 양방향 동기화 수동 재현(스크립트): 캔버스 신호 → 버튼 체크
+    해제, 버튼 toggle → 상태 반전, 탭 자신의 `_toggle_overlay()` 직접 호출 →
+    버튼도 동기화 — 전부 확인, 무한 재귀 없음.
+  - `py -3 scripts/generate_version_info.py` → "Generated release metadata
+    for 1.13.0" 확인.
+- 커밋(5건, `feature/zone-analysis-tab`):
+  - `31a6d28` feat: Zone 캔버스 — 바깥쪽(모든 원 밖) 클릭 시 선택 해제 (req5)
+  - `76b2510` feat: Zone 분석 탭 — 상단 툴바 레이아웃 재배치(버튼 인접+라벨
+    재노출+브러시툴바 이동)
+  - `2647c24` feat: Zone 분석 탭 — 오버레이 보기/숨기기 토글 버튼 추가 (req4,
+    F 단축키 양방향 동기화)
+  - `43eef5f` docs: zone-v1.13.0 — 레이아웃 미세조정+오버레이 토글+바깥쪽
+    클릭 선택해제 라운드 반영
+- `docs/agents/design-log.md`/`docs/agents/planning-log.md`는 다른 에이전트가
+  병행 작업 중이던 미커밋 변경이라 내 커밋에 포함하지 않음(디자이너/기획
+  에이전트가 각자 커밋). `docs/roadmap.md`는 체크박스 토글이 implementer
+  책임 범위라 내 커밋(`43eef5f`)에 포함.
+- 검증 에이전트 확인 필요: 위는 내가 직접 수행한 pytest/스크립트 확인이며,
+  리더 지침상 별도 검증 에이전트의 실제 UI 조작/실행 확인 전까지는 "완료"로
+  보지 않는다. push는 하지 않았다 — 리더가 사용자 확인 후 직접 push.
