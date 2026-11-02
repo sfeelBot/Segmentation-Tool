@@ -1,5 +1,70 @@
 # 기획 (Planning) 로그
 
+## 2026-11-02 — 레이아웃 미세조정 + 오버레이 토글 버튼 + 바깥쪽 클릭 선택해제 (5건)
+
+### 배경
+사용자가 스크린샷 목업으로 UI/기능 변경 5건을 제시, 리더가 이미 코드 레벨
+근거(파일:line)를 전부 조사해 사용자 확인까지 받고 위임한 작업 — 재조사 없이
+확인된 범위를 그대로 스펙화하는 것이 이번 작업 범위. ① "현재 이미지만 추론"
+버튼을 "추론 실행" 옆으로 ② 브러시 도구 ↔ 오버레이 불투명도 같은 행 ③
+AI신뢰도/픽셀threshold 라벨 재노출(2026-10-30에 툴팁으로 축소됐던 것 원복) ④
+오버레이 보기/숨기기 토글 버튼 + F 단축키 ⑤ "바깥쪽" 클릭 시 선택 해제.
+
+### 한 일
+- 리더가 제시한 라인번호·동작 서술을 전부 코드 직접 대조로 재확인 — 5건 모두
+  일치, 허위/누락 없음(`zone_analysis_tab.py` `toolbar_row1`/`toolbar_header`/
+  `opacity_row` 블록, `zone_canvas.py` `mouseReleaseEvent`/`_zone_index_at`/
+  `zone_clicked` 시그널, `i18n.py` 기존 키 2쌍).
+- **4번 조사 중 발견한 핵심 선례**: `app/tabs/r_analysis_tab.py` 289~295행이
+  이번에 Zone 탭에 요청된 것과 **완전히 동일한 기능**(QAction 체크 가능 눈
+  아이콘 토글 + `overlay_toggle_requested.connect(toggle)` 양방향 동기화 +
+  툴팁에 "[F]" 표기)을 이미 구현해 두고 있었음을 확인 — Zone 탭 구현의 거의
+  완성된 참고 템플릿으로 스펙에 그대로 인용. `app/resources/icons/eye.svg`도
+  이미 존재(라벨링 탭이 가시성 토글로 사용 중) — 신규 아이콘 조사/제작 불필요.
+- **4번 "BrushToolbar 공유 위젯 편입 여부" 결정 필요 지점을 사용자에게 묻지 않고
+  권장안으로 해소**: (1) `BrushToolbar` 클래스 docstring의 "동작까지 완전히
+  통일된 공통 도구만" 원칙, (2) R 분석 탭이 이미 같은 토글을 공유 위젯이 아니라
+  로컬 QAction으로 구현한 선례, (3) 2026-10-27 공유 위젯 추출 기획 로그의
+  명시적 YAGNI 결정("bucket-fill/select/clear/auto-label/eye/fullscreen 전부
+  공유 위젯 밖") — 3가지 근거가 모두 "Zone 탭 전용 로컬 액션"을 가리켜
+  `docs/decisions-needed.md`에 등록하지 않음(지시사항대로 합리적 기본안을 바로
+  제시).
+- 1·2·3번이 같은 `_build_ui()` 블록을 공유함을 확인해 한 커밋으로 묶어 BUG-021
+  폭 측정을 1회만 통합 수행하도록 실행 순서를 설계. 2번(`_edit_toolbar` 이동으로
+  `ckpt_card` 폭 감소)과 3번(라벨 추가로 폭 증가)이 상쇄 관계지만 **정확한 수치는
+  실측 없이 알 수 없음**을 명시(2026-10-30 스펙도 동일한 불확실성을 인정했던
+  선례와 같은 판단).
+- **기존 회귀 테스트와의 충돌을 사전에 발견**: `tests/test_zone_layout_compact_2026_10_30.py`의
+  `test_ckpt_card_is_single_row_no_second_toolbar_layout()`이
+  `tab._edit_toolbar.parentWidget() is ckpt_card`를 단언하는데, 2번 적용 시 이
+  단언이 반드시 깨짐 — 구현 범위에 이 테스트 수정을 명시적으로 포함시킴(놓치면
+  기존 테스트 스위트가 실패).
+- 5번은 `zone_clicked.connect()` 호출부가 `zone_analysis_tab.py` 667행 1곳뿐임을
+  grep으로 확인해 "기존 구독자 영향" 회귀 위험이 실질적으로 거의 없음을 확정.
+  `-1` emit 조건이 "원이 1개 이상 존재할 때"로 한정돼야 함(원 0개일 때 기존
+  불변식 유지)을 명시 — 사용자 요청 설명과 2026-10-30 스펙의 기존 불변식이
+  정확히 일치함을 교차 확인.
+- 스펙 문서 신설: [docs/specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md](../specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md)
+  — 5건 각각 현재상태/변경방향/영향파일/회귀위험 + 디자이너·구현자 역할분담
+  (같은 파일 동시 Edit 금지, 5번만 완전 병렬 가능) + 실행순서 + 검증체크리스트
+  9개 + 리더 보고사항.
+- `docs/roadmap.md` "상/하부 분석" 절에 신규 하위절 추가(5건을 3개 체크박스
+  단위로 그룹화 — 5 / 1+2+3 / 4).
+- `docs/decisions-needed.md`는 갱신하지 않음 — 4번 질문을 권장안으로 직접
+  해소했고 다른 4건은 결정 대기 지점이 없음.
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건, `roadmap.md`, 본 로그
+  갱신에만 사용. 작업 시작 전 `git status` 확인 — 기존 uncommitted 변경
+  (`CLAUDE.md`, `docs/agents/design-log.md`, `.codex/`, `.worktrees/`,
+  `AGENTS.md`, `data/annotations/`, `graphify-out/`)은 이번 작업과 무관해
+  건드리지 않음.
+
+### 상태
+완료 — 다음: 리더가 디자인 에이전트(1·2·3번 배치 목업, 4번 토글 버튼 위치)와
+구현 에이전트(5번 `zone_canvas.py` 단독 즉시 착수 가능, 1~4번은 목업 확인 후)에
+위임. 결정 대기 없음 — 바로 진행 가능.
+
+---
+
 ## 2026-10-30 — "원 설정" 아키텍처 전환 + 레이아웃/성능 개선 (8건, 2건 설계 번복)
 
 ### 배경
