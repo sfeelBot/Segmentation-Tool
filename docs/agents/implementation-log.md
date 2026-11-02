@@ -7208,4 +7208,51 @@ https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
   책임 범위라 내 커밋(`43eef5f`)에 포함.
 - 검증 에이전트 확인 필요: 위는 내가 직접 수행한 pytest/스크립트 확인이며,
   리더 지침상 별도 검증 에이전트의 실제 UI 조작/실행 확인 전까지는 "완료"로
+
+## 2026-11-02 — BUG-048(P2) 수정: Zone 캔버스 헤더 QToolBar 오버플로
+
+- 상태: 완료(코드 측 수정+자동 테스트 확인 — 리더 지침상 사소한 버그 수정은
+  별도 검증 에이전트 재호출 없이 리더가 직접 실행 확인하기로 함, 아래 "검증"
+  절은 내가 직접 수행한 것).
+- 작업 디렉토리: `D:/segmentation model-zone-analysis-tab`(worktree,
+  `feature/zone-analysis-tab`).
+- 근본 원인: `app/tabs/zone_analysis_tab.py`의 `canvas_panel`(스플리터
+  가운데 위젯)에 `setMinimumWidth()`가 전혀 없었다(좌측 `left`는
+  `setMinimumWidth(180)` 있음). 좌측 패널을 스플리터로 넓히면 캔버스 패널
+  폭에 하한이 없어 제한 없이 좁아지고, 그 안의 `opacity_row`(`_edit_toolbar`
+  브러시 도구모음 + 구분선 + 오버레이 불투명도 라벨/슬라이더/%)가 Qt 표준
+  QToolBar 오버플로를 일으켜 undo·eye(오버레이 토글) 버튼이 "…" 안에 숨었다.
+- 수정: `canvas_panel.setMinimumWidth(780)` 1줄 추가(`splitter.addWidget
+  (canvas_panel)` 직전). 780 = 실측(offscreen QPA,
+  `opacity_row.sizeHint().width()`) 744px + 여유 36px. 대안(슬라이더
+  `QSizePolicy` 축소 우선순위 조정, `QToolBar` 설정 변경)은 검토했으나 지시대로
+  1순위(최소폭 지정)로 충분히 해결돼 추가 변경 없음 — 최소 diff 원칙.
+- 검증(직접 수행):
+  - offscreen QPA에서 `splitter.setSizes([700, 300, 180])` 극단값 재현 →
+    수정 전 `canvas_panel.width()`가 300까지 줄어 undo/eye 버튼
+    `isVisible()==False`(오버플로 재현) → 수정 후 `canvas_panel.width()`가
+    780으로 클램프되고(좌측 434, 우측 160 — 둘 다 각자 최소폭 이상) 두
+    버튼 모두 `isVisible()==True`.
+  - 기본 스플리터 비율([200, 700, 180], 1400×800 창)에서는 캔버스 패널이
+    이미 780px보다 넓어(994px) 영향 없음 재확인.
+  - 신규 회귀 테스트 `tests/test_zone_bug048_toolbar_overflow_2026_11_02.py`
+    2건(극단값 재현 + 기본 비율 회귀 방지) 추가.
+  - `pytest tests/ -k zone -q`: 91 passed, 1 failed
+    (`test_zone_step_indicator.py::test_steps_complete_in_order_as_ckpt_image_circles_are_set`
+    — 사전 존재하는 BUG-049 플레이키, 이번 수정과 무관함을 격리 재실행으로
+    재확인). 실행 중 생성된 `a.zone.json`/`b.zone.json`(BUG-049의 CWD 오염
+    증상)은 매 실행 후 삭제, `git status` clean 확인.
+  - `py -3 scripts/generate_version_info.py` → "Generated release metadata
+    for 1.13.1" 확인.
+- 버전: `release.ini` 1.13.0 → 1.13.1(zone-v1.13.1, PATCH — 호환 버그 수정).
+  `docs/CHANGELOG.md`에 `[zone-v1.13.1] 2026-11-02` 항목 추가.
+- `QA.md`: BUG-048을 Open → Closed로 갱신(근본 원인/수정 내역/검증 결과를
+  같은 행에 추가, 기존 BUG-043~045와 동일한 "제자리 갱신" 컨벤션 — 별도
+  Closed 테이블로 물리적 이동은 하지 않음, 이 파일의 기존 관례를 따름).
+- 커밋(`feature/zone-analysis-tab`): `5cf0777` fix: Zone 캔버스 헤더 —
+  canvas_panel 최소폭 지정으로 undo/eye 버튼 오버플로 방지 (BUG-048).
+- 검증 에이전트 확인 필요: 리더 지침(AGENTS.md)상 "사소한 버그 수정"은
+  리더가 직접 실행 확인하는 것으로 이번 라운드에 합의됐으나, 구현
+  에이전트 본인의 확인만으로 최종 "완료"로 간주하지 않는다는 공통 규칙은
+  동일하게 적용된다 — 리더의 재현 전/후 실행 확인을 권장.
   보지 않는다. push는 하지 않았다 — 리더가 사용자 확인 후 직접 push.
