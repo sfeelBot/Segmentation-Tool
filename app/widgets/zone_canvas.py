@@ -86,7 +86,7 @@ class ZoneCanvas(OverlayViewer):
     circles_changed = pyqtSignal()          # 원 목록이 바뀔 때마다 (추가/이동/삭제 등)
     circles_committed = pyqtSignal()        # 원 편집 완료 — 원본 해상도 존 계산용
     circle_selected = pyqtSignal(object)    # 선택된 원 id (없으면 None)
-    zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스
+    zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스. -1 = 바깥쪽(모든 원 밖)/선택 해제
     blob_deleted = pyqtSignal(int)          # 블랍 삭제 모드에서 클릭으로 삭제된 블랍 라벨 id
     erase_changed = pyqtSignal()            # 브러시 지우기 스트로크가 끝났을 때 1회(R3-3)
     blob_clicked = pyqtSignal(int, int)     # 원본 이미지 좌표 (x, y) — 요청4, circle 모드에서만 emit
@@ -828,6 +828,10 @@ class ZoneCanvas(OverlayViewer):
                         if zone_idx is not None:
                             self.set_highlighted_zone(zone_idx)
                             self.zone_clicked.emit(zone_idx)
+                        else:
+                            # 바깥쪽(모든 원 밖) 클릭 — 이전 선택/하이라이트 해제(req5)
+                            self.set_highlighted_zone(None)
+                            self.zone_clicked.emit(-1)
                 self._view_press_pt = None
             else:
                 super().mouseReleaseEvent(event)   # 좌클릭 외(중클릭 팬 등) 종료 처리
@@ -863,6 +867,10 @@ class ZoneCanvas(OverlayViewer):
                         if zone_idx is not None:
                             self.set_highlighted_zone(zone_idx)
                             self.zone_clicked.emit(zone_idx)
+                        else:
+                            # 바깥쪽(모든 원 밖) 클릭 — 이전 선택/하이라이트 해제(req5)
+                            self.set_highlighted_zone(None)
+                            self.zone_clicked.emit(-1)
         self._drag_mode = None
         super().mouseReleaseEvent(event)
         self.update()

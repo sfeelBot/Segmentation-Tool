@@ -109,6 +109,30 @@ def test_editing_disabled_click_without_drag_emits_zone_and_blob_clicked() -> No
     canvas.close()
 
 
+def test_editing_disabled_click_outside_all_circles_deselects(monkeypatch) -> None:
+    """2026-11-02(req5): 바깥쪽(모든 원 밖) 클릭 -> 하이라이트 해제 + zone_clicked(-1)."""
+    canvas = _make_canvas(editing_enabled=False)
+    canvas.set_circles([(200.0, 150.0, 20.0), (200.0, 150.0, 60.0)])   # 중심부 + 링1
+
+    # 먼저 중심부를 클릭해 선택 상태를 만든다.
+    center, _ = canvas._orig_to_screen(200.0, 150.0, 20.0)
+    pt = QPoint(round(center.x()), round(center.y()))
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=pt)
+    assert canvas.highlighted_zone() == 0
+
+    zone_spy = QSignalSpy(canvas.zone_clicked)
+    outer, _ = canvas._orig_to_screen(10.0, 10.0, 1.0)   # 가장 큰 원(반지름 60) 밖
+    outer_pt = QPoint(round(outer.x()), round(outer.y()))
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=outer_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=outer_pt)
+
+    assert canvas.highlighted_zone() is None
+    assert len(zone_spy) == 1
+    assert zone_spy[0][0] == -1
+    canvas.close()
+
+
 def test_editing_enabled_default_true_modal_unaffected() -> None:
     """모달이 생성하는 캔버스는 기본값(True)을 그대로 유지해야 한다(역호환)."""
     canvas = ZoneCanvas()
