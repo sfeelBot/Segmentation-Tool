@@ -1570,6 +1570,39 @@ AI신뢰도/픽셀threshold/편집툴바 2행→1행 통합(BUG-021 재발 방�
 - `docs/decisions-needed.md`에 1건 등록(메인 캔버스 일반 휠 완전 제거
   여부 — 기본 가정으로 구현 착수 가능, 디자인 검토 중 재확인 가능성).
 
+### 레이아웃 미세조정 + 오버레이 토글 버튼 + 바깥쪽 클릭 선택해제 (2026-11-02 요청)
+
+기획 완료: [docs/specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md](specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md).
+사용자가 스크린샷 목업으로 제시한 5건 — ① "현재 이미지만 추론" 버튼을 "추론
+실행" 옆으로 이동 ② 브러시 도구 툴바를 ckpt_card에서 빼내 캔버스 헤더의
+오버레이 불투명도 행과 합침 ③ AI신뢰도/픽셀threshold 라벨 재노출(기존 i18n 키
+재사용, 2026-10-30에 툴팁으로만 축소됐던 것 원복) ④ 오버레이 보기/숨기기 토글
+버튼 신규(F 단축키는 이미 이중 경로로 동작 중 — 버튼만 추가, `eye.svg` 재사용,
+`r_analysis_tab.py`의 동일 선례 패턴 그대로 적용) ⑤ "바깥쪽"(모든 원 밖) 클릭
+시 이전 선택 해제(`zone_clicked.emit(-1)` sentinel, 기존 `_on_canvas_zone_clicked`
+수정 불필요).
+
+- [x] 5 — `zone_canvas.py` `mouseReleaseEvent()` 두 분기(편집비활성/원생성취소)에
+      "원이 있고 zone_idx가 None"일 때 `set_highlighted_zone(None)` +
+      `zone_clicked.emit(-1)` 추가, 시그널 docstring 갱신. `zone_analysis_tab.py`
+      변경 없음(동작 확인만). 구현 완료(2026-11-02). **검증 에이전트 확인 대기**.
+- [x] 1+2+3 — `zone_analysis_tab.py` `_build_ui()` 같은 블록 한 커밋.
+      ①버튼 순서 재배치 ②`_edit_toolbar`를 캔버스 헤더(오버레이 불투명도와 같은
+      행)로 이동(휠 안내 문구는 디자인 권장안대로 별도 행 유지) ③AI신뢰도/
+      픽셀threshold `QLabel` 재추가. BUG-021 통합 측정 완료
+      (`minimumSizeHint().width()` = 1191px ≤ 1280, 안전). 
+      `tests/test_zone_layout_compact_2026_10_30.py`의
+      `test_ckpt_card_is_single_row_no_second_toolbar_layout()` 수정 완료
+      (`_edit_toolbar` 새 부모 반영). 구현 완료(2026-11-02).
+      **검증 에이전트 확인 대기**.
+- [x] 4 — 오버레이 토글 QAction 신규(`zone_analysis_tab.py` 로컬, `BrushToolbar`
+      공유 위젯에는 넣지 않음). `_toggle_overlay()`를 반전(`_toggle_overlay`)/
+      설정(`_set_overlay_visible`) 로직으로 분리해 버튼↔F키 양방향 동기화
+      확보(기존 F키 호출부는 변경 없음). 신규 i18n 키 1쌍(`zone.overlay_visible_tip`)
+      추가. 구현 완료(2026-11-02). **검증 에이전트 확인 대기**.
+- 결정 대기 없음(4번의 BrushToolbar 편입 여부는 기획이 선례 2건으로 직접
+  권장안 결정, 사용자 재확인 불필요).
+
 ## GitHub #35 "메모리 이슈" (2026-09-22 접수)
 
 기획 완료: [docs/specs/github-35-memory-issue-2026-09-22.md](specs/github-35-memory-issue-2026-09-22.md).

@@ -5,6 +5,38 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.13.0] 2026-11-02
+
+사용자 요청 5건(스펙 `docs/specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md`):
+스크린샷 목업 기반 레이아웃 미세조정 + 오버레이 토글 버튼 + 바깥쪽 클릭 선택해제.
+
+### 변경
+- "현재 이미지만 추론" 버튼을 "추론 실행" 버튼 바로 앞으로 이동해 서로 인접하게
+  배치(req1).
+- 브러시 도구모음(`_edit_toolbar`)을 체크포인트 1행(`ckpt_card`)에서 빼내 캔버스
+  헤더의 오버레이 불투명도 슬라이더와 같은 행으로 이동(req2). 휠 안내 문구는
+  별도의 얇은 행으로 분리 유지(디자인 권장안).
+- AI신뢰도/픽셀 threshold 라벨을 다시 노출(req3, 2026-10-30에 툴팁으로만 축소됐던
+  것 원복 — 기존 i18n 키 재사용, 신규 키 불필요).
+- 오버레이 보기/숨기기 토글 버튼 신규(req4) — `r_analysis_tab.py` 선례 패턴 재사용,
+  Zone 탭 전용 로컬 QAction(`BrushToolbar` 공유 위젯은 수정 없음). F 단축키(기존
+  이중 경로)와 버튼의 체크 상태가 항상 양방향으로 동기화되도록 `_toggle_overlay()`를
+  반전/설정 로직으로 분리.
+- 캔버스에서 모든 원 밖(바깥쪽)을 클릭하면 이전에 선택/하이라이트돼 있던 존이
+  해제되도록 수정(req5, `zone_clicked.emit(-1)` sentinel).
+
+### 검증
+- BUG-021(최소폭 1588px 초과) 재발 없음 재확인 — `minimumSizeHint().width()` =
+  1191px (≤ 1280).
+- `pytest tests/ -k zone` 전체 재실행 — 신규/수정 테스트 전부 통과, 기존
+  `test_zone_step_indicator.py` 1건은 이번 변경과 무관한 사전 존재 플레이키
+  실패(변경 전부터 동일하게 실패, 원인 미조사 — 범위 밖).
+
+### 영향 범위
+`feature/zone-analysis-tab` 전용 변경, main에는 반영하지 않음.
+
+---
+
 ## [zone-v1.12.0] 2026-10-29
 
 사용자 요청 2건: 학습 탭의 모델/DataLoader 설정을 이 에디션 전용으로 고정.
