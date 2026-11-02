@@ -452,6 +452,17 @@ class ZoneAnalysisTab(QWidget):
         self._act_undo.setToolTip(t("zone.undo_tip"))
         self._act_undo.setEnabled(False)
         self._edit_toolbar.addAction(self._act_undo)
+
+        # 2026-11-02(스펙 4번): 오버레이 보기/숨기기 토글 버튼 — r_analysis_tab.py
+        # 289~295행과 동일 패턴(구분선 없이 undo 바로 뒤, 브러시 클러스터
+        # 맨 끝, 디자인 권장안 design-log.md 2026-11-02). Zone 탭은 BrushToolbar
+        # 밖(이 탭 전용) 로컬 QAction으로 둔다(BrushToolbar 자체는 수정하지 않음).
+        self._act_overlay_visible = QAction(svg_icon("eye"), "", self)
+        self._act_overlay_visible.setCheckable(True)
+        self._act_overlay_visible.setChecked(self._overlay_visible)
+        self._act_overlay_visible.setToolTip(t("zone.overlay_visible_tip") + " [F]")
+        self._act_overlay_visible.toggled.connect(self._set_overlay_visible)
+        self._edit_toolbar.addAction(self._act_overlay_visible)
         # _edit_toolbar의 실제 addWidget()은 canvas_layout(캔버스 헤더 합성 행)
         # 쪽에서 수행한다 — 아래 "중앙 — 캔버스" 블록 참고(스펙 2번).
 
@@ -1189,8 +1200,17 @@ class ZoneAnalysisTab(QWidget):
             QMessageBox.critical(self, t("zone.refilter_error_title"), str(exc))
 
     def _toggle_overlay(self) -> None:
-        self._overlay_visible = not self._overlay_visible
+        self._set_overlay_visible(not self._overlay_visible)
+
+    def _set_overlay_visible(self, visible: bool) -> None:
+        """"값을 정하는" 로직(req4) — _toggle_overlay()의 반전 로직과 분리해
+        QAction.toggled(bool)과 1:1로 맞물릴 수 있게 한다. 버튼↔F키 양방향
+        동기화: 값이 바뀌면 QAction의 체크 상태도 함께 갱신(이미 일치하면
+        재귀 호출 없이 그대로 둠)."""
+        self._overlay_visible = visible
         self._show_overlay_state()
+        if self._act_overlay_visible.isChecked() != visible:
+            self._act_overlay_visible.setChecked(visible)
 
     def _show_overlay_state(self) -> None:
         if self._overlay_visible and self._last_result is not None:
