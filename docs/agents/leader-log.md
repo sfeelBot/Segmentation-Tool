@@ -22,9 +22,20 @@
 > 확인됨), BUG-021 게이트 실측 1191px(안전). 리더가 planner/designer의
 > 미커밋 로그·스펙 파일(`docs/agents/planning-log.md`,
 > `docs/agents/design-log.md`, 스펙 파일)을 직접 커밋(`3825967`, 단순
-> append-only 로그라 서브에이전트 위임 없이 처리). verifier 서브에이전트
-> 실행 중 — 실제 앱 구동 골든패스 확인 대기. push는 아직 안 함(검증 완료
-> + 사용자 확인 후).
+> append-only 로그라 서브에이전트 위임 없이 처리). verifier가 실제 앱
+> 구동 골든패스 5건 전부 PASS 확인(`2e9da67`) — 신규버그 2건 발견:
+> BUG-048(P2, 좌측 패널을 스플리터로 넓히면 캔버스가 좁아져 브러시
+> 도구행이 QToolBar 표준 오버플로를 일으켜 undo/eye 버튼이 "…"에 숨음),
+> BUG-049(P3, `test_zone_step_indicator.py` flaky — 이번 라운드와 무관한
+> 사전 존재 테스트 인프라 버그, 디바운스 자동저장이 테스트 상대경로에
+> 실제 파일 생성해 후속 테스트 오염, 별도 워크트리로 재현 확인됨). 리더가
+> 스크린샷을 사용자에게 전달 후 "버그 수정" 지시 받아 BUG-048을
+> implementer에 위임(P2 단건이라 AGENTS.md "사소한 버그 수정" 기준 —
+> 검증 에이전트 재호출 없이 리더가 직접 실행확인). implementer 수정:
+> `canvas_panel.setMinimumWidth(780)`(실측 744px+여유36px) 1줄로 해결,
+> 회귀테스트 2건 추가, zone-v1.13.1(PATCH), 커밋 2개(`5cf0777`,
+> `b191f44`). 리더가 신규 회귀테스트 직접 재실행해 2/2 PASS 확인. push는
+> 아직 안 함(사용자 확인 후).
 
 > **[2026-10-30] 상/하부 분석 탭 대규모 변경 9건 — 구현+검증+BUG-047
 > 후속수정까지 전부 완료, push 완료.** planner(기획) → designer+implementer
