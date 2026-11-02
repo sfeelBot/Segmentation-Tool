@@ -7512,3 +7512,66 @@ exec()` 인스턴스 호출이라 정적 `QMessageBox.question()` 모킹만으�
 - 상태: PASS(블로커 없음) — BUG-047(P3, UX 문구/숨은 확인 게이트)만 신규
   기록, 기능 자체는 전부 명세대로 동작. 커밋/push 가능 여부 판단은 리더
   보고 참고.
+
+
+## 2026-11-02 — Zone 분석 탭 "레이아웃 미세조정+오버레이 토글+바깥쪽 클릭 선택해제" 라운드 검증 (feature/zone-analysis-tab)
+
+- 범위: 스펙 `docs/specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md`
+  5건(①"현재 이미지만 추론"↔"추론 실행" 인접, ②브러시 도구모음을 ckpt_card에서
+  캔버스 헤더 오버레이 불투명도 행으로 이동, ③AI신뢰도/픽셀threshold 라벨
+  재노출, ④오버레이 보기/숨기기 토글 버튼+F 단축키 양방향 동기화, ⑤메인
+  캔버스 바깥쪽(모든 원 밖) 클릭 시 선택 해제).
+- 정적 리뷰: `app/tabs/zone_analysis_tab.py` `_build_ui()`의 `toolbar_row1`/
+  `toolbar_header`+`opacity_row` 병합 영역, `_toggle_overlay()`/
+  `_set_overlay_visible()` 분리(반전 로직↔값 설정 로직), `app/widgets/
+  zone_canvas.py` `mouseReleaseEvent()`의 두 분기(조회전용/드래그취소) 코드를
+  직접 대조 — 스펙 기술과 100% 일치, `_overlay_visible`을 직접 대입하는 다른
+  호출부 없음(양방향 동기화 경로 단일화 확인), `_circles` 빈 상태에서는 두
+  분기 모두 `-1` emit 안 함(기존 불변식 유지) 확인.
+- 실행 확인(offscreen): `ZoneAnalysisTab()` 인스턴스화 후
+  (1) `minimumSizeHint().width()` = **1191px**(BUG-021 게이트 1588px/1280px
+  양쪽 통과), `_btn_run_current`/`_btn_run`이 `toolbar_row1`에서 `indexOf`
+  차이 1(인접) 확인.
+  (2) `_edit_toolbar`와 `_overlay_opacity_slider`가 같은 부모 위젯(캔버스
+  헤더 합성 행)을 공유함을 `parentWidget() is` 비교로 확인.
+  (3) 합성 QMouseEvent로 `ZoneCanvas`에 원 2개(반지름 5/40)를 두고 안쪽
+  클릭→`zone_clicked(0)`+하이라이트 설정, 바깥쪽(원본좌표 390,390) 클릭→
+  `zone_clicked(-1)`+`set_highlighted_zone(None)` 호출을 스파이로 직접 확인.
+  원 0개 상태에서는 클릭해도 `zone_clicked` 전혀 emit되지 않음(회귀 없음)도
+  확인. `editing_enabled=True`(원 설정 모달용 캔버스) 경로의 정상 드래그
+  원생성도 영향 없음(1개 생성, zone_clicked 미발생) 확인.
+  (4) `_act_overlay_visible.setChecked(False)` → `_overlay_visible` False로
+  동기화, 합성 `QKeyEvent`로 F키 2연타 → `_overlay_visible`/버튼 체크상태가
+  매번 함께 토글(양방향 동기화) 확인.
+  (5) ko/en `zone.ai_confidence_label`/`zone.pixel_threshold_label`/
+  `zone.overlay_visible_tip` i18n 키 양쪽 존재 확인.
+- GUI 스크린샷 3장으로 육안 확인(`C:/Users/Feel/AppData/Local/Temp/claude/
+  d--segmentation-model/7d22477b-1701-46e5-afbc-9a433ab94cb7/scratchpad/
+  zone_tab_1280.png`/`zone_tab_1191.png`/`zone_tab_leftwide.png`): 1280px/
+  1191px(최소폭) 양쪽에서 1행(ckpt_card) 레이아웃 겹침·잘림 없음, "현재
+  이미지만 추론"이 "추론 실행" 바로 옆에 붙어있음, AI신뢰도/픽셀threshold
+  라벨 정상 노출. 다만 **좌측 패널을 스플리터로 크게 넓히면(캔버스 패널 폭이
+  좁아지면) 캔버스 헤더의 `_edit_toolbar`가 Qt 표준 오버플로로 압축돼 undo와
+  신규 eye 토글 버튼이 작은 "…" 안에 숨는 현상을 실측 발견** — `BUG-048`(P2)로
+  `QA.md` 등록(기능 자체는 "…" 클릭으로 접근 가능해 완전 봉쇄는 아니나
+  discoverability 저하, 디자인 스펙이 미리 우려했던 항목이 실제 재현됨).
+- `py -3 scripts/generate_version_info.py` → "Generated release metadata for
+  1.13.0" 확인.
+- pytest: `pytest tests/ -k zone -q` → **89 passed, 1 failed**(구현자 보고와
+  일치). 그 1건(`test_zone_step_indicator.py::
+  test_steps_complete_in_order_as_ckpt_image_circles_are_set`)을 별도
+  worktree(`git worktree add`, 라운드 시작 전 커밋 `8dd9b49`)로 체크아웃해
+  클린 디렉터리에서 재현 — **라운드 이전 코드에서도 동일하게 재현됨**(84
+  passed/1 failed)을 확인해 "이번 라운드와 무관한 사전 버그"라는 구현자 주장을
+  직접 검증. 이번 기회에 근본원인까지 특정(기존에는 "flaky"로만 기록돼 있었음):
+  디바운스 자동저장(R-ZONE-3)이 테스트의 상대경로 `Path("a.png")`를 그대로
+  사이드카 경로로 써서 repo 루트에 `a.zone.json`을 남기고, 그 파일이 같은
+  세션의 나중 테스트(또는 다음 `pytest` 실행)를 오염시킴 — `QA.md` BUG-049(P3,
+  테스트 인프라 한정, 이번 라운드와 무관)로 신규 등록, 검증 중 생성된
+  `a.zone.json`은 삭제 후 `git status` clean 확인. 전체 스위트
+  `pytest tests/ -q` → 200 passed, 2 failed(위 1건 + 이번 라운드와 전혀
+  무관한 `test_training_performance.py` 1건 — 범위 밖이라 별도 조사 안 함).
+- 상태: **PASS(통과)** — 구현 5건 전부 명세대로 동작 확인, 신규 블로커(P0/P1)
+  없음. BUG-048(P2, 캔버스 헤더 오버플로)과 BUG-049(P3, 테스트 사이드카 오염
+  근본원인)를 `QA.md`에 신규 등록(둘 다 Open, 리더 판단 필요 — BUG-048은 이번
+  라운드가 만든 회귀라 우선순위 있음).
