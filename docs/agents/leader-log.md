@@ -5,18 +5,41 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-30] 상/하부 분석 탭 대규모 변경 9건 — 구현+검증 전부
-> 완료, push는 사용자 확인 대기.** planner(기획) → designer+implementer
+> **[최신, 2026-11-02] Zone 탭 레이아웃 미세조정+오버레이 토글+바깥쪽
+> 클릭 선택해제(5건) — 구현 완료, 검증 진행 중.** 사용자가 스크린샷
+> 목업을 보내 5건 요청(①"현재 이미지만 추론" 버튼을 "추론 실행" 옆으로
+> ②브러시 도구모음을 오버레이 불투명도와 같은 행으로 ③신뢰도/픽셀threshold
+> 라벨 재노출 ④오버레이 보기/숨기기 토글 버튼+F단축키 ⑤바깥쪽(모든 원
+> 밖) 클릭 시 선택 해제) → 리더가 코드 직접 조사 후 이해한 내용을
+> 사용자에게 요약·확인(라인번호까지 특정) → planner(스펙 작성,
+> `docs/specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md`,
+> `r_analysis_tab.py`의 eye 아이콘 선례 발견해 4번 재사용 방안 확정) →
+> designer+implementer 병렬(designer는 Artifact 목업+배치 권장안만,
+> implementer가 실제 코드 반영 — 중도에 리더가 SendMessage로 디자인
+> 권장사항(휠힌트 별도 행 유지, eye는 undo 바로 뒤 구분선 없이) 전달) →
+> implementer 완료: 커밋 5개(`31a6d28`~`abb6ef2`), zone-v1.13.0(MINOR),
+> `pytest -k zone` 89 passed/1 failed(사전 존재 flaky, git stash로 재현
+> 확인됨), BUG-021 게이트 실측 1191px(안전). 리더가 planner/designer의
+> 미커밋 로그·스펙 파일(`docs/agents/planning-log.md`,
+> `docs/agents/design-log.md`, 스펙 파일)을 직접 커밋(`3825967`, 단순
+> append-only 로그라 서브에이전트 위임 없이 처리). verifier 서브에이전트
+> 실행 중 — 실제 앱 구동 골든패스 확인 대기. push는 아직 안 함(검증 완료
+> + 사용자 확인 후).
+
+> **[2026-10-30] 상/하부 분석 탭 대규모 변경 9건 — 구현+검증+BUG-047
+> 후속수정까지 전부 완료, push 완료.** planner(기획) → designer+implementer
 > 2라운드 병렬(⑤단독→③+④/⑦ 병렬→①+②+⑧/⑥ 병렬) → implementer(구현 중
 > 발견된 QThread access violation 크래시 별도 수정, `f4e5a36`) → verifier
 > (실제 QTest 조작+스크린샷으로 골든패스 11개 전부 PASS, `23716aa`) 순서로
-> 진행. 커밋 19개(`9aaaff7`~`23716aa`), 전부 로컬, origin 대비 ahead.
-> verifier가 P3 1건 발견(BUG-047 — "원 설정" 모달을 여는 기존 확인팝업
-> 문구/게이트가 구 아키텍처(최근 레시피 자동로드) 시절 문구 그대로 남아
-> 실제 동작과 안 맞음, "아니오" 선택 시 모달이 안 열림 — 기능 파손/데이터
-> 유실 없음, QA.md 등록). 이 1건은 리더가 사용자에게 지금 고칠지/다음
-> 라운드로 미룰지 확인 후 처리. push는 사용자 명시 확인 전까지 보류
-> (AGENTS.md 원칙) — 사용자에게 보고 후 승인 받을 예정.
+> 진행. verifier가 P3 1건 발견(BUG-047 — "원 설정" 모달을 여는 기존
+> 확인팝업 문구/게이트가 구 아키텍처(최근 레시피 자동로드) 시절 문구
+> 그대로 남아 실제 동작과 안 맞음, "아니오" 선택 시 모달이 안 열림).
+> 사용자가 "지금 고쳐" 지시 → implementer가 팝업 자체를 제거(YAGNI,
+> `8dbcba2`)하고 회귀 테스트 추가, 리더가 직접 재확인(11/11 통과) →
+> origin에 PR #40(sync-from-main, 문서only) 반영돼 있어 `git fetch`+
+> `git merge`(leader-log.md "현재 상황 요약" 충돌 1건, "양쪽 다 살리기"로
+> 해소) 후 사용자 "지금 push" 확인 받아 `origin/feature/zone-analysis-tab`
+> 에 push 완료(`a7ff5a8..8dd9b49`).
 
 > **[2026-10-30] 상/하부 분석 탭 대규모 변경 9건 — 리더 확인 완료,
 > planner 기획 완료, 디자인/구현 착수 전.** 사용자 요청: ①체크포인트/신뢰도/
@@ -1559,3 +1582,58 @@ main repo에 `docs/manual/workflow-guide.md`+스크린샷 56장 커밋
 (`dc44387`). edition 저장소의 원본 스크린샷(서브에이전트가 생성한 untracked
 파일)은 그대로 둠 — 최종본은 main에 있으므로 별도 커밋/삭제 안 함. push는
 아직 사용자 확인 전.
+
+## 2026-11-02 — Zone 탭 레이아웃 미세조정 + 오버레이 토글 + 바깥쪽 클릭 선택해제
+
+사용자가 손으로 편집한 스크린샷 목업(두 "추론 실행" 버튼을 나란히 배치해
+보여줌)을 첨부하며 5건 요청: ①"현재 이미지만 추론" 버튼을 "추론 실행"
+옆으로 ②브러시 도구모음(그리기/지우기/영역삭제/팬/브러시크기/undo)을
+오버레이 불투명도 슬라이더와 같은 행으로 ③AI신뢰도/픽셀threshold 슬라이더·
+스핀 옆에 라벨 재노출(2026-10-30 라운드에서 공간 확보차 숨겼던 것) ④브러시
+도구모음에 오버레이 보기/숨기기 토글 버튼 추가 + F 단축키(F키 자체는
+이미 이중으로 동작 중이었음 — 버튼만 신규) ⑤메인 캔버스에서 모든 원
+바깥쪽을 클릭하면 이전 존 하이라이트/우측 목록 선택이 그대로 남아있던
+문제 수정(아무것도 선택 안 된 상태로 보이게).
+
+리더가 먼저 `zone_analysis_tab.py`/`zone_canvas.py`/`i18n.py`를 직접
+grep+Read로 조사해 라인번호까지 특정한 뒤 5건 요약을 사용자에게 확인받고
+(AGENTS.md 리더 규칙 1) planner에 위임 — 재조사 없이 리더 조사 결과를
+그대로 스펙화하도록 지시. planner가 스펙 작성 중
+`r_analysis_tab.py`(289~295행)에 오버레이 토글 버튼의 완전히 동일한 선례
+(체크 가능 눈 아이콘 QAction + 양방향 동기화 + "[F]" 툴팁)가 이미 있는
+것을 발견해 4번 구현 방안을 그 패턴 재사용으로 확정, `BrushToolbar`
+공유 위젯 자체는 건드리지 않고 Zone 탭 로컬 액션으로 결정(공유 위젯
+오염 방지 — 결정 대기 등록 없이 권장안으로 바로 해소).
+
+designer+implementer를 병렬 호출(AGENTS.md: UI 변경은 구현+디자인 병행).
+designer는 코드를 건드리지 않고 Artifact 목업
+(`https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW`)과 배치 권장안만
+`design-log.md`에 남김 — 핵심: 캔버스 헤더를 1행 완전통합하지 말고 휠
+안내문구는 별도 얇은 행으로 분리 유지(브러시도구+불투명도 병합 행만으로도
+폭이 빠듯해, 창 축소 시 보조설명 문구가 먼저 희생되는 쪽이 안전), eye
+토글은 undo 바로 뒤 구분선 없이. implementer가 먼저 진행 중이던 작업에
+리더가 SendMessage로 이 권장안을 중도 전달해 반영.
+
+implementer 완료 보고: 변경 파일 `zone_canvas.py`(req5),
+`zone_analysis_tab.py`(req1~4, `_toggle_overlay()`를
+`_set_overlay_visible(bool)`로 분리해 버튼↔F키 양방향 동기화),
+`i18n.py`(신규 키 1쌍), 기존 테스트 1건 갱신(`_edit_toolbar` 새 부모
+반영) + 신규 테스트 2건. 커밋 5개(`31a6d28` req5, `76b2510` req1~3,
+`2647c24` req4, `43eef5f` 버전/CHANGELOG/roadmap, `abb6ef2` 구현로그).
+release.ini 1.12.0→1.13.0(MINOR). `pytest tests/ -k zone -q` → 89
+passed/1 failed(`test_zone_step_indicator.py`, `git stash`로 수정 전
+코드에서도 재현되는 사전 존재 flaky — 이번 변경과 무관, implementer가
+직접 확인 후 보고). BUG-021 게이트 실측:
+`ZoneAnalysisTab().minimumSizeHint().width()` = 1191px(1280px 이내,
+안전). implementer 본인은 "완료 보고 아님, 검증 전까지 완료로 간주
+말 것"이라고 명시(AGENTS.md 원칙 그대로 준수).
+
+planner/designer가 남긴 미커밋 변경(`docs/agents/planning-log.md`,
+`docs/agents/design-log.md`, 신규 스펙 파일)은 단순 append-only 로그라
+리더가 서브에이전트 위임 없이 직접 커밋(`3825967`, AGENTS.md 리더 규칙 2
+"사소한 1~2줄 수정은 리더가 직접 처리 가능"에 해당).
+
+verifier 서브에이전트를 실제 앱 구동(`py -3 main.py`) 골든패스 확인 +
+`git stash`로 사전 존재 flaky 재확인 + 정적 리뷰까지 명시해 호출,
+진행 중 — 결과 대기. push는 검증 완료 + 사용자 확인 전까지 보류
+(AGENTS.md 원칙).
