@@ -375,31 +375,38 @@ class ZoneAnalysisTab(QWidget):
         toolbar_row1.addWidget(self._target_combo)
         toolbar_row1.addStretch()
 
-        # 2026-10-30(스펙 8번): "현재 이미지만 추론" — 리스트가 로드돼 있어도
-        # 지금 화면의 이미지 1장만 추론한다(_run_inference(current_only=True)).
-        # 다른 이미지의 기존 결과는 보존(핵심 회귀 포인트, _run_inference 참고).
-        self._btn_run_current = QPushButton(t("zone.btn_run_current"))
-        self._btn_run_current.setToolTip(t("zone.run_current_tip"))
-        toolbar_row1.addWidget(self._btn_run_current)
-
+        # 2026-11-02(스펙 3번): 2026-10-30 1행 통합 라운드에서 라벨을 제거하고
+        # 툴팁만 남겼던 것을 다시 노출(폭 여유 확보 — _edit_toolbar가 이 행에서
+        # 빠지는 2번 항목과 상쇄). 기존 .tip 툴팁은 중복이 아니므로 그대로 유지.
+        toolbar_row1.addWidget(QLabel(t("zone.ai_confidence_label")))
         self._conf_slider = QSlider(Qt.Orientation.Horizontal)
         self._conf_slider.setRange(0, 100)
         self._conf_slider.setValue(int(_DEFAULT_MIN_CONFIDENCE * 100))
         self._conf_slider.setFixedWidth(90)
-        self._conf_slider.setToolTip(t("zone.confidence_tip"))   # 2026-10-30: 라벨 제거, 툴팁만 유지
+        self._conf_slider.setToolTip(t("zone.confidence_tip"))
         toolbar_row1.addWidget(self._conf_slider)
         self._lbl_confidence = QLabel(f"{self._conf_slider.value()}%")
         self._lbl_confidence.setFixedWidth(32)
         toolbar_row1.addWidget(self._lbl_confidence)
 
+        toolbar_row1.addWidget(QLabel(t("zone.pixel_threshold_label")))
         self._min_px_spin = QSpinBox()
         self._min_px_spin.setRange(0, 100000)
         self._min_px_spin.setValue(_DEFAULT_MIN_PIXEL_SIZE)
         self._min_px_spin.setSuffix(" px")
         self._min_px_spin.setFixedWidth(90)
-        self._min_px_spin.setToolTip(t("zone.pixel_threshold_tip"))   # 2026-10-30: 라벨 제거, 툴팁만 유지
+        self._min_px_spin.setToolTip(t("zone.pixel_threshold_tip"))
         toolbar_row1.addWidget(self._min_px_spin)
 
+        # 2026-11-02(스펙 1번): "현재 이미지만 추론"을 "추론 실행" 바로 앞으로
+        # 이동 — 두 버튼이 행의 맨 끝에 인접하도록.
+        self._btn_run_current = QPushButton(t("zone.btn_run_current"))
+        self._btn_run_current.setToolTip(t("zone.run_current_tip"))
+        toolbar_row1.addWidget(self._btn_run_current)
+
+        # 2026-11-02(스펙 2번): _edit_toolbar(브러시 도구모음)는 이 행에서 빼서
+        # 캔버스 헤더(오버레이 불투명도와 같은 행)로 옮긴다 — 아래에서 생성만
+        # 하고 toolbar_row1에는 addWidget하지 않음(실제 배치는 canvas_layout 쪽).
         self._edit_toolbar = QToolBar()
         self._edit_toolbar.setIconSize(QSize(20, 20))
         self._edit_toolbar.setStyleSheet(
@@ -445,7 +452,8 @@ class ZoneAnalysisTab(QWidget):
         self._act_undo.setToolTip(t("zone.undo_tip"))
         self._act_undo.setEnabled(False)
         self._edit_toolbar.addAction(self._act_undo)
-        toolbar_row1.addWidget(self._edit_toolbar)
+        # _edit_toolbar의 실제 addWidget()은 canvas_layout(캔버스 헤더 합성 행)
+        # 쪽에서 수행한다 — 아래 "중앙 — 캔버스" 블록 참고(스펙 2번).
 
         self._btn_run = QPushButton(t("zone.run"))
         self._btn_run.setStyleSheet(
@@ -559,13 +567,15 @@ class ZoneAnalysisTab(QWidget):
             "background:#1f2329;border:1px solid #374151;border-radius:8px;"
         )
 
+        # 2026-11-02(스펙 2번, 디자인 권장안 — design-log.md 2026-11-02): 휠
+        # 안내 문구는 보조 설명이라 별도의 얇은 행으로 분리 유지(1행 완전
+        # 통합 시 창 축소에서 핵심 컨트롤보다 먼저 깨짐) — 병합 대상은
+        # ckpt_card에서 빼낸 _edit_toolbar(브러시 도구모음)와 오버레이
+        # 불투명도 둘뿐.
         toolbar_header = QWidget()
         toolbar_header.setStyleSheet("background:#1f2329;border:none;border-bottom:1px solid #374151;")
         toolbar_header_layout = QHBoxLayout(toolbar_header)
         toolbar_header_layout.setContentsMargins(8, 5, 8, 5)
-        # 2026-10-30(스펙 1번): `_edit_toolbar`는 이제 ckpt_card(상단 1행)에
-        # 배치된다 — 여기(캔버스 헤더)에는 더 이상 추가하지 않는다(위젯은 한
-        # 레이아웃에만 속할 수 있어 중복 addWidget은 의미 없음).
         self._lbl_wheel_hint = QLabel(t("zone.wheel_hint"))
         self._lbl_wheel_hint.setStyleSheet("color:#9ca3af;font-size:10.5px;")
         toolbar_header_layout.addWidget(self._lbl_wheel_hint)
@@ -576,14 +586,23 @@ class ZoneAnalysisTab(QWidget):
         opacity_row.setStyleSheet("background:#1f2329;border:none;border-bottom:1px solid #374151;")
         opacity_row_layout = QHBoxLayout(opacity_row)
         opacity_row_layout.setContentsMargins(8, 4, 8, 4)
+        opacity_row_layout.addWidget(self._edit_toolbar)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("color:#374151;")
+        opacity_row_layout.addWidget(sep)
+
         opacity_row_layout.addWidget(QLabel(t("common.overlay_opacity_label")))
         self._overlay_opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._overlay_opacity_slider.setRange(0, 100)
         self._overlay_opacity_slider.setValue(int(self._overlay_opacity * 100))
+        self._overlay_opacity_slider.setFixedWidth(90)
         self._lbl_overlay_opacity_pct = QLabel(f"{self._overlay_opacity_slider.value()}%")
         self._lbl_overlay_opacity_pct.setFixedWidth(36)
         opacity_row_layout.addWidget(self._overlay_opacity_slider)
         opacity_row_layout.addWidget(self._lbl_overlay_opacity_pct)
+        opacity_row_layout.addStretch()
         self._overlay_opacity_slider.valueChanged.connect(self._on_overlay_opacity_changed)
         canvas_layout.addWidget(opacity_row)
 

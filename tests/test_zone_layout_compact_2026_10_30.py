@@ -46,16 +46,24 @@ def test_ckpt_card_minimum_width_stays_within_1280() -> None:
 
 
 def test_ckpt_card_is_single_row_no_second_toolbar_layout() -> None:
-    """체크포인트 상태/타겟클래스/AI신뢰도/픽셀threshold/편집툴바/추론버튼이
-    전부 같은 ckpt_card(1행)에 들어있는지 — 버튼들의 공통 부모가 전부 동일."""
+    """체크포인트 상태/타겟클래스/AI신뢰도/픽셀threshold/추론버튼이 전부 같은
+    ckpt_card(1행)에 들어있는지 — 버튼들의 공통 부모가 전부 동일.
+
+    2026-11-02(스펙 2번): `_edit_toolbar`(브러시 도구모음)는 ckpt_card에서
+    빠져 캔버스 헤더의 오버레이 불투명도와 같은 행으로 이동했다 — 그 새
+    부모(`_overlay_opacity_slider`와 동일)인지로 단언을 갱신(동작 자체가
+    바뀐 것이므로 테스트를 현재 상태에 맞게 고침, 회피 아님)."""
     tab = ZoneAnalysisTab()
     try:
         ckpt_card = tab._btn_ckpt.parentWidget()
         for widget in (
             tab._lbl_ckpt, tab._target_combo, tab._conf_slider,
-            tab._min_px_spin, tab._edit_toolbar, tab._btn_run_current, tab._btn_run,
+            tab._min_px_spin, tab._btn_run_current, tab._btn_run,
         ):
             assert widget.parentWidget() is ckpt_card, f"{widget} — ckpt_card 1행 밖에 있음"
+        assert tab._edit_toolbar.parentWidget() is tab._overlay_opacity_slider.parentWidget(), (
+            "_edit_toolbar와 오버레이 불투명도 슬라이더가 같은 행(공통 부모)이 아님"
+        )
     finally:
         tab.close()
 
