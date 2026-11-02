@@ -256,6 +256,7 @@ QToolButton:hover {
 }
 QToolButton:checked {
     background: #1e3a5f;
+    border: 1px solid #60a5fa;
     color: #60a5fa;
     font-weight: bold;
 }

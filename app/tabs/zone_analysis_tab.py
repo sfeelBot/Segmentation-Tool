@@ -401,6 +401,10 @@ class ZoneAnalysisTab(QWidget):
         # 2026-11-02(스펙 1번): "현재 이미지만 추론"을 "추론 실행" 바로 앞으로
         # 이동 — 두 버튼이 행의 맨 끝에 인접하도록.
         self._btn_run_current = QPushButton(t("zone.btn_run_current"))
+        self._btn_run_current.setStyleSheet(
+            "background:#1e3a5f;border:1.5px solid #60a5fa;border-radius:5px;"
+            "padding:6px 18px;color:#93c5fd;font-weight:bold;font-size:13.5px;"
+        )   # 2026-11-02: "추론 실행" 버튼과 동일한 스타일(사용자 요청 — 두 버튼 외관 통일)
         self._btn_run_current.setToolTip(t("zone.run_current_tip"))
         toolbar_row1.addWidget(self._btn_run_current)
 
