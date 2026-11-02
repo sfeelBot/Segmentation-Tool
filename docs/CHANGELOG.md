@@ -5,6 +5,33 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.13.1] 2026-11-02
+
+BUG-048(P2) 수정 — zone-v1.13.0 레이아웃+오버레이토글 라운드(req2/req4)의
+부작용.
+
+### 수정
+- 좌측 이미지 패널을 스플리터로 크게 넓히면 중앙 캔버스 패널(`canvas_panel`)이
+  좁아져 `_edit_toolbar`(브러시 도구모음 + 오버레이 불투명도 행)가 Qt 표준
+  QToolBar 오버플로를 일으켜 undo·eye(오버레이 토글) 버튼이 "…" 안에 숨던
+  문제를 수정. `canvas_panel.setMinimumWidth(780)` 추가 — 실측(offscreen QPA)한
+  해당 행(`opacity_row`) `sizeHint().width()` 744px에 여유 36px을 더한 값.
+  `setChildrenCollapsible(False)`(BUG-020)와 함께, 스플리터가 캔버스 폭을 이
+  값 아래로 줄이지 못하게 돼 오버플로 자체가 발생하지 않는다.
+
+### 검증
+- `pytest tests/ -k zone` — 91 passed(신규 2건 포함), 기존 사전 존재 플레이키
+  실패(BUG-049, `test_zone_step_indicator.py`) 1건만 재현(이번 수정과 무관).
+- 신규 회귀 테스트 `tests/test_zone_bug048_toolbar_overflow_2026_11_02.py`:
+  `splitter.setSizes([700, 300, 180])` 극단값에서 undo/eye 액션이 보이는지,
+  기본 비율([200, 700, 180])에서 좌/우 패널이 각자 최소폭 이상을 유지하는지
+  확인.
+
+### 영향 범위
+`feature/zone-analysis-tab` 전용 변경, main에는 반영하지 않음.
+
+---
+
 ## [zone-v1.13.0] 2026-11-02
 
 사용자 요청 5건(스펙 `docs/specs/zone-analysis-tab-layout-and-overlay-toggle-2026-11-02.md`):

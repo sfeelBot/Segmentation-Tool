@@ -619,6 +619,13 @@ class ZoneAnalysisTab(QWidget):
 
         canvas_layout.addWidget(self._canvas, stretch=1)
 
+        # BUG-048 수정: 좌측 패널을 스플리터로 크게 넓히면 canvas_panel이
+        # 좁아져 opacity_row(_edit_toolbar + 구분선 + 오버레이 불투명도
+        # 라벨/슬라이더/%) 전체를 담지 못하고, QToolBar 표준 오버플로가
+        # undo/eye 버튼을 "…" 안에 숨겨버린다(발견성 저하). 실측(offscreen
+        # QPA, opacity_row.sizeHint().width()) = 744px — 이 값보다 canvas_panel이
+        # 좁아지지 않게 최소폭을 744+36(여유)=780으로 고정한다.
+        canvas_panel.setMinimumWidth(780)
         splitter.addWidget(canvas_panel)
 
         # 우측 — 원/존 목록 (R2/R3 로직 그대로, 컨테이너 위치만 이동)
