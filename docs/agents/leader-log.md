@@ -5,7 +5,27 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-10-30 (9)] workflow-guide PPT 재작업 — 스크린샷 버튼
+> **[최신, 2026-11-03 (10)] 체크포인트 주기 1 고정 + 학습 오류 시 batch size
+> 조절 안내 — commit 완료(`c4d223a`), tag `v1.13.0`, push는 사용자 확인 대기.**
+> 사용자 요청: (1) 학습 시 체크포인트 저장 주기를 1로 고정, (2) 학습 중 문제가
+> 생기면 batch size를 줄여보라는 안내 문구가 팝업에 뜨도록. 작업 범위를
+> 코드로 확인한 뒤(`app/widgets/config_form.py`의 `_ckpt_every` 스핀박스,
+> `app/core/trainer.py`의 `TrainerWorker.run()` 예외 처리 — OOM 전용 경로는
+> 이미 `format_oom_help()`로 batch size 안내가 있었음) 리더가 직접 처리
+> (사소한 1~2줄 수정 범주, 서브에이전트 미호출). `_ckpt_every`를
+> `setValue(1)` + `setEnabled(False)`로 고정, 비-OOM `RuntimeError`/일반
+> `Exception` 경로에 `_with_batch_size_tip()` 헬퍼로 안내 문구 추가. 회귀
+> 테스트(`tests/test_trainer_error_tip.py`) 3개 작성·통과, 기존
+> `test_training_performance.py`/`test_config_form_no_wheel.py`도 재확인
+> (단, `test_stop_mid_second_epoch_...`는 이번 변경과 무관한 기존 실패 —
+> stash로 베이스라인에서도 동일 실패 확인, 별도 이슈로 QA.md 등록 필요).
+> SemVer: 기능 추가라 MINOR, main `v1.12.0`→`v1.13.0`. zone 브랜치
+> (`feature/zone-analysis-tab` worktree)에도 동일 코드 변경을 독립 반영,
+> zone은 `zone-v1.13.1`(미출시, 이전 라운드)이 이번 건과 무관한 별개
+> 기능이라 그대로 이어 쓰지 않고 `zone-v1.14.0`으로 MINOR 범프. 사용자가
+> 완료 후 zone/main 모두 push를 명시적으로 요청 — 테스트 통과 확인 후 바로 진행.
+
+> **[2026-10-30 (9)] workflow-guide PPT 재작업 — 스크린샷 버튼
 > 위치 주석 + 단계 스테퍼 + 단축키 Tip 추가, commit 완료(`36a075d`),
 > push는 사용자 확인 대기.** 사용자 피드백: 기존 PPT(위 (6)번, 14슬라이드)의
 > 도식화는 좋지만 "화면에서 무슨 버튼을 누르는지" 스크린샷만 봐서는 알기
@@ -952,3 +972,37 @@ main repo에 `docs/manual/workflow-guide.md`+스크린샷 56장 커밋
 (`dc44387`). edition 저장소의 원본 스크린샷(서브에이전트가 생성한 untracked
 파일)은 그대로 둠 — 최종본은 main에 있으므로 별도 커밋/삭제 안 함. push는
 아직 사용자 확인 전.
+
+## 2026-11-03 (10) — 체크포인트 주기 1 고정 + 학습 오류 batch size 안내
+
+사용자 요청: "학습 시 체크포인트 주기를 1을 고정으로 해줘. 추가로 학습 시
+문제가 생길 때 batch size 조절 문구 팝업을 띄울 수 있도록 해줘. 해당 건은
+완료 후 zone branch, main 모두 push 해줘." 코드 확인 결과 `checkpoint_every`는
+`app/widgets/config_form.py`의 `_ckpt_every` 스핀박스(기본값 5, 사용자가
+조절 가능)였고, 학습 예외는 `app/core/trainer.py`의 `TrainerWorker.run()`
+단일 지점(모든 호출자가 여기로 수렴)에서 `training_error` 시그널로 emit되어
+`training_tab.py`의 `_on_job_error()`가 이미 `QMessageBox.critical()`로
+표시 중 — OOM(`"out of memory"` 포함 RuntimeError)은 기존에 `format_oom_help()`
+로 이미 batch size 축소 안내가 포함돼 있었지만, 그 외 RuntimeError/일반
+Exception 경로에는 안내가 없었음. 범위가 작아(설정값 고정 2줄 + 예외 처리
+헬퍼 1개 추가) 서브에이전트 체계 없이 리더가 직접 처리(AGENTS.md 리더 규칙
+2 — 사소한 수정). 변경: (1) `_ckpt_every.setValue(1)` + `setEnabled(False)`
++ 고정 이유 툴팁(`cfg.ckpt_every_fixed_tip` ko/en 신규), (2) `trainer.py`에
+`_with_batch_size_tip()` 헬퍼 추가해 비-OOM RuntimeError/일반 Exception
+emit 시 공통 적용(OOM 경로는 변경 없음 — 근본 원인이 같은 지점이라 한 곳만
+수정). 회귀 테스트 `tests/test_trainer_error_tip.py` 3개(비-OOM
+RuntimeError/일반 Exception/OOM 각각 batch size 문구 포함 확인) 작성·통과.
+기존 `test_training_performance.py` 재실행 중
+`test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`
+실패 발견 — `git stash`로 변경 전 베이스라인에서도 동일하게 실패함을 확인해
+이번 변경과 무관한 기존 결함으로 판단, 되돌리지 않고 그대로 둠(추후 QA.md
+등록 필요, 이번 작업 범위 밖). 버전: 기능 추가이므로 MINOR. main
+`release.ini` 1.12.0→1.13.0, `docs/CHANGELOG.md`에 `[v1.13.0]` 추가,
+`scripts/generate_version_info.py` 검증 통과 후 커밋(`c4d223a`)·태그
+(`v1.13.0`). 동일 변경을 `D:\segmentation model-zone-analysis-tab`
+worktree(`feature/zone-analysis-tab`)에도 독립 반영 — zone은 `release.ini`가
+`zone-v1.13.1`(미출시 상태였으나 이전 Zone UI 라운드용, 이번 건과 무관한
+별개 기능이라 그대로 이어쓰지 않음)이었던 것을 `zone-v1.14.0`으로 MINOR
+범프, `docs/CHANGELOG.md`에 `[zone-v1.14.0]` 추가. 사용자가 완료 후 zone·
+main 모두 push를 이미 명시적으로 요청했으므로, 두 브랜치 커밋 완료 후 바로
+push 진행.
