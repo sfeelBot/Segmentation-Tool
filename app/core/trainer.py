@@ -132,10 +132,16 @@ class TrainerWorker(QThread):
                 ) + f"\n\n[원문] {msg}")
             else:
                 log.exception("학습 중 RuntimeError")
-                self.training_error.emit(f"{type(exc).__name__}: {msg}")
+                self.training_error.emit(self._with_batch_size_tip(f"{type(exc).__name__}: {msg}"))
         except Exception as exc:
             log.exception("학습 중 예외")
-            self.training_error.emit(f"{type(exc).__name__}: {exc}")
+            self.training_error.emit(self._with_batch_size_tip(f"{type(exc).__name__}: {exc}"))
+
+    def _with_batch_size_tip(self, msg: str) -> str:
+        return (
+            f"{msg}\n\n[Tip] 문제가 반복되면 Batch Size를 줄여보세요 "
+            f"(현재 {self._cfg.batch_size} → 절반 시도)."
+        )
 
     def _train(self) -> None:
         cfg    = self._cfg

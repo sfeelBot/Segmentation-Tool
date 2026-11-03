@@ -147,7 +147,9 @@ class ConfigForm(QWidget):
         self._lr = QDoubleSpinBox()
         self._lr.setRange(1e-7, 1.0); self._lr.setSingleStep(1e-5)
         self._lr.setDecimals(6); self._lr.setValue(1e-4)
-        self._ckpt_every = QSpinBox(); self._ckpt_every.setRange(1, 9999); self._ckpt_every.setValue(5)
+        self._ckpt_every = QSpinBox(); self._ckpt_every.setRange(1, 9999); self._ckpt_every.setValue(1)
+        self._ckpt_every.setEnabled(False)
+        self._ckpt_every.setToolTip(t("cfg.ckpt_every_fixed_tip"))
 
         train_form.addRow("Epochs", self._epochs)
         train_form.addRow("Batch Size", self._batch)
