@@ -135,9 +135,10 @@ def test_training_completes_without_stop_saves_each_epoch(monkeypatch, tmp_path)
 def test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third(
     monkeypatch, tmp_path,
 ):
-    """회귀 확인: 2번째 epoch 도중 중지해도 1번째 epoch 결과는 (기존 보장대로)
-    보존되고, BUG-026 수정 덕에 2번째(부분) epoch 결과도 저장되며, 3번째 epoch는
-    아예 시작되지 않는다."""
+    """회귀 확인: 2번째 epoch 도중 중지해도 1번째 epoch 결과(BUG-026 보장)는
+    보존되고, 0be9c31(학습 중지 응답성 개선) 이후로는 이미 체크포인트가 있는
+    2번째 epoch의 validation/checkpoint는 저장하지 않고 즉시 종료하며, 3번째
+    epoch는 아예 시작되지 않는다."""
     class StopOnSecondEpochFirstBatch(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -170,15 +171,15 @@ def test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third(
 
     worker._train()
 
-    # 응답성: epoch2 의 남은 train 배치 2개(calls 6~7 자리)는 건너뛰고 val
-    # 배치 1개만 이어서 처리 → 총 forward 호출 6회 (epoch1: 4 + epoch2: 2).
-    assert model.calls == 6
+    # 응답성: epoch2의 첫 배치(call 5)만 처리되고 나머지 train 배치와 validation은
+    # 건너뛴 채(이미 epoch1 체크포인트가 있으므로) 즉시 종료 → 총 forward 호출 5회.
+    assert model.calls == 5
 
     [metrics_path] = tmp_path.glob("*training_metrics.json")
     history = json.loads(metrics_path.read_text())
-    assert [row["epoch"] for row in history] == [1, 2]
+    assert [row["epoch"] for row in history] == [1]
     # 파일명에 학습 시작 날짜(YYYYMMDD) 접두가 붙는다(2026-10-01 재설계).
     saved = sorted(p.name for p in tmp_path.glob("*_epoch_*.pt"))
-    assert len(saved) == 2
-    assert saved[0].endswith("epoch_0001.pt") and saved[1].endswith("epoch_0002.pt")
+    assert len(saved) == 1
+    assert saved[0].endswith("epoch_0001.pt")
     assert not list(tmp_path.glob("*epoch_0003.pt"))

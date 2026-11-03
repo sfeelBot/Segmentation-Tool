@@ -5,6 +5,19 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.14.1] 2026-11-03
+
+사용자 요청: "버그 수정 요청" — `test_stop_mid_second_epoch_...` 실패 조사·수정
+(main `v1.13.1`과 동일 내용, zone 브랜치에 독립 반영).
+
+### 수정
+- `tests/test_training_performance.py` — 근본 원인은 프로덕션 코드가 아니라
+  낡은 테스트였음. `0be9c31`(main, 학습 중지 응답성 개선)에서 의도적으로
+  바뀐 동작(이전 checkpoint가 있는 epoch는 중지 시 validation/checkpoint
+  생략)을 BUG-026 시절 작성된 테스트가 반영하지 못해 실패. 실제 동작(forward
+  5회, `epoch_0001.pt`만 저장)에 맞춰 기대값·주석 갱신. `trainer.py`는
+  변경 없음.
+
 ## [zone-v1.14.0] 2026-11-03
 
 사용자 요청: 체크포인트 주기 고정 + 학습 오류 시 batch size 조절 안내
