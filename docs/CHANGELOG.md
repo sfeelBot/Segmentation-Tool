@@ -5,6 +5,24 @@
 
 ---
 
+## [v1.13.1] 2026-11-03
+
+사용자 요청: "버그 수정 요청" — 직전 라운드(`v1.13.0`) 작업 중 발견해 보고한
+`test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`
+실패 조사·수정.
+
+### 수정
+- `tests/test_training_performance.py` — 근본 원인은 프로덕션 코드가 아니라
+  **낡은 테스트**였음. `app/core/trainer.py`의 `TrainerWorker._train()`은
+  커밋 `0be9c31`(학습 중지 응답성 개선, 2026-10-28)에서 "이전 epoch
+  체크포인트가 이미 있는 상태에서 중지 요청이 오면 그 epoch의
+  validation/checkpoint 저장을 건너뛰고 즉시 종료"하도록 의도적으로
+  동작이 바뀌었는데, 더 이전(BUG-026, `73c6f32`) 커밋에서 작성된 이 테스트는
+  갱신되지 않아 옛 동작(2번째 부분 epoch도 저장)을 기대하고 있었음.
+  실제 동작(forward 호출 5회, `epoch_0001.pt`만 저장, history는 `[1]`만)에
+  맞춰 테스트의 기대값·주석·docstring을 갱신. 프로덕션 코드(`trainer.py`)는
+  변경 없음 — `0be9c31`의 의도된 동작이 그대로 맞음을 재확인.
+
 ## [v1.13.0] 2026-11-03
 
 사용자 요청: 체크포인트 주기 고정 + 학습 오류 시 batch size 조절 안내.
