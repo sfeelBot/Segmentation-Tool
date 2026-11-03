@@ -5,7 +5,25 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-11-03 (10)] 체크포인트 주기 1 고정 + 학습 오류 시 batch size
+> **[최신, 2026-11-03 (11)] `test_stop_mid_second_epoch_...` 실패 버그 수정 —
+> commit 완료(`5588226`), tag `v1.13.1`, push는 사용자 확인 필요.**
+> 직전 (10)번 라운드에서 리더가 발견해 보고한 기존 테스트 실패를 사용자가
+> "버그 수정 요청"으로 승인. 원인 조사: `app/core/trainer.py` 자체는
+> 정상 — 커밋 `0be9c31`(2026-10-28, 학습 중지 응답성 개선)에서 "이미
+> 체크포인트가 있는 epoch는 중지 시 validation/checkpoint 생략" 동작으로
+> 의도적으로 바뀌었는데, 더 이전 BUG-026 커밋(`73c6f32`)에서 작성된
+> `tests/test_training_performance.py`의
+> `test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`가
+> 그 변경 때 갱신되지 않아 옛 동작(forward 6회, epoch 1·2 모두 저장)을
+> 기대하고 있었음 — 낡은 테스트가 원인, 프로덕션 코드 변경 없음. 실제
+> 동작(forward 5회, `epoch_0001.pt`만 저장)에 맞춰 기대값·주석 갱신,
+> main `tests/` 전체 100 passed 확인. 범위가 작아 서브에이전트 없이
+> 리더가 직접 처리(AGENTS.md 리더 규칙 2). zone worktree에도 동일 테스트
+> 수정 반영(zone은 BUG-049 테스트 오염 2건이 별도로 존재하나 이번 건과
+> 무관 — 기존 알려진 결함). 버전: 호환 버그 수정이라 PATCH,
+> `v1.13.0`→`v1.13.1`. push는 아직 사용자 확인 전.
+
+> **[2026-11-03 (10)] 체크포인트 주기 1 고정 + 학습 오류 시 batch size
 > 조절 안내 — commit 완료(`c4d223a`), tag `v1.13.0`, push는 사용자 확인 대기.**
 > 사용자 요청: (1) 학습 시 체크포인트 저장 주기를 1로 고정, (2) 학습 중 문제가
 > 생기면 batch size를 줄여보라는 안내 문구가 팝업에 뜨도록. 작업 범위를
