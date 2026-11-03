@@ -5,7 +5,25 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-11-03] 체크포인트 주기 1 고정 + 학습 오류 시 batch size
+> **[최신, 2026-11-03 (2)] `test_stop_mid_second_epoch_...` 실패 버그 수정 —
+> commit 완료(`806c045`), tag `zone-v1.14.1`, push는 사용자 확인 필요.**
+> 직전 라운드에서 리더가 발견해 보고한 기존 테스트 실패를 사용자가 "버그
+> 수정 요청"으로 승인. main에서 먼저 원인 조사·수정한 뒤 동일 변경을 이
+> worktree에 반영. 원인: `trainer.py` 자체는 정상 — 커밋
+> `0be9c31`(main, 2026-10-28, 학습 중지 응답성 개선)에서 "이미 체크포인트가
+> 있는 epoch는 중지 시 validation/checkpoint 생략"으로 의도적으로 바뀐
+> 동작을, 더 이전 BUG-026 시절 작성된
+> `test_stop_mid_second_epoch_preserves_first_epoch_and_halts_before_third`가
+> 반영하지 못해 실패 — 낡은 테스트가 원인, `trainer.py` 변경 없음. 실제
+> 동작(forward 5회, `epoch_0001.pt`만 저장)에 맞춰 기대값·주석 갱신.
+> `pytest tests/test_training_performance.py` 5 passed 확인. 전체 스위트
+> 실행 중 무관한 기존 결함 2건 재확인(`test_zone_edit_toolbar.py`,
+> `test_zone_step_indicator.py` — BUG-049 테스트 오염류, 이번 건과 무관,
+> 손대지 않음) + 테스트 오염 파일 `a.zone.json` 삭제. 버전: 호환 버그
+> 수정이라 PATCH, `zone-v1.14.0`→`zone-v1.14.1`. push는 아직 사용자 확인
+> 전.
+
+> **[2026-11-03] 체크포인트 주기 1 고정 + 학습 오류 시 batch size
 > 조절 안내 — commit 완료(`081f93d`), tag `zone-v1.14.0`, push는 사용자가
 > 이미 명시적으로 요청(zone+main 모두) → 바로 진행.** main 저장소
 > (`D:\segmentation model`)에서 먼저 처리한 동일 변경을 이 worktree에도
