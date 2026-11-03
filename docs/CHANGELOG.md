@@ -5,6 +5,25 @@
 
 ---
 
+## [v1.13.0] 2026-11-03
+
+사용자 요청: 체크포인트 주기 고정 + 학습 오류 시 batch size 조절 안내.
+
+### 변경
+- `app/widgets/config_form.py` — `_ckpt_every` 스핀박스를 `1`로 고정하고
+  `setEnabled(False)` 처리(더 이상 사용자가 조절 불가, 매 epoch마다 체크포인트
+  저장). 툴팁으로 고정 이유 안내(`cfg.ckpt_every_fixed_tip`).
+- `app/core/trainer.py` — `TrainerWorker.run()`의 비-OOM `RuntimeError`/일반
+  `Exception` 처리 경로에 `_with_batch_size_tip()` 헬퍼로 batch size 축소 안내
+  문구를 추가 emit(`training_error` 시그널 → 기존 `QMessageBox.critical` 팝업에
+  그대로 노출). OOM 전용 경로(`format_oom_help`)는 기존 안내에 이미 batch size
+  문구가 있어 변경 없음.
+- `app/core/i18n.py` — `cfg.ckpt_every_fixed_tip` ko/en 신규.
+
+### 추가
+- `tests/test_trainer_error_tip.py` — 비-OOM RuntimeError/일반 Exception/OOM
+  3가지 경로 모두 batch size 안내 문구가 포함되는지 확인하는 회귀 테스트.
+
 ## [v1.12.0] 2026-10-28
 
 사용자 요청: 학습 진행 다이얼로그의 "멈춘 것처럼 보이는" 준비 구간(디바이스 선택
