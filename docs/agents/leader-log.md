@@ -5,7 +5,20 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-11-02] Zone 탭 레이아웃 미세조정+오버레이 토글+바깥쪽
+> **[최신, 2026-11-03] 체크포인트 주기 1 고정 + 학습 오류 시 batch size
+> 조절 안내 — commit 완료(`081f93d`), tag `zone-v1.14.0`, push는 사용자가
+> 이미 명시적으로 요청(zone+main 모두) → 바로 진행.** main 저장소
+> (`D:\segmentation model`)에서 먼저 처리한 동일 변경을 이 worktree에도
+> 독립 반영. `_ckpt_every` 스핀박스를 `setValue(1)`+`setEnabled(False)`로
+> 고정, `trainer.py`의 `TrainerWorker.run()` 비-OOM 예외 경로에
+> `_with_batch_size_tip()` 헬퍼 추가(OOM 경로는 기존 `format_oom_help()`에
+> 이미 batch size 안내가 있어 변경 없음). 범위가 작아 서브에이전트 없이
+> 리더가 직접 처리. 회귀 테스트 `tests/test_trainer_error_tip.py` 3개
+> 통과. zone `release.ini`가 `zone-v1.13.1`(미출시, 이전 Zone UI 라운드용 —
+> 이번 건과 무관)이었던 것을 `zone-v1.14.0`으로 MINOR 범프(main도
+> `v1.12.0`→`v1.13.0` 동일하게 MINOR 범프).
+
+> **[2026-11-02] Zone 탭 레이아웃 미세조정+오버레이 토글+바깥쪽
 > 클릭 선택해제(5건) — 구현 완료, 검증 진행 중.** 사용자가 스크린샷
 > 목업을 보내 5건 요청(①"현재 이미지만 추론" 버튼을 "추론 실행" 옆으로
 > ②브러시 도구모음을 오버레이 불투명도와 같은 행으로 ③신뢰도/픽셀threshold
@@ -46,8 +59,10 @@
 > 수정이라 서브에이전트 위임 없이 리더가 직접 처리(AGENTS.md 리더 규칙 2),
 > `pytest -k zone`(92 passed) + 전체 스위트(202 passed, 사전 존재 flaky 2건만
 > 그대로) 직접 실행 확인 후 커밋(`b65febd`, `7fe9952`, zone-v1.13.1 안에
-> 같은 미출시 버전으로 포함 — 태그 없음 확인 후 버전 추가 범프 안 함). push는
-> 아직 안 함(사용자 확인 후).
+> 같은 미출시 버전으로 포함 — 태그 없음 확인 후 버전 추가 범프 안 함). 사용자가
+> "push 진행해" 지시 → `git fetch` 확인(behind 없음) 후 테스트 오염 파일
+> `a.zone.json`(BUG-049 재현물) 삭제하고 `origin/feature/zone-analysis-tab`에
+> push 완료(`8dd9b49..58f8c2d`).
 
 > **[2026-10-30] 상/하부 분석 탭 대규모 변경 9건 — 구현+검증+BUG-047
 > 후속수정까지 전부 완료, push 완료.** planner(기획) → designer+implementer
@@ -1660,3 +1675,26 @@ verifier 서브에이전트를 실제 앱 구동(`py -3 main.py`) 골든패스 �
 `git stash`로 사전 존재 flaky 재확인 + 정적 리뷰까지 명시해 호출,
 진행 중 — 결과 대기. push는 검증 완료 + 사용자 확인 전까지 보류
 (AGENTS.md 원칙).
+
+## 2026-11-03 — 체크포인트 주기 1 고정 + 학습 오류 batch size 안내 (main과 동일 반영)
+
+사용자 요청: "학습 시 체크포인트 주기를 1을 고정으로 해줘. 추가로 학습 시
+문제가 생길 때 batch size 조절 문구 팝업을 띄울 수 있도록 해줘. 해당 건은
+완료 후 zone branch, main 모두 push 해줘." main 저장소(`D:\segmentation
+model`)에서 먼저 코드를 조사·수정·테스트한 뒤 동일 변경을 이 worktree에
+독립 반영. 변경 내용은 main `release-log` 참고(공용 코드라 두 브랜치
+모두 동일): `app/widgets/config_form.py`의 `_ckpt_every` 스핀박스를
+`setValue(1)`+`setEnabled(False)`로 고정, `app/core/trainer.py`의
+`TrainerWorker.run()` 비-OOM `RuntimeError`/일반 `Exception` 경로에
+`_with_batch_size_tip()` 헬퍼 추가(OOM 경로는 기존 `format_oom_help()`에
+이미 batch size 안내가 있어 변경 없음), `i18n.py`에
+`cfg.ckpt_every_fixed_tip` ko/en 신규. 범위가 작아 서브에이전트 체계
+없이 리더가 직접 처리(AGENTS.md 리더 규칙 2). 회귀 테스트
+`tests/test_trainer_error_tip.py` 3개 작성, `test_config_form_no_wheel.py`
+와 함께 실행해 5 passed 확인. 버전: zone `release.ini`가 `zone-v1.13.1`
+(미출시, 이전 Zone UI 라운드용 — 이번 건과 무관한 별개 기능)이었던 것을
+기능 추가 기준 MINOR 범프로 `zone-v1.14.0`으로 변경,
+`docs/CHANGELOG.md`에 `[zone-v1.14.0]` 추가,
+`scripts/generate_version_info.py` 검증 통과. 커밋(`081f93d`) 후 태그
+`zone-v1.14.0`. 사용자가 완료 후 zone·main 모두 push를 이미 명시적으로
+요청했으므로 바로 push 진행.
