@@ -417,6 +417,7 @@ class TrainerWorker(QThread):
                     "sample_mode":  cfg.sample_mode,
                     "model_source": self._model_source,
                     "scheduler":    cfg.scheduler,
+                    "num_classes":  self._num_classes,
                 },
             }
             prefix = f"{self._ckpt_prefix}_" if self._ckpt_prefix else ""

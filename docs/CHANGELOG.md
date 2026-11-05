@@ -5,6 +5,42 @@
 
 ---
 
+## [v1.13.2] 2026-11-05
+
+사용자 요청: "상/하부분석 탭에서 체크포인트 새로 열기하면 기존 모델을 사용하는데도
+로드 실패 — Attention U-Net 프리셋 로드 실패" 조사·수정.
+
+### 수정
+- **근본 원인**: 프리셋 모델(Attention U-Net 등)을 재구성하는 경로
+  (`app/core/model_loader.py`의 `load_from_code()`)가 생성자를 항상 `cls()`
+  (인자 없음)로 호출해, 프리셋이 공통으로 쓰는 `num_classes: int = 2` 기본값에
+  영원히 고정됐다. 학습 작업(`app/tabs/training_tab.py`
+  `_resolve_model_for_job()`, `app/widgets/auto_label_dialog.py`
+  `_start_quick_train()`)도 실제 라벨 클래스 수(`len(load_classes())`)를
+  전달하지 않아, 프로젝트가 2개보다 많은 클래스를 쓰면 모델 출력 채널이
+  실제 라벨과 어긋난 채로 학습·저장됐다. 체크포인트 재선택 시
+  (`load_model_from_ckpt()`)엔 이 어긋난 아키텍처를 다시 그대로 재구성하거나,
+  이후 실제 추론에서 `load_state_dict(strict=False)`가 head 레이어
+  shape mismatch로 예외를 던져 "로드 실패"로 보였다.
+- `load_from_code(code, num_classes=...)` — num_classes가 주어지면
+  `cls(num_classes=...)`로 생성자에 전달(생성자가 받지 않는 커스텀 코드는
+  `TypeError`를 잡아 인자 없이 재시도, 하위 호환 유지).
+- `trainer.py` 체크포인트의 `config`에 `num_classes` 저장 — 재오픈 시 "지금"의
+  프로젝트 클래스 수가 아니라 "그 체크포인트가 실제로 학습된" 클래스 수를
+  쓰도록 해, 학습 이후 클래스 목록이 바뀌어도 어긋나지 않게 함.
+  `num_classes`가 없는 구 체크포인트는 현재 프로젝트 클래스 수로 추정(완전한
+  보장은 아니지만 하드코딩된 2보다 낫음).
+- `load_model_from_ckpt()`가 실패를 조용히 삼키지 않고 `log.error`/
+  `log.exception`으로 실제 원인을 남기도록 — 재발 시 로그로 바로 원인 파악
+  가능.
+- `_resolve_model_for_job()`/`_start_quick_train()`에 실제 num_classes 전달.
+
+### 추가
+- `tests/test_preset_num_classes.py` — 프리셋 생성자에 num_classes가
+  전달되는지, 생성자가 그 인자를 안 받는 커스텀 코드는 안전하게 폴백하는지,
+  체크포인트의 저장된/누락된 num_classes 각각에 대해 `load_model_from_ckpt`가
+  올바른 출력 채널 수로 재구성하는지 5개 테스트로 확인.
+
 ## [v1.13.1] 2026-11-03
 
 사용자 요청: "버그 수정 요청" — 직전 라운드(`v1.13.0`) 작업 중 발견해 보고한

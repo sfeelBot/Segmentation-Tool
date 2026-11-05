@@ -223,14 +223,16 @@ class AutoLabelDialog(QDialog):
                 f"라벨링 탭에서 몇 장 더 어노테이션 해주세요.")
             return
 
-        # 모델 인스턴스화 (프리셋에서 fresh)
+        # 모델 인스턴스화 (프리셋에서 fresh) — 실제 라벨 클래스 수를 생성자에
+        # 전달해야 출력 채널이 프리셋 기본값(2)으로 고정되지 않는다.
+        num_classes = len(load_classes())
         src = self._quick_model.currentData()
         key = src[len("preset:"):] if src.startswith("preset:") else src
         code = load_preset_code(key)
         if not code:
             QMessageBox.critical(self, "프리셋 오류", f"'{key}' 프리셋을 찾을 수 없습니다.")
             return
-        result = load_from_code(code)
+        result = load_from_code(code, num_classes=num_classes)
         if not result.ok:
             QMessageBox.critical(self, "모델 로드 실패", result.error or "알 수 없는 오류")
             return
@@ -253,7 +255,6 @@ class AutoLabelDialog(QDialog):
             num_workers     = 0,
         )
 
-        num_classes = len(load_classes())
         self._progress.setMaximum(QUICK_EPOCHS)
         self._progress.setValue(0)
         self._lbl_status.setText(
