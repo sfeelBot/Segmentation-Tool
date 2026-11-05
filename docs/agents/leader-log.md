@@ -5,7 +5,44 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-11-03 (11)] `test_stop_mid_second_epoch_...` 실패 버그 수정 —
+> **[최신, 2026-11-05 (12)] 프리셋 모델 num_classes 미전달 버그 수정 —
+> commit 완료(`1101e73`), tag `v1.13.2`, push는 사용자 확인 필요.**
+> 사용자 보고: "상/하부분석(Zone) 탭에서 체크포인트 새로 열기하면 기존
+> 모델을 사용하는데도 'Attention U-Net 프리셋 로드 실패'." 리더가 직접
+> 조사(서브에이전트 미호출 — 원인 범위가 명확해지기 전까진 위임이 과함).
+> 재현 시도: 합성 체크포인트·실제 `trainer._train()` 산출 체크포인트
+> (onecycle 스케줄러 포함) 모두로 `load_model_from_ckpt()`를 직접 호출해봤지만
+> 정상 재구성됨 — 사용자의 정확한 파일 없이는 100% 동일 재현 실패. 대신
+> 코드 추적으로 같은 영역의 확실한 구조적 결함을 발견: `model_loader.py`의
+> `load_from_code()`가 프리셋 클래스를 항상 `cls()`(인자 없음)로 생성해
+> 모든 프리셋의 `num_classes: int = 2` 기본값에 영원히 고정됨 —
+> `training_tab.py`(`_resolve_model_for_job`)·`auto_label_dialog.py`
+> (`_start_quick_train`) 둘 다 실제 라벨 클래스 수(`len(load_classes())`)를
+> 계산은 하면서도 모델 생성자에는 전달하지 않았음. 클래스가 2개보다 많은
+> 프로젝트라면: 학습 시 모델 출력 채널이 실제 라벨과 어긋난 채 저장되고,
+> 재오픈 시 그 어긋난 아키텍처가 다시 재구성되거나(겉보기엔 성공) 실제
+> 추론에서 `load_state_dict(strict=False)`가 head shape mismatch로 터져
+> "로드 실패"로 보일 수 있음 — 사용자가 본 정확한 증상과 정합적인 근본
+> 원인으로 판단, 확정 재현은 못 했지만 고치지 않고 넘기면 재발이 확실한
+> 결함이라 수정. 수정: (1) `load_from_code(code, num_classes=...)` —
+> 주어지면 `cls(num_classes=...)`로 생성, 생성자가 안 받으면(커스텀 코드)
+> `TypeError`를 잡아 인자 없이 폴백. (2) `trainer.py` 체크포인트 `config`에
+> `num_classes` 저장 — 재오픈 시 "지금" 프로젝트 클래스 수가 아니라 "그
+> 체크포인트가 학습된" 클래스 수를 써서, 학습 후 클래스 목록이 바뀌어도
+> 안 어긋나게. 없는 구 체크포인트는 현재 클래스 수로 추정(폴백). (3)
+> `load_model_from_ckpt()`가 예외를 조용히 삼키지 않고 `log.error`/
+> `log.exception`으로 실제 원인 기록 — 재발 시 로그로 바로 진단 가능하게.
+> (4) 학습 경로 2곳에 실제 num_classes 전달. 회귀 테스트
+> `tests/test_preset_num_classes.py` 5개 작성·통과(프리셋 num_classes
+> 전달/기본값 유지/커스텀 코드 폴백/체크포인트 저장값 사용/구 체크포인트
+> 폴백). 전체 스위트 105 passed(main). 공용 코드(`app/core/`,
+> `app/widgets/auto_label_dialog.py`)라 main에서 먼저 고친 뒤 zone
+> worktree에도 동일 수정 반영(zone의 `_resolve_model_for_job` 호출 시그니처도
+> 동일하게 `num_classes` 인자 추가). zone 전체 스위트 201 passed(기존
+> BUG-049류 flaky 2건은 제외하고 별도 확인 — 격리 실행 시 11 passed, 이번
+> 변경과 무관). 버전: 호환 버그 수정이라 PATCH, main `v1.13.1`→`v1.13.2`.
+
+> **[2026-11-03 (11)] `test_stop_mid_second_epoch_...` 실패 버그 수정 —
 > commit 완료(`5588226`), tag `v1.13.1`, push는 사용자 확인 필요.**
 > 직전 (10)번 라운드에서 리더가 발견해 보고한 기존 테스트 실패를 사용자가
 > "버그 수정 요청"으로 승인. 원인 조사: `app/core/trainer.py` 자체는
