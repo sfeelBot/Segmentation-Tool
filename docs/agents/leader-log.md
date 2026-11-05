@@ -5,7 +5,27 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-11-03 (2)] `test_stop_mid_second_epoch_...` 실패 버그 수정 —
+> **[최신, 2026-11-05] 프리셋 모델 num_classes 미전달 버그 수정 — commit
+> 완료(`77bac9b`), tag `zone-v1.14.2`, push는 사용자 확인 필요.**
+> 사용자 보고: "상/하부분석 탭에서 체크포인트 새로 열기하면 기존 모델을
+> 사용하는데도 'Attention U-Net 프리셋 로드 실패'." main에서 먼저 원인
+> 조사·수정 후 동일 변경을 이 worktree에 반영(상세 분석은 main
+> leader-log 2026-11-05 (12) 참고). 핵심: `load_from_code()`가 프리셋을
+> 항상 `cls()`(인자 없음)로 생성해 `num_classes` 기본값 2에 고정 —
+> zone의 `FIXED_MODEL_SOURCE`(Attention U-Net 고정) 학습 경로도 실제 라벨
+> 클래스 수를 생성자에 전달하지 않아, 상/하부처럼 2개보다 많은 클래스를
+> 쓰는 프로젝트는 모델 출력 채널이 라벨과 어긋난 채 저장되고 재오픈/추론
+> 시 shape mismatch로 "로드 실패"처럼 보일 수 있었음. 리더가 합성·실제
+> 체크포인트로 재현을 시도했으나 100% 동일 재현은 못 했고(대신 구조적
+> 결함을 코드 추적으로 확정), 수정하지 않으면 재발이 확실해 바로 수정.
+> 수정 내용은 main과 동일: `load_from_code(num_classes=...)`,
+> `trainer.py` 체크포인트에 `num_classes` 저장, `load_model_from_ckpt()`
+> 예외 로깅, 학습 경로 2곳에 num_classes 전달. 회귀 테스트
+> `tests/test_preset_num_classes.py` 5개 통과, zone 전체 스위트 201
+> passed(기존 flaky 2건 제외, 격리 실행 시 11 passed로 무관 확인). 버전:
+> 호환 버그 수정이라 PATCH, `zone-v1.14.1`→`zone-v1.14.2`.
+
+> **[2026-11-03 (2)] `test_stop_mid_second_epoch_...` 실패 버그 수정 —
 > commit 완료(`806c045`), tag `zone-v1.14.1`, push는 사용자 확인 필요.**
 > 직전 라운드에서 리더가 발견해 보고한 기존 테스트 실패를 사용자가 "버그
 > 수정 요청"으로 승인. main에서 먼저 원인 조사·수정한 뒤 동일 변경을 이
