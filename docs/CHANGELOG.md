@@ -5,6 +5,30 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.14.2] 2026-11-05
+
+사용자 요청: "상/하부분석 탭에서 체크포인트 새로 열기하면 기존 모델을 사용하는데도
+로드 실패 — Attention U-Net 프리셋 로드 실패" 조사·수정 (main `v1.13.2`와
+동일 내용, zone 브랜치에 독립 반영).
+
+### 수정
+- **근본 원인**: `app/core/model_loader.py`의 `load_from_code()`가 프리셋
+  클래스를 항상 `cls()`(인자 없음)로 생성해, 프리셋 공통 기본값
+  `num_classes: int = 2`에 영원히 고정됐다. zone의 학습 경로
+  (`training_tab.py` `_resolve_model_for_job()` — Attention U-Net으로
+  고정된 `FIXED_MODEL_SOURCE` 경로 포함, `auto_label_dialog.py`
+  `_start_quick_train()`)도 실제 라벨 클래스 수를 생성자에 전달하지 않아,
+  프로젝트(상/하부 등 2개보다 많은 클래스)에서는 모델 출력 채널이 실제
+  라벨과 어긋난 채 학습·저장되고, 재오픈/추론 시 shape mismatch로
+  "로드 실패"처럼 보일 수 있었음.
+- `load_from_code(code, num_classes=...)`, `trainer.py` 체크포인트
+  `config`에 `num_classes` 저장, `load_model_from_ckpt()` 예외를
+  `log.error`/`log.exception`으로 기록, 학습 경로 2곳에 실제 num_classes
+  전달 — main과 동일.
+
+### 추가
+- `tests/test_preset_num_classes.py` — main과 동일한 5개 회귀 테스트.
+
 ## [zone-v1.14.1] 2026-11-03
 
 사용자 요청: "버그 수정 요청" — `test_stop_mid_second_epoch_...` 실패 조사·수정

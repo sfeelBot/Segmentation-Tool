@@ -55,8 +55,14 @@ class LoadResult:
     error: str = ""
 
 
-def load_from_code(code: str) -> LoadResult:
-    """검증 후 모델을 인스턴스화한다."""
+def load_from_code(code: str, num_classes: int | None = None) -> LoadResult:
+    """검증 후 모델을 인스턴스화한다.
+
+    num_classes 가 주어지면 `cls(num_classes=...)`로 생성자에 실제 클래스 수를
+    전달한다 — 프리셋 모델은 모두 `num_classes: int = 2` 기본값을 쓰므로, 이걸
+    넘기지 않으면 프로젝트가 2개보다 많은 클래스를 쓸 때 출력 채널이 항상 2로
+    고정돼 학습/재구성 결과가 실제 라벨과 어긋난다. 생성자가 그 인자를 받지
+    않는(커스텀 사용자 코드 등) 경우는 인자 없이 생성."""
     vr: ValidationResult = validate(code)
     if not vr.ok:
         return LoadResult(ok=False, error="\n".join(vr.errors))
@@ -83,7 +89,13 @@ def load_from_code(code: str) -> LoadResult:
         return LoadResult(ok=False, error="nn.Module 서브클래스를 찾을 수 없습니다.")
 
     try:
-        model: nn.Module = cls()
+        if num_classes is not None:
+            try:
+                model: nn.Module = cls(num_classes=num_classes)
+            except TypeError:
+                model = cls()
+        else:
+            model = cls()
     except Exception as e:
         return LoadResult(
             ok=False,

@@ -494,8 +494,10 @@ class TrainingTab(QWidget):
             return
 
         job = self._jobs[next_idx]
+        classes = load_classes()
+        num_classes = len(classes)
         try:
-            model = self._resolve_model_for_job(job)
+            model = self._resolve_model_for_job(job, num_classes)
         except Exception as e:
             log.error(f"'{job.name}' 모델 로드 실패: {e}")
             job.status = "error"
@@ -510,8 +512,6 @@ class TrainingTab(QWidget):
         self._btn_stop.setEnabled(True)
         job.epoch_times = []
         job.epochs_done = 0
-        classes = load_classes()
-        num_classes = len(classes)
 
         self._chart.reset()
         self._metrics_table.setRowCount(0)
@@ -777,8 +777,13 @@ class TrainingTab(QWidget):
             return win._model_tab.loaded_model
         return None
 
-    def _resolve_model_for_job(self, job):
-        """job.model_source 를 보고 실제 nn.Module 인스턴스를 준비."""
+    def _resolve_model_for_job(self, job, num_classes: int):
+        """job.model_source 를 보고 실제 nn.Module 인스턴스를 준비.
+
+        num_classes를 프리셋 생성자에 전달 — 넘기지 않으면 프리셋 기본값(2)로
+        고정돼, 클래스가 2개보다 많은 프로젝트는 출력 채널 수가 실제 라벨과
+        어긋난 모델로 학습하게 된다(체크포인트 재구성 시 shape mismatch로
+        이어지는 근본 원인)."""
         src = job.model_source
         if src == "loaded":
             m = self._get_model()
@@ -792,7 +797,7 @@ class TrainingTab(QWidget):
             code = load_preset_code(key)
             if not code:
                 raise RuntimeError(f"프리셋 '{key}' 코드를 찾을 수 없습니다.")
-            result = load_from_code(code)
+            result = load_from_code(code, num_classes=num_classes)
             if not result.ok:
                 raise RuntimeError(f"프리셋 '{info.title if info else key}' 로드 실패: {result.error}")
             log.info(

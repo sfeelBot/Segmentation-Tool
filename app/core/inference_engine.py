@@ -14,6 +14,9 @@ from PyQt6.QtGui import QImage
 from app.core.dataset import IMAGENET_MEAN, IMAGENET_STD
 from app.core.annotation_store import ClassDef, load_classes
 from app.core import project as _project
+from app.core.logger import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -449,26 +452,45 @@ def load_checkpoint_meta(path: Path) -> CheckpointMeta:
 
 def load_model_from_ckpt(ckpt_path: Path) -> "nn.Module | None":
     """체크포인트 메타에서 model_source 를 읽어 자동으로 모델 인스턴스화.
-    프리셋 모델이면 fresh weights 로 반환, 알 수 없으면 None."""
+    프리셋 모델이면 fresh weights 로 반환, 알 수 없으면 None.
+
+    체크포인트 자체에 저장된 num_classes(2026-11-05 이후 학습분)를 생성자에
+    전달해 출력 채널 수를 실제 학습 때와 맞춘다 — 넘기지 않으면 프리셋 기본값
+    (2)로 고정돼, 클래스가 2개보다 많은 프로젝트에서는 나중에 실제 추론 시
+    `load_state_dict`가 head 레이어 shape mismatch로 터진다. num_classes가
+    없는(이 수정 이전에 저장된) 구 체크포인트는 현재 프로젝트의 라벨 클래스
+    수로 최선을 다해 추정한다."""
     try:
         ckpt = torch.load(str(ckpt_path), map_location="cpu")
-        src  = ckpt.get("config", {}).get("model_source", "")
+        cfg  = ckpt.get("config", {})
+        src  = cfg.get("model_source", "")
     except Exception:
+        log.exception(f"체크포인트 로드 실패: {ckpt_path}")
         return None
 
     if not src.startswith("preset:"):
         return None
 
     key = src[len("preset:"):]
+    num_classes = cfg.get("num_classes")
+    if num_classes is None:
+        try:
+            num_classes = len(load_classes())
+        except Exception:
+            num_classes = None
     try:
         from app.model_presets import load_preset_code
         from app.core.model_loader import load_from_code
         code = load_preset_code(key)
         if not code:
+            log.error(f"프리셋 '{key}' 코드 파일을 찾을 수 없음 — {ckpt_path}")
             return None
-        result = load_from_code(code)
+        result = load_from_code(code, num_classes=num_classes)
+        if not result.ok:
+            log.error(f"프리셋 '{key}' 재구성 실패 — {ckpt_path}: {result.error}")
         return result.model if result.ok else None
     except Exception:
+        log.exception(f"프리셋 '{key}' 재구성 중 예외 — {ckpt_path}")
         return None
 
 
