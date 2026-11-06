@@ -5,7 +5,33 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-11-05 (12)] 프리셋 모델 num_classes 미전달 버그 수정 —
+> **[최신, 2026-11-06 (13)] GitHub issue #41("학습 취소 에러 발생") 수정 —
+> commit 완료(`a92b37f`), tag `v1.13.3`, push는 사용자 확인 필요.**
+> 사용자 요청: "issue #41 확인해줘." `gh issue view 41`로 확인 — zone 에디션
+> 설치본(`SegmentationModelUIZone`)에서 학습 취소 시
+> `app\widgets\icons.py:24`(`pixmap()`)가 `status_square.svg`를
+> `read_text()`로 읽다 `FileNotFoundError`로 죽어 진행 다이얼로그가
+> 크래시. 코드·git 기록 추적: 해당 아이콘 파일과 그걸 참조하는
+> `training_progress_dialog.py`의 `STATUS_ICON_NAME["stopped"]` 매핑은
+> 같은 커밋(`2ad0165`, 2026-08-20)에서 함께 추가됐고, 그 커밋은
+> `zone-v1.12.0`/`zone-v1.14.0` 모두의 조상이며 `build.spec`도 처음부터
+> `app/resources/icons` 전체를 datas로 패키징함 — 저장소·빌드 설정 자체의
+> 로직 결함은 아니라 사용자 설치 환경(백신 격리, 패키징/설치 중 파일 누락
+> 등) 쪽 문제로 추정, 정확한 원인은 사용자 PC 없이는 확정 불가. 리더가
+> 직접 처리(범위가 작아 서브에이전트 미호출, AGENTS.md 리더 규칙 2) —
+> 근본 수정 방향: 어떤 이유로든 아이콘 리소스가 없어도 공용 로더
+> (`icons.pixmap()`/`icon()`)가 크래시 대신 빈 투명 아이콘 + 경고 로그로
+> 대체하도록 방어 — `icon()`/`pixmap()`은 앱 전역 단일 진입점이라 이
+> 수정으로 어떤 아이콘이 누락되든 동일하게 보호됨(symptom 패치가 아니라
+> shared 함수 수정). 회귀 테스트 `tests/test_icons.py` 2개 추가·통과.
+> main 전체 스위트 107 passed(신규 2건 포함). zone도 공용 코드라 동일
+> 반영, zone 전체 스위트 213 passed 확인 중 `test_zone_step_indicator.py`
+> 1건 실패 재현 — 기존에 문서화된 BUG-049류 테스트 오염(`a.zone.json`
+> 잔존 파일, 이번 수정과 무관)으로 확인, 격리 실행 시 정상. 버전: 호환
+> 버그 수정이라 PATCH, main `v1.13.2`→`v1.13.3`(이미 태그된 버전이라 새
+> 버전 필요), zone `zone-v1.14.2`→`zone-v1.14.3`.
+
+> **[2026-11-05 (12)] 프리셋 모델 num_classes 미전달 버그 수정 —
 > commit 완료(`1101e73`), tag `v1.13.2`, push는 사용자 확인 필요.**
 > 사용자 보고: "상/하부분석(Zone) 탭에서 체크포인트 새로 열기하면 기존
 > 모델을 사용하는데도 'Attention U-Net 프리셋 로드 실패'." 리더가 직접
