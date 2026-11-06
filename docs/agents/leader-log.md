@@ -5,7 +5,25 @@
 
 ## 현재 상황 요약
 
-> **[최신, 2026-11-05] 프리셋 모델 num_classes 미전달 버그 수정 — commit
+> **[최신, 2026-11-06] GitHub issue #41("학습 취소 에러 발생") 수정 — commit
+> 완료(`aa323cc`), tag `zone-v1.14.3`, push는 사용자 확인 필요.**
+> 사용자 요청: "issue #41 확인해줘." — zone 에디션 설치본
+> (`SegmentationModelUIZone`)에서 학습 취소 시 `app\widgets\icons.py`의
+> `pixmap()`이 `status_square.svg`를 못 읽어 `FileNotFoundError`로 죽어
+> 진행 다이얼로그가 크래시(상세 분석은 main leader-log 2026-11-06 (13)
+> 참고 — 공용 코드라 main에서 먼저 조사·수정 후 이 worktree에 동일 반영).
+> 저장소·`build.spec` 자체 로직 결함은 아니며(해당 아이콘 파일·참조는
+> `zone-v1.12.0` 이전부터 같은 커밋에 함께 존재, datas 패키징 설정도
+> 처음부터 정상) 사용자 설치 환경 쪽 문제로 추정 — 근본 수정은 "어떤
+> 이유로든 아이콘이 없어도" 공용 로더가 크래시 대신 빈 아이콘 + 경고
+> 로그로 대체하도록 방어. 회귀 테스트 `tests/test_icons.py` 2개 추가,
+> zone 전체 스위트 215 passed(신규 2건 포함) 확인 —
+> `test_zone_step_indicator.py` 1건은 기존 BUG-049류 테스트 오염
+> (`a.zone.json` 잔존 파일, 이번 수정과 무관, 격리 실행 시 정상)으로 별도
+> 확인. 버전: 호환 버그 수정이라 PATCH, `zone-v1.14.2`→`zone-v1.14.3`
+> (이미 태그된 버전이라 새 버전 필요).
+
+> **[2026-11-05] 프리셋 모델 num_classes 미전달 버그 수정 — commit
 > 완료(`77bac9b`), tag `zone-v1.14.2`, push는 사용자 확인 필요.**
 > 사용자 보고: "상/하부분석 탭에서 체크포인트 새로 열기하면 기존 모델을
 > 사용하는데도 'Attention U-Net 프리셋 로드 실패'." main에서 먼저 원인
