@@ -550,7 +550,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "r.no_cell_msg":             "먼저 좌측에서 셀을 선택하세요.",
         "r.detecting_progress_label": "검출 중...",
         "r.no_images_to_detect_msg": "검출할 이미지가 없습니다.",
-        "r.no_roi_images_msg":       "ROI가 지정된 이미지가 없습니다.",
         "r.untested_badge":          "미검사  (R={ratio})",
         "r.cell_title_selected":     "현재 선택된 셀 — {cell_id}",
 
@@ -1144,7 +1143,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "r.no_cell_msg":             "First select a cell on the left.",
         "r.detecting_progress_label": "Detecting...",
         "r.no_images_to_detect_msg": "There are no images to detect.",
-        "r.no_roi_images_msg":       "No images have an ROI specified.",
         "r.untested_badge":          "Untested  (R={ratio})",
         "r.cell_title_selected":     "Currently Selected Cell — {cell_id}",
 

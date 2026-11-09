@@ -48,7 +48,7 @@ class RSettingsPanel(QDialog):
         layout.addLayout(roi_row)
 
         self._chk_auto_detect = QCheckBox(t("r_settings.auto_detect_checkbox"))
-        self._chk_auto_detect.setChecked(True)
+        self._chk_auto_detect.setChecked(False)
         self._chk_auto_detect.toggled.connect(self._on_auto_detect_toggled)
         layout.addWidget(self._chk_auto_detect)
 
@@ -88,6 +88,10 @@ class RSettingsPanel(QDialog):
         btn_close = QPushButton(t("common.close"))
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
+
+        # setChecked(False) 위 초기화는 기본값(unchecked)과 같아 toggled가 발화하지
+        # 않는다 — threshold 슬라이더 enabled 상태를 체크박스와 명시적으로 동기화.
+        self._on_auto_detect_toggled(self._chk_auto_detect.isChecked())
 
     def _on_threshold_changed(self, value: int) -> None:
         self._lbl_threshold.setText(str(value))
@@ -165,13 +169,14 @@ if __name__ == "__main__":
     panel._btn_roi_override.click()
     assert roi_override_clicks == [1]
 
-    assert panel.auto_detect_enabled() is True, "기본값은 켜짐이어야 함(하위호환)"
+    assert panel.auto_detect_enabled() is False, "기본값은 꺼짐이어야 함(브러시 전용 워크플로 기본, 2026-11-09)"
+    assert not panel._threshold_slider.isEnabled(), "자동검출 기본 꺼짐 -> threshold 슬라이더도 처음부터 비활성"
     fired.clear()
-    panel.set_auto_detect_enabled(False)
-    assert panel.auto_detect_enabled() is False
-    assert not panel._threshold_slider.isEnabled(), "자동검출 꺼지면 threshold 슬라이더도 비활성화"
-    assert fired == [1], "체크박스 toggled는 디바운스 없이 즉시 settings_changed를 발화해야 함"
     panel.set_auto_detect_enabled(True)
-    assert panel._threshold_slider.isEnabled()
+    assert panel.auto_detect_enabled() is True
+    assert panel._threshold_slider.isEnabled(), "자동검출 켜지면 threshold 슬라이더 활성화"
+    assert fired == [1], "체크박스 toggled는 디바운스 없이 즉시 settings_changed를 발화해야 함"
+    panel.set_auto_detect_enabled(False)
+    assert not panel._threshold_slider.isEnabled()
 
     print("r_settings_panel self-check OK")

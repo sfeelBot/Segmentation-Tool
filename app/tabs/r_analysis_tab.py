@@ -82,7 +82,7 @@ def _default_session() -> dict:
     return {
         "version": 1, "cells": {}, "global_roi": None,
         "threshold": 128, "denominator": 0.0, "spec_lower": 0.0, "spec_upper": 0.0,
-        "auto_detect": True,
+        "auto_detect": False,
     }
 
 
@@ -98,10 +98,16 @@ class _RDetectWorker(QThread):
     image_done = pyqtSignal(str, int)     # path, area
     progress = pyqtSignal(int, int)        # done, total
 
-    def __init__(self, jobs: list[tuple[Path, tuple[int, int, int, int], list]], threshold: int) -> None:
+    def __init__(
+        self,
+        jobs: list[tuple[Path, tuple[int, int, int, int] | None, list]],
+        threshold: int,
+        auto_detect: bool,
+    ) -> None:
         super().__init__()
         self._jobs = jobs
         self._threshold = threshold
+        self._auto_detect = auto_detect
 
     def run(self) -> None:
         total = len(self._jobs)
@@ -111,7 +117,12 @@ class _RDetectWorker(QThread):
             try:
                 img = cv2.imread(str(path))
                 if img is not None:
-                    mask = detect_contour_mask(img, roi, self._threshold)
+                    # _compute_detected_mask()와 동일한 분기 — 자동검출 꺼짐 또는
+                    # ROI 미지정이면 빈 마스크로 시작해 브러시 스트로크만으로 면적을 낸다.
+                    if self._auto_detect and roi is not None:
+                        mask = detect_contour_mask(img, roi, self._threshold)
+                    else:
+                        mask = np.zeros(img.shape[:2], dtype=bool)
                     if manual_strokes:
                         mask = apply_manual_strokes(mask, manual_strokes)
                     self.image_done.emit(str(path), contour_area(mask))
@@ -443,14 +454,30 @@ class RAnalysisTab(QWidget):
         # 디자인 스펙 v4: 각 클러스터에 캔버스 폭 비례 max-width를 둬, 캔버스가 좁아져도
         # 세 클러스터의 영역이 서로 겹치지 않게 한다(BUG-044). 내부 버튼이 잘리는 건
         # 허용하되, 클러스터끼리 겹쳐 클릭이 막히는 상태는 만들지 않는다.
+        #
+        # run_cluster(현재 이미지 검출/일괄 검출/전체 셀 분석 — 핵심 실행 버튼)는
+        # 남는 공간만 받다 보니 창이 좁아지면 폭 0까지 수축해 클릭이 막혔다(BUG-050).
+        # edit/nav보다 run을 우선해 최소폭(sizeHint)을 보장하고, 공간이 부족하면
+        # edit/nav를 42%/46% 비율보다 더 줄여서 양보시킨다.
+        run_min = self._run_cluster.sizeHint().width()
+
         self._edit_cluster.setMaximumWidth(max(1, int(w * 0.42)))
         self._nav_cluster.setMaximumWidth(max(1, int(w * 0.46)))
         self._edit_cluster.adjustSize()
         self._nav_cluster.adjustSize()
 
+        side_budget = max(1, w - run_min - 4 * margin)
+        if self._edit_cluster.width() + self._nav_cluster.width() > side_budget:
+            edit_share = max(1, int(side_budget * 0.42 / 0.88))
+            nav_share = max(1, side_budget - edit_share)
+            self._edit_cluster.setMaximumWidth(edit_share)
+            self._nav_cluster.setMaximumWidth(nav_share)
+            self._edit_cluster.adjustSize()
+            self._nav_cluster.adjustSize()
+
         edit_right = margin + self._edit_cluster.width()
         nav_left = w - margin - self._nav_cluster.width()
-        available_for_run = max(1, nav_left - margin - edit_right - margin)
+        available_for_run = max(run_min, nav_left - margin - edit_right - margin)
         self._run_cluster.setMaximumWidth(available_for_run)
         self._run_cluster.adjustSize()
 
@@ -544,7 +571,7 @@ class RAnalysisTab(QWidget):
         self._settings_dialog.set_denominator(self._session.get("denominator", 0.0))
         self._settings_dialog.set_spec_lower(self._session.get("spec_lower", 0.0))
         self._settings_dialog.set_spec_upper(self._session.get("spec_upper", 0.0))
-        self._settings_dialog.set_auto_detect_enabled(self._session.get("auto_detect", True))
+        self._settings_dialog.set_auto_detect_enabled(self._session.get("auto_detect", False))
 
         self._current_cell = None
         self._current_image_path = None
@@ -831,19 +858,16 @@ class RAnalysisTab(QWidget):
         if not paths:
             QMessageBox.information(self, t("infer.no_image_title"), t("r.no_images_to_detect_msg"))
             return
-        jobs = []
-        for p in paths:
-            roi = self._effective_roi(p)
-            if roi is not None:
-                jobs.append((p, roi, self._image_data(p).get("manual_strokes", [])))
-        if not jobs:
-            QMessageBox.information(self, t("r.no_roi_title"), t("r.no_roi_images_msg"))
-            return
+        # ROI 없는 이미지도 job에 포함 — roi=None이면 워커가 빈 마스크 + 브러시만으로
+        # 면적을 계산한다(자동검출 꺼짐/ROI 미지정 워크플로도 일괄검출 가능해야 함).
+        jobs = [(p, self._effective_roi(p), self._image_data(p).get("manual_strokes", [])) for p in paths]
 
         self._set_detect_buttons_enabled(False)
         self._progress = QProgressDialog(t("r.detecting_progress_label"), t("common.cancel"), 0, len(jobs), self)
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self._detect_worker = _RDetectWorker(jobs, self._settings_dialog.threshold())
+        self._detect_worker = _RDetectWorker(
+            jobs, self._settings_dialog.threshold(), self._settings_dialog.auto_detect_enabled()
+        )
         self._detect_worker.image_done.connect(self._on_detect_image_done)
         self._detect_worker.progress.connect(lambda done, _total: self._progress.setValue(done))
         self._progress.canceled.connect(self._detect_worker.requestInterruption)
@@ -857,10 +881,11 @@ class RAnalysisTab(QWidget):
         self._btn_detect_all.setEnabled(enabled)
 
     def _sync_detect_buttons_enabled(self) -> None:
-        """자동검출이 꺼지면 "검출" 버튼 3개는 의미가 없으므로 비활성화한다 — 배치
-        검출이 실행 중일 때의 임시 비활성화(_set_detect_buttons_enabled)와는 별개로,
-        설정 변경·세션 로드 시 이 메서드로 "정상 상태"의 enabled를 동기화한다."""
-        self._set_detect_buttons_enabled(self._settings_dialog.auto_detect_enabled())
+        """배치 검출이 실행 중일 때의 임시 비활성화(_set_detect_buttons_enabled)와는
+        별개로, 설정 변경·세션 로드 시 이 메서드로 "정상 상태"의 enabled를 동기화한다.
+        자동검출이 꺼져 있어도 "검출" 버튼은 유효하다 — manual_strokes(브러시)만으로
+        면적을 재계산하는 동작이기 때문(자동검출 OFF가 기본값인 워크플로 지원)."""
+        self._set_detect_buttons_enabled(True)
 
     def _on_detect_image_done(self, path_str: str, area: int) -> None:
         self._image_data_map.setdefault(path_str, _default_image_data())["area"] = area
@@ -1034,15 +1059,39 @@ if __name__ == "__main__":
     mask_on_no_roi = tab._compute_detected_mask(dummy_path, dummy_img)
     assert not mask_on_no_roi.any(), "ROI 없으면 자동검출 ON이어도 검출 마스크는 비어야 함(기존 동작 유지)"
 
-    # 자동검출 체크박스를 끄면 검출 버튼 3개가 비활성화된다.
-    assert tab._btn_detect_current.isEnabled() is True   # 아직 다시 켜진 상태
+    # 검출 버튼 3개는 자동검출 on/off와 무관하게 항상 활성 — OFF일 때도 브러시
+    # 기반 재계산이라는 유효한 동작이라 비활성화하면 안 됨(2026-11-09 요구사항).
     tab._settings_dialog.set_auto_detect_enabled(False)
     tab._on_settings_changed()
-    assert tab._btn_detect_current.isEnabled() is False
-    assert tab._btn_detect_cell.isEnabled() is False
-    assert tab._btn_detect_all.isEnabled() is False
+    assert tab._btn_detect_current.isEnabled() is True
+    assert tab._btn_detect_cell.isEnabled() is True
+    assert tab._btn_detect_all.isEnabled() is True
     tab._settings_dialog.set_auto_detect_enabled(True)
     tab._on_settings_changed()
     assert tab._btn_detect_current.isEnabled() is True
+
+    # 일괄검출(_RDetectWorker)도 ROI 없이 브러시 스트로크만으로 면적을 낸다 —
+    # roi=None job을 실제로 통과시켜 batch 경로가 단일 이미지 경로와 동일하게
+    # 동작하는지 확인(요구사항: 자동검출 꺼짐이어도 일괄검출 가능해야 함).
+    worker = _RDetectWorker(
+        jobs=[(dummy_path, None, [(True, [(50.0, 50.0, 10.0)])])],
+        threshold=128, auto_detect=False,
+    )
+    batch_results: list[tuple[str, int]] = []
+    worker.image_done.connect(lambda path, area: batch_results.append((path, area)))
+    cv2.imwrite(str(dummy_path), dummy_img)
+    try:
+        worker.run()   # QThread이지만 직접 run() 호출 — 이벤트 루프 없이 동기 검증
+    finally:
+        dummy_path.unlink(missing_ok=True)
+    assert len(batch_results) == 1 and batch_results[0][1] > 0, \
+        "ROI 없는 job도 브러시 스트로크로 면적 > 0이 나와야 함"
+
+    # 캔버스가 좁아져도 실행 버튼 클러스터가 폭 0으로 수축해 클릭 불가능해지면 안 됨(BUG-050).
+    tab._canvas.resize(800, 600)
+    tab._position_overlays()
+    run_min_check = tab._run_cluster.sizeHint().width()
+    assert tab._run_cluster.width() >= run_min_check, "실행 버튼 클러스터가 최소폭보다 작아지면 안 됨"
+    assert tab._btn_detect_current.width() > 0, "좁은 창에서도 실행 버튼이 클릭 가능한 폭을 가져야 함(BUG-050)"
 
     print("r_analysis_tab self-check OK")
