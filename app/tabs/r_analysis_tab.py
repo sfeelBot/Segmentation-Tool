@@ -251,6 +251,18 @@ class RAnalysisTab(QWidget):
         self._build_run_cluster()
         self._build_nav_cluster()
         self._build_opacity_cluster()
+        # 세 클러스터(편집도구/실행버튼/탐색)의 최소폭 합만큼은 캔버스가 항상 확보하도록
+        # 강제한다 — _position_overlays()의 42%/46%/잔여폭 분배는 이 폭 안에서만 동작을
+        # 보장하고, 그보다 좁아지면 클러스터가 1px까지 눌려 사실상 클릭 불가능해진다
+        # (BUG-050 재점검, 2026-11-09 — Zone 탭 BUG-048과 동일 패턴: 캔버스 자체에
+        # setMinimumWidth를 둬 애초에 그 구간에 들어가지 못하게 함).
+        min_canvas_w = (
+            self._edit_cluster.minimumSizeHint().width()
+            + self._run_cluster.minimumSizeHint().width()
+            + self._nav_cluster.minimumSizeHint().width()
+            + 4 * 8
+        )
+        self._canvas.setMinimumWidth(min_canvas_w)
         QTimer.singleShot(0, self._position_overlays)
         return center
 
@@ -486,7 +498,15 @@ class RAnalysisTab(QWidget):
         run_x = min(run_x, nav_left - margin - self._run_cluster.width())
         run_x = max(run_x, edit_right + margin)
         self._run_cluster.move(run_x, margin)
-        self._nav_cluster.move(max(nav_left, run_x + self._run_cluster.width() + margin), margin)
+        # run_cluster가 run_min을 보장받느라 nav 쪽으로 겹칠 수 있는 극단적으로 좁은
+        # 캔버스에서는, run을 피해 nav를 오른쪽으로 더 밀면 nav 전체가 캔버스 밖으로
+        # 나가 완전히 사라진다(BUG-050과 같은 "클릭 불가" 클래스). 겹침 회피보다
+        # "항상 캔버스 안에 보이는" 쪽을 우선해 nav_x를 캔버스 우측 경계로 clamp —
+        # 이 경우 nav가 run의 꼬리를 덮으며 겹치는 건 허용(ponytail: 세 클러스터
+        # 전부를 위한 폭이 모자란 근본 원인은 캔버스 자체 최소폭 보장, 필요해지면 추가).
+        nav_x = max(nav_left, run_x + self._run_cluster.width() + margin)
+        nav_x = min(nav_x, w - self._nav_cluster.width())
+        self._nav_cluster.move(nav_x, margin)
 
         # 불투명도 슬라이더는 상단 3개 클러스터와 겹치지 않도록 좌측 하단에 별도 배치.
         self._opacity_cluster.adjustSize()
@@ -658,17 +678,36 @@ class RAnalysisTab(QWidget):
 
     def _on_cell_selected(self, cell_id: str) -> None:
         self._current_cell = cell_id
+        if self._current_image_path not in self._cells.get(cell_id, []):
+            self._clear_current_image()
         self._refresh_thumb_strip()
         self._refresh_right_panel()
 
     def _on_cells_changed(self) -> None:
         self._cells = self._cell_panel.get_cells()
+        if self._current_cell is not None and self._current_image_path not in self._cells.get(self._current_cell, []):
+            self._clear_current_image()
         self._refresh_thumb_strip()
         self._refresh_right_panel()
         self._refresh_step_indicator()
         self._schedule_autosave()
 
     # ── 현재 이미지(캔버스/좌측 목록/썸네일/네비게이션 공유 상태) ─────────────
+
+    def _clear_current_image(self) -> None:
+        """셀 전환/이미지 삭제로 현재 보던 이미지가 더 이상 유효하지 않을 때 호출.
+        캔버스가 방금 지운/다른 셀의 이미지를 그대로 보여주면 "선택이 반영 안
+        됐나?" 혼동을 준다(2026-11-09 레이아웃 점검 중 발견) — 빈 캔버스로 되돌림."""
+        self._current_image_path = None
+        self._canvas.blockSignals(True)
+        try:
+            self._canvas.clear()
+            self._canvas.set_detected_mask(None)
+            self._canvas.set_state({"roi": None, "erase_strokes": [], "manual_strokes": []})
+        finally:
+            self._canvas.blockSignals(False)
+        self._update_nav_label()
+        self._update_undo_button_state()
 
     def _set_current_image(self, path: Path) -> None:
         if path != self._current_image_path:
@@ -1093,5 +1132,44 @@ if __name__ == "__main__":
     run_min_check = tab._run_cluster.sizeHint().width()
     assert tab._run_cluster.width() >= run_min_check, "실행 버튼 클러스터가 최소폭보다 작아지면 안 됨"
     assert tab._btn_detect_current.width() > 0, "좁은 창에서도 실행 버튼이 클릭 가능한 폭을 가져야 함(BUG-050)"
+
+    # run_cluster가 최소폭을 보장받느라 nav_cluster를 캔버스 밖으로 밀어내면 안 됨
+    # (run 폭을 보장하는 1차 수정이 nav를 안 보이게 만드는 2차 회귀를 낳았던 부분 —
+    # 2026-11-09 재점검에서 발견, nav_x를 캔버스 우측 경계로 clamp해 수정).
+    for canvas_w in (700, 500, 350, 250):
+        tab._canvas.resize(canvas_w, 600)
+        tab._position_overlays()
+        actual_w = tab._canvas.width()   # RRoiCanvas 자체 최소폭보다 작게는 안 줄어듦
+        assert tab._nav_cluster.geometry().right() <= actual_w, \
+            f"nav_cluster가 캔버스 밖으로 밀려나면 안 됨(canvas_w={actual_w})"
+
+    # 캔버스 자체에 세 클러스터 최소폭 합만큼 최소 너비를 강제해, 창을 아무리 좁혀도
+    # 위 좁은-캔버스 보정 로직이 실제로 필요한 구간(클러스터가 1px로 짓눌리는 상태)에
+    # 들어가지 못하게 한다(Zone 탭 BUG-048과 동일 패턴).
+    expected_min = (
+        tab._edit_cluster.minimumSizeHint().width()
+        + tab._run_cluster.minimumSizeHint().width()
+        + tab._nav_cluster.minimumSizeHint().width()
+        + 32
+    )
+    assert tab._canvas.minimumWidth() == expected_min
+
+    # 셀 전환/이미지 삭제로 현재 보던 이미지가 더 이상 유효하지 않으면 캔버스가
+    # 이전 이미지를 계속 보여주지 말고 비워야 함(2026-11-09 레이아웃 점검 중 발견 —
+    # "선택이 안 먹혔나?" 혼동 방지).
+    stale_path = Path("stale_test.jpg")
+    cv2.imwrite(str(stale_path), dummy_img)
+    try:
+        tab._cell_panel.set_cells({"CELL-STALE": [stale_path]})
+        tab._on_cells_changed()
+        tab._cell_panel._select_cell("CELL-STALE")
+        tab._set_current_image(stale_path)
+        assert tab._current_image_path == stale_path
+        tab._cell_panel.set_cells({"CELL-STALE": []})
+        tab._on_cells_changed()
+        assert tab._current_image_path is None, "이미지가 전부 삭제되면 캔버스 현재 이미지도 비워야 함"
+        assert tab._canvas.pixmap() is None, "현재 이미지가 없으면 캔버스도 빈 화면이어야 함(이전 이미지 잔상 금지)"
+    finally:
+        stale_path.unlink(missing_ok=True)
 
     print("r_analysis_tab self-check OK")
