@@ -1,5 +1,104 @@
 # 기획 (Planning) 로그
 
+## 2026-11-10 — R 분석 탭: ROI 선택+삭제 / 블랍 선택+삭제
+
+### 배경
+사용자 요청 원문: "roi는 선택시 지울 수 있는 기능을 만들어줘. blob을 선택할 수
+있는 기능도 만들고 roi도 선택할 수 있게 만들면 좋겟어." 리더가 코드를 조사해
+사용자에게 재확인·승인받은 범위: ① ROI(사각형 1개)를 클릭하면 "선택됨" 상태로
+시각 강조되고 Delete/Backspace로 삭제(삭제 시 재검출 트리거). ② Zone 탭의 블랍
+삭제(클릭=즉시삭제, 선택 단계 없음)와 달리 R 탭은 "선택 → 강조 표시 → Delete
+키로 삭제" 흐름 — ROI/블랍 둘 다 동일한 "선택 후 삭제" 패턴. 이 범위는 이미
+사용자 승인 완료 상태라 재확인 없이 세부 스펙화만 진행.
+
+### 한 일
+- `app/widgets/r_roi_canvas.py`(전체), `app/widgets/zone_canvas.py`(전체,
+  대조군), `app/tabs/r_analysis_tab.py`(전체), `app/core/r_analysis_metrics.py`,
+  `app/core/zone_metrics.py`, `app/core/zone_state_store.py`,
+  `app/core/r_cell_store.py`, `app/widgets/brush_toolbar.py`,
+  `app/widgets/overlay_viewer.py`(`set_highlight_rect` 확인), `app/widgets/
+  icons.py`를 직접 읽고 과제 지시문의 모든 조사 요구사항을 코드로 재확인.
+- **핵심 발견 1(모드 설계)**: 지시문이 "신규 `blob_select` 모드 vs 기존 모드
+  안에서 구분" 두 옵션 비교를 요구했는데, 조사 결과 **신규 모드 없이 기존
+  `mouseReleaseEvent`의 "드래그가 `_MIN_CREATE_PX`보다 작아 ROI 생성 취소"
+  분기**(이미 존재하는 클릭-vs-드래그 판정 메커니즘)에 블랍 히트테스트를 끼워
+  넣는 쪽이 압도적으로 낫다고 판단 — ROI 생성 드래그의 실시간 미리보기(마우스
+  이동마다 사각형이 자라는 피드백)를 깨지 않고, `_edit_cluster`에 새 토글
+  액션을 추가하지 않아 `r_analysis_tab.py`의 `_build_center_panel()`/
+  `_position_overlays()`(2026-11-09 BUG-050 재점검으로 막 안정화된 3클러스터
+  최소폭 공식)에 손을 대지 않는다. 삭제도 새 버튼 없이 Delete/Backspace
+  키보드만 제공(접근성 트레이드오프는 있으나 Zone의 원 삭제도 버튼 없이
+  Delete+우클릭 메뉴뿐이었던 선례와 일치, 폭 예산 리스크 회피가 우선이라고
+  판단) — 권장안으로 직접 결정, `decisions-needed.md` 등록 없음.
+- **핵심 발견 2(블랍 데이터 모델, 지시문에 없던 내용 — Zone 패턴을 그대로
+  복붙하면 생기는 회귀를 발견)**: Zone의 `removed_blob_ids`(정수 라벨 id
+  집합)는 `set_blob_data()`가 타겟 클래스 전환/재추론 시에만 호출돼 라벨 id가
+  안정적으로 유지된다. 반면 R 탭의 `set_detected_mask()`는
+  `_on_settings_changed()`(threshold/분모/스펙/자동검출 체크박스 — 분모만
+  바꿔도!) 경로로 매번 재호출됨을 `r_analysis_tab.py` 직접 추적으로 확인 —
+  Zone의 "라벨 id 집합" 패턴을 그대로 쓰면 블랍 1개를 지운 뒤 아무 설정이나
+  하나만 바꿔도 삭제 이력이 증발하는 심각한 회귀가 된다. 해결책으로 삭제를
+  라벨 id가 아니라 **이미지 좌표 바운딩박스 목록**(`removed_blob_regions`)으로
+  영속화하도록 설계 변경 — 좌표는 재검출로 라벨맵이 바뀌어도 불변이라 안전.
+  정확도 트레이드오프(다른 threshold 재검출 시 그 박스 안에 무관한 새 블랍이
+  생기면 함께 가려질 수 있음)는 명시적으로 문서화하고 YAGNI로 지금은 감수 —
+  Zone 자신의 `_paint_removed_blobs()`도 "정확한 블랍 모양이 아니라 bbox
+  근사"라고 이미 인정하고 있어 같은 수준의 근사를 데이터 모델에도 적용하는
+  것이 기존 관례와 일치한다고 판단.
+- **핵심 발견 3**: `effective_mask()`의 기존 P0 성능 캐시(브러시 스트로크
+  증분 재생, 2026-10-27 도입)가 `_detected_mask`의 **identity**(`is`) 비교로
+  유효성을 판단하는데, 블랍 삭제를 단순히 `detected_mask & ~delete_mask`로
+  매번 새 배열을 만들어 넘기면 identity가 항상 깨져 이 캐시가 무력화된다(매
+  커밋마다 전체 재생 — 성능 회귀). "검출+블랍삭제 반영 기저 마스크"를
+  `_deleted_blob_regions` 개수가 바뀔 때만 재계산해 캐시하는 `_base_mask()`
+  계층을 추가 설계 — 삭제가 하나도 없는 일반적인 경우(대다수 사용자)는
+  `_detected_mask`를 그대로 반환해 기존 동작/성능에 회귀가 없도록 함.
+- 선택 상태(`_roi_selected`/`_selected_blob_id`)는 undo 스택/세션 JSON 양쪽에
+  **포함하지 않음**으로 결정 — Zone의 `_selected_id`/`_highlighted_zone`도
+  undo/영속 대상이 아닌 선례와 동일 결론(지시문이 명시적으로 확인을 요청한
+  지점). 이미지/셀 전환 시 자동 해제도 Zone의 `set_blob_data()` 선택 리셋과
+  동일 패턴으로 명시.
+- 삭제된 블랍 위에 브러시로 다시 그리면 복원되는지(지시문이 요구한 엣지케이스
+  확인)는 `zone_metrics.apply_manual_strokes()`가 "마지막 스트로크가 항상
+  우선"하는 수학임을 코드로 확인해 해결 — effective_mask() 적용 순서를
+  "기저(검출+삭제 반영) → manual_strokes"로 고정하면 draw 스트로크가 자동으로
+  되살려줌, 별도 특수처리 불필요.
+- `removed_blob_ids`가 면적 비율 계산에 반영되는 경로(지시문 질문)는 Zone과
+  R이 근본적으로 다름을 확인: Zone은 `zone_metrics.zone_stats()`로 존별
+  면적비를 계산하지만 R은 `r_analysis_metrics.contour_area(effective_mask())`
+  단일 합계(`cell_rollup()`)뿐이라 "제외"는 그냥 `effective_mask()` 자체에서
+  True 픽셀이 줄어드는 것으로 충분 — 별도 집계 로직 분기 불필요.
+- i18n은 새 키 신설 없이 기존 `r.tool_roi_tip` ko/en 문구만 신규 동작을
+  반영하도록 갱신 제안(저리스크, 선택 사항).
+- `_edit_cluster` 폭 변화 우려(지시문이 명시한 BUG-050/051 민감도) — 핵심
+  발견 1의 결정(신규 버튼 없음)으로 **원천적으로 해소**: 이번 라운드는
+  `_build_center_panel()`/`_position_overlays()`를 전혀 건드리지 않음.
+- 스펙 문서 신설: [docs/specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md](../specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md)
+  — 설계 결정 7개(모드/판정순서/데이터모델/캐시통합/삭제디스패치/시각표시/
+  undo+세션범위) + 영향파일별 구체 변경사항(필드/메서드/시그널 신규·수정
+  목록) + 엣지케이스 7건 + 검증체크리스트 12개 + 실행순서(단일 구현
+  에이전트 순차 권장, 같은 파일에 핵심 로직이 몰려 있어 병렬 분리 시 충돌
+  위험이 더 크다고 판단).
+- `docs/roadmap.md`에 신규 절 "R 분석 탭 — ROI 선택+삭제 / 블랍 선택+삭제
+  (2026-11-10 요청)" 추가(핵심 설계 결정 요약 + 구현/검증 체크박스).
+  `docs/decisions-needed.md`는 갱신하지 않음 — 모든 설계 재량 사항을 위에서
+  근거와 함께 직접 결정했고, 기술 선택지 사이에 실측 근거가 필요한 스파이크
+  대상 지점도 없음(순수 알고리즘/상태관리 설계).
+- 코드는 건드리지 않음 — Write/Edit는 스펙 신설 1건, `roadmap.md`, 본 로그
+  갱신에만 사용. 작업 전 `git status` 확인(이 워크트리는 `feature/
+  zone-analysis-tab` 브랜치 전용) — 이번 작업과 무관한 기존 상태는 건드리지
+  않음.
+
+### 상태
+완료 — 다음: 리더가 디자인 에이전트(선택 강조 색/굵기는 기존 `_COLOR_SELECTED`/
+Zone 선례 재사용이라 사전 Artifact 목업 생략 권장, 구현 완료 후 실물로 1차
+가독성 검토만 요청)와 구현 에이전트(단일 에이전트 순차: ① `r_roi_canvas.py`
+데이터모델+캐시 → ② 마우스/키보드 통합 → ③ 렌더링 → ④ `r_analysis_tab.py`
+배선 → ⑤ `i18n.py` 문구, ⑤는 언제든 병렬 가능)에 위임. 결정 대기 없음 —
+바로 구현 착수 가능.
+
+---
+
 ## 2026-11-02 — 레이아웃 미세조정 + 오버레이 토글 버튼 + 바깥쪽 클릭 선택해제 (5건)
 
 ### 배경

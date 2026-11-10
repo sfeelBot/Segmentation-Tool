@@ -87,7 +87,7 @@ def _default_session() -> dict:
 
 
 def _default_image_data() -> dict:
-    return {"roi_override": None, "manual_strokes": [], "area": 0}
+    return {"roi_override": None, "manual_strokes": [], "area": 0, "removed_blob_regions": []}
 
 
 class _RDetectWorker(QThread):
@@ -234,6 +234,8 @@ class RAnalysisTab(QWidget):
         self._canvas.roi_changed.connect(self._update_undo_button_state)
         self._canvas.erase_changed.connect(self._update_undo_button_state)
         self._canvas.erase_changed.connect(self._on_canvas_edited)
+        self._canvas.blob_deleted.connect(self._update_undo_button_state)
+        self._canvas.blob_deleted.connect(lambda _id: self._on_canvas_edited())
         layout.addWidget(self._canvas, stretch=1)
 
         self._thumb_strip = QListWidget()
@@ -541,6 +543,7 @@ class RAnalysisTab(QWidget):
         state = self._canvas.get_state()
         data = self._image_data(self._current_image_path)
         data["manual_strokes"] = state["manual_strokes"]
+        data["removed_blob_regions"] = state["removed_blob_regions"]
         eff = self._canvas.effective_mask()
         data["area"] = contour_area(eff) if eff is not None else 0
         self._refresh_right_panel()
@@ -582,6 +585,7 @@ class RAnalysisTab(QWidget):
                     "roi_override": img.get("roi_override"),
                     "manual_strokes": img.get("manual_strokes", []),
                     "area": img.get("area", 0),
+                    "removed_blob_regions": img.get("removed_blob_regions", []),
                 }
             cells[cell_id] = paths
         self._cells = cells
@@ -617,6 +621,7 @@ class RAnalysisTab(QWidget):
                     "roi_override": list(d["roi_override"]) if d.get("roi_override") else None,
                     "manual_strokes": d.get("manual_strokes", []),
                     "area": d.get("area", 0),
+                    "removed_blob_regions": d.get("removed_blob_regions", []),
                 })
             cells_payload[cell_id] = {"images": images}
         self._session["cells"] = cells_payload
@@ -703,7 +708,10 @@ class RAnalysisTab(QWidget):
         try:
             self._canvas.clear()
             self._canvas.set_detected_mask(None)
-            self._canvas.set_state({"roi": None, "erase_strokes": [], "manual_strokes": []})
+            self._canvas.set_state({
+                "roi": None, "erase_strokes": [], "manual_strokes": [],
+                "removed_blob_regions": [],
+            })
         finally:
             self._canvas.blockSignals(False)
         self._update_nav_label()
@@ -740,6 +748,7 @@ class RAnalysisTab(QWidget):
                                         # 화면 렌더링/면적 계산엔 쓰이지 않아 세션에 저장하지
                                         # 않는다(필요해지면 manual_strokes처럼 영속화 추가).
                 "manual_strokes": data.get("manual_strokes", []),
+                "removed_blob_regions": data.get("removed_blob_regions", []),
             })
             mask = self._compute_detected_mask(path, img) if img is not None else None
             self._canvas.set_detected_mask(mask)
@@ -1171,5 +1180,62 @@ if __name__ == "__main__":
         assert tab._canvas.pixmap() is None, "현재 이미지가 없으면 캔버스도 빈 화면이어야 함(이전 이미지 잔상 금지)"
     finally:
         stale_path.unlink(missing_ok=True)
+
+    # ── 골든 패스: 블랍 선택 → Delete → area 감소 → 저장/로드 왕복 후
+    # removed_blob_regions 보존(스펙 "r-analysis-tab-roi-blob-select-delete") ──
+    from PyQt6.QtCore import QEvent as _QEvent2, QPointF as _QPointF2
+    from PyQt6.QtGui import QKeyEvent as _QKeyEvent2
+
+    blob_path = Path("r_blob_golden_test.jpg")
+    session_path = Path("r_blob_golden_session.json")
+    other_path = Path("r_blob_golden_other.json")
+    blob_img = np.zeros((60, 80, 3), dtype=np.uint8)
+    blob_img[5:15, 5:15] = 255     # 블랍 A
+    blob_img[5:15, 40:50] = 255    # 블랍 B
+    cv2.imwrite(str(blob_path), blob_img)
+    try:
+        tab._session_path = None
+        tab._cell_panel.set_cells({"CELL-BLOB": [blob_path]})
+        tab._on_cells_changed()
+        tab._cell_panel._select_cell("CELL-BLOB")
+        tab._session["global_roi"] = [0, 0, 80, 60]
+        tab._settings_dialog.set_auto_detect_enabled(True)
+        tab._settings_dialog.set_threshold(128)
+        tab._set_current_image(blob_path)
+        assert tab._current_image_path == blob_path
+
+        area_before = tab._image_data(blob_path)["area"]
+        assert area_before > 0, "검출된 블랍이 있어야 area > 0"
+
+        label = tab._canvas._blob_label_at(_QPointF2(10, 10))
+        assert label is not None, "(10,10) 위치에 블랍 A가 검출돼야 함"
+        tab._canvas._select_blob(label)
+        del_evt = _QKeyEvent2(_QEvent2.Type.KeyPress, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
+        tab._canvas.keyPressEvent(del_evt)
+
+        area_after = tab._image_data(blob_path)["area"]
+        assert area_after < area_before, "블랍 삭제 후 area가 감소해야 함"
+        assert len(tab._image_data(blob_path)["removed_blob_regions"]) == 1
+
+        tab._session_path = session_path
+        tab._do_save()
+        assert session_path.exists()
+
+        r_store.save(other_path, _default_session())
+        tab._load_session(other_path)
+        # 다른(관계없는) 세션으로 전환했을 때 이전 세션의 삭제 이력이 새어들면
+        # 안 된다(image_data_map 자체는 설정 변경 시 재검출로 다시 채워질 수
+        # 있음 — 기존 _load_session 순서의 별개 특성, 이번 기능 범위 밖).
+        for d in tab._image_data_map.values():
+            assert d.get("removed_blob_regions", []) == [], \
+                "다른 세션에 이전 삭제 이력이 새어들면 안 됨"
+
+        tab._load_session(session_path)
+        restored = tab._image_data_map[str(blob_path)]
+        assert restored["removed_blob_regions"] == [[5.0, 5.0, 10.0, 10.0]], restored["removed_blob_regions"]
+        assert restored["area"] == area_after
+    finally:
+        for p in (blob_path, session_path, other_path):
+            p.unlink(missing_ok=True)
 
     print("r_analysis_tab self-check OK")

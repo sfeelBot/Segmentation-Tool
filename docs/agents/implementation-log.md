@@ -7256,3 +7256,86 @@ https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
   에이전트 본인의 확인만으로 최종 "완료"로 간주하지 않는다는 공통 규칙은
   동일하게 적용된다 — 리더의 재현 전/후 실행 확인을 권장.
   보지 않는다. push는 하지 않았다 — 리더가 사용자 확인 후 직접 push.
+
+## 2026-11-10 — R 분석 탭 ROI 선택+삭제 / 블랍 선택+삭제 (존 분석 탭 에디션 브랜치)
+
+- 상태: 구현 완료 — **검증 에이전트의 실제 UI 조작(골든 패스) 확인 필요**
+  (사용자 요청 "roi는 선택시 지울 수 있는 기능을 만들어줘. blob을 선택할 수
+  있는 기능도 만들고 roi도 선택할 수 있게 만들면 좋겟어" — 주요 기능 추가,
+  정적 검토만으로 완료 처리 불가).
+- 대상 브랜치/경로: `feature/zone-analysis-tab`, 워크트리
+  `D:\segmentation model-zone-analysis-tab`.
+- 스펙: `docs/specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md`(기획
+  에이전트 작성, 설계 결정 1~7 + 영향 파일별 변경사항 + 엣지케이스 7건 +
+  검증 체크리스트 12건 포함) — 그대로 구현.
+- `app/widgets/r_roi_canvas.py`(핵심, 스펙 실행 순서대로 단일 흐름 진행):
+  - 데이터 모델: `_roi_selected`, `_selected_blob_id`, `_blob_labels`/
+    `_blob_stats`(파생값, 영속화 안 함), `_deleted_blob_regions`(진짜 영속
+    데이터 — 라벨 id가 아니라 이미지 좌표 bbox 목록, 설계 결정 3),
+    `_blob_delete_mask`(파생 캐시), `_base_mask_cache`/`_base_mask_cache_key`,
+    `_press_orig_pt`.
+  - `_base_mask()` 신규(설계 결정 4) — 삭제가 없으면 `_detected_mask`를
+    identity 그대로 반환해 `effective_mask()`의 기존 P0 증분 캐시가 삭제
+    없는 일반 경우 그대로 유지되게 함(성능 회귀 없음). `effective_mask()`의
+    `_detected_mask` 참조 3곳을 `_base_mask()`로 교체.
+  - 마우스: `mousePressEvent`에서 ROI 핸들/내부 직접 클릭 시 즉시
+    `_roi_selected=True`; `mouseReleaseEvent`의 "드래그가 너무 작아 생성
+    취소" 분기에 `_press_orig_pt` 기준 블랍 히트테스트를 끼워 넣어 클릭
+    위치에 블랍이 있으면 선택, 없으면 전체 선택 해제(기존 클릭-vs-드래그
+    판정 재사용, 신규 모드 추가 없음 — 설계 결정 1·2).
+  - 키보드: `keyPressEvent`에 `self._mode == "roi"` 가드 + Delete/Backspace
+    분기 — 블랍 선택 시 `_delete_selected_blob()`, ROI 선택 시
+    `set_roi(None)`(기존 undo 포함 메서드 재사용).
+  - 렌더링: `_paint_roi()` 선택 시 `_COLOR_SELECTED`(255,200,0)+펜 두께 3,
+    `_paint_deleted_blob_regions()` 신규(`ZoneCanvas._paint_removed_blobs()`
+    1:1 포팅, bbox 근사 — ponytail 알려진 한계, 설계 결정 3과 동일 트레이드
+    오프), `paintEvent()`에서 strokes 다음/roi 이전에 호출, `_select_blob()`이
+    `OverlayViewer.set_highlight_rect()` 재사용.
+  - 신규 시그널 `blob_deleted = pyqtSignal(int)`(Zone과 동일 시그니처).
+  - `set_detected_mask()`: `_recompute_blob_labels()` 호출 추가 + 선택 상태
+    리셋(엣지케이스 2), `_deleted_blob_regions`는 리셋하지 않음(설계
+    결정 3의 핵심 보장 — threshold 등 설정 변경마다 호출되는 메서드가 삭제
+    이력을 지우면 회귀).
+  - `get_state()`/`set_state()`: `removed_blob_regions` 키 추가(역호환
+    `state.get(..., [])`), `set_state()`가 선택 상태도 리셋(엣지케이스 4).
+  - self-check(실제 `RRoiCanvas` 위젯 생성, `QT_QPA_PLATFORM=offscreen`) 4건
+    추가: (1) `_select_blob()`/`_deselect_all()` 상태 전환, (2) 블랍 삭제
+    전후 `effective_mask()` 픽셀 수 100 감소 확인, (3) 삭제 후
+    `set_detected_mask()` 재호출(threshold 변경 시뮬레이션)해도
+    `_deleted_blob_regions` 유지 확인, (4) Delete 키 디스패치 — 블랍
+    선택/ROI 선택 각각 분리 삭제 확인 + brush/pan 모드 가드 확인(엣지케이스
+    10 겸용).
+- `app/tabs/r_analysis_tab.py`: 스펙이 지정한 7개 지점 모두 배선 —
+  `_default_image_data()`/`_load_session()`/`_do_save()`/`_load_image()`/
+  `_clear_current_image()`/`_on_canvas_edited()`에 `removed_blob_regions` 키
+  추가, `_build_center_panel()`에 `blob_deleted` 시그널 2줄 연결(기존
+  `erase_changed` 연결과 동일 패턴). 버튼 추가 없음(스펙 설계 결정 1 —
+  BUG-050/051 폭 예산 리스크 회피, 키보드 Delete/Backspace만 제공).
+  self-check 골든 패스 1건 추가: 실제 이미지(두 개의 분리된 사각 블랍) →
+  검출 → 블랍 선택 → Delete → area 감소 확인 → `_do_save()` → 관계없는
+  다른 세션으로 전환(이전 삭제 이력이 새어들지 않는지 확인) → 원래 세션
+  재로드 → `removed_blob_regions`/area 보존 확인(JSON round-trip 포함).
+- `app/core/i18n.py`: `r.tool_roi_tip` ko/en 문구 갱신(새 키 신설 없음) —
+  "ROI 편집(생성/이동/리사이즈) · 클릭해 선택 후 Delete로 삭제, 블랍 클릭도
+  선택 가능" / 영문 대응.
+- `app/core/r_cell_store.py`: 스펙 지시대로 변경 없음(제네릭 passthrough).
+- 검증(구현자 자체 실행, `PYTHONPATH`에 워크트리 루트 지정 필요 — `python`
+  단독 명령은 이 환경에서 Windows Store stub로 연결돼 별도 Python
+  (`C:\Users\Feel\AppData\Local\Python\bin\python.exe`) 사용):
+  - `python app/widgets/r_roi_canvas.py` → `r_roi_canvas self-check OK`.
+  - `python app/tabs/r_analysis_tab.py` → `r_analysis_tab self-check OK`.
+  - `pytest -q`(전체): `213 passed, 1 failed` —
+    실패 1건은 `tests/test_zone_step_indicator.py::test_steps_complete_in_order_as_ckpt_image_circles_are_set`
+    (사전 존재하는 BUG-049류 플레이키, 리더 지시대로 기준치와 일치 확인 —
+    새로운 실패 없음). 실행 중 생성된 `a.zone.json`은 삭제, `git status`로
+    의도한 3개 파일(`app/core/i18n.py`, `app/tabs/r_analysis_tab.py`,
+    `app/widgets/r_roi_canvas.py`)만 수정됐음을 확인.
+  - 구현 과정에서 자체 self-check 작성 중 `r_analysis_tab.py`의
+    `_load_session()`이 설정(auto_detect 등) setter를 `_current_image_path`
+    리셋보다 먼저 호출해, 세션 전환 시 직전 이미지 기준으로 재검출이 1회
+    더 실행되는 기존 동작(이번 기능과 무관, 사전 존재)을 발견 — 이번
+    라운드 범위 밖이라 수정하지 않고 self-check 단언만 그 특성에 맞게
+    작성(과도하게 엄격한 단언을 피함). 검증 에이전트 참고용으로만 기록.
+- 커밋: 하지 않음 — 리더가 검증 이후 직접 커밋.
+- 버전/CHANGELOG: 변경하지 않음 — 리더가 검증 완료 후 버전 점검 루틴에
+  따라 처리할 것으로 판단(구현 단계에서는 보류).

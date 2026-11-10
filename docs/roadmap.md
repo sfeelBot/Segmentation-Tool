@@ -1650,6 +1650,37 @@ QA.md BUG-033(P1) 참고. 순수 로그 덤프로 접수된 반복 크래시(`nu
       조정, 자동 검출(현재 이미지/선택 셀/전체 셀), 마스크 보정, 셀별 결과+Excel export,
       세션 JSON 저장/복원) 실제 `python main.py` 구동 확인 예정.
 
+## R 분석 탭 — ROI 선택+삭제 / 블랍 선택+삭제 (2026-11-10 요청)
+
+사용자 요청: "roi는 선택시 지울 수 있는 기능을 만들어줘. blob을 선택할 수 있는
+기능도 만들고 roi도 선택할 수 있게 만들면 좋겟어." Zone 탭의 블랍 삭제(클릭=즉시
+삭제, 선택 단계 없음)와 달리 R 탭은 "선택 → 강조 표시 → Delete 키로 삭제" 흐름으로
+리더가 재확인·사용자 승인 완료. 기획 완료:
+[docs/specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md](specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md).
+
+- **핵심 설계 결정**: (1) 신규 캔버스 모드를 추가하지 않고 기존 `"roi"` 모드의
+  "드래그가 너무 작아 ROI 생성 취소" 분기(이미 존재하는 클릭-vs-드래그 판정)에
+  블랍 히트테스트를 끼워 넣는 방식으로 ROI 생성 드래그의 실시간 미리보기를
+  깨지 않음(BUG-050/051 폭 예산 리스크 회피 — 새 툴바 버튼 추가 없음, 삭제는
+  Delete/Backspace 키보드만). (2) 블랍 삭제는 Zone처럼 정수 라벨 id 집합이
+  아니라 **이미지 좌표 바운딩박스 목록**(`removed_blob_regions`)으로 영속화 —
+  R 탭은 `set_detected_mask()`가 threshold/분모/스펙 등 설정 변경마다(Zone의
+  타겟 클래스 전환보다 훨씬 고빈도) 호출돼 라벨 id가 전혀 안정적이지 않기
+  때문(Zone 패턴을 그대로 복붙하면 삭제 이력이 설정 변경마다 증발하는 회귀가
+  생김). (3) `effective_mask()`의 기존 P0 증분 캐시(식별 비교)를 깨지 않도록
+  "검출+블랍삭제 반영 기저 마스크"를 별도로 캐시해 삭제 없는 일반 케이스는
+  기존 성능/동작 그대로 유지.
+- [ ] 구현 — `app/widgets/r_roi_canvas.py`(핵심: 선택 상태/블랍 라벨맵/삭제
+      영역 데이터모델/마우스·키보드 통합/렌더링) → `app/tabs/r_analysis_tab.py`
+      (세션 필드 `removed_blob_regions` 배선 + `blob_deleted` 시그널 연결) →
+      `app/core/i18n.py`(툴팁 문구만, 선택). `app/core/r_cell_store.py` 코드
+      변경 불필요(제네릭 passthrough).
+- [ ] 검증 — ROI/블랍 선택 강조 표시, Delete 삭제(ROI/블랍 각각), 삭제 후
+      threshold 변경에도 삭제 이력 유지(핵심 회귀 포인트), Undo 복원, 세션
+      저장/복원 왕복, 브러시로 삭제 영역 재도색 시 복원, 이미지/셀 전환 시
+      선택 상태 자동 해제, 좁은 창에서 기존 3클러스터 레이아웃 회귀 없음
+      (BUG-050/051 재확인) 실제 `python main.py` 구동 확인 예정.
+
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
   그리기/지우기/연결 블랍 삭제/팬/Undo), 수동 스트로크 last-write-wins와 혼합 LIFO Undo.

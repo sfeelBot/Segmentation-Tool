@@ -25,10 +25,15 @@ from app.core import zone_metrics
 _HANDLE_PX = 8.0        # 리사이즈 핸들 히트 판정 반경 — 화면 픽셀
 _MIN_CREATE_PX = 6.0    # 이보다 작게 생성 드래그하면 취소
 
-_COLOR_ROI = QColor(250, 204, 21)           # amber-400 — 마스크/브러시 색과 구분
+_COLOR_ROI = QColor(45, 212, 191)           # teal-400 — 마스크/브러시 색과 구분. 기존
+# amber(250,204,21)는 _COLOR_SELECTED(255,200,0)와 RGB 거리가 너무 가까워(디자인 검토
+# 2026-11-10, 실제 스크린샷으로 비선택/선택 ROI가 육안 구분 불가 수준임을 확인) teal로
+# 교체 — 선택색(노랑)과 색상환상 거리를 크게 벌려 선택 여부가 두께 변화 없이도 보인다.
 _COLOR_DRAW = QColor(96, 165, 250, 110)     # zone_canvas._COLOR_DRAW 재사용(accent blue)
 _COLOR_ERASE = QColor(156, 163, 175, 110)   # zone_canvas._COLOR_ERASE 재사용
 _COLOR_MASK = (34, 197, 94, 90)             # 검출된(+보정된) 마스크 오버레이, green-500
+_COLOR_SELECTED = QColor(255, 200, 0)       # 앱 표준 "선택" 색(zone_canvas._COLOR_SELECTED와 동일)
+_COLOR_DELETED_BLOB = QColor(255, 60, 60, 110)   # 삭제된 블랍 bbox — zone_canvas._paint_removed_blobs와 동일
 
 # 핸들별 (고정 변(fixed), 이동 변(movable)) — "roi edges" = {left, top, right, bottom}
 # 딕셔너리(x,y,w,h 아님, 리사이즈 중 좌/상/우/하 중 일부만 갱신하는 편이 간단하다).
@@ -52,6 +57,7 @@ class RRoiCanvas(OverlayViewer):
     erase_changed = pyqtSignal()    # 브러시 스트로크가 끝났을 때 1회(데이터 재계산 트리거)
     mask_changed = pyqtSignal()     # 화면에 그려지는 effective_mask()가 바뀔 때마다
     overlay_toggle_requested = pyqtSignal()   # F키 — 탭이 show/hide 액션을 토글
+    blob_deleted = pyqtSignal(int)  # 선택된 블랍이 Delete로 삭제된 라벨 id (zone_canvas와 동일 시그니처)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -61,6 +67,7 @@ class RRoiCanvas(OverlayViewer):
 
         # ── ROI 상태머신 ─────────────────────────────────────────────────────
         self._roi_edges: dict[str, float] | None = None   # {"left","top","right","bottom"}, 원본 좌표
+        self._roi_selected: bool = False   # 선택된 ROI — Delete/Backspace로 삭제 가능
         self._drag_mode: str | None = None    # None | "move" | "resize" | "create"
         self._resize_handle: str | None = None
         self._fixed_edges: dict[str, float] = {}
@@ -68,11 +75,23 @@ class RRoiCanvas(OverlayViewer):
         self._press_orig_pt: QPointF | None = None
         self._move_snapshot: dict[str, float] | None = None
 
+        # ── 블랍 선택/삭제(설계 결정 2·3 — zone_canvas 블랍 삭제와 달리 "선택 후
+        # Delete" 흐름, 영속 데이터는 라벨 id가 아니라 bbox 목록) ────────────────
+        self._selected_blob_id: int | None = None
+        self._blob_labels: np.ndarray | None = None   # (H, W) int32 라벨맵 — 파생값, 영속화 안 함
+        self._blob_stats: np.ndarray | None = None     # [label] = [x, y, w, h, area] — 파생값
+        self._deleted_blob_regions: list[tuple[float, float, float, float]] = []   # (x,y,w,h) 원본 좌표, 진짜 상태
+        self._blob_delete_mask: np.ndarray | None = None   # 파생 캐시(bool, 원본 해상도)
+
         # ── 검출된/보정된 마스크(원본 해상도 bool) ───────────────────────────────
         self._detected_mask: np.ndarray | None = None
         self._mask_image: QImage | None = None
         self._mask_alpha = 90   # _COLOR_MASK 기본 alpha(0~255) — set_mask_opacity()로 조절
         self._mask_visible = True   # 화면 표시 여부만 — effective_mask()/데이터는 영향 없음
+
+        # ── _base_mask() 캐시(설계 결정 4 — 블랍 삭제 반영한 중간 마스크의 identity 캐시) ──
+        self._base_mask_cache: np.ndarray | None = None
+        self._base_mask_cache_key: int | None = None
 
         # ── effective_mask() 증분 캐시(P0 성능) ──────────────────────────────
         # 스트로크를 1개 커밋할 때마다 누적된 manual_strokes 전체를 처음부터
@@ -143,8 +162,15 @@ class RRoiCanvas(OverlayViewer):
     def set_detected_mask(self, mask: np.ndarray | None) -> None:
         """탭이 `r_analysis_metrics.detect_contour_mask()` 결과를 반영할 때 호출.
         수동 그리기/지우기 스트로크는 그대로 유지된다(이미지 전환이 아니라 같은
-        이미지의 재검출이므로 — threshold/ROI 조정 시 반복 호출됨)."""
+        이미지의 재검출이므로 — threshold/ROI 조정 시 반복 호출됨).
+
+        `_deleted_blob_regions`(진짜 영속 데이터)는 리셋하지 않는다(설계 결정 3 —
+        threshold 등 설정 변경마다 호출되는 이 메서드가 매번 삭제 이력을 지우면
+        회귀가 생긴다). 라벨 id 기반 선택 상태만 리셋(엣지케이스 2)."""
         self._detected_mask = mask
+        self._selected_blob_id = None
+        self.set_highlight_rect(None)
+        self._recompute_blob_labels()
         self._rebuild_mask_image()
         self.update()
         self.mask_changed.emit()
@@ -178,11 +204,16 @@ class RRoiCanvas(OverlayViewer):
         스트로크만 캐시 결과 위에 덧적용한다(전체 재생 금지). 그 외(검출 마스크가
         바뀜, undo/세션 로드로 스트로크 수가 줄어듬)는 처음부터 전체 재계산한다
         — 이 경우도 O(그 시점 전체 스트로크 수) 1회일 뿐, 매 커밋마다 커지진 않는다.
+
+        기저 마스크는 `_detected_mask` 자체가 아니라 `_base_mask()`(블랍 삭제
+        반영, 설계 결정 4) — 삭제가 없으면 `_base_mask()`가 `_detected_mask`를
+        identity 그대로 반환하므로 이 캐시의 기존 동작/성능은 변하지 않는다.
         """
-        if self._detected_mask is None:
+        base = self._base_mask()
+        if base is None:
             self._invalidate_mask_cache()
             return None
-        if (self._mask_cache_base is self._detected_mask
+        if (self._mask_cache_base is base
                 and self._mask_cache_n_strokes <= len(self._manual_strokes)):
             new_strokes = self._manual_strokes[self._mask_cache_n_strokes:]
             if new_strokes:
@@ -191,20 +222,119 @@ class RRoiCanvas(OverlayViewer):
                 )
                 self._mask_cache_n_strokes = len(self._manual_strokes)
             return self._mask_cache_result
-        self._mask_cache_result = self.apply_manual_strokes(self._detected_mask)
-        self._mask_cache_base = self._detected_mask
+        self._mask_cache_result = self.apply_manual_strokes(base)
+        self._mask_cache_base = base
         self._mask_cache_n_strokes = len(self._manual_strokes)
         return self._mask_cache_result
+
+    def _base_mask(self) -> np.ndarray | None:
+        """`_detected_mask` + 삭제된 블랍 영역 제외(설계 결정 3·4). 삭제가 없으면
+        `_detected_mask` 자체를 identity 그대로 반환해(새 배열 생성 없음)
+        `effective_mask()`의 P0 증분 캐시가 그대로 유효하게 유지된다. 삭제가
+        있으면 `len(_deleted_blob_regions)`를 캐시 키로 삼아, 삭제 건수가
+        바뀌지 않는 한(브러시 스트로크 등) 매번 새 배열을 만들지 않는다."""
+        if self._detected_mask is None:
+            return None
+        if not self._deleted_blob_regions:
+            return self._detected_mask
+        if self._base_mask_cache_key != len(self._deleted_blob_regions):
+            self._base_mask_cache = self._detected_mask & ~self._blob_delete_mask
+            self._base_mask_cache_key = len(self._deleted_blob_regions)
+        return self._base_mask_cache
 
     def _invalidate_mask_cache(self) -> None:
         self._mask_cache_base = None
         self._mask_cache_n_strokes = 0
         self._mask_cache_result = None
+        self._base_mask_cache = None
+        self._base_mask_cache_key = None
 
     def apply_manual_strokes(self, mask: np.ndarray) -> np.ndarray:
         """zone_canvas.apply_manual_strokes()와 동일한 얇은 래퍼 —
         `zone_metrics.apply_manual_strokes()`(순수 함수)에 위임."""
         return zone_metrics.apply_manual_strokes(mask, self._manual_strokes)
+
+    # ── 블랍 선택/삭제(설계 결정 2·3·5 — ROI 클릭 판정 안에 통합, zone_canvas
+    # 블랍 삭제와 달리 "선택 후 Delete" 흐름) ───────────────────────────────────
+
+    def _recompute_blob_labels(self) -> None:
+        """`_detected_mask`(삭제 반영 전 원본 검출 마스크) 기준으로 블랍 라벨맵을
+        다시 계산 — 이미 삭제된 블랍은 `_blob_delete_mask`로 미리 빼서 다시 선택할
+        수 없게 한다(설계 결정 3). `set_detected_mask()`/블랍 삭제 커밋 지점에서만
+        호출(오버레이 opacity 슬라이더 드래그 등 고빈도 경로에서는 호출하지 않음
+        — cv2.connectedComponentsWithStats 비용 회피)."""
+        if self._detected_mask is None:
+            self._blob_labels = None
+            self._blob_stats = None
+            return
+        mask = self._detected_mask
+        if self._blob_delete_mask is not None:
+            mask = mask & ~self._blob_delete_mask
+        self._blob_labels, self._blob_stats, _ = zone_metrics.compute_blob_labels(mask)
+
+    def _blob_label_at(self, pt: QPointF | None) -> int | None:
+        if pt is None or self._blob_labels is None:
+            return None
+        x, y = int(pt.x()), int(pt.y())
+        h, w = self._blob_labels.shape
+        if not (0 <= y < h and 0 <= x < w):
+            return None
+        label = int(self._blob_labels[y, x])
+        return label if label != 0 else None
+
+    def _select_blob(self, label: int) -> None:
+        """`ZoneCanvas.highlight_blob_bbox()` 1:1 포팅 — `_blob_stats[label]`의
+        bbox를 픽스맵 좌표로 변환해 `set_highlight_rect()`에 넘긴다."""
+        self._selected_blob_id = label
+        self._roi_selected = False
+        if self._blob_stats is not None and 0 <= label < len(self._blob_stats):
+            sx, sy = self._orig_scale()
+            x, y, w, h = (float(v) for v in self._blob_stats[label, :4])
+            self.set_highlight_rect(QRectF(x * sx, y * sy, w * sx, h * sy))
+        self.update()
+
+    def _deselect_all(self) -> None:
+        self._roi_selected = False
+        self._selected_blob_id = None
+        self.set_highlight_rect(None)
+        self.update()
+
+    def _rasterize_deleted_region(self, x: float, y: float, w: float, h: float) -> None:
+        if self._img_orig_h <= 0 or self._img_orig_w <= 0:
+            return
+        if self._blob_delete_mask is None:
+            self._blob_delete_mask = np.zeros((self._img_orig_h, self._img_orig_w), dtype=bool)
+        x0, y0 = max(0, int(x)), max(0, int(y))
+        x1, y1 = min(self._img_orig_w, int(x + w) + 1), min(self._img_orig_h, int(y + h) + 1)
+        if x1 > x0 and y1 > y0:
+            self._blob_delete_mask[y0:y1, x0:x1] = True
+
+    def _replay_deleted_blob_regions(self) -> None:
+        """`_replay_erase_strokes()`와 동일 패턴 — `_deleted_blob_regions`(진짜
+        상태)로부터 `_blob_delete_mask`(파생 캐시)를 처음부터 재구성한다(undo/
+        set_state 복원용)."""
+        self._blob_delete_mask = None
+        for x, y, w, h in self._deleted_blob_regions:
+            self._rasterize_deleted_region(x, y, w, h)
+
+    def _delete_selected_blob(self) -> None:
+        if self._selected_blob_id is None or self._blob_stats is None:
+            return
+        label = self._selected_blob_id
+        if not (0 <= label < len(self._blob_stats)):
+            return
+        self._push_undo()
+        x, y, w, h = (float(v) for v in self._blob_stats[label, :4])
+        self._deleted_blob_regions.append((x, y, w, h))
+        self._rasterize_deleted_region(x, y, w, h)
+        self._invalidate_mask_cache()
+        self._recompute_blob_labels()
+        self._rebuild_mask_image()
+        self._selected_blob_id = None
+        self.set_highlight_rect(None)
+        self.update()
+        self.blob_deleted.emit(label)
+        self.mask_changed.emit()
 
     # ── Undo ─────────────────────────────────────────────────────────────────
 
@@ -225,6 +355,7 @@ class RRoiCanvas(OverlayViewer):
             "roi": self._normalized_tuple(self._roi_edges) if self._roi_edges else None,
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
+            "removed_blob_regions": list(self._deleted_blob_regions),
         }
 
     def set_state(self, state: dict) -> None:
@@ -232,9 +363,13 @@ class RRoiCanvas(OverlayViewer):
         self._roi_edges = self._edges_from_tuple(tuple(roi)) if roi else None
         self._erase_strokes = list(state.get("erase_strokes", []))
         self._manual_strokes = list(state.get("manual_strokes", []))
+        # 역호환: 기존 세션 파일에 이 키가 없을 수 있음(설계 결정 7).
+        self._deleted_blob_regions = [tuple(r) for r in state.get("removed_blob_regions", [])]
         self._invalidate_mask_cache()   # undo/세션 로드 — 스트로크 리스트가 통째로
         # 교체되므로 개수만 보는 캐시 휴리스틱을 믿지 않고 안전하게 전체 재계산한다.
         self._replay_erase_strokes()
+        self._replay_deleted_blob_regions()
+        self._recompute_blob_labels()
         self._rebuild_stroke_overlay()
         self._rebuild_mask_image()
         self._drag_mode = None
@@ -242,6 +377,11 @@ class RRoiCanvas(OverlayViewer):
         self._current_stroke = []
         self._last_erase_pos = None
         self._erasing = False
+        # 선택 상태는 undo/영속 대상이 아님(설계 결정 7) — 이미지/셀 전환, undo
+        # 시 항상 리셋(엣지케이스 4).
+        self._roi_selected = False
+        self._selected_blob_id = None
+        self.set_highlight_rect(None)
         self.update()
         self.roi_changed.emit()
         self.roi_committed.emit()
@@ -474,15 +614,34 @@ class RRoiCanvas(OverlayViewer):
         rect = self._screen_rect()
         if rect is None:
             return
-        pen = QPen(_COLOR_ROI, 2)
+        color = _COLOR_SELECTED if self._roi_selected else _COLOR_ROI
+        pen = QPen(color, 4 if self._roi_selected else 2)
         pen.setCosmetic(True)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(rect)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_COLOR_ROI)
+        p.setBrush(color)
         for hp in self._handle_points(rect).values():
             p.drawRect(QRectF(hp.x() - 4, hp.y() - 4, 8, 8))
+
+    def _paint_deleted_blob_regions(self, p: QPainter) -> None:
+        """`ZoneCanvas._paint_removed_blobs()` 1:1 포팅 — bbox 근사(ponytail,
+        설계 결정 3과 동일한 알려진 한계), `_deleted_blob_regions`(진짜 상태)를
+        순회해 반투명 빨강으로 표시."""
+        if not self._deleted_blob_regions:
+            return
+        sx, sy = self._orig_scale()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_COLOR_DELETED_BLOB)
+        for x, y, w, h in self._deleted_blob_regions:
+            rect = QRectF(
+                x * sx * self._zoom + self._pan.x(),
+                y * sy * self._zoom + self._pan.y(),
+                w * sx * self._zoom,
+                h * sy * self._zoom,
+            )
+            p.drawRect(rect)
 
     # ── paintEvent ───────────────────────────────────────────────────────────
 
@@ -494,6 +653,7 @@ class RRoiCanvas(OverlayViewer):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._paint_mask_overlay(p)
         self._paint_strokes(p)
+        self._paint_deleted_blob_regions(p)
         self._paint_roi(p)
         p.end()
 
@@ -532,6 +692,10 @@ class RRoiCanvas(OverlayViewer):
             else:
                 self._begin_resize(handle)
                 self._drag_mode = "resize"
+            # ROI 테두리/핸들/내부를 직접 클릭 — 즉시 선택 상태로(설계 결정 2).
+            self._roi_selected = True
+            self._selected_blob_id = None
+            self.set_highlight_rect(None)
         else:
             self._roi_edges = self._edges_from_tuple((orig_pt.x(), orig_pt.y(), 0.0, 0.0))
             self._begin_resize("se")
@@ -593,8 +757,18 @@ class RRoiCanvas(OverlayViewer):
                     snap = self._undo_stack.pop()
                     roi = snap["roi"]
                     self._roi_edges = self._edges_from_tuple(tuple(roi)) if roi else None
+                # 드래그가 아니라 단순 클릭이었던 지점 — 블랍이 있으면 선택,
+                # 없으면 전체 선택 해제(설계 결정 2).
+                label = self._blob_label_at(self._press_orig_pt)
+                if label:
+                    self._select_blob(label)
+                else:
+                    self._deselect_all()
             else:
                 self._roi_edges = self._edges_from_tuple((x, y, w, h))
+                self._roi_selected = True   # 방금 만든 ROI는 선택 상태로 시작
+                self._selected_blob_id = None
+                self.set_highlight_rect(None)
         elif self._drag_mode in ("resize", "move") and self._roi_edges is not None:
             self._roi_edges = self._edges_from_tuple(self._normalized_tuple(self._roi_edges))
         self._drag_mode = None
@@ -610,6 +784,13 @@ class RRoiCanvas(OverlayViewer):
             return
         if event.matches(QKeySequence.StandardKey.Undo):
             self.undo()
+            return
+        if self._mode == "roi" and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if self._selected_blob_id is not None:
+                self._delete_selected_blob()
+            elif self._roi_selected and self._roi_edges is not None:
+                self.set_roi(None)   # 기존 메서드 — 내부에서 이미 _push_undo() 호출
+                self._roi_selected = False
             return
         super().keyPressEvent(event)
 
@@ -679,5 +860,86 @@ if __name__ == "__main__":
     fc3b._mask_image = "detected"   # 검출 완료 → 커밋 래스터는 더 이상 그리지 않음
     fc3b._paint_strokes(None)
     assert fc3b.calls == ["current"]
+
+    # ── self-check: 블랍 선택/삭제 + ROI 선택/삭제(실제 위젯, offscreen) ────────
+    import os as _os
+    import sys as _sys
+    _os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QEvent as _QEvent
+    from PyQt6.QtGui import QKeyEvent as _QKeyEvent, QPixmap as _QPixmap
+    from PyQt6.QtWidgets import QApplication as _QApplication
+
+    _app = _QApplication.instance() or _QApplication(_sys.argv)
+
+    h, w = 50, 60
+    mask = np.zeros((h, w), dtype=bool)
+    mask[5:15, 5:15] = True     # 블랍 A — 100px
+    mask[5:15, 40:50] = True    # 블랍 B — 100px
+    assert mask.sum() == 200
+
+    canvas = RRoiCanvas()
+    canvas.set_image_size(w, h)
+    canvas.set_pixmap(_QPixmap(w, h))
+    canvas.set_detected_mask(mask)
+
+    def _label_at_bbox(c: RRoiCanvas, x: int, y: int) -> int:
+        lbl = c._blob_label_at(QPointF(x, y))
+        assert lbl is not None, f"({x},{y})에 블랍이 있어야 함"
+        return lbl
+
+    label_a = _label_at_bbox(canvas, 10, 10)
+    label_b = _label_at_bbox(canvas, 45, 10)
+    assert label_a != label_b
+
+    # (1) _select_blob()/_deselect_all() 상태 전환.
+    canvas._select_blob(label_b)
+    assert canvas._selected_blob_id == label_b and canvas._roi_selected is False
+    assert canvas._highlight_rect is not None
+    canvas._deselect_all()
+    assert canvas._selected_blob_id is None and canvas._highlight_rect is None
+
+    # (2) 삭제 전후 effective_mask() 픽셀 수 감소 확인.
+    count_before = int(canvas.effective_mask().sum())
+    assert count_before == 200
+    canvas._select_blob(label_a)
+    canvas._delete_selected_blob()
+    assert canvas._selected_blob_id is None   # 삭제 후 선택 해제됨
+    count_after = int(canvas.effective_mask().sum())
+    assert count_after == count_before - 100, (count_before, count_after)
+    assert len(canvas._deleted_blob_regions) == 1
+
+    # (3) 같은 블랍을 삭제한 뒤 다른 threshold로 재검출해도(set_detected_mask() 재호출)
+    # _deleted_blob_regions가 살아있는지(설계 결정 3의 핵심 보장).
+    mask2 = mask.copy()
+    mask2[20:25, 20:25] = True   # 전혀 다른 위치에 새 블랍 하나 추가(threshold 변경 시뮬레이션)
+    canvas.set_detected_mask(mask2)
+    assert len(canvas._deleted_blob_regions) == 1, "재검출해도 삭제 이력이 유지돼야 함(설계 결정 3)"
+    assert canvas._selected_blob_id is None   # 엣지케이스 2 — 재검출 시 선택 리셋
+
+    # (4) Delete 키 디스패치 — 블랍 선택 상태에서 Delete → 블랍만 지워짐(ROI 안 지워짐).
+    canvas.set_roi(QRect(0, 0, 5, 5))
+    label_b2 = _label_at_bbox(canvas, 45, 10)
+    canvas._select_blob(label_b2)
+    regions_before = len(canvas._deleted_blob_regions)
+    del_press = _QKeyEvent(_QEvent.Type.KeyPress, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
+    canvas.keyPressEvent(del_press)
+    assert len(canvas._deleted_blob_regions) == regions_before + 1
+    assert canvas.get_roi() is not None, "블랍 삭제가 선택되지 않은 ROI까지 지우면 안 됨"
+
+    # ROI 선택 상태에서 Delete → ROI만 지워짐.
+    canvas._roi_selected = True
+    canvas._selected_blob_id = None
+    regions_before2 = len(canvas._deleted_blob_regions)
+    canvas.keyPressEvent(del_press)
+    assert canvas.get_roi() is None
+    assert len(canvas._deleted_blob_regions) == regions_before2   # 블랍 삭제 이력은 그대로
+
+    # 브러시/pan 모드에서는 Delete가 무동작(가드 확인, 엣지케이스 10).
+    canvas.set_roi(QRect(0, 0, 5, 5))
+    canvas._roi_selected = True
+    canvas.set_pan_mode(True)
+    canvas.keyPressEvent(del_press)
+    assert canvas.get_roi() is not None, "roi 모드가 아니면 Delete가 ROI를 지우면 안 됨"
+    canvas.set_pan_mode(False)
 
     print("r_roi_canvas self-check OK")

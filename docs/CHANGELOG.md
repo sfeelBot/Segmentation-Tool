@@ -5,6 +5,41 @@ main 형식: `[vX.Y.Z] YYYY-MM-DD`, zone 형식: `[zone-vX.Y.Z] YYYY-MM-DD`.
 
 ---
 
+## [zone-v1.16.0] 2026-11-10
+
+사용자 요청: "roi는 선택시 지울 수 있는 기능을 만들어줘. blob을 선택할 수 있는
+기능도 만들고 roi도 선택할 수 있게 만들면 좋겟어." — 기획→구현→디자인→검증 전
+단계를 거쳐 완료. 검증 에이전트가 스펙
+(`docs/specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md`) 체크리스트 12개
+항목 전부 실제 QTest 마우스/키 조작 기반으로 PASS 확인, pytest 213 passed /
+1 pre-existing-failure(기존 기준과 동일, 새 회귀 없음).
+
+### 추가
+- **ROI 선택 + Delete 삭제**: ROI(사각형)를 클릭하면 선택 강조(색/굵기 변화)로
+  표시되고, 선택 상태에서 Delete/Backspace 키로 삭제(재검출 트리거).
+- **블랍 선택 + Delete 삭제**: 검출된 블랍을 클릭하면 bbox 하이라이트로 선택
+  표시되고, Delete/Backspace로 그 블랍만 effective mask에서 제외(면적 감소,
+  `_cell_rollup()` 숫자 갱신) — 삭제된 블랍은 반투명 빨강 bbox로 표시.
+- 블랍 삭제는 라벨 id가 아니라 이미지 좌표계 바운딩박스 목록으로 영속화해,
+  threshold 등 설정을 바꿔 재검출해도 삭제 이력이 유지됨(핵심 회귀 포인트).
+- ROI/블랍 삭제 모두 undo(Ctrl+Z) 지원, 세션 저장/불러오기 시
+  `removed_blob_regions` 키로 보존.
+- 새 버튼/툴바 액션 추가 없이 Delete/Backspace 키보드 입력만으로 동작(기존
+  3클러스터 폭 예산(BUG-050/051) 리스크 회피).
+
+### 수정
+- ROI 선택/비선택 상태의 색상 대비 문제(디자인 에이전트 발견 → 리더가 teal/yellow
+  색상 교체 + 두께 조정으로 수정).
+
+### 알려진 이슈
+- **BUG-052(P3, Open)**: ROI 삭제 시 재검출이 자동으로 트리거되지 않음 — 다음
+  라운드로 이월.
+
+검증: `verifier` 서브에이전트가 스펙 체크리스트 12건 전부 실제 QTest 마우스/키
+조작으로 PASS 확인, 전체 pytest 213 passed(새 회귀 없음).
+
+---
+
 ## [zone-v1.15.1] 2026-11-09
 
 사용자 요청: "일반 사용자가 쓰기에 어색함이 있을 것 같은 레이아웃은 없어?

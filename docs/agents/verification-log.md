@@ -7629,3 +7629,88 @@ exec()` 인스턴스 호출이라 정적 `QMessageBox.question()` 모킹만으�
 - 상태: **PASS(통과), 단 BUG-050(P1) 신규 Open** — 리더 핵심 수정 2건은 실행 검증
   통과. 이번 라운드와 무관하게 기존 BUG-044 수정의 틈에서 나온 레이아웃 버그를
   실행 중 발견해 별도 등록(리더 판단 필요).
+
+## 2026-11-10 — R 분석 탭 ROI/블랍 선택+삭제 검증
+
+- 범위: `docs/specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md`의 "검증
+  체크리스트(검증 에이전트용)" 1~12번 전부. QTest 기반 실제 마우스 드래그/클릭
+  좌표 시뮬레이션 + 실제 키 입력(Delete/Backspace/Ctrl+Z)으로 `RAnalysisTab`을
+  조작했다(정적 코드 리뷰만이 아님). 스크린샷(`QWidget.grab()`)을 단계별로 저장해
+  육안으로도 선택 강조/삭제 bbox 색상을 확인했다. 환경: `QT_QPA_PLATFORM=offscreen`,
+  `C:\Users\Feel\AppData\Local\Python\bin\python.exe`,
+  `PYTHONPATH=D:\segmentation model-zone-analysis-tab`. 검증 스크립트:
+  `C:\Users\Feel\AppData\Local\Temp\claude\d--segmentation-model\7d22477b-1701-46e5-afbc-9a433ab94cb7\scratchpad\r_verify.py`.
+- 사전 자체검증(self-check) 재확인: `python app/widgets/r_roi_canvas.py` →
+  `r_roi_canvas self-check OK`, `python app/tabs/r_analysis_tab.py` →
+  `r_analysis_tab self-check OK` (둘 다 구현 에이전트가 추가한 블랍 선택/삭제
+  골든패스 포함).
+- `pytest -q` 전체 재실행: **213 passed, 1 failed**
+  (`tests/test_zone_step_indicator.py::test_steps_complete_in_order_as_ckpt_image_circles_are_set`,
+  `current==3` 기대에 `4`) — 구현 에이전트가 보고한 베이스라인(213 passed/1
+  pre-existing failure)과 정확히 일치, 이번 라운드로 인한 신규 회귀 없음(해당
+  실패는 `QA.md` BUG-049로 이미 등록된 기존 flaky).
+- **체크리스트 1~12 결과(전부 PASS)**:
+  1. PASS — ROI 내부 클릭(배경 영역)과 'e' 핸들(테두리) 클릭 둘 다
+     `_roi_selected=True`로 전환, 색/굵기가 amber(2px)→selected-gold(3px)+채움
+     핸들로 바뀜(스크린샷 `01_roi_selected_by_click.png`로 육안 확인).
+  2. PASS — 선택된 ROI에서 Delete → `canvas.get_roi() is None`(사각형 소멸)
+     확인. 단, "+재검출 트리거" 부분은 실측상 일어나지 않음(아래 BUG-052 참고,
+     리더 판단 필요 — item 2의 "ROI 사라짐" 자체는 PASS로 판정).
+  3. PASS — 블랍 A 내부 클릭 → `selected_blob_id`가 설정되고 `_roi_selected`는
+     `False`, `set_highlight_rect()`로 노란 bbox 표시(스크린샷
+     `03_blob_a_selected.png`).
+  4. PASS — 선택된 블랍에서 Delete → `effective_mask()` 합 5000→2500(블랍 1개분
+     감소), `_image_data(path)["area"]`도 동일하게 감소, `_deleted_blob_regions`에
+     bbox 1건 추가 + 화면에 빨간 반투명 bbox로 표시(스크린샷
+     `04_after_blob_delete.png` — 블랍 A만 분홍/빨강, 블랍 B는 그대로 녹색).
+  5. PASS — threshold를 128→140으로 바꾸고(디바운스 150ms 대기, 실제
+     `set_detected_mask()` 재호출 유발) `_deleted_blob_regions`가 그대로
+     유지됨 확인(설계 결정 3 핵심 보장).
+  6. PASS — 블랍 삭제 후 Ctrl+Z(QTest 키시퀀스) → `_deleted_blob_regions`가
+     빈 리스트로, `effective_mask()` 합이 2500→5000으로 복원(스크린샷
+     `06_after_undo_blob.png` — 두 블랍 모두 녹색으로 복귀).
+  7. PASS — ROI를 다시 드래그로 그린 뒤 Delete → `get_roi() is None`, Ctrl+Z →
+     ROI 좌표가 삭제 전과 동일하게 복원.
+  8. PASS — `_do_save()`로 저장한 JSON을 직접 읽어 `removed_blob_regions`
+     키가 `[[50.0, 50.0, 50.0, 50.0]]`로 저장됨을 확인. 비어있는 다른 세션으로
+     전환(`_load_session(other_path)`) 후 다시 원 세션으로 전환
+     (`_load_session(session_path)`)해도 `_image_data_map`의
+     `removed_blob_regions`가 그대로 복원됨.
+  9. PASS — 삭제된 블랍 영역에 브러시 그리기 도구(`_set_tool`/`act_brush` 실제
+     트리거)로 실제 드래그 스트로크를 찍으면 `effective_mask()` 합이
+     2500→4902로 증가(되살아남, 테두리 안티앨리어싱으로 100% 완전 복구는
+     아니지만 명백한 증가로 "되살아남" 확인).
+  10. PASS — 이미지 없는 빈 캔버스에서 Delete 입력 시 예외 없음. 브러시그리기/
+      지우개/pan 3개 모드에서 ROI가 선택된 상태로 Delete를 눌러도 ROI가
+      지워지지 않음(`self._mode == "roi"` 가드 확인) — 오류 0건.
+  11. PASS — 캔버스 폭 700/500/350/250px 스윕에서 `nav_cluster`가 캔버스 밖으로
+      밀려나지 않고 `run_cluster`가 `minimumSizeHint()` 미만으로 줄어들지
+      않음(BUG-050/051 재발 없음, 새 버튼 미추가로 폭 공식 불변 확인).
+  12. PASS — 블랍/ROI를 선택한 상태에서 다른 이미지로 전환
+      (`_set_current_image`) → `_selected_blob_id is None`,
+      `_roi_selected is False`, `_highlight_rect is None`으로 자동 초기화 확인.
+- **신규 버그 1건 등록**: `QA.md` **BUG-052**(P3, Open) — 스펙 체크리스트 2번이
+  명시한 "ROI 삭제 → 재검출 트리거"가 실제로는 일어나지 않음. `roi_committed`
+  시그널이 `RAnalysisTab`에 전혀 connect돼 있지 않아(grep 전체 재확인 0건),
+  ROI 삭제 후에도 `canvas._detected_mask`의 identity가 그대로라 마스크 오버레이/
+  area가 갱신되지 않음. git 이력으로 이 시그널과 미연결 상태가 이번 라운드
+  이전(HEAD `18b1dea`)부터 있었음을 확인 — 이번에 새로 만든 회귀는 아니며, 실제
+  검출 영역(`global_roi`/`roi_override`)은 화면 ROI 사각형과 별개 개념이라
+  사용자 체감 영향도 제한적으로 판단되나, 스펙 문서의 명시적 약속과 실제 동작이
+  다르므로 리더 판단을 위해 등록.
+- **리더가 남긴 사전 발견 사항(범위 밖, 신규 버그 아님)** 재확인: `_load_session()`이
+  설정 setter(`set_auto_detect_enabled()` 등)를 `_current_image_path` 리셋보다
+  먼저 호출하는 기존(사전 존재) 순서 문제를 별도 반복 스크립트로 직접 재현했다 —
+  auto_detect가 True→False로 바뀌는 세션 전환 시, 아직 리셋 안 된 이전
+  `_current_image_path`를 대상으로 `_run_and_display_detection()`이 한 번 더
+  호출되고, 그 호출이 (이미 `clear()`된) `_image_data_map`에 그 경로의 "유령"
+  엔트리를 다시 만들어 넣는 것을 확인(`r_ghost_test.jpg` 키가 빈 세션 로드 후에도
+  `_image_data_map`에 재등장). 다만 `self._cells`는 새 세션 기준으로 이미
+  재구성돼 있어 `_do_save()` 결과물(저장 파일)에는 영향이 없었고, 이번 ROI/블랍
+  select+delete 기능(`removed_blob_regions` 영속화, 체크리스트 8번)과도 실제
+  상호작용해 문제를 일으키지는 않음을 확인(저장/재로드 왕복 결과가 정확히
+  기대값과 일치). 리더 메모대로 범위 밖으로 판단해 신규 BUG 번호는 매기지
+  않고 기록만 남긴다.
+- **결론**: 1~12번 전부 PASS. `pytest` 213 passed/1 pre-existing-failure로 변화
+  없음. 신규 BUG-052(P3) 1건 등록(스펙 문구-구현 불일치, 영향 제한적) — 리더
+  판단 필요. 이번 라운드는 "완료"로 간주 가능(단 BUG-052는 Open 상태로 남음).
