@@ -333,3 +333,45 @@
 - 태그: `zone-v1.11.0` (로컬 annotated tag, push 전)
 - installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트 범위 밖).
 - push 대기: 리더가 사용자 확인 후 진행 필요.
+
+---
+
+## 2026-11-10 — zone-v1.16.0 배포 (R 분석 탭 ROI 선택+삭제 / 블랍 선택+삭제)
+
+### 배경
+- 사용자 요청: "roi는 선택시 지울 수 있는 기능을 만들어줘. blob을 선택할 수 있는
+  기능도 만들고 roi도 선택할 수 있게 만들면 좋겟어." 기획→구현→디자인→검증 전
+  단계 완료(스펙 `docs/specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md`).
+  검증 에이전트가 체크리스트 12개 항목 전부 실제 QTest 마우스/키 조작으로 PASS
+  확인, 전체 pytest 213 passed / 1 pre-existing-failure(기존 기준과 동일, 새
+  회귀 없음). 검증 중 발견된 ROI 선택/비선택 색상 대비 문제는 리더가 직접
+  teal/yellow 색상 교체 + 두께 조정으로 수정(디자인 에이전트 발견, self-check/
+  pytest 재확인 완료 후 이번 커밋에 포함).
+
+### 조치
+- `release.ini`: `version` `1.15.1` → `1.16.0`(신규 기능 → SemVer MINOR 판단).
+- `docs/CHANGELOG.md`에 `[zone-v1.16.0] 2026-11-10` 섹션 추가 — 사용자 요청 원문,
+  ROI/블랍 선택+삭제, undo/세션 저장 지원, 색상 대비 수정, BUG-052(P3, Open,
+  다음 라운드로 이월) 기록.
+- `python scripts/generate_version_info.py` 실행 → `Generated release metadata
+  for 1.16.0` 성공.
+- `QA.md`, `app/core/i18n.py`, `app/tabs/r_analysis_tab.py`,
+  `app/widgets/r_roi_canvas.py`, `docs/specs/r-analysis-tab-roi-blob-select-delete-2026-11-10.md`,
+  `docs/roadmap.md`, `docs/agents/{design,implementation,planning,verification}-log.md`,
+  `release.ini`, `docs/CHANGELOG.md`를 커밋에 포함. 무관한 기존 미추적 파일
+  (`.codex/`, `AGENTS.md`, `data/annotations/`, `graphify-out/`)은 배포 범위
+  밖이라 손대지 않음.
+- 커밋 `0204bff` (`feat: R 분석 탭 ROI 선택+삭제 / 블랍 선택+삭제 기능 추가`).
+- 태그 `zone-v1.16.0` (annotate, 커밋 `0204bff` 대상).
+- **push는 수행하지 않음** — 지시사항에 따라 커밋/태깅까지만 로컬에서 종료,
+  리더가 사용자 확인 후 `git push origin feature/zone-analysis-tab` +
+  `git push origin zone-v1.16.0` 진행 필요(현재 origin 대비 3커밋 앞섬 — 이전
+  2커밋도 아직 push 전 상태였음).
+
+### 결과 요약
+- 버전: zone-v1.16.0
+- 커밋: `0204bff` (로컬에만 존재, origin/feature/zone-analysis-tab 대비 3커밋 앞섬)
+- 태그: `zone-v1.16.0` (로컬 annotated tag, push 전)
+- installer 실빌드/GitHub Release: 이번 요청 범위에 포함하지 않음(배포 에이전트
+  범위 밖).
+- push 대기: 리더가 사용자 확인 후 진행 필요.
