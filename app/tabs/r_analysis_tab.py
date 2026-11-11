@@ -35,7 +35,9 @@ from PyQt6.QtWidgets import (
 from app.core import r_cell_store as r_store
 from app.core.i18n import t
 from app.core.logger import get_logger
-from app.core.r_analysis_metrics import cell_rollup, contour_area, detect_contour_mask
+from app.core.r_analysis_metrics import (
+    cell_rollup, contour_area, detect_contour_mask, imread_unicode, regions_mask,
+)
 from app.core.zone_metrics import apply_manual_strokes
 from app.widgets.brush_toolbar import BrushToolbar, TOOL_BRUSH, TOOL_ERASER, TOOL_PAN
 from app.widgets.icons import icon as svg_icon
@@ -100,7 +102,8 @@ class _RDetectWorker(QThread):
 
     def __init__(
         self,
-        jobs: list[tuple[Path, tuple[int, int, int, int] | None, list]],
+        # (path, roi, manual_strokes, removed_blob_regions)
+        jobs: list[tuple[Path, tuple[int, int, int, int] | None, list, list]],
         threshold: int,
         auto_detect: bool,
     ) -> None:
@@ -111,11 +114,11 @@ class _RDetectWorker(QThread):
 
     def run(self) -> None:
         total = len(self._jobs)
-        for done, (path, roi, manual_strokes) in enumerate(self._jobs, 1):
+        for done, (path, roi, manual_strokes, removed_regions) in enumerate(self._jobs, 1):
             if self.isInterruptionRequested():
                 break
             try:
-                img = cv2.imread(str(path))
+                img = imread_unicode(path)
                 if img is not None:
                     # _compute_detected_mask()와 동일한 분기 — 자동검출 꺼짐 또는
                     # ROI 미지정이면 빈 마스크로 시작해 브러시 스트로크만으로 면적을 낸다.
@@ -123,6 +126,10 @@ class _RDetectWorker(QThread):
                         mask = detect_contour_mask(img, roi, self._threshold)
                     else:
                         mask = np.zeros(img.shape[:2], dtype=bool)
+                    if removed_regions:
+                        # 캔버스 _base_mask()와 같은 순서 — 삭제한 블랍을 먼저 빼고
+                        # 스트로크를 적용해야 화면 면적과 일치한다(BUG-054).
+                        mask &= ~regions_mask(mask.shape, removed_regions)
                     if manual_strokes:
                         mask = apply_manual_strokes(mask, manual_strokes)
                     self.image_done.emit(str(path), contour_area(mask))
@@ -647,14 +654,14 @@ class RAnalysisTab(QWidget):
         return self._image_data_map.setdefault(str(path), _default_image_data())
 
     def _cv2_imread_cached(self, path: Path) -> np.ndarray | None:
-        """`cv2.imread()` 결과를 LRU로 캐싱 — 이미지 전환/threshold 재검출 때마다
+        """`imread_unicode()` 결과를 LRU로 캐싱 — 이미지 전환/threshold 재검출 때마다
         같은 대형 이미지를 반복 디코드하지 않는다(P1 성능)."""
         key = str(path)
         cached = self._image_cache.get(key)
         if cached is not None:
             self._image_cache.move_to_end(key)
             return cached
-        img = cv2.imread(key)
+        img = imread_unicode(key)
         if img is not None:
             self._image_cache[key] = img
             if len(self._image_cache) > _IMAGE_CACHE_SIZE:
@@ -908,7 +915,13 @@ class RAnalysisTab(QWidget):
             return
         # ROI 없는 이미지도 job에 포함 — roi=None이면 워커가 빈 마스크 + 브러시만으로
         # 면적을 계산한다(자동검출 꺼짐/ROI 미지정 워크플로도 일괄검출 가능해야 함).
-        jobs = [(p, self._effective_roi(p), self._image_data(p).get("manual_strokes", [])) for p in paths]
+        jobs = [
+            (
+                p, self._effective_roi(p), self._image_data(p).get("manual_strokes", []),
+                self._image_data(p).get("removed_blob_regions", []),
+            )
+            for p in paths
+        ]
 
         self._set_detect_buttons_enabled(False)
         self._progress = QProgressDialog(t("r.detecting_progress_label"), t("common.cancel"), 0, len(jobs), self)
@@ -1122,7 +1135,7 @@ if __name__ == "__main__":
     # roi=None job을 실제로 통과시켜 batch 경로가 단일 이미지 경로와 동일하게
     # 동작하는지 확인(요구사항: 자동검출 꺼짐이어도 일괄검출 가능해야 함).
     worker = _RDetectWorker(
-        jobs=[(dummy_path, None, [(True, [(50.0, 50.0, 10.0)])])],
+        jobs=[(dummy_path, None, [(True, [(50.0, 50.0, 10.0)])], [])],
         threshold=128, auto_detect=False,
     )
     batch_results: list[tuple[str, int]] = []
@@ -1134,6 +1147,23 @@ if __name__ == "__main__":
         dummy_path.unlink(missing_ok=True)
     assert len(batch_results) == 1 and batch_results[0][1] > 0, \
         "ROI 없는 job도 브러시 스트로크로 면적 > 0이 나와야 함"
+
+    # BUG-053: 한글 경로 이미지도 탭/워커 양쪽에서 디코드돼야 함(cv2.imread는 None을
+    # 반환해 리터치 전체가 죽었다) — cv2.imwrite도 한글 경로를 못 써서 imencode로 만든다.
+    kr_path = Path("r_한글_경로_테스트.png")
+    cv2.imencode(".png", dummy_img)[1].tofile(str(kr_path))
+    try:
+        assert tab._cv2_imread_cached(kr_path) is not None, "한글 경로 이미지를 탭이 못 읽음"
+        kr_worker = _RDetectWorker(
+            jobs=[(kr_path, None, [(True, [(50.0, 50.0, 10.0)])], [])],
+            threshold=128, auto_detect=False,
+        )
+        kr_results: list[int] = []
+        kr_worker.image_done.connect(lambda _path, area: kr_results.append(area))
+        kr_worker.run()
+        assert kr_results and kr_results[0] > 0, "한글 경로 job도 image_done이 나와야 함"
+    finally:
+        kr_path.unlink(missing_ok=True)
 
     # 캔버스가 좁아져도 실행 버튼 클러스터가 폭 0으로 수축해 클릭 불가능해지면 안 됨(BUG-050).
     tab._canvas.resize(800, 600)
@@ -1216,6 +1246,20 @@ if __name__ == "__main__":
         area_after = tab._image_data(blob_path)["area"]
         assert area_after < area_before, "블랍 삭제 후 area가 감소해야 함"
         assert len(tab._image_data(blob_path)["removed_blob_regions"]) == 1
+
+        # BUG-054: 일괄 검출 워커도 삭제한 블랍을 빼야 함 — 캔버스 면적과 같아야 한다
+        # (job에 removed_blob_regions가 안 실리면 삭제 전 면적으로 덮어써졌다).
+        blob_data = tab._image_data(blob_path)
+        blob_worker = _RDetectWorker(
+            jobs=[(blob_path, tab._effective_roi(blob_path), blob_data["manual_strokes"],
+                   blob_data["removed_blob_regions"])],
+            threshold=128, auto_detect=True,
+        )
+        blob_results: list[int] = []
+        blob_worker.image_done.connect(lambda _path, area: blob_results.append(area))
+        blob_worker.run()
+        assert blob_results == [contour_area(tab._canvas.effective_mask())] == [area_after], \
+            (blob_results, area_after)
 
         tab._session_path = session_path
         tab._do_save()

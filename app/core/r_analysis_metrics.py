@@ -23,6 +23,30 @@ from app.core.zone_metrics import disk_mask, apply_manual_strokes   # noqa: F401
 _MIN_CONTOUR_AREA = 4.0
 
 
+def imread_unicode(path: str | Path) -> np.ndarray | None:
+    # cv2.imread()는 Windows에서 비ASCII(한글) 경로를 못 읽고 None을 반환한다(BUG-053).
+    try:
+        return cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_COLOR)
+    except (OSError, cv2.error):
+        return None
+
+
+def regions_mask(
+    shape: tuple[int, int], regions: list[tuple[float, float, float, float]],
+) -> np.ndarray:
+    """bbox (x, y, w, h) 목록을 True로 칠한 bool 마스크. 삭제된 블랍 영역의 래스터화
+    규칙을 캔버스(`RRoiCanvas`)와 일괄 검출 워커가 공유한다 — 따로 구현하면 화면
+    면적과 일괄 검출 면적이 어긋난다(BUG-054)."""
+    h, w = shape
+    out = np.zeros((h, w), dtype=bool)
+    for x, y, rw, rh in regions:
+        x0, y0 = max(0, int(x)), max(0, int(y))
+        x1, y1 = min(w, int(x + rw) + 1), min(h, int(y + rh) + 1)
+        if x1 > x0 and y1 > y0:
+            out[y0:y1, x0:x1] = True
+    return out
+
+
 def detect_contour_mask(
     img: np.ndarray, roi: tuple[int, int, int, int], threshold: int,
 ) -> np.ndarray:
@@ -172,8 +196,23 @@ if __name__ == "__main__":
     edited = apply_manual_strokes(base, [(True, [(4.0, 4.0, 2.0)])])
     assert edited[4, 4]
 
-    # export_r_results_to_excel — 왕복(파일 생성 + 시트/행 수 확인)
+    # regions_mask — 캔버스 블랍 삭제와 같은 규칙(끝 좌표 +1px 포함, 이미지 경계 클램프)
+    assert regions_mask((50, 60), [(5.0, 5.0, 10.0, 10.0)]).sum() == 11 * 11
+    assert regions_mask((50, 60), [(55.0, 45.0, 10.0, 10.0)]).sum() == 5 * 5
+    assert not regions_mask((50, 60), [(-30.0, -30.0, 10.0, 10.0)]).any()
+
     import tempfile
+
+    # imread_unicode — 한글 폴더/파일명도 읽혀야 함(BUG-053), 실패는 예외가 아니라 None
+    with tempfile.TemporaryDirectory() as tmp:
+        kr_path = Path(tmp) / "한글폴더" / "7번.png"
+        kr_path.parent.mkdir()
+        cv2.imencode(".png", img)[1].tofile(str(kr_path))
+        loaded = imread_unicode(kr_path)
+        assert loaded is not None and loaded.shape == (50, 50, 3), "한글 경로 이미지를 못 읽음"
+        assert imread_unicode(kr_path.with_name("없는파일.png")) is None
+
+    # export_r_results_to_excel — 왕복(파일 생성 + 시트/행 수 확인)
     from openpyxl import load_workbook
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "r_results.xlsx"

@@ -21,6 +21,7 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, QRect, pyqtSignal
 
 from app.widgets.overlay_viewer import OverlayViewer
 from app.core import zone_metrics
+from app.core.r_analysis_metrics import regions_mask
 
 _HANDLE_PX = 8.0        # 리사이즈 핸들 히트 판정 반경 — 화면 픽셀
 _MIN_CREATE_PX = 6.0    # 이보다 작게 생성 드래그하면 취소
@@ -302,12 +303,12 @@ class RRoiCanvas(OverlayViewer):
     def _rasterize_deleted_region(self, x: float, y: float, w: float, h: float) -> None:
         if self._img_orig_h <= 0 or self._img_orig_w <= 0:
             return
+        # 래스터화 규칙은 일괄 검출 워커와 공유(BUG-054) — 여기서 따로 구현하지 않는다.
+        region = regions_mask((self._img_orig_h, self._img_orig_w), [(x, y, w, h)])
         if self._blob_delete_mask is None:
-            self._blob_delete_mask = np.zeros((self._img_orig_h, self._img_orig_w), dtype=bool)
-        x0, y0 = max(0, int(x)), max(0, int(y))
-        x1, y1 = min(self._img_orig_w, int(x + w) + 1), min(self._img_orig_h, int(y + h) + 1)
-        if x1 > x0 and y1 > y0:
-            self._blob_delete_mask[y0:y1, x0:x1] = True
+            self._blob_delete_mask = region
+        else:
+            self._blob_delete_mask |= region
 
     def _replay_deleted_blob_regions(self) -> None:
         """`_replay_erase_strokes()`와 동일 패턴 — `_deleted_blob_regions`(진짜
@@ -605,8 +606,11 @@ class RRoiCanvas(OverlayViewer):
 
     def _paint_strokes(self, p: QPainter) -> None:
         """커밋된 스트로크(검출 마스크 없을 때만) + 드래그 중 스트로크(항상) 디스패치.
-        로직을 분리해 self-check에서 QPainter 없이 검증 가능하게 했다."""
-        if self._mask_image is None:
+        로직을 분리해 self-check에서 QPainter 없이 검증 가능하게 했다.
+
+        `_mask_image is None`으로 판정하면 안 된다 — 유효 마스크가 0px일 때도 None이라
+        전부 지운 뒤 파랑/회색 스트로크가 잔상으로 남는다(BUG-055)."""
+        if self._detected_mask is None:
             self._paint_committed_strokes(p)
         self._paint_current_stroke(p)
 
@@ -845,7 +849,7 @@ if __name__ == "__main__":
     # _paint_strokes(): 커밋 후(effective_mask 있음) 파란/회색 덧칠이 사라지고
     # 드래그 중 미리보기만 항상 그려지는지(사용자가 명시한 핵심 버그 수정) 확인.
     class _FakeCanvas3:
-        _mask_image = None
+        _detected_mask = None
         _paint_strokes = RRoiCanvas._paint_strokes
         def __init__(self):
             self.calls = []
@@ -857,7 +861,7 @@ if __name__ == "__main__":
     fc3._paint_strokes(None)   # 마스크 없음 → 커밋 래스터도 보여줘야(유일한 피드백)
     assert fc3.calls == ["committed", "current"]
     fc3b = _FakeCanvas3()
-    fc3b._mask_image = "detected"   # 검출 완료 → 커밋 래스터는 더 이상 그리지 않음
+    fc3b._detected_mask = "detected"   # 검출 완료 → 커밋 래스터는 더 이상 그리지 않음
     fc3b._paint_strokes(None)
     assert fc3b.calls == ["current"]
 
@@ -941,5 +945,21 @@ if __name__ == "__main__":
     canvas.keyPressEvent(del_press)
     assert canvas.get_roi() is not None, "roi 모드가 아니면 Delete가 ROI를 지우면 안 됨"
     canvas.set_pan_mode(False)
+
+    # (5) BUG-055: 그린 뒤 전부 지워 유효 마스크가 0px(_mask_image None)이어도, 검출
+    # 마스크(빈 배열)가 있는 한 파랑/회색 커밋 스트로크 폴백을 그리면 안 됨.
+    ghost = RRoiCanvas()
+    ghost.set_image_size(w, h)
+    ghost.set_pixmap(_QPixmap(w, h))
+    ghost.set_detected_mask(np.zeros((h, w), dtype=bool))   # 자동검출 OFF와 같은 상태
+    ghost.set_state({
+        "roi": None, "removed_blob_regions": [],
+        "manual_strokes": [(True, [(30.0, 25.0, 5.0)]), (False, [(30.0, 25.0, 15.0)])],
+    })
+    assert not ghost.effective_mask().any() and ghost._mask_image is None
+    ghost_calls: list[str] = []
+    ghost._paint_committed_strokes = lambda p: ghost_calls.append("committed")
+    ghost._paint_strokes(None)
+    assert ghost_calls == [], "유효 마스크가 비어도 커밋 스트로크 잔상을 그리면 안 됨(BUG-055)"
 
     print("r_roi_canvas self-check OK")
