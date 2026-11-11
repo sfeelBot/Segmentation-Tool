@@ -57,7 +57,7 @@ from app.core.model_loader import load_from_code
 from app.core.annotation_store import ClassDef, DEFAULT_PALETTE
 from app.core.zone_metrics import (
     Circle, Zone, zones_from_circles, zone_stats, compute_blob_labels,
-    apply_manual_strokes, zone_blob_stats, ZoneBlobStat, scale_circles,
+    apply_edits, zone_blob_stats, ZoneBlobStat, scale_circles,
     max_blob_pixels_by_zone, drop_hidden,
 )
 from app.core import zone_state_store as zstate
@@ -227,11 +227,14 @@ def _compute_zone_rows(
     if not circles:
         return None
     h, w = result.raw_class_map.shape
-    ai_mask = result.class_map == target_cid
-    if previous is not None and previous["removed_blob_ids"]:
-        labels, _, _ = compute_blob_labels(ai_mask)
-        ai_mask = ai_mask & ~np.isin(labels, list(previous["removed_blob_ids"]))
-    final_mask = apply_manual_strokes(ai_mask, previous["manual_strokes"]) if previous else ai_mask
+    ai_mask = final_mask = result.class_map == target_cid
+    if previous is not None:
+        # 화면(`ZoneCanvas.edited_masks()`)과 같은 함수 — 따로 계산하면 화면 비율과
+        # 결과표가 어긋난다.
+        ai_mask, final_mask = apply_edits(
+            ai_mask, previous["manual_strokes"], previous["removed_blob_ids"],
+            previous.get("removed_points", []),
+        )
     zones = zones_from_circles(
         [Circle(idx, cx, cy, r, rest[0] if len(rest) > 0 else None,
                 bool(rest[1]) if len(rest) > 1 else False)
@@ -702,7 +705,7 @@ class ZoneAnalysisTab(QWidget):
         # R-ZONE-3: 원편집/블랍삭제/브러시스트로크 3개 시그널 전부 편집마다
         # 디바운스 타이머를 재시작(annotation_canvas.py의 자동 저장 패턴과 동일).
         self._canvas.circles_changed.connect(lambda: self._save_timer.start())
-        self._canvas.blob_deleted.connect(lambda _id: self._save_timer.start())
+        self._canvas.blob_deleted.connect(lambda: self._save_timer.start())
         self._canvas.erase_changed.connect(lambda: self._save_timer.start())
         self._canvas.circle_selected.connect(self._on_canvas_circle_selected)
         self._canvas.zone_clicked.connect(self._on_canvas_zone_clicked)
@@ -725,7 +728,7 @@ class ZoneAnalysisTab(QWidget):
         self._btn_save_all_images.clicked.connect(self._on_save_all_images)
         # 스텝 인디케이터 — 신규 시그널 없이 기존 호출부에 편승(주석 위 Undo 관례와 동일 패턴).
         self._canvas.circles_changed.connect(self._refresh_step_indicator)
-        self._canvas.blob_deleted.connect(lambda _id: self._mark_step6_touched())
+        self._canvas.blob_deleted.connect(self._mark_step6_touched)
         self._canvas.erase_changed.connect(self._mark_step6_touched)
 
     # ── 슬롯 — 이미지 / 체크포인트 선택 (C-1) ────────────────────────────────
@@ -1246,9 +1249,11 @@ class ZoneAnalysisTab(QWidget):
         try:
             ai_mask, final_mask = self._ai_and_final_masks()
             if ai_mask is not None and final_mask is not None:
+                # 타겟 클래스 픽셀 = 최종 마스크 그대로. 삭제한 블랍(검출분·브러시분)과
+                # 수동 지우기는 배경(틴트 없음), 수동 그리기는 검출과 같은 타겟 색.
                 corrected = self._last_result.class_map.copy()   # 사본 — 원본 class_map 변형 금지
-                corrected[ai_mask & ~final_mask] = 0   # 수동 지우기 → 배경(틴트 없음)
-                corrected[final_mask & ~ai_mask] = self._target_class_id   # 수동 그리기 → 타겟 색
+                corrected[corrected == self._target_class_id] = 0
+                corrected[final_mask] = self._target_class_id
                 overlay_img = engine.colorize_class_map(
                     corrected, self._image_path, self._overlay_opacity,
                 )
@@ -1293,28 +1298,25 @@ class ZoneAnalysisTab(QWidget):
         """(ai_mask, final_mask) — R3 Excel blob 내보내기가 둘을 구분해서 써야 해서
         `_current_target_mask()`를 두 단계로 분리한 리팩터링(기존 동작 100% 보존).
 
-        `ai_mask`: 타겟 클래스 마스크에서 삭제된 블랍(라운드 4)을 배경 처리해 제외한
-        "표시 마스크"(스펙 "블랍 삭제" 절) — 수동 스트로크 반영 *전*. 삭제 이력·
-        라벨맵은 `ZoneCanvas`가 단일 출처로 들고 있다(`removed_blob_ids()`/
-        `blob_labels()` — 원 선택/존 하이라이트와 동일한 getter 패턴, BUG-018/019
-        재발 방지). `final_mask`: `ai_mask`에 수동 그리기/지우기까지 반영한 최종 마스크
-        (기존 `_current_target_mask()`가 반환하던 것과 동일)."""
+        `ai_mask`: 타겟 클래스 검출 픽셀 중 블랍 삭제로 지워지지 않은 것(AI 점수 계산용).
+        `final_mask`: 블랍 삭제와 수동 그리기/지우기를 시간순으로 반영한 최종 마스크 =
+        화면에 보이는 것. 삭제 이력·스트로크는 `ZoneCanvas`가 단일 출처로 들고 있고
+        (BUG-018/019 재발 방지), 계산은 `zone_metrics.apply_edits()` 하나다 — 배치/
+        "전체 결과 보기"의 `_compute_zone_rows()`와 같은 함수(zone-v1.18.0)."""
         if self._last_result is None or self._target_class_id is None:
             return None, None
-        ai_mask = self._last_result.class_map == self._target_class_id
-        removed = self._canvas.removed_blob_ids()
-        labels = self._canvas.blob_labels()
-        if removed and labels is not None:
-            ai_mask = ai_mask & ~np.isin(labels, list(removed))
-        final_mask = self._canvas.apply_manual_strokes(ai_mask)
-        return ai_mask, final_mask
+        return self._canvas.edited_masks(self._last_result.class_map == self._target_class_id)
 
     def _current_target_mask(self) -> np.ndarray | None:
         return self._ai_and_final_masks()[1]
 
-    def _on_blob_deleted(self, _label_id: int) -> None:
-        # ZoneCanvas가 이미 removed_blob_ids에 반영·재도색까지 마친 뒤 emit한다
-        # (라운드 3의 circles_changed와 동일하게, 여기선 재계산만 트리거).
+    def _on_blob_deleted(self) -> None:
+        # ZoneCanvas가 삭제를 상태에 반영한 뒤 emit한다 — 여기선 재계산(오버레이 재합성
+        # 포함)만 트리거. 선택(하이라이트)된 블랍이 지워졌을 수 있으므로 선택도 해제한다.
+        # ponytail: 어느 블랍을 지웠든 선택을 해제한다 — 지운 블랍이 선택 블랍인지
+        # 가리려면 선택 지점을 따로 들고 최종 마스크를 한 번 더 조회해야 한다.
+        self._canvas.set_highlight_rect(None)
+        self._lbl_selected_blob.setText("")
         self._recompute_zones()
 
     # ── 슬롯 — 도구 전환(브러시그리기/브러시지우기/영역삭제/pan, R3-3) ──────────

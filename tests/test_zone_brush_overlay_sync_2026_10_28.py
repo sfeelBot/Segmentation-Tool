@@ -123,12 +123,11 @@ def test_committed_brush_strokes_no_longer_painted_as_separate_overlay() -> None
     canvas._manual_strokes = [(True, [(3.0, 3.0, 1.0)])]
     canvas._current_stroke = []
     calls = []
-    canvas._paint_removed_blobs = lambda p: calls.append("removed")
+    # zone-v1.18.0: 삭제한 블랍의 빨강 bbox 표시(_paint_removed_blobs)는 제거됐다.
+    assert not hasattr(ZoneCanvas, "_paint_removed_blobs")
     canvas._paint_current_stroke = lambda p: calls.append("current")
     canvas._pixmap = None   # paintEvent 본문 진입 전 가드는 그대로 두되, 우린 직접 분기만 호출
     # paintEvent는 pixmap None이면 조기 return하므로, 분기 로직만 직접 재현해 검증.
-    if canvas._removed_blob_ids:
-        canvas._paint_removed_blobs(None)
     if canvas._current_stroke:
         canvas._paint_current_stroke(None)
     assert calls == []   # 둘 다 조건 미충족(런타임엔 committed strokes만 있고 current는 빔)

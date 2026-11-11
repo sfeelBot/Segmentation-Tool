@@ -128,6 +128,55 @@ def apply_manual_strokes(
     return result
 
 
+def apply_edits(
+    mask: np.ndarray,
+    manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]],
+    removed_blob_ids: set[int] | list[int] = (),
+    removed_points: list[tuple[int, int, int]] = (),
+    labels: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """타겟 마스크에 블랍 삭제·브러시 스트로크를 시간순으로 적용한 `(ai_mask, final_mask)`.
+
+    `final_mask`: 화면에 보이는 최종 마스크. `ai_mask`: 원래 검출 픽셀 중 블랍 삭제로
+    지워지지 않은 것(`zone_blob_stats()`의 AI 점수 계산용 — 삭제한 자리에 다시 그린
+    픽셀은 수동 편집으로 본다). 캔버스(`ZoneCanvas.edited_masks()`)와 배치/"전체 결과
+    보기"(`_compute_zone_rows()`)가 이 함수 하나를 공유한다 — 따로 계산하면 화면과
+    결과표가 어긋난다(R 탭 BUG-054와 같은 부류).
+
+    `removed_points`(zone-v1.18.0): `(x, y, n)` — 스트로크 n개까지 적용한 마스크에서
+    (x, y)를 포함한 연결 성분(4-연결, `compute_blob_labels()`와 동일)을 지운다. 그 전에
+    그린 브러시분도 같은 덩어리면 함께 사라지고, 그 뒤 스트로크는 영향을 받지 않는다.
+    bbox가 아니라 픽셀 단위 flood fill이라 링 모양 블랍을 지워도 안쪽 블랍은 남는다.
+    `removed_blob_ids`(zone-v1.17.x 이하 사이드카): `mask`의 라벨 id — 이전 버전과 같이
+    스트로크보다 먼저 지운다. `labels`는 `mask`의 라벨맵을 이미 갖고 있을 때 재계산을
+    피하는 용도. 입력 `mask`는 건드리지 않는다."""
+    ai_mask = mask
+    if removed_blob_ids:
+        if labels is None:
+            labels, _, _ = compute_blob_labels(mask)
+        ai_mask = mask & ~np.isin(labels, list(removed_blob_ids))
+    by_n: dict[int, list[tuple[int, int]]] = {}
+    for x, y, n in removed_points:
+        by_n.setdefault(min(max(int(n), 0), len(manual_strokes)), []).append((int(x), int(y)))
+    if not by_n:
+        return ai_mask, apply_manual_strokes(ai_mask, manual_strokes)
+    ai_mask = ai_mask.astype(bool)   # 복사본 — 아래에서 제자리 수정
+    h, w = mask.shape
+    final, start = ai_mask, 0
+    for n in sorted(by_n):
+        final = apply_manual_strokes(final, manual_strokes[start:n])   # 항상 복사본
+        start = n
+        u8 = final.view(np.uint8)   # bool(0/1)과 메모리 공유 — floodFill이 받는 dtype
+        for x, y in by_n[n]:
+            if not (0 <= x < w and 0 <= y < h) or not final[y, x]:
+                continue
+            _, _, _, (bx, by, bw, bh) = cv2.floodFill(u8, None, (x, y), 2, flags=4)
+            gone = u8[by:by + bh, bx:bx + bw] == 2   # 채워진 픽셀만(bbox 안에서 판정)
+            final[by:by + bh, bx:bx + bw][gone] = False
+            ai_mask[by:by + bh, bx:bx + bw][gone] = False
+    return ai_mask, apply_manual_strokes(final, manual_strokes[start:])
+
+
 def zone_stats(zone_mask: np.ndarray, target_class_mask: np.ndarray) -> float:
     """존 마스크 면적 대비 타겟 클래스(AND) 픽셀 비율(%)."""
     area = int(zone_mask.sum())
@@ -436,6 +485,64 @@ if __name__ == "__main__":
     edited = apply_manual_strokes(base, strokes)
     assert edited[4, 2], "그리기 스트로크 반경 밖(x=2)은 True로 남아야 함"
     assert not edited[4, 4], "지우기 스트로크가 마지막이라 중심(4,4)은 False여야 함"
+
+    # ── apply_edits(zone-v1.18.0): 최종 마스크의 연결 성분 삭제 ─────────────────
+    det = np.zeros((40, 40), dtype=bool)
+    det[5:35, 5:35] = True
+    det[8:32, 8:32] = False      # 링(테두리 3px)
+    det[18:22, 18:22] = True     # 링 안쪽의 별개 블랍
+    det[0:2, 38:40] = True       # 구석 블랍
+    det_before = det.copy()
+    brush_only = (True, [(2.0, 37.0, 1.0)])     # 검출과 떨어진 브러시 전용 영역
+    brush_joined = (True, [(20.0, 3.0, 2.0)])   # 링 위쪽에 맞닿게 덧그림(y=1..5)
+
+    ai0, fin0 = apply_edits(det, [brush_only, brush_joined])
+    assert ai0 is det or np.array_equal(ai0, det)
+    assert np.array_equal(fin0, apply_manual_strokes(det, [brush_only, brush_joined]))
+
+    # 브러시로만 그린 영역 삭제 — 다른 건 그대로
+    ai1, fin1 = apply_edits(det, [brush_only, brush_joined], removed_points=[(2, 37, 2)])
+    assert not fin1[37, 2] and int(fin0.sum() - fin1.sum()) == 5, "브러시 전용 영역(5px)만 삭제"
+    assert np.array_equal(ai1, det), "검출 픽셀은 그대로"
+
+    # 검출(링) + 맞닿은 브러시 통삭제, 링 안쪽 블랍·구석 블랍은 보존(bbox 삭제 아님)
+    ai2, fin2 = apply_edits(det, [brush_only, brush_joined], removed_points=[(20, 2, 2)])
+    assert not fin2[2, 20] and not fin2[6, 6] and not fin2[33, 33], "링 + 브러시분 전부 삭제"
+    assert fin2[20, 20] and fin2[19, 19], "링 안쪽 블랍 보존(BUG-063과 같은 일이 없어야 함)"
+    assert fin2[0, 39] and fin2[37, 2], "무관한 블랍·브러시 영역 보존"
+    assert not ai2[6, 6] and ai2[20, 20], "ai_mask에서도 삭제한 검출 픽셀만 빠진다"
+
+    # 삭제 이후 스트로크는 살아남고(재브러시), 삭제 이전 스트로크는 같이 지워진다
+    rebrush = (True, [(6.0, 6.0, 1.0)])
+    ai3, fin3 = apply_edits(det, [brush_only, brush_joined, rebrush], removed_points=[(20, 2, 2)])
+    assert fin3[6, 6] and not fin3[6, 20] and not fin3[2, 20], "재브러시만 생존"
+    assert not ai3[6, 6], "삭제한 자리에 다시 그린 픽셀은 AI 픽셀이 아니다"
+    _, fin3b = apply_edits(det, [brush_only, brush_joined, rebrush], removed_points=[(20, 2, 3)])
+    assert not fin3b[6, 6], "n=3(재브러시 뒤 삭제)이면 재브러시분도 같은 덩어리라 삭제"
+
+    # 지우개로 갈라진 조각은 별개 — 한쪽만 삭제
+    bar = np.zeros((10, 30), dtype=bool)
+    bar[4:6, 2:28] = True
+    cut = (False, [(15.0, 4.5, 2.0)])
+    _, fin4 = apply_edits(bar, [cut], removed_points=[(5, 4, 1)])
+    assert not fin4[4, 5] and fin4[4, 25], "갈라진 왼쪽만 삭제, 오른쪽 보존"
+
+    # 빈 곳/범위 밖 지점은 무시
+    _, fin5 = apply_edits(det, [], removed_points=[(15, 15, 0), (99, 99, 0), (-1, 0, 0)])
+    assert np.array_equal(fin5, det)
+
+    # 구 removed_blob_ids(라벨 id) 상태는 이전 계산식과 동일
+    old_labels, _, _ = compute_blob_labels(det)
+    ring_id = int(old_labels[6, 6])
+    legacy_strokes = [brush_joined, (False, [(20.0, 20.0, 1.0)])]
+    old_ai = det & ~np.isin(old_labels, [ring_id])
+    old_final = apply_manual_strokes(old_ai, legacy_strokes)
+    for lbl in (None, old_labels):
+        ai6, fin6 = apply_edits(det, legacy_strokes, removed_blob_ids={ring_id}, labels=lbl)
+        assert np.array_equal(ai6, old_ai) and np.array_equal(fin6, old_final), "구 사이드카 결과 동일"
+    assert fin6[2, 20], "구 방식은 브러시분이 남는다(이전 동작 그대로)"
+
+    assert np.array_equal(det, det_before), "입력 mask 불변"
 
     # ── zone_blob_stats: AI blob 1개(중심부, 교집합 있음) + 원 밖 순수 수동 blob
     # 1개(2026-10-30: "바깥쪽" 존 제거로 "미분류" 폴백이 실제로 도달 가능해짐,

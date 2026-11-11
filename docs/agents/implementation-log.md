@@ -7438,3 +7438,45 @@ https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
 - 확인하지 못한 것: 실제 화면(비-offscreen)에서의 마우스 조작감 — 3px 클릭 판정, 고배율
   줌에서의 클릭/드래그 구분. 실 세션 파일(사용자 데이터)로의 역호환 확인은 합성 세션으로만 함.
 - 상태: 구현 완료. **검증 서브에이전트의 확인 전까지는 완료로 간주하지 않음.**
+
+## 2026-11-11 — Zone 분석 탭 "영역 삭제"를 R 탭 방식으로 통일(zone-v1.18.0) [진행중]
+
+- 리더 지시(사용자 결정 "zone도 r탭처럼 맞춤"): 영역 삭제가 AI 라벨맵이 아니라 화면에
+  보이는 최종 마스크(검출 − 삭제 + 브러시)의 연결 성분을 지우도록 변경, 삭제 후 재브러시
+  생존, 빨강 bbox 표시 제거, 계산 경로를 `zone_metrics` 순수 함수 하나로 통일.
+  대상: `app/core/zone_metrics.py`, `app/core/zone_state_store.py`,
+  `app/widgets/zone_canvas.py`, `app/tabs/zone_analysis_tab.py`. R 탭 코드는 건드리지 않음.
+- 상태: 진행중.
+- 진행: zone_metrics.apply_edits()+셀프체크, zone_state_store removed_points, zone_canvas(_removed_points/edited_masks/빨강 표시 제거), zone_analysis_tab(_ai_and_final_masks/_compute_zone_rows/_reblend_overlay) 코드 반영 완료(미커밋). 남은 것: 테스트 수정, pytest, offscreen E2E, 성능 측정, 버전/CHANGELOG, 커밋.
+- 진행: 테스트 2개 수정(test_zone_edit_toolbar, test_zone_brush_overlay_sync), pytest 213 passed/1 deselected, 실제 탭 offscreen E2E(scratchpad zone_e2e.py) 통과. 남은 것: 성능 측정(after), 버전/CHANGELOG, 종료 항목, 커밋.
+
+## 2026-11-11 — Zone 분석 탭 "영역 삭제"를 R 탭 방식으로 통일(zone-v1.18.0) [구현 완료 — 검증 대기]
+
+- 상태: 구현·자체 확인 완료. **검증 서브에이전트의 확인 전까지는 "완료"가 아니다.**
+- 삭제 표현: `removed_points = [(x, y, n)]`(클릭 지점 원본 좌표 + 삭제 시점 스트로크 수).
+  `zone_metrics.apply_edits()`가 스트로크 n개까지 적용한 마스크에서 그 지점의 4-연결 성분을
+  `cv2.floodFill`로 픽셀 단위 제거(bbox 아님 — 링 안쪽 블랍 보존). 구 `removed_blob_ids`는
+  계속 읽어 먼저 적용(이전 공식과 동일 결과).
+- 표시: `_reblend_overlay()`가 보정 class_map의 타겟 클래스를 최종 마스크 그대로 채운다
+  (삭제 블랍은 배경, 브러시분은 검출과 같은 색). `_paint_removed_blobs()`(빨강 bbox) 제거.
+  `set_pixmap(preserve_view=True)` 경로 그대로라 줌/팬 유지.
+- 계산 경로: 화면(`ZoneCanvas.edited_masks()` → `_ai_and_final_masks()`)과 배치/"전체 결과
+  보기"(`_compute_zone_rows()`)가 같은 `apply_edits()` 호출.
+- 변경 파일: `app/core/zone_metrics.py`, `app/core/zone_state_store.py`,
+  `app/widgets/zone_canvas.py`, `app/tabs/zone_analysis_tab.py`,
+  `tests/test_zone_edit_toolbar.py`, `tests/test_zone_brush_overlay_sync_2026_10_28.py`,
+  `release.ini`(1.17.1 → 1.18.0), `docs/CHANGELOG.md`.
+- 확인: `zone_metrics`/`zone_state_store` `__main__` 셀프체크 OK, pytest `213 passed, 1 deselected`
+  (브리프 기준선의 실패 1건 `test_zone_step_indicator`는 스크래치 `SEG_DATA_DIR` 환경에선 변경 전
+  코드에서도 통과 — 환경 의존), 실제 `ZoneAnalysisTab` offscreen QTest E2E 통과(브러시 → 삭제 →
+  비율 감소 → Ctrl+Z → 재삭제 → 재브러시 생존, 브러시 전용 영역 삭제, 지우개 분할 조각, 하이라이트
+  해제, 사이드카 왕복, 구 사이드카 = 이전 공식, 구버전 리더는 `removed_points` 조용히 무시).
+- 성능(4000×3000, 스트로크 30개/957 스탬프, 삭제 3~4건, 전 → 후): 스트로크 커밋 5403 → 5403 ms
+  (라벨링 1 → 1회), 불투명도/토글 1954 → 1929 ms(라벨링 0 → 0회), 삭제 클릭 5377 → 7039 ms
+  (라벨링 1 → 1회; 클릭 지점 판정용 스트로크 재생 1회 추가분 약 1.7 s).
+- 범위 밖 발견(미수정): 스트로크 재생이 스탬프마다 전체 프레임 배열을 만들어 12MP에서 스탬프당
+  약 1.75 ms, `_recompute_zones()` 1회에 재생 3회 — 위 절대 시간의 원인(성능 라운드 대상).
+  `ZoneCanvas`의 `_blob_stats`, `removed_blob_ids()`, `blob_labels()`, `apply_manual_strokes()` 래퍼는
+  탭에서 더는 쓰이지 않음(테스트만 사용). 하이라이트된 블랍을 브러시 지우개로 지우면 하이라이트가
+  남는 것은 기존 동작 그대로.
+- 커밋: 이 항목을 포함한 `feat:` 커밋 1개(해시는 리더 보고 참조). push·태그 없음.

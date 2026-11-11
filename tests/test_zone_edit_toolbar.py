@@ -143,7 +143,15 @@ def test_blob_clicked_only_in_circle_mode_and_blob_delete_unaffected() -> None:
     QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
     assert len(spy_click) == 0
     assert len(spy_delete) == 1
-    assert canvas._removed_blob_ids == {1}
+    # zone-v1.18.0: 삭제는 라벨 id가 아니라 (클릭 지점, 삭제 시점 스트로크 수)로 기록되고
+    # 최종 마스크에서 그 블랍이 사라진다. 지운 자리를 다시 클릭해도 중복 기록되지 않는다.
+    assert canvas._removed_blob_ids == set()
+    [(del_x, del_y, del_n)] = canvas._removed_points
+    assert abs(del_x - 50) <= 1 and abs(del_y - 50) <= 1 and del_n == 0
+    assert not canvas.edited_masks(labels > 0)[1].any()
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=click_pt)
+    assert len(spy_delete) == 1 and len(canvas._removed_points) == 1
     canvas.set_blob_delete_mode(False)
 
     # brush_draw/brush_erase/pan 모드 — blob_clicked 미emit(모드별 조기 return 경로).

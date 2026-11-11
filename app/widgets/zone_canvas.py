@@ -87,7 +87,7 @@ class ZoneCanvas(OverlayViewer):
     circles_committed = pyqtSignal()        # 원 편집 완료 — 원본 해상도 존 계산용
     circle_selected = pyqtSignal(object)    # 선택된 원 id (없으면 None)
     zone_clicked = pyqtSignal(int)          # 원이 아닌 빈 곳을 (드래그 없이) 클릭 -> 해당 존 인덱스. -1 = 바깥쪽(모든 원 밖)/선택 해제
-    blob_deleted = pyqtSignal(int)          # 블랍 삭제 모드에서 클릭으로 삭제된 블랍 라벨 id
+    blob_deleted = pyqtSignal()             # 블랍 삭제 모드에서 클릭으로 블랍 1개가 삭제됨
     erase_changed = pyqtSignal()            # 브러시 지우기 스트로크가 끝났을 때 1회(R3-3)
     blob_clicked = pyqtSignal(int, int)     # 원본 이미지 좌표 (x, y) — 요청4, circle 모드에서만 emit
 
@@ -110,7 +110,10 @@ class ZoneCanvas(OverlayViewer):
         self._view_press_pt: QPointF | None = None   # 조회 전용 모드의 클릭-vs-드래그 판정용
         self._blob_labels: np.ndarray | None = None   # (H, W) int32 라벨맵, 원본 이미지 좌표계
         self._blob_stats: np.ndarray | None = None     # [label] = [x, y, w, h, area]
-        self._removed_blob_ids: set[int] = set()
+        self._removed_blob_ids: set[int] = set()   # zone-v1.17.x 이하 사이드카의 라벨 id 삭제(읽기 전용)
+        # zone-v1.18.0: 영역 삭제 = (x, y, n) — 스트로크 n개까지 적용한 최종 마스크에서
+        # (x, y)를 포함한 연결 성분을 지운다(`zone_metrics.apply_edits()`).
+        self._removed_points: list[tuple[int, int, int]] = []
         # ── 브러시 지우기(R3-3) ──────────────────────────────────────────────
         self._erase_strokes: list[list[tuple[float, float, float]]] = []  # 하위 호환 지우기 합집합
         self._manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]] = []
@@ -273,6 +276,7 @@ class ZoneCanvas(OverlayViewer):
         self._blob_labels = labels
         self._blob_stats = stats
         self._removed_blob_ids = set()
+        self._removed_points = []
         self._erase_strokes = []
         self._manual_strokes = []
         self._erase_mask_np = None
@@ -322,6 +326,15 @@ class ZoneCanvas(OverlayViewer):
         래퍼(API 이름/시그니처 불변, `zone_analysis_tab._current_target_mask()`
         호출부 무변경)."""
         return zone_metrics.apply_manual_strokes(mask, self._manual_strokes)
+
+    def edited_masks(self, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """타겟 마스크에 이 캔버스의 블랍 삭제·브러시 스트로크를 적용한
+        `(ai_mask, final_mask)` — `zone_metrics.apply_edits()`의 얇은 래퍼. 탭의 존
+        비율/오버레이/엑셀과 영역 삭제 클릭 판정이 전부 이 결과를 쓴다."""
+        return zone_metrics.apply_edits(
+            mask, self._manual_strokes, self._removed_blob_ids, self._removed_points,
+            self._blob_labels,
+        )
 
     def _erase_mask_shape(self) -> tuple[int, int]:
         if self._blob_labels is not None:
@@ -448,6 +461,7 @@ class ZoneCanvas(OverlayViewer):
         self._undo_stack.append({
             "circles": [(c.id, c.cx, c.cy, c.r, c.name, c.hidden) for c in self._circles],
             "removed_blob_ids": set(self._removed_blob_ids),
+            "removed_points": list(self._removed_points),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
         })
@@ -470,6 +484,7 @@ class ZoneCanvas(OverlayViewer):
         return {
             "circles": [(c.id, c.cx, c.cy, c.r, c.name, c.hidden) for c in self._circles],
             "removed_blob_ids": set(self._removed_blob_ids),
+            "removed_points": list(self._removed_points),
             "erase_strokes": list(self._erase_strokes),
             "manual_strokes": list(self._manual_strokes),
         }
@@ -488,6 +503,7 @@ class ZoneCanvas(OverlayViewer):
             for cid, cx, cy, r, *rest in state["circles"]
         ]
         self._removed_blob_ids = set(state["removed_blob_ids"])
+        self._removed_points = list(state.get("removed_points", []))
         self._erase_strokes = list(state["erase_strokes"])
         self._manual_strokes = list(state.get("manual_strokes", []))
         # 2026-10-30: "outer_name" 키는 더 이상 쓰지 않는다 — 구버전(2026-10-29) 스냅샷에
@@ -523,13 +539,15 @@ class ZoneCanvas(OverlayViewer):
         h, w = self._blob_labels.shape
         if not (0 <= y < h and 0 <= x < w):
             return
-        label = int(self._blob_labels[y, x])
-        if label == 0 or label in self._removed_blob_ids:
+        # 화면에 보이는 최종 마스크(검출 − 삭제 + 브러시) 기준 — 브러시로만 그린 영역도
+        # 지워진다. 라벨맵 > 0 은 탭이 넘기는 타겟 마스크와 같은 배열이다.
+        _, final_mask = self.edited_masks(self._blob_labels > 0)
+        if not final_mask[y, x]:
             return
         self._push_undo()
-        self._removed_blob_ids.add(label)
+        self._removed_points.append((x, y, len(self._manual_strokes)))
         self.update()
-        self.blob_deleted.emit(label)
+        self.blob_deleted.emit()
 
     # ── 좌표 변환 (원본 이미지 스케일 <-> 픽스맵 스케일 <-> 화면 스케일) ────────
 
@@ -600,8 +618,6 @@ class ZoneCanvas(OverlayViewer):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self._removed_blob_ids:
-            self._paint_removed_blobs(p)
         if self._current_stroke:
             self._paint_current_stroke(p)
         if not self._circles:
@@ -642,32 +658,6 @@ class ZoneCanvas(OverlayViewer):
             path.addEllipse(c_o, r_o, r_o)
             path.addEllipse(c_i, r_i, r_i)
         p.fillPath(path, _COLOR_ZONE_HIGHLIGHT)
-
-    def _paint_removed_blobs(self, p: QPainter) -> None:
-        """삭제된 블랍을 바운딩 박스로 표시(시각 피드백).
-
-        ponytail: 정확한 블랍 형태(픽셀 단위)가 아니라 bounding box 근사 —
-        전체 해상도 마스크를 QImage로 합성하는 것보다 훨씬 단순하고, 오버레이
-        픽스맵을 다시 그리지 않으므로 `set_pixmap()`이 강제하는 줌/팬 리셋도
-        피한다(BUG-018/019와 같은 부류의 "조작 시 상태 리셋" 재발 방지).
-        블랍 모양까지 정확히 겹쳐 보여줘야 하면 그때 QImage 합성으로 승격.
-        """
-        if self._blob_stats is None:
-            return
-        sx, sy = self._orig_scale()
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(255, 60, 60, 110))
-        for label in self._removed_blob_ids:
-            if not (0 <= label < len(self._blob_stats)):
-                continue
-            x, y, w, h = self._blob_stats[label, :4]
-            rect = QRectF(
-                x * sx * self._zoom + self._pan.x(),
-                y * sy * self._zoom + self._pan.y(),
-                w * sx * self._zoom,
-                h * sy * self._zoom,
-            )
-            p.drawRect(rect)
 
     def _paint_current_stroke(self, p: QPainter) -> None:
         """진행 중인(아직 커밋 안 된) 스트로크만 파란/회색으로 미리보기.

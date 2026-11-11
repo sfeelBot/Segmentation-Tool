@@ -22,14 +22,18 @@ def save_state(image_path: Path, state: dict) -> None:
     있으면(한 번도 편집 안 한 이미지) 사이드카를 만들지 않고, 기존 파일이
     있으면 정리 차원에서 지운다(빈 파일 난립 방지)."""
     path = sidecar_path(image_path)
+    # removed_points(zone-v1.18.0): 최종 마스크 연결 성분 삭제 (x, y, n). 키가 없는
+    # 호출부(구 포맷 상태 dict)도 그대로 받는다.
+    removed_points = state.get("removed_points", [])
     is_empty = (not state["circles"] and not state["removed_blob_ids"]
-                and not state["manual_strokes"])
+                and not state["manual_strokes"] and not removed_points)
     if is_empty:
         path.unlink(missing_ok=True)
         return
     payload = {
         "circles": state["circles"],
         "removed_blob_ids": sorted(state["removed_blob_ids"]),   # set -> JSON 배열
+        "removed_points": removed_points,
         "erase_strokes": state["erase_strokes"],
         "manual_strokes": state["manual_strokes"],
     }
@@ -61,6 +65,8 @@ def load_state(image_path: Path) -> dict | None:
         return {
             "circles": [tuple(c) for c in payload["circles"]],
             "removed_blob_ids": set(payload["removed_blob_ids"]),
+            # zone-v1.17.x 이하 사이드카엔 이 키가 없다 -> 빈 목록(이전과 같은 결과)
+            "removed_points": [tuple(pt) for pt in payload.get("removed_points", [])],
             "erase_strokes": [[tuple(pt) for pt in s] for s in payload["erase_strokes"]],
             "manual_strokes": [(m[0], [tuple(pt) for pt in m[1]]) for m in payload["manual_strokes"]],
         }
@@ -87,6 +93,15 @@ if __name__ == "__main__":
         assert loaded["circles"] == [(1, 10.0, 20.0, 5.0)]
         assert loaded["removed_blob_ids"] == {1, 3}
         assert loaded["manual_strokes"] == [(True, [(1.0, 2.0, 3.0)])]
+        assert loaded["removed_points"] == [], "removed_points 키 없는 상태 dict도 저장/로드"
+
+        # zone-v1.18.0: 삭제 지점만 있는 상태도 저장되고(빈 상태 아님) 왕복된다
+        only_delete = {
+            "circles": [], "removed_blob_ids": set(), "erase_strokes": [],
+            "manual_strokes": [], "removed_points": [(7, 9, 0)],
+        }
+        save_state(img, only_delete)
+        assert load_state(img)["removed_points"] == [(7, 9, 0)]
         assert "outer_name" not in loaded, "2026-10-30: outer_name은 더 이상 저장/반환하지 않음"
 
         empty = {
@@ -105,6 +120,7 @@ if __name__ == "__main__":
         sidecar_path(img).write_text(json.dumps(legacy_payload), encoding="utf-8")
         legacy_loaded = load_state(img)
         assert legacy_loaded is not None and legacy_loaded["circles"] == [(1, 10.0, 20.0, 5.0)]
+        assert legacy_loaded["removed_points"] == []
         assert "outer_name" not in legacy_loaded
         sidecar_path(img).unlink()
 
