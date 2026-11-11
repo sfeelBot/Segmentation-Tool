@@ -169,6 +169,7 @@ class RRoiCanvas(OverlayViewer):
         threshold 등 설정 변경마다 호출되는 이 메서드가 매번 삭제 이력을 지우면
         회귀가 생긴다). 라벨 id 기반 선택 상태만 리셋(엣지케이스 2)."""
         self._detected_mask = mask
+        self._invalidate_mask_cache()   # 삭제 건수 키만으론 재검출을 못 잡는다(BUG-056)
         self._selected_blob_id = None
         self.set_highlight_rect(None)
         self._recompute_blob_labels()
@@ -961,5 +962,20 @@ if __name__ == "__main__":
     ghost._paint_committed_strokes = lambda p: ghost_calls.append("committed")
     ghost._paint_strokes(None)
     assert ghost_calls == [], "유효 마스크가 비어도 커밋 스트로크 잔상을 그리면 안 됨(BUG-055)"
+
+    # BUG-056: 블랍 삭제 후 재검출(threshold/ROI 변경)하면 새 검출 결과가 반영돼야 한다.
+    stale_m = np.zeros((h, w), dtype=bool)
+    stale_m[5:15, 5:15] = True
+    stale_m[5:15, 40:50] = True
+    stale = RRoiCanvas()
+    stale.set_image_size(w, h)
+    stale.set_pixmap(_QPixmap(w, h))
+    stale.set_detected_mask(stale_m)
+    stale._select_blob(stale._blob_label_at(QPointF(10, 10)))
+    stale._delete_selected_blob()
+    stale_m2 = stale_m.copy()
+    stale_m2[30:40, 20:30] = True
+    stale.set_detected_mask(stale_m2)
+    assert int(stale.effective_mask().sum()) == 200, "재검출 결과가 삭제 캐시에 가려지면 안 됨(BUG-056)"
 
     print("r_roi_canvas self-check OK")
