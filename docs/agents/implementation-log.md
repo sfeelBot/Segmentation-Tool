@@ -7339,3 +7339,48 @@ https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
 - 커밋: 하지 않음 — 리더가 검증 이후 직접 커밋.
 - 버전/CHANGELOG: 변경하지 않음 — 리더가 검증 완료 후 버전 점검 루틴에
   따라 처리할 것으로 판단(구현 단계에서는 보류).
+
+## 2026-11-11 — R 분석 탭 리터치 버그 3건(BUG-053/054/055) 수정 [진행중]
+
+- 리더 지시: 한글 경로 이미지 리터치 미동작(BUG-053), 일괄 검출이 삭제 블랍 무시(BUG-054),
+  유효 마스크 0px 시 스트로크 잔상(BUG-055). 원인 조사는 리더가 완료, 스펙대로 최소 diff 수정 시작.
+
+## 2026-11-11 — R 분석 탭 리터치 버그 3건(BUG-053/054/055) 수정 [구현 완료 — 검증 대기]
+
+- 커밋: `be095d9` (fix, 코드 + release.ini 1.16.1 + CHANGELOG zone-v1.16.1). 태그/푸시/QA.md는
+  건드리지 않음(리더·검증 에이전트 몫).
+- `app/core/r_analysis_metrics.py`: `imread_unicode()`(np.fromfile + cv2.imdecode, 실패 시
+  None) 추가 — BUG-053. `regions_mask(shape, regions)`(삭제 블랍 bbox 래스터화 규칙) 추가 —
+  BUG-054. self-check에 한글 폴더/파일명 읽기 + 래스터화 규칙 단언 추가.
+- `app/tabs/r_analysis_tab.py`: `_RDetectWorker.run()`/`_cv2_imread_cached()`를
+  `imread_unicode()`로 교체. 워커 job을 4-튜플 `(path, roi, manual_strokes,
+  removed_blob_regions)`로 바꾸고 스트로크 적용 전에 삭제 영역 제외. `_run_batch_detect()`가
+  `removed_blob_regions`를 실어 보냄. self-check: 기존 워커 호출 시그니처 갱신 + 한글 경로
+  탭/워커 단언 + "블랍 삭제 후 워커 면적 == 캔버스 effective_mask() 면적" 단언 추가.
+- `app/widgets/r_roi_canvas.py`: `_rasterize_deleted_region()`이 `regions_mask()`를 공유
+  (규칙 복붙 제거). `_paint_strokes()` 폴백 조건을 `_mask_image is None` →
+  `_detected_mask is None`으로 좁힘 — BUG-055. self-check: 그리기+전부 지우기 상태에서
+  커밋 스트로크 폴백이 호출되지 않음을 단언.
+- 스펙과 다른 점: 리더가 예시로 든 `exclude_regions(mask, regions)` 대신
+  `regions_mask(shape, regions)`로 구현 — 캔버스는 "삭제 마스크"를 누적하고 워커는 검출
+  마스크에서 빼므로, True 마스크를 돌려주는 형태 하나로 양쪽이 함수 1개를 공유할 수 있음.
+- 검증(구현자 자체 실행):
+  - self-check 3개 모두 OK(`r_analysis_metrics` / `r_roi_canvas` / `r_analysis_tab`).
+  - `scripts/generate_version_info.py` → `Generated release metadata for 1.16.1`.
+  - `pytest -q` 전체 실행은 `tests/test_zone_view_all_async_2026_10_30.py::
+    test_on_view_all_results_returns_without_blocking_and_dialog_shown_after_worker_finishes`
+    에서 `Windows fatal exception: access violation`(exit 139)으로 프로세스가 죽음 —
+    변경을 stash한 HEAD(6e76404) 기준에서도 동일하게 재현되고, 해당 파일만 단독 실행하면
+    5 passed. 이번 변경과 무관한 사전 존재 문제로 판단(원인은 조사하지 않음).
+    그 1건을 `--deselect`하면 `212 passed, 1 failed, 1 deselected` — 실패 1건은 알려진
+    `tests/test_zone_step_indicator.py`.
+  - 리더 재현 스크립트 2개는 워커를 3-튜플 job으로 불러 원본 그대로는 그 줄에서
+    `ValueError`가 남 → scratchpad에 job 튜플만 맞춘 사본으로 실행. 한글 경로 케이스가
+    ASCII 경로와 동일 결과(조절됨/숨겨짐/면적>0/워커 결과 있음), `[R-A]` 일치(1681 == 1681),
+    `[R-D]` 화면 차이 픽셀 0.
+- 범위 밖 발견(수정 안 함, 리더 판단 필요): `RRoiCanvas._base_mask()` 캐시 키가 삭제 건수
+  뿐이라, 블랍을 삭제한 뒤 재검출(`set_detected_mask()`, threshold/ROI 변경)하면 캔버스
+  `effective_mask()`가 이전 검출 마스크 기준의 낡은 값을 돌려준다(프로브: 삭제 후 100px,
+  새 블랍 100px이 추가된 마스크로 재검출해도 100px 유지, 기대 200px). 이 경우 워커(정확)와
+  캔버스(낡음)가 다시 어긋난다.
+- 상태: 구현 완료. **검증 서브에이전트의 확인 전까지는 완료로 간주하지 않음.**
