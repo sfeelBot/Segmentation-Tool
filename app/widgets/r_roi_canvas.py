@@ -309,8 +309,7 @@ class RRoiCanvas(OverlayViewer):
     def undo(self) -> None:
         if not self._undo_stack:
             return
-        snap = self._undo_stack.pop()
-        self.set_state(snap)
+        self._restore_state(self._undo_stack.pop())
 
     def get_state(self) -> dict:
         return {
@@ -321,6 +320,16 @@ class RRoiCanvas(OverlayViewer):
         }
 
     def set_state(self, state: dict) -> None:
+        """외부에서 상태를 통째로 교체(이미지 전환/세션 로드) — 이전 이미지의 undo
+        이력은 버린다(BUG-060: 남겨두면 Ctrl+Z가 옛 이미지 편집을 새 이미지에 적용)."""
+        self._undo_stack.clear()
+        self._restore_state(state)
+
+    def clear(self) -> None:
+        self._undo_stack.clear()
+        super().clear()
+
+    def _restore_state(self, state: dict) -> None:
         roi = state.get("roi")
         self._roi_edges = self._edges_from_tuple(tuple(roi)) if roi else None
         self._erase_strokes = list(state.get("erase_strokes", []))
@@ -1025,6 +1034,16 @@ if __name__ == "__main__":
                   "removed_blob_regions": [[5.0, 5.0, 10.0, 10.0]]})
     assert lc.effective_mask()[10, 10] and not lc.effective_mask()[5, 5]
     assert 100 < _area(lc) < 200
+
+    # BUG-060: 외부 set_state()는 undo 이력을 버리고, undo()는 여러 단계가 그대로 유지된다.
+    uc = _new_canvas(mask.copy())
+    _brush(uc, True, 6, 10, 50, 20, 50)
+    _brush(uc, True, 6, 30, 50, 40, 50)
+    assert len(uc._undo_stack) == 2
+    uc.undo()
+    assert len(uc._undo_stack) == 1 and len(uc.get_state()["manual_strokes"]) == 1
+    uc.set_state({"roi": None, "manual_strokes": [], "removed_blob_regions": []})
+    assert not uc.can_undo()
 
     # (8) 변경 3: ROI 안쪽 — 블랍 위 클릭은 블랍 선택, 빈 곳 클릭/드래그는 기존 ROI 동작.
     rc = _new_canvas(mask.copy())
