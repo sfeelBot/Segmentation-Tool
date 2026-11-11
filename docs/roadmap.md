@@ -1670,16 +1670,29 @@ QA.md BUG-033(P1) 참고. 순수 로그 덤프로 접수된 반복 크래시(`nu
   생김). (3) `effective_mask()`의 기존 P0 증분 캐시(식별 비교)를 깨지 않도록
   "검출+블랍삭제 반영 기저 마스크"를 별도로 캐시해 삭제 없는 일반 케이스는
   기존 성능/동작 그대로 유지.
-- [ ] 구현 — `app/widgets/r_roi_canvas.py`(핵심: 선택 상태/블랍 라벨맵/삭제
+- [x] 구현 — `app/widgets/r_roi_canvas.py`(핵심: 선택 상태/블랍 라벨맵/삭제
       영역 데이터모델/마우스·키보드 통합/렌더링) → `app/tabs/r_analysis_tab.py`
-      (세션 필드 `removed_blob_regions` 배선 + `blob_deleted` 시그널 연결) →
-      `app/core/i18n.py`(툴팁 문구만, 선택). `app/core/r_cell_store.py` 코드
-      변경 불필요(제네릭 passthrough).
-- [ ] 검증 — ROI/블랍 선택 강조 표시, Delete 삭제(ROI/블랍 각각), 삭제 후
-      threshold 변경에도 삭제 이력 유지(핵심 회귀 포인트), Undo 복원, 세션
-      저장/복원 왕복, 브러시로 삭제 영역 재도색 시 복원, 이미지/셀 전환 시
-      선택 상태 자동 해제, 좁은 창에서 기존 3클러스터 레이아웃 회귀 없음
-      (BUG-050/051 재확인) 실제 `python main.py` 구동 확인 예정.
+      (세션 필드 `removed_blob_regions` 배선 + `blob_deleted` 시그널 연결).
+- [x] 검증 — 스펙 체크리스트 12개 QTest 조작 기반 PASS, `zone-v1.16.0` 태그.
+      잔여: BUG-052(P3, Open — ROI 삭제 시 재검출 미트리거).
+
+## R 분석 탭 — 리터치 버그 수정 (2026-11-11, zone-v1.16.1)
+
+사용자 신고: R 탭에서 브러시 리터치 후 불투명도·보이기/숨기기가 안 되고 면적에도
+포함되지 않음. 원인은 한글 경로에서 `cv2.imread()` 실패.
+
+- [x] BUG-053 한글 경로 이미지에서 리터치 전체 미동작 — `imread_unicode()`로 교체.
+- [x] BUG-054 일괄 검출이 삭제한 블랍을 무시 — 워커 job에 `removed_blob_regions` 전달.
+- [x] BUG-055 유효 마스크 0px일 때 파랑/회색 스트로크 잔상.
+- [x] BUG-056 블랍 삭제 후 재검출 결과가 화면에 반영되지 않음(캐시 무효화 누락).
+- [x] 검증 — 실제 탭 + QTest + 한글 경로로 4건 PASS(offscreen, 실제 창 육안 확인은 미실시).
+- [ ] BUG-057(P3) 삭제 블랍 빨강 bbox 표시 — 사용자 결정 대기(`decisions-needed.md`).
+- [ ] 같은 점검에서 나온 Zone(상/하부) 탭 이슈, 미착수:
+      (a) AI 신뢰도/최소 픽셀 값을 바꾸면 현재 이미지의 리터치·블랍 삭제가 사라짐,
+      (b) 클릭으로 지운 블랍이 오버레이에 색이 남음(수치는 제외됨),
+      (c) 타겟 클래스 id가 프로젝트 클래스 목록에 없으면 어둡게 표시됨.
+- [ ] 전체 `pytest` 실행 시 `tests/test_zone_view_all_async_2026_10_30.py`에서 Windows
+      access violation(이번 변경 전부터 존재, 단독 실행은 통과) — 원인 미조사.
 
 ## 다음 후보
 - [x] Zone 분석 VOC 편집 도구화 — 라벨링 스타일 exclusive toolbar(원 편집/브러시
