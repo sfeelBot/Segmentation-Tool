@@ -36,9 +36,8 @@ from app.core import r_cell_store as r_store
 from app.core.i18n import t
 from app.core.logger import get_logger
 from app.core.r_analysis_metrics import (
-    cell_rollup, contour_area, detect_contour_mask, imread_unicode, regions_mask,
+    apply_edits, cell_rollup, contour_area, detect_contour_mask, imread_unicode,
 )
-from app.core.zone_metrics import apply_manual_strokes
 from app.widgets.brush_toolbar import BrushToolbar, TOOL_BRUSH, TOOL_ERASER, TOOL_PAN
 from app.widgets.icons import icon as svg_icon
 from app.widgets.r_batch_result_dialog import RBatchResultDialog
@@ -102,7 +101,7 @@ class _RDetectWorker(QThread):
 
     def __init__(
         self,
-        # (path, roi, manual_strokes, removed_blob_regions)
+        # (path, roi, manual_strokes, removed_blob_regions) — 영역은 (x, y, w, h[, n])
         jobs: list[tuple[Path, tuple[int, int, int, int] | None, list, list]],
         threshold: int,
         auto_detect: bool,
@@ -126,12 +125,9 @@ class _RDetectWorker(QThread):
                         mask = detect_contour_mask(img, roi, self._threshold)
                     else:
                         mask = np.zeros(img.shape[:2], dtype=bool)
-                    if removed_regions:
-                        # 캔버스 _base_mask()와 같은 순서 — 삭제한 블랍을 먼저 빼고
-                        # 스트로크를 적용해야 화면 면적과 일치한다(BUG-054).
-                        mask &= ~regions_mask(mask.shape, removed_regions)
-                    if manual_strokes:
-                        mask = apply_manual_strokes(mask, manual_strokes)
+                    # 캔버스 effective_mask()와 같은 함수 — 따로 계산하면 화면 면적과
+                    # 일괄 검출 면적이 어긋난다(BUG-054).
+                    mask = apply_edits(mask, manual_strokes, removed_regions)
                     self.image_done.emit(str(path), contour_area(mask))
             except Exception:
                 log.exception(f"R 분석 일괄 검출 실패 — image={path}")
@@ -1261,6 +1257,39 @@ if __name__ == "__main__":
         assert blob_results == [contour_area(tab._canvas.effective_mask())] == [area_after], \
             (blob_results, area_after)
 
+        # zone-v1.17.0: 삭제·브러시·삭제 후 재브러시·지우개가 섞여도 캔버스 == 워커.
+        def _commit_stroke(draw: bool, x: float, y: float, r: float) -> None:
+            # 캔버스 mouseReleaseEvent의 스트로크 커밋과 같은 순서(실제 마우스 경로는
+            # r_roi_canvas self-check가 검증) — 여기선 탭/워커/세션 연동만 본다.
+            tab._canvas._manual_strokes.append((draw, [(x, y, r)]))
+            tab._canvas._rebuild_mask_image()
+            tab._canvas.erase_changed.emit()
+
+        def _worker_area() -> int:
+            d = tab._image_data(blob_path)
+            wk = _RDetectWorker(
+                jobs=[(blob_path, tab._effective_roi(blob_path), d["manual_strokes"],
+                       d["removed_blob_regions"])],
+                threshold=128, auto_detect=True,
+            )
+            out: list[int] = []
+            wk.image_done.connect(lambda _path, area: out.append(area))
+            wk.run()
+            return out[0]
+
+        _commit_stroke(True, 52.0, 10.0, 3.0)    # 블랍 B(x=40..49)에 붙여 그림
+        assert tab._image_data(blob_path)["area"] > area_after
+        joined = tab._canvas._blob_label_at(_QPointF2(54, 10))
+        assert joined is not None and joined == tab._canvas._blob_label_at(_QPointF2(45, 10))
+        tab._canvas._select_blob(joined)
+        tab._canvas.keyPressEvent(del_evt)        # 검출분 + 브러시분 통째로 삭제
+        assert tab._image_data(blob_path)["area"] == 0 == _worker_area()
+        _commit_stroke(True, 45.0, 10.0, 4.0)    # 삭제한 자리에 재브러시 — 살아나야 함
+        _commit_stroke(False, 45.0, 10.0, 2.0)   # 지우개
+        area_mixed = tab._image_data(blob_path)["area"]
+        assert area_mixed > 0
+        assert _worker_area() == contour_area(tab._canvas.effective_mask()) == area_mixed
+
         tab._session_path = session_path
         tab._do_save()
         assert session_path.exists()
@@ -1276,8 +1305,43 @@ if __name__ == "__main__":
 
         tab._load_session(session_path)
         restored = tab._image_data_map[str(blob_path)]
-        assert restored["removed_blob_regions"] == [[5.0, 5.0, 10.0, 10.0]], restored["removed_blob_regions"]
-        assert restored["area"] == area_after
+        # 삭제 영역 = [x, y, w, h, n(삭제 시점 스트로크 수)]
+        assert restored["removed_blob_regions"] == [
+            [5.0, 5.0, 10.0, 10.0, 0], [40.0, 5.0, 16.0, 10.0, 1],
+        ], restored["removed_blob_regions"]
+        assert len(restored["manual_strokes"]) == 3
+        assert restored["area"] == area_mixed
+        # 다시 열어 화면에 올려도 같은 면적으로 복원돼야 함(저장→로드 왕복).
+        tab._cell_panel._select_cell("CELL-BLOB")
+        tab._set_current_image(blob_path)
+        assert contour_area(tab._canvas.effective_mask()) == area_mixed == _worker_area()
+
+        # 기존(zone-v1.16.x) 세션 — 4-원소 영역 / 키 없음이 오류 없이 열리고, 결과가
+        # 이전 버전 계산(삭제 영역 먼저 제외 → 스트로크 적용)과 같아야 함.
+        from app.core.r_analysis_metrics import regions_mask as _regions_mask
+        from app.core.zone_metrics import apply_manual_strokes as _apply_strokes
+        legacy_strokes = [[True, [[10.0, 10.0, 3.0]]]]
+        legacy_regions = [[5.0, 5.0, 10.0, 10.0]]
+        r_store.save(other_path, {
+            **_default_session(), "global_roi": [0, 0, 80, 60], "auto_detect": True,
+            "cells": {
+                "CELL-OLD": {"images": [{
+                    "path": str(blob_path), "roi_override": None, "area": 0,
+                    "manual_strokes": legacy_strokes, "removed_blob_regions": legacy_regions,
+                }]},
+                "CELL-OLDER": {"images": [{"path": "no_key.jpg", "manual_strokes": [], "area": 0}]},
+            },
+        })
+        tab._load_session(other_path)
+        tab._cell_panel._select_cell("CELL-OLD")
+        tab._set_current_image(blob_path)
+        legacy_det = detect_contour_mask(cv2.imread(str(blob_path)), (0, 0, 80, 60), 128)
+        legacy_area = contour_area(_apply_strokes(
+            legacy_det & ~_regions_mask(legacy_det.shape, legacy_regions), legacy_strokes
+        ))
+        assert 0 < legacy_area < contour_area(legacy_det)
+        assert tab._image_data(blob_path)["area"] == legacy_area == _worker_area()
+        assert tab._image_data(Path("no_key.jpg"))["removed_blob_regions"] == []
     finally:
         for p in (blob_path, session_path, other_path):
             p.unlink(missing_ok=True)

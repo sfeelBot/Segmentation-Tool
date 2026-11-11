@@ -47,6 +47,31 @@ def regions_mask(
     return out
 
 
+def apply_edits(
+    mask: np.ndarray,
+    manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]],
+    removed_regions: list[tuple[float, ...]],
+) -> np.ndarray:
+    """검출 마스크에 브러시 스트로크와 블랍 삭제를 시간순으로 적용한 유효 마스크.
+
+    삭제 영역은 `(x, y, w, h[, n])` — n은 삭제 시점의 스트로크 개수로, 스트로크 n개를
+    적용한 직후에 그 bbox를 지운다(그 전에 그린 브러시분도 함께 사라지고, 그 뒤에
+    그린 건 살아난다). n이 없는 4-원소(zone-v1.16.x 세션 파일)는 n=0 = 스트로크보다
+    먼저 지움 — 이전 버전 계산과 같다. 캔버스(`RRoiCanvas.effective_mask()`)와 일괄
+    검출 워커가 이 함수 하나를 공유한다 — 따로 계산하면 면적이 어긋난다(BUG-054).
+    항상 새 배열을 반환한다(입력 `mask`는 건드리지 않음)."""
+    by_n: dict[int, list[tuple[float, float, float, float]]] = {}
+    for x, y, w, h, *rest in removed_regions:
+        n = min(max(int(rest[0]), 0), len(manual_strokes)) if rest else 0
+        by_n.setdefault(n, []).append((x, y, w, h))
+    result, start = mask, 0
+    for n in sorted(by_n):
+        result = apply_manual_strokes(result, manual_strokes[start:n])   # 항상 복사본
+        result &= ~regions_mask(mask.shape, by_n[n])
+        start = n
+    return apply_manual_strokes(result, manual_strokes[start:])
+
+
 def detect_contour_mask(
     img: np.ndarray, roi: tuple[int, int, int, int], threshold: int,
 ) -> np.ndarray:
@@ -200,6 +225,26 @@ if __name__ == "__main__":
     assert regions_mask((50, 60), [(5.0, 5.0, 10.0, 10.0)]).sum() == 11 * 11
     assert regions_mask((50, 60), [(55.0, 45.0, 10.0, 10.0)]).sum() == 5 * 5
     assert not regions_mask((50, 60), [(-30.0, -30.0, 10.0, 10.0)]).any()
+
+    # apply_edits — 삭제 영역을 스트로크 타임라인의 n번째 지점에서 적용
+    det = np.zeros((50, 60), dtype=bool)
+    det[5:15, 5:15] = True
+    det_copy = det.copy()
+    draw1 = (True, [(10.0, 10.0, 3.0)])     # 삭제 bbox 안에 그림
+    draw2 = (True, [(10.0, 10.0, 2.0)])     # 삭제 뒤 같은 자리에 다시 그림
+    region = (5.0, 5.0, 10.0, 10.0)
+    # 4-원소(기존 세션) = n=0 = 이전 버전 계산(삭제 먼저, 스트로크 나중)과 같아야 함
+    legacy = apply_manual_strokes(det & ~regions_mask(det.shape, [region]), [draw1])
+    assert legacy.any()
+    assert np.array_equal(apply_edits(det, [draw1], [region]), legacy)
+    assert np.array_equal(apply_edits(det, [draw1], [[*region, 0]]), legacy)   # JSON list도 허용
+    # n=1: 삭제 전에 그린 브러시분까지 지워짐 / 삭제 뒤에 그린 건 살아남음
+    assert not apply_edits(det, [draw1], [(*region, 1)]).any()
+    regrown = apply_edits(det, [draw1, draw2], [(*region, 1)])
+    assert np.array_equal(regrown, apply_manual_strokes(np.zeros_like(det), [draw2]))
+    # n이 스트로크 수보다 커도(스트로크가 줄어든 데이터) 오류 없이 맨 끝에서 적용
+    assert not apply_edits(det, [draw1], [(*region, 99)]).any()
+    assert np.array_equal(apply_edits(det, [], []), det) and np.array_equal(det, det_copy)
 
     import tempfile
 

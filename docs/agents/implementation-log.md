@@ -7384,3 +7384,57 @@ https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
   새 블랍 100px이 추가된 마스크로 재검출해도 100px 유지, 기대 200px). 이 경우 워커(정확)와
   캔버스(낡음)가 다시 어긋난다.
 - 상태: 구현 완료. **검증 서브에이전트의 확인 전까지는 완료로 간주하지 않음.**
+
+## 2026-11-11 — R 분석 탭 캔버스 변경 3건(zone-v1.17.0) [진행중]
+
+- 리더 지시: (1) 삭제 블랍 빨강 표시 제거(BUG-057), (2) 브러시 영역도 블랍으로 선택·삭제,
+  (3) ROI 안쪽에서도 블랍 클릭 선택. 대상: `app/core/r_analysis_metrics.py`,
+  `app/widgets/r_roi_canvas.py`, `app/tabs/r_analysis_tab.py`. Zone 탭 코드는 건드리지 않음.
+- 상태: 진행중.
+
+## 2026-11-11 — R 분석 탭 캔버스 변경 3건(zone-v1.17.0) [구현 완료 — 검증 대기]
+
+- 커밋: 이 항목을 포함한 `feat:` 커밋 1개(코드 + release.ini 1.17.0 + CHANGELOG
+  zone-v1.17.0 + 이 로그) — 해시는 리더 보고에 기재. 태그/푸시/QA.md는 건드리지 않음.
+- 설계: 리더 권장안 그대로.
+  - `app/core/r_analysis_metrics.py`: `apply_edits(mask, manual_strokes, removed_regions)`
+    추가. 삭제 영역 `(x, y, w, h[, n])`을 스트로크 타임라인의 n번째 지점에서 지운다.
+    4-원소는 n=0(이전 버전 계산과 동일), n이 스트로크 수보다 크면 맨 끝에서 적용.
+  - `app/widgets/r_roi_canvas.py`:
+    - 변경 1: `_paint_deleted_blob_regions()`·호출·`_COLOR_DELETED_BLOB` 삭제.
+    - 변경 2: `effective_mask()` 전체 재계산 경로가 `apply_edits()`를 쓴다(증분 캐시는
+      유지 — 뒤에 붙은 스트로크만 덧적용). `_base_mask()`, `_base_mask_cache*`,
+      `_blob_delete_mask`, `_rasterize_deleted_region()`, `_replay_deleted_blob_regions()`,
+      `_recompute_blob_labels()`, 미사용 래퍼 `apply_manual_strokes()` 삭제. 라벨맵은
+      `_ensure_blob_labels()`가 클릭 히트테스트 때만, 유효 마스크 배열 identity가 바뀐
+      경우에만 다시 계산(dirty 플래그를 따로 관리하지 않음 — 유효 마스크는 내용이 바뀌면
+      항상 새 배열). 삭제 시 `(x, y, w, h, len(_manual_strokes))` 저장. 스트로크 커밋 시
+      블랍 선택 해제(낡은 bbox로 삭제되는 것 방지).
+    - 변경 3: ROI 안쪽("move" 히트) press~release 화면 거리 ≤ `_CLICK_PX`(3px)이고 그
+      지점에 블랍이 있으면 블랍 선택 — press의 undo 스냅샷 pop, 손떨림 이동분 원복.
+  - `app/tabs/r_analysis_tab.py`: `_RDetectWorker.run()`이 `apply_edits()` 사용(직접
+    `regions_mask`/`apply_manual_strokes` 호출 제거). `removed_blob_regions` 전달 경로
+    (`_on_canvas_edited`/세션 저장·로드/job 생성)는 값을 그대로 넘기므로 코드 변경 없음.
+- 세션 파일: `removed_blob_regions` 항목이 `[x, y, w, h]` → `[x, y, w, h, n]`. 기존
+  4-원소/키 없는 세션은 그대로 읽힘(다시 저장해도 4-원소 유지). 새 형식 세션을
+  zone-v1.16.x 이하로 열면 삭제 이력이 있는 이미지에서 오류(하위 호환 아님 — CHANGELOG 명시).
+- 검증(구현자 자체 실행):
+  - self-check 3개 OK(`r_analysis_metrics` / `r_roi_canvas` / `r_analysis_tab`). 추가 단언:
+    브러시 전용 블랍 선택→삭제→면적 0→Ctrl+Z 복원→삭제 후 재브러시 복원, 검출+브러시 붙은
+    블랍 통째 삭제 + 재검출 후 유지, 지우개로 갈라진 블랍 분리, 4-원소 역호환(캔버스·탭·
+    워커), 캔버스 == 워커(삭제·브러시·재브러시·지우개 혼합), 저장→로드 왕복, ROI 안쪽
+    블랍 클릭 선택/빈 곳 클릭/드래그 이동.
+  - 변이 확인(scratchpad 스크립트, 커밋 안 함): 라벨맵을 검출 마스크로 되돌림 / n을 0으로
+    고정 / ROI 안 클릭 선택 제거 / 드래그도 블랍 선택 / undo pop 누락 / 삭제 시 캐시
+    무효화 누락 / 스트로크 커밋 시 선택 유지 / 워커가 n 무시 / 워커가 영역 무시 — 9건 모두
+    self-check가 실패함을 확인.
+  - 프로브(scratchpad): 삭제 후 `grab()` 렌더에서 삭제 자리 픽셀이 순수 배경(빨강 없음),
+    4000x3000에서 스트로크 40개 커밋 비용 일정(첫 50ms / 마지막 51ms),
+    커밋·불투명도 경로에서 `compute_blob_labels` 호출 0회, 클릭 2회에 1회.
+  - `scripts/generate_version_info.py` → `Generated release metadata for 1.17.0`.
+  - pytest(알려진 access violation 1건 `--deselect`): `1 failed, 212 passed, 1 deselected`
+    — 기준선과 동일(실패는 기존 `tests/test_zone_step_indicator.py`). 실행이 남긴
+    `a.zone.json`은 삭제.
+- 확인하지 못한 것: 실제 화면(비-offscreen)에서의 마우스 조작감 — 3px 클릭 판정, 고배율
+  줌에서의 클릭/드래그 구분. 실 세션 파일(사용자 데이터)로의 역호환 확인은 합성 세션으로만 함.
+- 상태: 구현 완료. **검증 서브에이전트의 확인 전까지는 완료로 간주하지 않음.**
