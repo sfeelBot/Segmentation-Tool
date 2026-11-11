@@ -592,7 +592,6 @@ class RAnalysisTab(QWidget):
                 }
             cells[cell_id] = paths
         self._cells = cells
-        self._cell_panel.set_cells(cells)
 
         self._settings_dialog.set_threshold(self._session.get("threshold", 128))
         self._settings_dialog.set_denominator(self._session.get("denominator", 0.0))
@@ -603,6 +602,8 @@ class RAnalysisTab(QWidget):
         self._current_cell = None
         self._current_image_path = None
         self._canvas.clear()
+        # 초기화 뒤에 호출 — set_cells가 첫 셀/이미지를 자동 선택하며 보내는 시그널을 덮어쓰지 않게(BUG-058)
+        self._cell_panel.set_cells(cells)
         self._lbl_session_path.setText(str(path))
         self._lbl_session_path.setStyleSheet("color:#e5e7eb;font-size:11px;")
         self._refresh_settings_summary()
