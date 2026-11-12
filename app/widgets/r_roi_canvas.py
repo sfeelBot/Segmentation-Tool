@@ -17,7 +17,7 @@ Delete) | "brush_draw" | "brush_erase" | "pan" 4가지뿐. 블랍은 유효 마�
 import math
 
 import numpy as np
-from PyQt6.QtGui import QPainter, QPen, QColor, QImage, QKeySequence
+from PyQt6.QtGui import QPainter, QPen, QColor, QImage, QKeySequence, qRgba
 from PyQt6.QtCore import Qt, QPointF, QRectF, QRect, pyqtSignal
 
 from app.widgets.overlay_viewer import OverlayViewer
@@ -494,11 +494,18 @@ class RRoiCanvas(OverlayViewer):
         if mask is None or not mask.any():
             self._mask_image = None
             return
-        h, w = mask.shape
-        rgba = np.zeros((h, w, 4), dtype=np.uint8)
-        rgba[mask] = (*_COLOR_MASK[:3], self._mask_alpha)
-        img = QImage(rgba.data, w, h, w * 4, QImage.Format.Format_RGBA8888)
-        self._mask_image = img.copy()   # numpy 버퍼와 분리(생명주기 안전)
+        # perf D8: RGBA 배열을 만들지 않고 bool 마스크를 Indexed8로 무복사 래핑 —
+        # 색·알파는 컬러 테이블(0=투명, 1=마스크색). 버퍼는 _mask_image_buf로 수명 유지
+        # (effective_mask() 결과는 제자리 수정되지 않는다). 불투명도 변경도 이 래핑을
+        # 다시 할 뿐이라 비용 ≈0 — 기존 QImage에 setColorTable하면 detach 복사가 날 수 있다.
+        if mask.dtype != bool:
+            mask = mask.astype(bool)   # 0/255 uint8이면 인덱스 255가 테이블 밖
+        buf = np.ascontiguousarray(mask).view(np.uint8)
+        h, w = buf.shape
+        img = QImage(buf.data, w, h, w, QImage.Format.Format_Indexed8)
+        img.setColorTable([0, qRgba(*_COLOR_MASK[:3], self._mask_alpha)])
+        self._mask_image_buf = buf
+        self._mask_image = img
 
     def _paint_mask_overlay(self, p: QPainter) -> None:
         if not self._mask_visible:

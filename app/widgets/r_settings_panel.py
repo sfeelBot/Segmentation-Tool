@@ -107,6 +107,10 @@ class RSettingsPanel(QDialog):
     def auto_detect_enabled(self) -> bool:
         return self._chk_auto_detect.isChecked()
 
+    def cancel_pending(self) -> None:
+        """setter로 값을 채운 뒤 디바운스된 settings_changed를 보내지 않게 한다(세션 열기, perf D12)."""
+        self._debounce.stop()
+
     def set_auto_detect_enabled(self, value: bool) -> None:
         self._chk_auto_detect.setChecked(value)
 

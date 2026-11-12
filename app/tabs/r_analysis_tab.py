@@ -598,6 +598,7 @@ class RAnalysisTab(QWidget):
         self._settings_dialog.set_spec_lower(self._session.get("spec_lower", 0.0))
         self._settings_dialog.set_spec_upper(self._session.get("spec_upper", 0.0))
         self._settings_dialog.set_auto_detect_enabled(self._session.get("auto_detect", False))
+        self._settings_dialog.cancel_pending()   # 로드 값 반영으로 인한 재검출·자동 저장 생략(perf D12)
 
         self._current_cell = None
         self._current_image_path = None
@@ -746,6 +747,9 @@ class RAnalysisTab(QWidget):
         try:
             self._canvas.set_image_size(w, h)
             self._canvas.set_pixmap(pixmap)
+            # perf D9: 옛 이미지 검출 마스크로 새 이미지 편집을 재생하지 않게 먼저 비운다
+            # (재생은 아래 set_detected_mask(mask) 1회만).
+            self._canvas.set_detected_mask(None)
             self._canvas.set_state({
                 "roi": tuple(roi) if roi else None,
                 "erase_strokes": [],   # ponytail: 레거시 필드(읽는 곳 없음, perf D2) — 현재
@@ -812,12 +816,19 @@ class RAnalysisTab(QWidget):
     # ── 검사 설정(threshold/분모/스펙/ROI) ───────────────────────────────────
 
     def _on_settings_changed(self) -> None:
+        # perf D11: 검출 입력(threshold·auto_detect)이 바뀐 경우에만 재검출 — 분모·스펙만
+        # 바뀌면 마스크가 같다. 키가 없으면(구형 세션) "바뀜"으로 보고 재검출.
+        detect_changed = (
+            "threshold" not in self._session or "auto_detect" not in self._session
+            or self._session["threshold"] != self._settings_dialog.threshold()
+            or self._session["auto_detect"] != self._settings_dialog.auto_detect_enabled()
+        )
         self._session["threshold"] = self._settings_dialog.threshold()
         self._session["denominator"] = self._settings_dialog.denominator()
         self._session["spec_lower"] = self._settings_dialog.spec_lower()
         self._session["spec_upper"] = self._settings_dialog.spec_upper()
         self._session["auto_detect"] = self._settings_dialog.auto_detect_enabled()
-        if self._current_image_path is not None:
+        if detect_changed and self._current_image_path is not None:
             self._run_and_display_detection(self._current_image_path)
         self._refresh_settings_summary()
         self._refresh_right_panel()
