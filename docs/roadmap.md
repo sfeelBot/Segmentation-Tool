@@ -1722,8 +1722,9 @@ QA.md BUG-033(P1) 참고. 순수 로그 덤프로 접수된 반복 크래시(`nu
 ## R·Zone 탭 성능 개선 (2026-11-11~)
 
 - [x] R 탭 코드맵 + 실측 — `docs/specs/perf-2026-11-11-r-codemap.md`, `scripts/bench_r_tab.py`.
-- [ ] Zone 탭 코드맵 + 실측 — 진행 중.
-- [ ] 새 구조 설계(설계 항목 번호·목표 수치) → 설계 검토.
+- [x] Zone 탭 코드맵 + 실측 — `docs/specs/perf-2026-11-11-zone-codemap.md`, `scripts/bench_zone_tab.py`.
+- [x] 새 구조 설계 — `docs/specs/perf-2026-11-11-design.md` (D1~D15, 보류 12건, 목표 26개 조작).
+- [ ] 설계 검토(결과는 설계 문서 8절).
 - [ ] 구현 + 설계 항목별 구현 매칭률 기록.
 - [ ] 검증(같은 벤치로 전/후 비교 + 두 탭 기능 회귀).
 
