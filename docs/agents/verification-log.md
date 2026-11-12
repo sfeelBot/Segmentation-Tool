@@ -7830,3 +7830,11 @@ exec()` 인스턴스 호출이라 정적 `QMessageBox.question()` 모킹만으�
 - F pytest 212/1/1 deselected(기준점 동일, `a.zone.json` 잔여 파일 원인 확인·삭제), 셀프체크 7개·`generate_version_info.py` 정상.
 - 신규: BUG-066(P3), BUG-067(P3). 못 한 것: 실제 창 육안 확인, 실제 GPU 추론, installer, Zone 기준점 벤치 번갈아 측정.
 - 산출물: 스크래치 `v1190/RESULTS.md`, `zsnap.py`/`zsnap2.py`/`rsnap.py`/`fneq.py`/`probe_d12*.py`, `rep_r.txt`/`rep_z.txt`/`tbl_v.txt`.
+
+## 2026-11-12 — zone-v1.19.1 BUG-065 수정 검증 시작 (진행중)
+- 대상: `a48892c`(재추론 시 새 결과를 받은 모든 이미지의 Zone 편집 초기화). 실제 ZoneAnalysisTab + 워커 신호 경로, v1180 G1~G5 회귀, pytest, 정적 검토.
+## 2026-11-12 — zone-v1.19.1 BUG-065 수정 검증 종료 (통과)
+- 실제 버튼 → `_ZoneInferenceWorker.result_ready` → `_on_inference_result` 경로(엔진 함수만 가짜): ASCII 37/37, 한글·공백 경로 37/37, 예외 0. 화면 안·밖 모든 결과 수신 이미지의 편집·undo 초기화 + 사이드카 즉시 반영, 원 유지, 재시작 뒤 유지, "현재 이미지만 추론"은 다른 이미지 편집 유지, 전환·배치·전체 결과 보기·엑셀·단일 결과 보기는 편집 유지, 캐시 결과 = 직접 계산. 구 `f40cd46` 25/37(민감도).
+- 회귀: G1 18/18, G2 16/16, G5 14/14, g3b_bug065 5/5, G4 생성 동일. G3 7r·G3b R1~R3 FAIL은 옛 "편집 유지" 기대 → 새 규칙대로(기대 변경 항목). pytest 213 passed / 1 failed(기존 step_indicator, 잔여 a.zone.json 삭제), check_perf_equivalence fail 0, release.ini 1.19.1, generate_version_info 정상.
+- 신규: BUG-068(P3, 추론 중 배치 "영역 적용"과 사이드카 경합 — 고정 인터리빙으로 편집 되살아남 재현), BUG-069(P3, 다중 클래스 타겟 선택이 재추론·전환 뒤 첫 클래스로 — 기존 동작, CHANGELOG "타겟 클래스 유지" 서술과 불일치). BUG-065 Closed.
+- 못 한 것: 실제 창 육안, 실제 GPU 추론, installer.
