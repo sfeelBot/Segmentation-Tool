@@ -24,7 +24,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PyQt6.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon, QImage, QPixmap
+from PyQt6.QtGui import QAction, QIcon, QImage, QImageReader, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QListWidget,
     QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QSlider,
@@ -148,6 +148,7 @@ class RAnalysisTab(QWidget):
         self._detect_worker: _RDetectWorker | None = None
         self._progress: QProgressDialog | None = None
         self._image_cache: OrderedDict[str, np.ndarray] = OrderedDict()   # P1 성능(LRU)
+        self._thumb_cache: dict[tuple[Path, int], QIcon] = {}   # perf D10: (경로, mtime_ns) -> 56px 아이콘
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -798,16 +799,35 @@ class RAnalysisTab(QWidget):
             idx = 0
         self._lbl_nav.setText(f"{self._current_image_path.name} ({idx}/{len(paths)})")
 
+    def _thumb_icon(self, p: Path) -> QIcon:
+        """perf D10: 원본 풀 디코드 대신 QImageReader 축소 디코드 + (경로, mtime_ns) 캐시.
+        autoTransform 기본값은 그대로 둔다(QPixmap(path)와 같은 EXIF 처리)."""
+        try:
+            key: tuple[Path, int] | None = (p, p.stat().st_mtime_ns)
+        except OSError:
+            key = None
+        if key is not None and key in self._thumb_cache:
+            return self._thumb_cache[key]
+        reader = QImageReader(str(p))
+        size = reader.size()
+        if size.isValid():
+            reader.setScaledSize(size.scaled(_THUMB_PX, _THUMB_PX, Qt.AspectRatioMode.KeepAspectRatio))
+            icon = QIcon(QPixmap.fromImage(reader.read()))
+        else:   # 크기 헤더가 없는 형식 — 기존 방식
+            icon = QIcon(QPixmap(str(p)).scaled(
+                _THUMB_PX, _THUMB_PX, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        if key is not None:
+            self._thumb_cache[key] = icon
+        return icon
+
     def _refresh_thumb_strip(self) -> None:
         self._thumb_strip.clear()
         if self._current_cell is None:
             return
         for p in self._cells.get(self._current_cell, []):
-            pm = QPixmap(str(p)).scaled(
-                _THUMB_PX, _THUMB_PX, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            item = QListWidgetItem(QIcon(pm), p.name)
+            item = QListWidgetItem(self._thumb_icon(p), p.name)
             item.setData(Qt.ItemDataRole.UserRole, p)
             self._thumb_strip.addItem(item)
         if self._current_image_path is not None:
