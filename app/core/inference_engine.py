@@ -619,7 +619,19 @@ def _colorize_and_blend(
     QThread 워커에서도 호출되므로(run/run_sliding_window) QPixmap은 절대 만들지 않는다 —
     QPixmap은 GUI 스레드 전용이라 백그라운드 스레드에서 생성하면 undefined behavior다.
     QPixmap 변환이 필요한 호출부는 반드시 GUI 스레드에서 QPixmap.fromImage()를 사용한다.
+
+    2026-11-12(zone perf D4): 본문을 순서 그대로 `_colorize_layer` + `_blend`로 나눴다 —
+    Zone 탭이 색칠 레이어를 캐시해 불투명도 변경 시 블렌드만 다시 한다. 결과 동일.
     """
+    _, color_img, foreground, (w, h) = _colorize_layer(class_map, cls_map)
+    orig_np = np.array(orig.resize((w, h), Image.BILINEAR), dtype=np.uint8)
+    return _blend(orig_np, color_img, foreground, opacity, w, h)
+
+
+def _colorize_layer(
+    class_map: np.ndarray, cls_map: dict[int, ClassDef],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[int, int]]:
+    """(class_map_work, color_img, foreground, (w, h)) — 미리보기 크기 축소 + 클래스 색칠."""
     h, w = class_map.shape
 
     max_dim = max(h, w)
@@ -639,11 +651,15 @@ def _colorize_and_blend(
     for cid, cls in cls_map.items():
         mask = class_map_work == cid
         color_img[mask] = cls.color
+    return class_map_work, color_img, class_map_work != 0, (w, h)
 
-    # PIL blend — 원본 이미지는 부드러운 축소를 위해 BILINEAR
-    orig_np    = np.array(orig.resize((w, h), Image.BILINEAR), dtype=np.uint8)
+
+def _blend(
+    orig_np: np.ndarray, color_img: np.ndarray, foreground: np.ndarray,
+    opacity: float, w: int, h: int,
+) -> QImage:
+    """(w, h)로 축소한 원본(BILINEAR, uint8 RGB) 위에 색칠 레이어를 opacity로 블렌드."""
     blended = orig_np.copy()
-    foreground = class_map_work != 0
     blended[foreground] = (
         orig_np[foreground] * (1 - opacity) + color_img[foreground] * opacity
     ).clip(0, 255).astype(np.uint8)

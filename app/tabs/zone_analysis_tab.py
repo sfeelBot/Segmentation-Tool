@@ -273,6 +273,10 @@ class ZoneAnalysisTab(QWidget):
         self._labels_cache: tuple | None = None       # (mask_key, labels)
         self._blob_stats_cache: tuple | None = None   # ((mask_key, circles_key), [ZoneBlobStat])
         self._zones_cache: tuple | None = None        # ((circles_key, (h, w)), [Zone])
+        # perf D4: 오버레이 색칠 레이어 / 축소 원본 / 최종 오버레이 1칸 캐시(2.4절)
+        self._layer_cache: tuple | None = None        # (layer_key, class_map 참조, color_img, fg, (w, h))
+        self._orig_small_cache: tuple | None = None   # ((path, (w, h)), orig_np)
+        self._overlay_cache: tuple | None = None      # ((layer_key, opacity), class_map 참조, QImage)
         # BUG-040 후속: 원본 디코드(Image.open+convert)+썸네일(thumbnail) 결과를
         # Path 기준으로 캐시 — 신뢰도/threshold와 무관한 "이미지 자체" 캐시라
         # _target_cache(추론 파라미터 의존)와 별개로 둔다. 재추론해도 무효화되지
@@ -1207,7 +1211,8 @@ class ZoneAnalysisTab(QWidget):
             # 재합성해야 _ai_and_final_masks()가 이전 타겟의 stale 보정을 섞어
             # 쓰지 않는다(set_blob_data가 먼저였다면 reblend가 옛 보정을 반영할 수 있음).
             self._canvas.set_blob_data(labels, stats)
-            self._show_overlay_state()
+            if not self._suppress_recompute:   # perf D5: 전환 중이면 복원 뒤 _recompute_zones가 합성
+                self._show_overlay_state()
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             for action in (self._brush_tools.act_brush, self._brush_tools.act_eraser,
@@ -1253,24 +1258,51 @@ class ZoneAnalysisTab(QWidget):
         if self._last_result is None or self._image_path is None:
             return
         try:
+            # perf D4: 클래스 색은 라벨링 탭에서 바뀔 수 있어 지금처럼 매번 읽고 키에 넣는다.
+            classes = engine.load_classes()
+            classes_key = tuple((c.class_id, tuple(c.color)) for c in classes)
+            class_map = self._last_result.class_map
             ai_mask, final_mask = self._ai_and_final_masks()
-            if ai_mask is not None and final_mask is not None:
-                # 타겟 클래스 픽셀 = 최종 마스크 그대로. 삭제한 블랍(검출분·브러시분)과
-                # 수동 지우기는 배경(틴트 없음), 수동 그리기는 검출과 같은 타겟 색.
-                corrected = self._last_result.class_map.copy()   # 사본 — 원본 class_map 변형 금지
-                corrected[corrected == self._target_class_id] = 0
-                corrected[final_mask] = self._target_class_id
-                overlay_img = engine.colorize_class_map(
-                    corrected, self._image_path, self._overlay_opacity,
-                )
+            has_edit = ai_mask is not None and final_mask is not None
+            mask_key = self._mask_key() if has_edit else (id(class_map), None, self._canvas.edit_revision())
+            layer_key = (mask_key, classes_key)
+            full_key = (layer_key, self._overlay_opacity)
+            if self._overlay_cache is not None and self._overlay_cache[0] == full_key:
+                overlay_img = self._overlay_cache[2]   # 같은 입력 — 합성 생략
             else:
-                overlay_img = engine.reblend(
-                    self._last_result, self._image_path, self._overlay_opacity,
+                if self._layer_cache is None or self._layer_cache[0] != layer_key:
+                    if has_edit:
+                        # 타겟 클래스 픽셀 = 최종 마스크 그대로. 삭제한 블랍(검출분·브러시분)과
+                        # 수동 지우기는 배경(틴트 없음), 수동 그리기는 검출과 같은 타겟 색.
+                        corrected = class_map.copy()   # 사본 — 원본 class_map 변형 금지
+                        corrected[corrected == self._target_class_id] = 0
+                        corrected[final_mask] = self._target_class_id
+                    else:
+                        corrected = class_map
+                    _, color_img, fg, size = engine._colorize_layer(
+                        corrected, {c.class_id: c for c in classes},
+                    )
+                    self._layer_cache = (layer_key, class_map, color_img, fg, size)
+                _, _, color_img, fg, (w, h) = self._layer_cache
+                overlay_img = engine._blend(
+                    self._resized_original(self._image_path, (w, h)), color_img, fg,
+                    self._overlay_opacity, w, h,
                 )
+                self._overlay_cache = (full_key, class_map, overlay_img)
             self._last_result.overlay_image = overlay_img
             self._results[self._image_path] = self._last_result
         except Exception:
             log.exception("존 분석 오버레이 재합성 실패")
+
+    def _resized_original(self, path: Path, size: tuple[int, int]) -> np.ndarray:
+        """`reblend`/`colorize_class_map`과 같은 축소 원본(RGB, BILINEAR) — (경로, 크기) 1칸
+        캐시(perf D4). `_preview_cache`(thumbnail)는 픽셀이 달라 재사용하지 않는다."""
+        key = (path, size)
+        if self._orig_small_cache is None or self._orig_small_cache[0] != key:
+            arr = np.array(Image.open(str(path)).convert("RGB").resize(size, Image.BILINEAR), dtype=np.uint8)
+            arr.setflags(write=False)
+            self._orig_small_cache = (key, arr)
+        return self._orig_small_cache[1]
 
     def _on_overlay_opacity_changed(self, value: int) -> None:
         self._lbl_overlay_opacity_pct.setText(f"{value}%")

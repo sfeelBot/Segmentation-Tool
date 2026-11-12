@@ -322,10 +322,69 @@ def check_zone_tab_cache_sequence() -> int:
     return steps
 
 
+def check_zone_overlay_cache() -> int:
+    """perf D4: Zone 탭 `_reblend_overlay` 결과(캐시 경로)가 개선 전 경로(보정 class_map →
+    `engine.colorize_class_map`, 타겟 없음 → `engine.reblend`)와 바이트 단위로 같은지, 클래스 색만
+    바꿔도(불투명도 그대로) 새 색이 반영되는지(검토 R4) 확인."""
+    import tempfile
+    from pathlib import Path
+    from PyQt6.QtWidgets import QApplication
+    from app.tabs.zone_analysis_tab import ZoneAnalysisTab
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    nrng = np.random.default_rng(5)
+    cases = 0
+    real_load = ie.load_classes
+    palettes = [[ie.ClassDef(0, "bg", (0, 0, 0)), ie.ClassDef(1, "a", (255, 0, 0)), ie.ClassDef(2, "b", (0, 0, 255))],
+                [ie.ClassDef(0, "bg", (0, 0, 0)), ie.ClassDef(1, "a", (9, 99, 199)), ie.ClassDef(2, "b", (0, 0, 255))]]
+    with tempfile.TemporaryDirectory() as d:
+        for h, w in ((300, 410), (1800, 2500)):
+            path = Path(d) / f"img_{w}.png"
+            Image.fromarray(nrng.integers(0, 256, (h, w, 3), dtype=np.uint8)).save(path)
+            cm = np.zeros((h, w), np.int64)
+            cm[h // 4:h // 2, w // 4:w // 2] = 1
+            cm[h // 2:h - 5, w // 2:w - 5] = 2
+            tab = ZoneAnalysisTab()
+            tab._last_result = type("Result", (), {"class_map": cm, "raw_class_map": cm,
+                                                   "confidence_map": np.ones((h, w), np.float32),
+                                                   "overlay_image": None})()
+            tab._image_path = path
+            for target in (None, 1):
+                tab._target_class_id = target
+                if target is not None:
+                    labels, stats, _ = compute_blob_labels(cm == target)
+                    tab._canvas.set_blob_data(labels, stats)
+                for edits in (0, 1, 2):
+                    if edits and target is not None:
+                        tab._canvas._manual_strokes.append((edits == 1, [(w * .3, h * .3, 20), (w * .6, h * .6, 35)]))
+                        tab._canvas._edit_rev += 1
+                    for pal in palettes:
+                        ie.load_classes = lambda pal=pal: list(pal)
+                        try:
+                            for op in (0.5, 0.3, 0.5):
+                                tab._overlay_opacity = op
+                                tab._reblend_overlay()
+                                got = _qbytes(tab._last_result.overlay_image)
+                                if target is None:
+                                    exp = _qbytes(ie.reblend(tab._last_result, path, op))
+                                else:
+                                    corrected = cm.copy()
+                                    corrected[corrected == target] = 0
+                                    corrected[tab._ai_and_final_masks()[1]] = target
+                                    exp = _qbytes(ie.colorize_class_map(corrected, path, op))
+                                _check(got == exp, f"zone overlay {w}x{h} target={target} edits={edits} op={op}")
+                                cases += 1
+                        finally:
+                            ie.load_classes = real_load
+            tab.close()
+    return cases
+
+
 if __name__ == "__main__":
     n1 = check_strokes_and_edits()
     n2 = check_blobs_filter()
     n3 = check_colorize()
     n4 = check_zone_tab_cache_sequence()
-    print(f"cases: strokes/edits {n1}, blobs_filter {n2}, colorize {n3}, zone tab cache steps {n4} — fail {_fail}")
+    n5 = check_zone_overlay_cache()
+    print(f"cases: strokes/edits {n1}, blobs_filter {n2}, colorize {n3}, zone tab cache steps {n4}, "
+          f"zone overlay {n5} — fail {_fail}")
     sys.exit(1 if _fail else 0)

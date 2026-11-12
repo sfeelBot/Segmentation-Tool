@@ -25,7 +25,7 @@ def _app() -> QApplication:
 
 
 def _make_fake_result(class_map: np.ndarray) -> object:
-    """blob_at 테스트와 동일하게 engine.colorize_class_map/reblend만 쓰는 최소 스텁."""
+    """오버레이 합성 경로(engine._colorize_layer/_blend)만 쓰는 최소 스텁."""
     return type("Result", (), {
         "class_map": class_map,
         "raw_class_map": class_map,
@@ -56,20 +56,23 @@ def test_reblend_overlay_applies_manual_corrections_to_class_map_copy() -> None:
         tab._canvas._manual_strokes.append((True, [(8.0, 8.0, 1.0)]))
 
         captured = {}
+        real_layer = zone_tab_module.engine._colorize_layer
 
-        def _fake_colorize(cls_map, path, opacity):
+        # perf D4(2026-11-12): 합성이 색칠 레이어(_colorize_layer) + 블렌드로 나뉘었다 —
+        # 보정 class_map은 _colorize_layer로 전달된다. 원본 이미지 파일은 없으므로 축소
+        # 원본 로더만 스텁.
+        def _fake_layer(cls_map, color_map):
             captured["class_map"] = cls_map.copy()
-            captured["opacity"] = opacity
-            return QImage(1, 1, QImage.Format.Format_RGB32)
+            return real_layer(cls_map, color_map)
 
-        previous = zone_tab_module.engine.colorize_class_map
-        zone_tab_module.engine.colorize_class_map = _fake_colorize
+        zone_tab_module.engine._colorize_layer = _fake_layer
+        tab._resized_original = lambda path, size: np.zeros((size[1], size[0], 3), np.uint8)
         try:
             tab._reblend_overlay()
         finally:
-            zone_tab_module.engine.colorize_class_map = previous
+            zone_tab_module.engine._colorize_layer = real_layer
 
-        assert "class_map" in captured, "target_class_id가 설정된 경우 colorize_class_map이 호출돼야 함"
+        assert "class_map" in captured, "target_class_id가 설정된 경우 보정 class_map으로 색칠해야 함"
         corrected = captured["class_map"]
         # 지운 중심 픽셀은 배경(0)으로 바뀌어야 함(검출 안 된 것처럼).
         assert corrected[3, 3] == 0
@@ -83,8 +86,8 @@ def test_reblend_overlay_applies_manual_corrections_to_class_map_copy() -> None:
 
 
 def test_reblend_overlay_falls_back_to_plain_reblend_without_target() -> None:
-    """타겟 클래스가 없으면(_ai_and_final_masks()가 (None,None)) 기존 engine.reblend()
-    경로로 떨어져야 한다(보정 없음 — 회귀 방지)."""
+    """타겟 클래스가 없으면(_ai_and_final_masks()가 (None,None)) 보정 없이 원본
+    result.class_map 그대로 색칠해야 한다(기존 engine.reblend() 경로와 같은 결과 — 회귀 방지)."""
     app = _app()
     tab = ZoneAnalysisTab()
     try:
@@ -95,17 +98,15 @@ def test_reblend_overlay_falls_back_to_plain_reblend_without_target() -> None:
         tab._image_path = Path("unused.png")
 
         calls = []
-        previous_reblend = zone_tab_module.engine.reblend
-        previous_colorize = zone_tab_module.engine.colorize_class_map
-        zone_tab_module.engine.reblend = lambda *a, **k: calls.append("reblend") or QImage(1, 1, QImage.Format.Format_RGB32)
-        zone_tab_module.engine.colorize_class_map = lambda *a, **k: calls.append("colorize") or QImage(1, 1, QImage.Format.Format_RGB32)
+        real_layer = zone_tab_module.engine._colorize_layer
+        zone_tab_module.engine._colorize_layer = lambda cm, color_map: calls.append(cm) or real_layer(cm, color_map)
+        tab._resized_original = lambda path, size: np.zeros((size[1], size[0], 3), np.uint8)
         try:
             tab._reblend_overlay()
         finally:
-            zone_tab_module.engine.reblend = previous_reblend
-            zone_tab_module.engine.colorize_class_map = previous_colorize
+            zone_tab_module.engine._colorize_layer = real_layer
 
-        assert calls == ["reblend"]
+        assert len(calls) == 1 and calls[0] is class_map   # 보정 사본이 아니라 원본 그대로
     finally:
         tab.close()
 
