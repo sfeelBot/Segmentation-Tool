@@ -118,13 +118,26 @@ def apply_manual_strokes(
     R-ZONE-3에서 `ZoneCanvas.apply_manual_strokes()`(인스턴스 메서드)를 순수
     함수로 승격 — 현재 화면 캔버스가 아닌 다른 이미지의 사이드카 상태(배치
     처리 중 재조회한 `manual_strokes`)에도 적용할 수 있어야 하기 때문이다.
+
+    2026-11-12(성능, perf-2026-11-11 D1): 스탬프마다 전체 프레임 `disk_mask()`를 OR하지
+    않고 그 스탬프 bbox만 잘라 칠한다 — 한 스트로크의 스탬프는 `draw`가 같아 "OR 후 1회
+    대입"과 결과가 같다. bbox·비교식은 `disk_mask()`와 문자 그대로 같아야 한다(경계 픽셀).
+    스트로크 단위 bbox 합집합에서 스탬프마다 평가하면 긴 대각선 획에서 더 느려진다(검토 R1).
     """
     result = mask.copy()
+    h, w = mask.shape
     for draw, stroke in manual_strokes:
-        stroke_mask = np.zeros(mask.shape, dtype=bool)
         for cx, cy, r in stroke:
-            stroke_mask |= disk_mask(cx, cy, r, mask.shape)
-        result[stroke_mask] = draw
+            if r < 0:
+                continue
+            x0 = max(0, int(math.floor(cx - r)))
+            x1 = min(w, int(math.ceil(cx + r)) + 1)
+            y0 = max(0, int(math.floor(cy - r)))
+            y1 = min(h, int(math.ceil(cy + r)) + 1)
+            if x0 >= x1 or y0 >= y1:
+                continue
+            yy, xx = np.ogrid[y0:y1, x0:x1]
+            result[y0:y1, x0:x1][(xx - cx) ** 2 + (yy - cy) ** 2 <= r ** 2] = draw
     return result
 
 
@@ -179,10 +192,10 @@ def apply_edits(
 
 def zone_stats(zone_mask: np.ndarray, target_class_mask: np.ndarray) -> float:
     """존 마스크 면적 대비 타겟 클래스(AND) 픽셀 비율(%)."""
-    area = int(zone_mask.sum())
+    area = np.count_nonzero(zone_mask)   # bool 전용(D13) — 정수 마스크 sum과 의미가 다름
     if area == 0:
         return 0.0
-    hit = int((zone_mask & target_class_mask).sum())
+    hit = np.count_nonzero(zone_mask & target_class_mask)
     return hit / area * 100.0
 
 

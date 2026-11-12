@@ -105,7 +105,7 @@ def detect_contour_mask(
 
 
 def contour_area(mask: np.ndarray) -> int:
-    return int(mask.sum())
+    return int(np.count_nonzero(mask))   # 입력은 항상 bool 마스크(D13)
 
 
 def compute_cell_ratio(sum_area: float, denominator: float) -> float | None:
