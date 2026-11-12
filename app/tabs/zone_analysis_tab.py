@@ -1079,9 +1079,22 @@ class ZoneAnalysisTab(QWidget):
             m, s = divmod(int(remain_s), 60)
             eta_txt = t("zone.eta_minutes").format(m=m, s=s) if m else t("zone.eta_seconds").format(s=s)
             self._infer_progress.setToolTip(eta_txt)   # ETA는 호버로 확인(디자인 확인 2026-10-03#3)
+        # BUG-065: 새 추론 결과 = 그 이미지의 수동 편집(브러시·영역 삭제) 초기화,
+        # 원 설정은 유지. 캐시 재표시(_on_list_image_selected)는 이 경로를 타지 않는다.
         if path == self._image_path:
             self._last_result = result
-            self._setup_target_classes(result)
+            self._setup_target_classes(result)   # set_blob_data가 캔버스 편집·undo 초기화
+            self._save_timer.stop()
+            self._flush_state()                  # 사이드카에도 즉시 반영
+        else:
+            state = zstate.load_state(path)
+            if state is not None:
+                state.update(removed_blob_ids=set(), removed_points=[],
+                             erase_strokes=[], manual_strokes=[])
+                try:
+                    zstate.save_state(path, state)
+                except OSError as exc:
+                    log.warning(f"Zone 편집 초기화 저장 실패 — {path}: {exc}")
 
     def _on_inference_finished(self) -> None:
         self._btn_run.setEnabled(True)
