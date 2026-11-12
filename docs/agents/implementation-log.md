@@ -7480,3 +7480,4 @@ https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
   탭에서 더는 쓰이지 않음(테스트만 사용). 하이라이트된 블랍을 브러시 지우개로 지우면 하이라이트가
   남는 것은 기존 동작 그대로.
 - 커밋: 이 항목을 포함한 `feat:` 커밋 1개(해시는 리더 보고 참조). push·태그 없음.
+- 2026-11-12 perf 라운드(perf-2026-11-11-design.md) 단계 0: scripts/check_perf_equivalence.py 신설(구 함수 복사본 고정, 366케이스 통과). 진행중
