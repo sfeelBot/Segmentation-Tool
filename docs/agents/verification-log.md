@@ -7801,3 +7801,19 @@ exec()` 인스턴스 호출이라 정적 `QMessageBox.question()` 모킹만으�
 - **결론**: zone-v1.17.0(브러시 블랍 선택·삭제 / ROI 안 블랍 클릭 / 삭제 표시 제거 / BUG-058) 검증 통과. 태깅을 막는 블로커 없음.
   BUG-060은 회귀는 아니지만 측정값을 바꾸는 경로라 다음 라운드 우선 처리 권고.
 - 산출물(스크래치패드): `C:/Users/Feel/AppData/Local/Temp/claude/d--segmentation-model/7d22477b-1701-46e5-afbc-9a433ab94cb7/scratchpad/r_verify_1170/` — `out_A_*.txt`, `out_B*.txt`, `out_C*.txt`, `out_perf_*.txt`, `out_D_*.txt`, `out_pytest.txt`, 스크립트 `verify_1170.py`·`probe_*.py`.
+
+## 2026-11-11 — R 분석 탭 BUG-060 수정(zone-v1.17.1) + Zone 탭 "영역 삭제" 통일(zone-v1.18.0) 검증
+
+- **상태: 진행중** (시작) — 대상 커밋 `8deb1a4`(BUG-060) + `fd9ed94`(Zone 영역 삭제), 기준점 `cb3f325`(= `zone-v1.17.0`).
+  워크트리 `D:\segmentation model-zone-analysis-tab`(`feature/zone-analysis-tab`).
+  검증 수준: 기능 추가 라운드 — 정적 검토 + 실제 `RAnalysisTab`/`ZoneAnalysisTab` + QTest 마우스/키 이벤트(offscreen). 코드 수정 없음(검증 전용).
+
+- **상태: 완료 — 통과(블로커 없음)** (종료, 2026-11-12) — 방법: offscreen QPA + 실제 탭 QTest 조작, `cb3f325` 코드로 같은 스크립트 대조. 화면 판정은 grab 픽셀(실제 창 육안 확인 아님).
+  - A. BUG-060: HEAD 26/26(ASCII·한글), `cb3f325` 6/26(재현), 리더 probe PASS, R 회귀 94/94 → QA.md BUG-060 Closed.
+  - B. Zone 영역 삭제: 편집 의미(①②③④⑥⑩) 18/18, 표시(⑤) 16/16(구버전 8/16), 경로 일치(⑦⑧) 19/20(실패 1 = BUG-065), 사이드카 호환(⑨) 신→구·구→신 모두 CHANGELOG와 부합(구 앱은 이미지 전환만으로도 `removed_points` 키 삭제), 설정 변경·새 추론(⑪) 14/14.
+  - 성능(⑫, 4000×3000, 2회): 삭제 클릭 `cb3f325` 5317·5337 ms → HEAD 6866·6872 ms(약 +29%, 후속 성능 라운드 대상 — 블로커 아님), 스트로크 커밋·불투명도 토글·마스크 계산은 동등.
+  - C. 셀프체크 5개 exit 0, pytest 213 passed / 1 deselected, `test_zone_step_indicator`는 `cb3f325`에서도 통과(구현자 주장 확인), `release.ini` 1.18.0, `generate_version_info.py` 정상, 잔여 파일 없음.
+  - D. 정적 검토: undo/state에 `removed_points` 포함, n 클램프, floodFill 가드, 선택·삭제 모두 4-연결(불일치 없음), 워커 스레드 안전 — 문제 없음.
+  - 신규: BUG-065(P1, 기존 문제 — 추론 결과 도착 시 현재 이미지의 저장된 편집 초기화 후 사이드카 덮어쓰기로 유실, `cb3f325`에서도 재현).
+  - 못 한 것: 실제 창 육안 확인, 실제 GPU 추론, 현장 이미지, installer.
+  - 산출물: 스크래치패드 `v1180/RESULTS.md`, `v1180/out_*.txt`.
