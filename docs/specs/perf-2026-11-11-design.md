@@ -234,21 +234,21 @@ python scripts/bench_zone_tab.py --sizes 4000x3000 --repeat 1 --blobs 10 --out z
 
 | # | 상태 (구현/부분/미구현) | 구현 커밋 | 설계와 다른 점 | 근거 (파일:행) | 동일성 확인 결과 | 검증 (일치/불일치 + 메모) |
 |---|---|---|---|---|---|---|
-| D1 | 구현 | `5c86f0a` | 없음 | app/core/zone_metrics.py:112-145 | 일치 — check_perf_equivalence.py apply_manual_strokes·zone/r apply_edits 180케이스(3크기, uint8 18케이스 포함) |  |
-| D2 | 구현 | `2b5784d` | 없음. grep 근거: `_erase_mask_np`/`erase_mask()`/`_erase_stamp`/`_replay_erase_strokes`/Zone `_stroke_overlay`·`_ensure_stroke_overlay`·`_rasterize_stroke`·`_rebuild_stroke_overlay`는 app·scripts·tests에서 정의·자기 호출 외 읽는 곳 없음(벤치 hook 이름 문자열, 테스트 docstring만). Zone `QImage` import·`disk_mask` import도 미사용이 되어 삭제 | app/widgets/zone_canvas.py(삭제), app/widgets/r_roi_canvas.py:440-470(삭제 후), scripts/bench_r_tab.py:96-98 | 일치 — 결과 마스크 무관(지우개 마스크는 안 읽힘), pytest 동일 |  |
-| D3 | 구현 | `44e1621` | 없음. 리비전 증가 지점 grep 재확인 결과 설계와 같은 4곳+`set_state` | app/widgets/zone_canvas.py:121,272,318-320,420,463,706; app/tabs/zone_analysis_tab.py:1335-1360 | 일치 — check_perf_equivalence.py Zone 탭 캐시 시퀀스 120단계(스트로크·삭제·Undo·class_map 교체·타겟 변경·원 변경), 키에서 rev를 빼면 실패함을 확인 |  |
-| D4 | 구현 | `65106c0` | 레이어 캐시·최종 오버레이 캐시에 class_map 참조도 함께 보관(id 재사용 방지, D3과 같은 방식). `load_classes()`는 `engine.load_classes()`로 호출(기존 테스트·패치와 같은 함수 객체) | app/core/inference_engine.py:613-680; app/tabs/zone_analysis_tab.py:1249-1305; tests/test_zone_brush_overlay_sync_2026_10_28.py:58-108 | 일치 — colorize 6케이스(작은 크기+2100×1300 × opacity 3) QImage 바이트 동일, Zone 탭 오버레이 72케이스(타겟 유무·편집·팔레트 2종·opacity) 개선 전 경로와 바이트 동일·팔레트만 바꿔도 새 색 반영(R4) |  |
-| D5 | 구현 | `65106c0` | 없음 | app/tabs/zone_analysis_tab.py:1214 | 일치 — 스모크에서 이미지 전환(사이드카 있음/없음) 후 오버레이 바이트가 개선 전 경로와 동일 |  |
-| D6 | 구현 | `44e1621` | 없음(블랍 조회는 `_compute_zone_blob_rows` 결과가 아니라 `zone_blob_stats` 호출 캐시를 공유 — R3 준수) | app/tabs/zone_analysis_tab.py:1362-1378,1490,1624-1631 | 일치 — 캐시 시퀀스 120단계에서 블랍표·라벨맵을 직접 계산과 비교 |  |
-| D7 | 구현 | `2f6fb4c` | 없음 | app/core/inference_engine.py:545-575 | 일치 — blobs_filter 180케이스(블랍 10/50/500, 경계 걸침, 임계값 3조합) filtered·blobs 동일 |  |
-| D8 | 구현 | `07fcce2` | 없음 | app/widgets/r_roi_canvas.py:492-508 | 일치 — canvas.grab() 구 RGBA vs 신 Indexed8 24케이스(3크기×fit/2배×알파 0/90/128/255) 완전 일치(스크래치 perf_impl/d8_grab.py) |  |
-| D9 | 구현 | `07fcce2` | 없음 | app/tabs/r_analysis_tab.py:751-754 | 일치 — verify_1170 세션·전환 시나리오 면적 동일(스모크) |  |
-| D10 | 구현 | `2282e4a` | `os.stat` 대신 `Path.stat()`(같은 값, import 추가 없음) | app/tabs/r_analysis_tab.py:802-830 | 썸네일 픽셀은 설계상 허용 차이(화면 전용). 크기·순서·선택은 스모크 확인 |  |
-| D11 | 구현 | `07fcce2` | 없음 | app/tabs/r_analysis_tab.py:838-851 | 일치 — 재검출 입력 불변(설계 근거), pytest·verify_1170 통과 |  |
-| D12 | 구현 | `07fcce2` | 없음 | app/widgets/r_settings_panel.py:110-112; app/tabs/r_analysis_tab.py:602 | 일치 — 세션 열기 직후 상태 동일(verify_1170 session) |  |
-| D13 | 구현 | `5c86f0a` | 없음 | app/core/zone_metrics.py:195-198; app/core/r_analysis_metrics.py:108 | 일치 — 셀프체크 contour_area·zone_stats(uint8 포함) 동일 |  |
-| D14 | 구현 | `2f6fb4c` | 없음 | app/tabs/zone_analysis_tab.py:142-143 | 일치 — convert()는 크기 불변 |  |
-| D15 | 구현 | `44e1621` | `_current_zones`와 블랍 조회가 같은 `_zones_for(circles_raw, shape)` 헬퍼를 쓴다(블랍 조회도 원판 재계산 생략) | app/tabs/zone_analysis_tab.py:1380-1390 | 일치 — 캐시 시퀀스 120단계에서 zones 이름·숨김·마스크 직접 계산과 동일 |  |
+| D1 | 구현 | `5c86f0a` | 없음 | app/core/zone_metrics.py:112-145 | 일치 — check_perf_equivalence.py apply_manual_strokes·zone/r apply_edits 180케이스(3크기, uint8 18케이스 포함) | 일치 — 검증자 독립 비교(`fneq.py`: 기준점·HEAD의 실제 함수에 같은 시드 입력 60케이스 — 600점 획·uint8·경계 밖·r=0 포함) 0 불일치, `check_perf_equivalence.py` exit 0, R·Zone 앱 스냅샷 기준점과 동일 |
+| D2 | 구현 | `2b5784d` | 없음. grep 근거: `_erase_mask_np`/`erase_mask()`/`_erase_stamp`/`_replay_erase_strokes`/Zone `_stroke_overlay`·`_ensure_stroke_overlay`·`_rasterize_stroke`·`_rebuild_stroke_overlay`는 app·scripts·tests에서 정의·자기 호출 외 읽는 곳 없음(벤치 hook 이름 문자열, 테스트 docstring만). Zone `QImage` import·`disk_mask` import도 미사용이 되어 삭제 | app/widgets/zone_canvas.py(삭제), app/widgets/r_roi_canvas.py:440-470(삭제 후), scripts/bench_r_tab.py:96-98 | 일치 — 결과 마스크 무관(지우개 마스크는 안 읽힘), pytest 동일 | 일치 — grep 재확인: app·scripts·tests에 정의 삭제 후 docstring·벤치 hook 이름 문자열 외 참조 없음, R `_stroke_overlay` 유지 확인. 지우개 단계 스냅샷 기준점과 동일 |
+| D3 | 구현 | `44e1621` | 없음. 리비전 증가 지점 grep 재확인 결과 설계와 같은 4곳+`set_state` | app/widgets/zone_canvas.py:121,272,318-320,420,463,706; app/tabs/zone_analysis_tab.py:1335-1360 | 일치 — check_perf_equivalence.py Zone 탭 캐시 시퀀스 120단계(스트로크·삭제·Undo·class_map 교체·타겟 변경·원 변경), 키에서 rev를 빼면 실패함을 확인 | 일치 — 리비전 증가 지점(4곳 + `set_state`) 외 편집 상태 변경 없음(grep). Zone 스냅샷 46단계(편집 직후 조회, undo 직후 불투명도, A→B→A·사이드카 복원, 타겟 클래스·신뢰도·최소 픽셀 변경, 가짜 새 추론, 원 변경, 배치 후, 재시작)에서 마스크 해시 기준점과 동일 + 매 단계 캐시 없는 `apply_edits` 직접 계산과 일치. 캐시 배열 읽기 전용 확인 |
+| D4 | 구현 | `65106c0` | 레이어 캐시·최종 오버레이 캐시에 class_map 참조도 함께 보관(id 재사용 방지, D3과 같은 방식). `load_classes()`는 `engine.load_classes()`로 호출(기존 테스트·패치와 같은 함수 객체) | app/core/inference_engine.py:613-680; app/tabs/zone_analysis_tab.py:1249-1305; tests/test_zone_brush_overlay_sync_2026_10_28.py:58-108 | 일치 — colorize 6케이스(작은 크기+2100×1300 × opacity 3) QImage 바이트 동일, Zone 탭 오버레이 72케이스(타겟 유무·편집·팔레트 2종·opacity) 개선 전 경로와 바이트 동일·팔레트만 바꿔도 새 색 반영(R4) | 일치 — 오버레이 바이트·화면 grab 46단계 기준점과 동일, 클래스 색 변경 뒤 불투명도만 바꿔도 새 색 반영(R4), `fneq.py` 블렌드 96케이스(2600×1900 축소 포함 × 불투명도 4종) 동일. 메모: 같은 경로의 원본 파일을 디스크에서 덮어쓰면 이미지를 바꾸기 전까지 옛 축소 원본으로 합성(설계 키 규칙 그대로, 기준점은 매번 다시 읽음) → BUG-067(P3) |
+| D5 | 구현 | `65106c0` | 없음 | app/tabs/zone_analysis_tab.py:1214 | 일치 — 스모크에서 이미지 전환(사이드카 있음/없음) 후 오버레이 바이트가 개선 전 경로와 동일 | 일치 — 이미지 전환(사이드카 있음/없음, 배치 후, 재시작 후) 오버레이·grab 기준점과 동일 |
+| D6 | 구현 | `44e1621` | 없음(블랍 조회는 `_compute_zone_blob_rows` 결과가 아니라 `zone_blob_stats` 호출 캐시를 공유 — R3 준수) | app/tabs/zone_analysis_tab.py:1362-1378,1490,1624-1631 | 일치 — 캐시 시퀀스 120단계에서 블랍표·라벨맵을 직접 계산과 비교 | 일치 — 블랍 조회 정보 라벨(삭제 직후 클릭 포함)·결과표·단일 결과 다이얼로그 기준점과 동일 |
+| D7 | 구현 | `2f6fb4c` | 없음 | app/core/inference_engine.py:545-575 | 일치 — blobs_filter 180케이스(블랍 10/50/500, 경계 걸침, 임계값 3조합) filtered·blobs 동일 | 일치 — `fneq.py` 24케이스(블랍 5/60/400개, 신뢰도 3종 × 최소 픽셀 3종) filtered·blobs 동일, 앱 신뢰도 변경 단계 동일 |
+| D8 | 구현 | `07fcce2` | 없음 | app/widgets/r_roi_canvas.py:492-508 | 일치 — canvas.grab() 구 RGBA vs 신 Indexed8 24케이스(3크기×fit/2배×알파 0/90/128/255) 완전 일치(스크래치 perf_impl/d8_grab.py) | 일치 — R 캔버스 렌더를 불투명도 0/50/100%·숨김·2단계 확대에서 기준점과 비교해 바이트 동일 |
+| D9 | 구현 | `07fcce2` | 없음 | app/tabs/r_analysis_tab.py:751-754 | 일치 — verify_1170 세션·전환 시나리오 면적 동일(스모크) | 일치 — 전환·복귀 뒤 면적·`effective_mask()` 해시·표 문자열 기준점과 동일 |
+| D10 | 구현 | `2282e4a` | `os.stat` 대신 `Path.stat()`(같은 값, import 추가 없음) | app/tabs/r_analysis_tab.py:802-830 | 썸네일 픽셀은 설계상 허용 차이(화면 전용). 크기·순서·선택은 스모크 확인 | 일치 — 썸네일 크기·순서·선택 동일(테스트 PNG 400px에선 픽셀도 동일). 원본 파일 교체(수정 시각 변경) 뒤 새 픽셀 표시 = 캐시 없는 새 탭과 동일 |
+| D11 | 구현 | `07fcce2` | 없음 | app/tabs/r_analysis_tab.py:838-851 | 일치 — 재검출 입력 불변(설계 근거), pytest·verify_1170 통과 | 일치 — 분모·스펙 변경 후 표·라벨 문자열 기준점과 동일, threshold·자동 검출 변경 시 재검출 결과 동일 |
+| D12 | 구현 | `07fcce2` | 없음 | app/widgets/r_settings_panel.py:110-112; app/tabs/r_analysis_tab.py:602 | 일치 — 세션 열기 직후 상태 동일(verify_1170 session) | **불일치 → 부분** — 디바운스 정지는 반영됐으나 설계의 확인 항목 "세션 파일이 열기만으로 다시 쓰이지 않음"이 성립하지 않는다: 자동 검출 ON 세션을 새 탭에서 열면 `set_auto_detect_enabled` → 체크박스 즉시 시그널(디바운스 없음) → `_on_settings_changed` → 자동 저장 예약으로 파일이 다시 쓰인다(기준점도 동일, 내용 동일, 재검출은 D11로 생략됨). BUG-066(P3) |
+| D13 | 구현 | `5c86f0a` | 없음 | app/core/zone_metrics.py:195-198; app/core/r_analysis_metrics.py:108 | 일치 — 셀프체크 contour_area·zone_stats(uint8 포함) 동일 | 일치 — 면적·비율 값 동일. 메모: `zone_stats` 반환 타입이 `float` → `np.float64`(float 하위 클래스, 표시·Excel·사이드카 동일 — repr만 다름) |
+| D14 | 구현 | `2f6fb4c` | 없음 | app/tabs/zone_analysis_tab.py:142-143 | 일치 — convert()는 크기 불변 | 일치 — 배치 영역 적용 뒤 원 좌표·화면·사이드카 기준점과 동일 |
+| D15 | 구현 | `44e1621` | `_current_zones`와 블랍 조회가 같은 `_zones_for(circles_raw, shape)` 헬퍼를 쓴다(블랍 조회도 원판 재계산 생략) | app/tabs/zone_analysis_tab.py:1380-1390 | 일치 — 캐시 시퀀스 120단계에서 zones 이름·숨김·마스크 직접 계산과 동일 | 일치 — 원 이름·숨김·크기 변경 뒤 존 비율·블랍표·조회 기준점과 동일 |
 
 **판정 기준**
 - 구현 = 3.1절 "변경 내용"을 모두 반영 + "결과 동일성 보장 방법"의 확인을 통과.
@@ -265,6 +265,7 @@ python scripts/bench_zone_tab.py --sizes 4000x3000 --repeat 1 --blobs 10 --out z
 | 구현 | 부분 | 미구현 | 취소 | 분모 | 매칭률 |
 |---:|---:|---:|---:|---:|---:|
 | 15 | 0 | 0 | 0 | 15 | 100 % (구현자 기록 — 검증 열 기준으로 다시 계산할 것) |
+| 14 | 1 | 0 | 0 | 15 | **96.7 %** (검증자 기준, 2026-11-12 — D12 부분: 열기만으로 세션 파일 재기록, BUG-066) |
 
 ### 7.2 목표 수치 달성률
 
@@ -272,71 +273,83 @@ python scripts/bench_zone_tab.py --sizes 4000x3000 --repeat 1 --blobs 10 --out z
 
 | 탭 | 시나리오 (편집) | 크기 | 현재 | 목표 | 후측정 | 달성 (O/X) | 비고 |
 |---|---|---|---:|---:|---:|---|---|
-| R | `image_switch_list_warm` (e30) | 4000 | 4087 | ≤ 150 | 79.8 | O |  |
-| R | `image_switch_list_warm` (e30) | 5472 | 9756 | ≤ 250 | 123.6 | O |  |
-| R | `image_switch_list_warm` (e0) | 4000 | 145 | ≤ 60 | 38.1 | O |  |
-| R | `image_switch_list_warm` (e0) | 5472 | 229 | ≤ 90 | 55.6 | O |  |
-| R | `cell_switch_to_50img` (e0) | 4000 | 3922 | ≤ 100 | 24.3 | O | 재방문(캐시 적중) 중앙값 |
-| R | `cell_switch_to_50img` (e0) | 5472 | 6483 | ≤ 150 | 35.3 | O |  |
-| R | `cell_switch_to_50img` (e0) `max_ms` | 4000 | 4309 | ≤ 1200 | 1028.2 | O | 첫 방문(축소 디코드 50장) |
-| R | `cell_switch_to_50img` (e0) `max_ms` | 5472 | 6782 | ≤ 1800 | 1904.6 | X | 첫 방문 — 목표 대비 +105 ms 미달(장당 축소 디코드 ≈ 38 ms) |
-| R | `session_open` (e0) | 4000 | 631 | ≤ 250 | 161.2 | O |  |
-| R | `session_open` (e0) | 5472 | 1103 | ≤ 400 | 276.5 | O |  |
-| R | `delete_blob` (e30) | 4000 | 2043 | ≤ 100 | 29.3 | O |  |
-| R | `delete_blob` (e30) | 5472 | 4889 | ≤ 150 | 40.5 | O |  |
-| R | `undo_brush` (e30) | 4000 | 2163 | ≤ 100 | 51.5 | O |  |
-| R | `undo_brush` (e30) | 5472 | 4891 | ≤ 150 | 72.9 | O |  |
-| R | `threshold_change` (e30) | 4000 | 2079 | ≤ 120 | 50.9 | O |  |
-| R | `threshold_change` (e30) | 5472 | 4901 | ≤ 180 | 55.9 | O |  |
-| R | `denominator_change` (e30) | 4000 | 2013 | ≤ 15 | 0.6 | O |  |
-| R | `denominator_change` (e30) | 5472 | 4879 | ≤ 20 | 0.6 | O |  |
-| R | `brush_commit` (e30) | 4000 | 153 | ≤ 30 | 8.7 | O |  |
-| R | `brush_commit` (e30) | 5472 | 284 | ≤ 40 | 10.6 | O |  |
-| R | `opacity_step` (e30) | 4000 | 79 | ≤ 8 | 3.1 | O |  |
-| R | `opacity_step` (e30) | 5472 | 98 | ≤ 8 | 3.5 | O |  |
-| R | `batch_cell_5img` (e30) | 4000 | 4314 | ≤ 500 | 312.8 | O |  |
-| R | `batch_cell_5img` (e30) | 5472 | 10084 | ≤ 800 | 517.1 | O |  |
-| Zone | `delete_blob` (e30) | 4000 | 7201 | ≤ 350 | 210.2 | O |  |
-| Zone | `delete_blob` (e30) | 5472 | 15009 | ≤ 500 | 283.9 | O |  |
-| Zone | `image_switch_list_warm` (e30) | 4000 | 6049 | ≤ 400 | 296.7 | O |  |
-| Zone | `image_switch_list_warm` (e30) | 5472 | 12772 | ≤ 550 | 422.9 | O |  |
-| Zone | `image_switch_list_warm` (e0) | 4000 | 514 | ≤ 330 | 281.6 | O |  |
-| Zone | `image_switch_list_warm` (e0) | 5472 | 670 | ≤ 450 | 386.6 | O |  |
-| Zone | `undo_brush` (e30) | 4000 | 5907 | ≤ 300 | 182.4 | O |  |
-| Zone | `undo_brush` (e30) | 5472 | 12495 | ≤ 450 | 242.7 | O |  |
-| Zone | `brush_commit` (e30) | 4000 | 5548 | ≤ 300 | 186.1 | O |  |
-| Zone | `brush_commit` (e30) | 5472 | 11677 | ≤ 450 | 242.6 | O |  |
-| Zone | `brush_commit` (e0) | 4000 | 511 | ≤ 250 | 166.0 | O |  |
-| Zone | `brush_commit` (e0) | 5472 | 777 | ≤ 350 | 212.4 | O |  |
-| Zone | `brush_commit_long` (e0) | 4000 | 1926 | ≤ 300 | 167.5 | O |  |
-| Zone | `brush_commit_long` (e0) | 5472 | 3248 | ≤ 450 | 224.0 | O |  |
-| Zone | `opacity_step` (e30) | 4000 | 2071 | ≤ 40 | 25.2 | O |  |
-| Zone | `opacity_step` (e30) | 5472 | 3891 | ≤ 60 | 22.9 | O |  |
-| Zone | `overlay_toggle_on` (e30) | 4000 | 1891 | ≤ 20 | 4.6 | O |  |
-| Zone | `overlay_toggle_on` (e30) | 5472 | 3919 | ≤ 30 | 4.9 | O |  |
-| Zone | `zone_click_select` (e30) | 4000 | 1697 | ≤ 15 | 1.0 | O |  |
-| Zone | `zone_click_select` (e30) | 5472 | 3655 | ≤ 20 | 1.4 | O |  |
-| Zone | `blob_click_select` (e30) | 4000 | 1931 | ≤ 30 | 1.1 | O |  |
-| Zone | `blob_click_select` (e30) | 5472 | 3790 | ≤ 40 | 1.5 | O |  |
-| Zone | `export_single_open` (e30) | 4000 | 3500 | ≤ 60 | 8.0 | O |  |
-| Zone | `export_single_open` (e30) | 5472 | 7417 | ≤ 90 | 12.7 | O |  |
-| Zone | `conf_threshold_change` (e0) | 4000 | 1212 | ≤ 600 | 718.8 | X | 미달 — breakdown: refilter 485 ms 중 `_compute_blobs_and_filter` 290 ms(전 479 ms, 설계 추정 120 ms보다 큼 — np.unique·CC·bincount·isin), 합성 136 ms |
-| Zone | `conf_threshold_change` (e0) | 5472 | 1729 | ≤ 850 | 1014.9 | X | 미달 — 위와 같은 원인 |
-| Zone | `view_all_results` (e30) | 4000 | 1875 | ≤ 400 | 173.2 | O |  |
-| Zone | `view_all_results` (e30) | 5472 | 3942 | ≤ 600 | 282.2 | O |  |
-| Zone | `batch_apply_circles` (e30) | 4000 | 568 | ≤ 150 | 49.2 | O |  |
-| Zone | `batch_apply_circles` (e30) | 5472 | 877 | ≤ 200 | 93.5 | O |  |
+| R | `image_switch_list_warm` (e30) | 4000 | 4087 | ≤ 150 | 79.8 | O | 검증 84.0 O |
+| R | `image_switch_list_warm` (e30) | 5472 | 9756 | ≤ 250 | 123.6 | O | 검증 120.8 O |
+| R | `image_switch_list_warm` (e0) | 4000 | 145 | ≤ 60 | 38.1 | O | 검증 32.0 O |
+| R | `image_switch_list_warm` (e0) | 5472 | 229 | ≤ 90 | 55.6 | O | 검증 50.8 O |
+| R | `cell_switch_to_50img` (e0) | 4000 | 3922 | ≤ 100 | 24.3 | O | 재방문(캐시 적중) 중앙값 / 검증 24.1 O |
+| R | `cell_switch_to_50img` (e0) | 5472 | 6483 | ≤ 150 | 35.3 | O | 검증 35.4 O |
+| R | `cell_switch_to_50img` (e0) `max_ms` | 4000 | 4309 | ≤ 1200 | 1028.2 | O | 첫 방문(축소 디코드 50장) / 검증 991.6 O |
+| R | `cell_switch_to_50img` (e0) `max_ms` | 5472 | 6782 | ≤ 1800 | 1904.6 | X | 첫 방문 — 목표 대비 +105 ms 미달(장당 축소 디코드 ≈ 38 ms) / 검증 1688.6 O — 반복 1661.5 / 1676.4(기준점 6300 / 6248) → 구현자 X는 측정 잡음, 목표 달성 |
+| R | `session_open` (e0) | 4000 | 631 | ≤ 250 | 161.2 | O | 검증 167.3 O |
+| R | `session_open` (e0) | 5472 | 1103 | ≤ 400 | 276.5 | O | 검증 265.0 O |
+| R | `delete_blob` (e30) | 4000 | 2043 | ≤ 100 | 29.3 | O | 검증 29.4 O |
+| R | `delete_blob` (e30) | 5472 | 4889 | ≤ 150 | 40.5 | O | 검증 40.4 O |
+| R | `undo_brush` (e30) | 4000 | 2163 | ≤ 100 | 51.5 | O | 검증 52.6 O |
+| R | `undo_brush` (e30) | 5472 | 4891 | ≤ 150 | 72.9 | O | 검증 74.9 O |
+| R | `threshold_change` (e30) | 4000 | 2079 | ≤ 120 | 50.9 | O | 검증 37.9 O |
+| R | `threshold_change` (e30) | 5472 | 4901 | ≤ 180 | 55.9 | O | 검증 54.3 O |
+| R | `denominator_change` (e30) | 4000 | 2013 | ≤ 15 | 0.6 | O | 검증 0.7 O |
+| R | `denominator_change` (e30) | 5472 | 4879 | ≤ 20 | 0.6 | O | 검증 0.6 O |
+| R | `brush_commit` (e30) | 4000 | 153 | ≤ 30 | 8.7 | O | 검증 8.4 O |
+| R | `brush_commit` (e30) | 5472 | 284 | ≤ 40 | 10.6 | O | 검증 10.4 O |
+| R | `opacity_step` (e30) | 4000 | 79 | ≤ 8 | 3.1 | O | 검증 3.2 O |
+| R | `opacity_step` (e30) | 5472 | 98 | ≤ 8 | 3.5 | O | 검증 3.5 O |
+| R | `batch_cell_5img` (e30) | 4000 | 4314 | ≤ 500 | 312.8 | O | 검증 315.7 O |
+| R | `batch_cell_5img` (e30) | 5472 | 10084 | ≤ 800 | 517.1 | O | 검증 520.3 O |
+| Zone | `delete_blob` (e30) | 4000 | 7201 | ≤ 350 | 210.2 | O | 검증 212.6 O |
+| Zone | `delete_blob` (e30) | 5472 | 15009 | ≤ 500 | 283.9 | O | 검증 277.0 O |
+| Zone | `image_switch_list_warm` (e30) | 4000 | 6049 | ≤ 400 | 296.7 | O | 검증 307.5 O |
+| Zone | `image_switch_list_warm` (e30) | 5472 | 12772 | ≤ 550 | 422.9 | O | 검증 391.9 O |
+| Zone | `image_switch_list_warm` (e0) | 4000 | 514 | ≤ 330 | 281.6 | O | 검증 275.1 O |
+| Zone | `image_switch_list_warm` (e0) | 5472 | 670 | ≤ 450 | 386.6 | O | 검증 374.2 O |
+| Zone | `undo_brush` (e30) | 4000 | 5907 | ≤ 300 | 182.4 | O | 검증 192.1 O |
+| Zone | `undo_brush` (e30) | 5472 | 12495 | ≤ 450 | 242.7 | O | 검증 231.8 O |
+| Zone | `brush_commit` (e30) | 4000 | 5548 | ≤ 300 | 186.1 | O | 검증 192.3 O |
+| Zone | `brush_commit` (e30) | 5472 | 11677 | ≤ 450 | 242.6 | O | 검증 231.5 O |
+| Zone | `brush_commit` (e0) | 4000 | 511 | ≤ 250 | 166.0 | O | 검증 161.5 O |
+| Zone | `brush_commit` (e0) | 5472 | 777 | ≤ 350 | 212.4 | O | 검증 201.9 O |
+| Zone | `brush_commit_long` (e0) | 4000 | 1926 | ≤ 300 | 167.5 | O | 검증 167.1 O |
+| Zone | `brush_commit_long` (e0) | 5472 | 3248 | ≤ 450 | 224.0 | O | 검증 207.0 O |
+| Zone | `opacity_step` (e30) | 4000 | 2071 | ≤ 40 | 25.2 | O | 검증 25.2 O |
+| Zone | `opacity_step` (e30) | 5472 | 3891 | ≤ 60 | 22.9 | O | 검증 21.4 O |
+| Zone | `overlay_toggle_on` (e30) | 4000 | 1891 | ≤ 20 | 4.6 | O | 검증 5.0 O |
+| Zone | `overlay_toggle_on` (e30) | 5472 | 3919 | ≤ 30 | 4.9 | O | 검증 4.6 O |
+| Zone | `zone_click_select` (e30) | 4000 | 1697 | ≤ 15 | 1.0 | O | 검증 1.1 O |
+| Zone | `zone_click_select` (e30) | 5472 | 3655 | ≤ 20 | 1.4 | O | 검증 1.2 O |
+| Zone | `blob_click_select` (e30) | 4000 | 1931 | ≤ 30 | 1.1 | O | 검증 1.4 O |
+| Zone | `blob_click_select` (e30) | 5472 | 3790 | ≤ 40 | 1.5 | O | 검증 1.6 O |
+| Zone | `export_single_open` (e30) | 4000 | 3500 | ≤ 60 | 8.0 | O | 검증 8.0 O |
+| Zone | `export_single_open` (e30) | 5472 | 7417 | ≤ 90 | 12.7 | O | 검증 11.5 O |
+| Zone | `conf_threshold_change` (e0) | 4000 | 1212 | ≤ 600 | 718.8 | X | 미달 — breakdown: refilter 485 ms 중 `_compute_blobs_and_filter` 290 ms(전 479 ms, 설계 추정 120 ms보다 큼 — np.unique·CC·bincount·isin), 합성 136 ms / 검증 675.3 X — 반복 669.5 / 670.6 → 실제 미달(전 대비 −45 %) |
+| Zone | `conf_threshold_change` (e0) | 5472 | 1729 | ≤ 850 | 1014.9 | X | 미달 — 위와 같은 원인 / 검증 961.0 X — 반복 981.2 / 974.2 → 실제 미달(전 대비 −43 %) |
+| Zone | `view_all_results` (e30) | 4000 | 1875 | ≤ 400 | 173.2 | O | 검증 186.9 O |
+| Zone | `view_all_results` (e30) | 5472 | 3942 | ≤ 600 | 282.2 | O | 검증 271.8 O |
+| Zone | `batch_apply_circles` (e30) | 4000 | 568 | ≤ 150 | 49.2 | O | 검증 42.5 O |
+| Zone | `batch_apply_circles` (e30) | 5472 | 877 | ≤ 200 | 93.5 | O | 검증 53.0 O |
 
 **목표 수치 달성률 = 달성(O) 행 수 / 전체 행 수 × 100 %** (4.1절 12행 + 4.2절 15행 = 27개 × 2 크기 = 54행). `cell_switch_to_50img`은 중앙값 행과 `max_ms` 행을 따로 둔다(나머지는 모두 `median_ms`). 회귀 감시 시나리오가 기준(+20% 또는 +1.0 ms 중 큰 쪽)을 넘은 개수도 따로 적는다: `회귀 n건`.
 
 | 달성 행 | 전체 행 | 달성률 | 회귀 건수 |
 |---:|---:|---:|---:|
 | 51 | 54 | 94.4 % | 8 |
+| 52 | 54 | **96.3 %** | 8 → 실회귀 0 (검증자, 아래) |
 
 (구현자 기록, 6.1절 전체 실행 `r_after.json`/`zone_after.json`, 스크래치 `perf_2026_11_11/`.) 회귀 8건(+20% 또는 +1.0 ms 중 큰 쪽 초과):
 R `paint_repaint` e0 1920 2.1 → 3.2, `roi_resize_release` e0 1920 1.9 → 3.8, `zoom_wheel` e0 1920 2.0 → 3.1 / 4000 2.5 → 3.6
 (D8 Indexed8 그리기 변환 — 설계가 예고한 대가, 프레임당 +1~2 ms), R `autosave` e30 4000 8.5 → 14.4(전부 `r_store.save` 안 — 저장 코드·데이터 무변경, 디스크 I/O 변동으로 추정),
 Zone `autosave_flush` e30 4000_b500 4.4 → 6.2, `excel_export` e30 5472 14.1 → 17.2 / 5472_b500 60.5 → 77.3(샘플 57.7~83.8로 편차 큼, 해당 코드 무변경 — 측정 잡음으로 추정). 리더 판단 필요.
+
+**검증자 독립 측정(2026-11-12, 같은 PC)**: 두 벤치 전체 1회(`--compare` 기준선, 3크기, R 48 s / Zone 4 m 13 s) + 의심 항목 반복 —
+R은 기준점(`0704bd6` 임시 워크트리)과 HEAD를 번갈아 2회씩(4000·5472), Zone은 HEAD 2회 추가(4000·5472, b500 포함; 기준점 Zone 벤치는 1회 ~95분이라 생략).
+달성 52/54 — 미달은 Zone `conf_threshold_change` e0 2건뿐(675 / 961 ms, 반복 670·671 / 981·974 — 실제 미달). 구현자 X였던 R `cell_switch_to_50img` `max_ms` 5472는
+1689 ms(반복 1662·1676)로 달성 — 구현자 1905 ms는 잡음. 회귀 감시 초과는 1회차 8건(R `zoom_wheel` e0 1920·5472·e30 1920, `brush_move_long_last20` e0 5472,
+`roi_move_release` e30 5472, `autosave` e30 4000·5472, Zone `excel_export` e30 5472_b500)이고 판정은:
+① R 드래그·페인트 프레임 계열은 기준점 2.2~3.0 ms → HEAD 2.9~4.2 ms로 번갈아 측정에서도 일관(+0.7~1.4 ms) — D8 Indexed8 그리기 변환의 **예고된 대가**(설계 추정 +0.3~0.9 ms보다 약간 큼), 체감 영향 없음.
+② R `autosave` e30은 기준점도 12.2~13.9 ms(HEAD 11.9~13.7)라 회귀 아님 — 기준선 8.5 / 9.7 ms가 당시 환경 값.
+③ Zone `excel_export`·`autosave_flush`는 코드 무변경이고 반복마다 초과 항목이 바뀐다(5472_b500 75.7 → 60.6 / 60.4, 4000 15.1 → 19.2 / 19.1) — 잡음.
+`zone_stats`가 `np.float64`를 돌려주게 된 것(D13)이 Excel 쓰기를 늦추는지도 따로 확인: float 116.9 / 123.1 ms vs np.float64 132.8 / 123.4 ms — 차이 없음.
+→ **코드 원인의 실회귀 0건**(D8 예상 비용 제외).
 
 ## 8. 설계 검토 반영 기록
 
