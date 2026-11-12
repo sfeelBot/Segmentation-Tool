@@ -93,7 +93,9 @@ HOOKS = [
 
 def install_hooks() -> None:
     for owner, attr, label in HOOKS:
-        orig = getattr(owner, attr)
+        orig = getattr(owner, attr, None)
+        if orig is None:   # 성능 라운드로 삭제된 메서드는 건너뛴다(Zone 벤치와 같게)
+            continue
 
         def wrapper(*a, _orig=orig, _label=label, **k):
             t0 = pc()

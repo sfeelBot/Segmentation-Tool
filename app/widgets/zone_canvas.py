@@ -46,11 +46,10 @@ from dataclasses import dataclass
 
 import numpy as np
 from PyQt6.QtWidgets import QMenu, QInputDialog
-from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QKeySequence, QImage
+from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QKeySequence
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer
 
 from app.widgets.overlay_viewer import OverlayViewer
-from app.core.zone_metrics import disk_mask
 from app.core import zone_metrics
 from app.core.i18n import t
 
@@ -117,14 +116,6 @@ class ZoneCanvas(OverlayViewer):
         # ── 브러시 지우기(R3-3) ──────────────────────────────────────────────
         self._erase_strokes: list[list[tuple[float, float, float]]] = []  # 하위 호환 지우기 합집합
         self._manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]] = []
-        self._erase_mask_np: np.ndarray | None = None   # 원본 해상도 bool, 파생 캐시(undo 대상 아님)
-        # 커밋된 스트로크 rasterize 캐시(R-ZONE-1, 화면 렌더링 전용) — pixmap
-        # 좌표계 ARGB32_Premultiplied. paintEvent가 매 프레임 _manual_strokes를
-        # 전체 순회하던 O(누적 스탬프 수) 비용을 제거하기 위해, 스트로크가
-        # 커밋되는 시점(mouseReleaseEvent)에 1회만 이 이미지에 추가로 그려두고
-        # paintEvent는 drawImage() 1회로 끝낸다. _erase_mask_np(마스크 계산)와는
-        # 완전히 별개 — 이 이미지는 오직 화면 표시용이다.
-        self._stroke_overlay: QImage | None = None
         self._erase_brush_size = 30   # 원본 이미지 픽셀 단위 지름
         self._current_stroke: list[tuple[float, float, float]] = []
         self._last_erase_pos: QPointF | None = None
@@ -279,8 +270,6 @@ class ZoneCanvas(OverlayViewer):
         self._removed_points = []
         self._erase_strokes = []
         self._manual_strokes = []
-        self._erase_mask_np = None
-        self._stroke_overlay = None
         self._current_stroke = []
         self._last_erase_pos = None
         self._erasing = False
@@ -313,11 +302,6 @@ class ZoneCanvas(OverlayViewer):
     def erase_brush_size(self) -> int:
         return self._erase_brush_size
 
-    def erase_mask(self) -> np.ndarray | None:
-        """지운 영역(bool, 원본 이미지 좌표계) — `removed_blob_ids()`/
-        `blob_labels()`와 동일한 "캔버스가 상태의 단일 출처" getter 패턴."""
-        return self._erase_mask_np
-
     def apply_manual_strokes(self, mask: np.ndarray) -> np.ndarray:
         """수동 그리기/지우기를 시간순으로 적용한다(마지막 스트로크 우선).
 
@@ -336,31 +320,8 @@ class ZoneCanvas(OverlayViewer):
             self._blob_labels,
         )
 
-    def _erase_mask_shape(self) -> tuple[int, int]:
-        if self._blob_labels is not None:
-            return self._blob_labels.shape
-        return (self._img_orig_h, self._img_orig_w)
-
-    def _erase_stamp(self, cx: float, cy: float, r: float) -> None:
-        """bbox-crop 벡터화 원판 스탬프 — `annotation_canvas._paint_circle()` 이식.
-        스탬프 반경만큼만 갱신되므로 이미지 전체 크기와 무관하게 저렴하다."""
-        h, w = self._erase_mask_shape()
-        if h <= 0 or w <= 0:
-            return
-        if self._erase_mask_np is None:
-            self._erase_mask_np = np.zeros((h, w), dtype=bool)
-        cxi, cyi, ri = int(cx), int(cy), max(1, int(r))
-        y0, y1 = max(0, cyi - ri), min(h, cyi + ri + 1)
-        x0, x1 = max(0, cxi - ri), min(w, cxi + ri + 1)
-        if x1 <= x0 or y1 <= y0:
-            return
-        ys, xs = np.ogrid[y0:y1, x0:x1]
-        circle = (ys - cyi) ** 2 + (xs - cxi) ** 2 <= ri ** 2
-        self._erase_mask_np[y0:y1, x0:x1][circle] = True
-
     def _erase_paint_at(self, img_pt: QPointF) -> None:
         r = max(1, self._erase_brush_size // 2)
-        self._erase_stamp(img_pt.x(), img_pt.y(), r)
         self._current_stroke.append((img_pt.x(), img_pt.y(), float(r)))
 
     def _erase_paint_stroke(self, img_pt: QPointF) -> None:
@@ -385,60 +346,6 @@ class ZoneCanvas(OverlayViewer):
                 t = i * inv
                 self._erase_paint_at(QPointF(x0 + dx * t, y0 + dy * t))
         self._last_erase_pos = img_pt
-
-    def _ensure_stroke_overlay(self) -> None:
-        """`self._stroke_overlay`가 없거나 `self._pixmap` 크기와 안 맞으면 새로
-        만든다(이미지 전환 시 크기가 바뀔 수 있음 — 별도 resize 이벤트 배선
-        불필요, 이미지 전환은 항상 `set_blob_data()`를 거쳐 캐시가 먼저 `None`이
-        되므로 자연히 재생성된다)."""
-        if self._pixmap is None:
-            return
-        size = self._pixmap.size()
-        if self._stroke_overlay is None or self._stroke_overlay.size() != size:
-            self._stroke_overlay = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
-            self._stroke_overlay.fill(Qt.GlobalColor.transparent)
-
-    def _rasterize_stroke(self, draw: bool, stroke: list[tuple[float, float, float]]) -> None:
-        """스트로크 1개(스탬프 몇 개)만 캐시 이미지에 추가로 그린다 — 전체
-        재순회가 아니라 이번에 커밋된 스트로크만 그리므로 스트로크가 몇 개
-        쌓여 있든 O(1)에 가깝다(스탬프 개수에만 비례)."""
-        self._ensure_stroke_overlay()
-        if self._stroke_overlay is None:
-            return
-        sx, sy = self._orig_scale()
-        s = (sx + sy) / 2
-        p = QPainter(self._stroke_overlay)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_COLOR_DRAW if draw else _COLOR_ERASE)
-        for cx, cy, r in stroke:
-            p.drawEllipse(QPointF(cx * sx, cy * sy), r * s, r * s)
-        p.end()
-
-    def _rebuild_stroke_overlay(self) -> None:
-        """`self._manual_strokes`를 처음부터 다시 그려 캐시를 재구성한다 — 저빈도
-        이벤트(undo, 타겟 클래스 전환)에서만 호출되므로 매 프레임 문제였던
-        비용과는 무관하다(스펙 R-ZONE-1)."""
-        self._stroke_overlay = None
-        if self._pixmap is None:
-            return
-        for draw, stroke in self._manual_strokes:
-            self._rasterize_stroke(draw, stroke)
-
-    def _replay_erase_strokes(self) -> None:
-        """스트로크 좌표 목록으로부터 지우기 마스크를 처음부터 다시 그린다
-        (`disk_mask()` 재사용). 이번 라운드(R3-3)엔 호출부가 없지만, 스트로크가
-        이미 "재생 가능한 경량 표현"이므로 다음 라운드(Undo, R3-4)가 이 함수만
-        불러 복원에 재사용할 수 있도록 미리 준비해둔다(스펙 판단 1/2)."""
-        h, w = self._erase_mask_shape()
-        if h <= 0 or w <= 0 or not self._erase_strokes:
-            self._erase_mask_np = None
-            return
-        mask = np.zeros((h, w), dtype=bool)
-        for stroke in self._erase_strokes:
-            for cx, cy, r in stroke:
-                mask |= disk_mask(cx, cy, r, (h, w))
-        self._erase_mask_np = mask
 
     def blob_labels(self) -> np.ndarray | None:
         """현재 라벨맵(원본 이미지 좌표계) — 탭이 존 퍼센티지 재계산 시 삭제된
@@ -508,8 +415,6 @@ class ZoneCanvas(OverlayViewer):
         self._manual_strokes = list(state.get("manual_strokes", []))
         # 2026-10-30: "outer_name" 키는 더 이상 쓰지 않는다 — 구버전(2026-10-29) 스냅샷에
         # 그 키가 남아있어도 그냥 무시(하위 호환, 역마이그레이션 불필요).
-        self._replay_erase_strokes()   # 스트로크 좌표에서 지우기 마스크를 재생(스펙 판단 1)
-        self._rebuild_stroke_overlay()  # 화면 렌더링 캐시도 스냅샷 기준으로 재구성(R-ZONE-1)
         self._selected_id = None
         self._current_stroke = []
         self._last_erase_pos = None
@@ -662,12 +567,10 @@ class ZoneCanvas(OverlayViewer):
     def _paint_current_stroke(self, p: QPainter) -> None:
         """진행 중인(아직 커밋 안 된) 스트로크만 파란/회색으로 미리보기.
 
-        커밋된 스트로크(`self._stroke_overlay`)는 더 이상 여기서 그리지 않는다 —
-        커밋 시점에 탭이 `overlay_image` 자체를 보정 반영해 재합성하므로
-        (타겟 클래스 색으로 통일), 여기서 또 덧칠하면 이중 렌더링이 된다.
-        `_stroke_overlay`/`_rasterize_stroke`/`_rebuild_stroke_overlay`는 캐시
-        메커니즘이라 남겨두되(다른 참조 없음 확인됨) paintEvent에서는 더 이상 쓰지
-        않는다."""
+        커밋된 스트로크는 여기서 그리지 않는다 — 커밋 시점에 탭이 `overlay_image`
+        자체를 보정 반영해 재합성하므로(타겟 클래스 색으로 통일), 여기서 또 덧칠하면
+        이중 렌더링이 된다. (안 읽히던 커밋 스트로크 캐시 `_stroke_overlay`와 지우개
+        마스크 `_erase_mask_np`는 2026-11-12 perf D2에서 삭제.)"""
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(_COLOR_DRAW if self._mode == "brush_draw" else _COLOR_ERASE)
         for cx, cy, r in self._current_stroke:
@@ -790,7 +693,6 @@ class ZoneCanvas(OverlayViewer):
                 if self._current_stroke:
                     stroke_entry = (self._mode == "brush_draw", self._current_stroke)
                     self._manual_strokes.append(stroke_entry)
-                    self._rasterize_stroke(*stroke_entry)   # 커밋 시점 1회만 캐시에 추가(R-ZONE-1)
                     if self._mode == "brush_erase":
                         self._erase_strokes.append(self._current_stroke)
                 self._current_stroke = []

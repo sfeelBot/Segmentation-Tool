@@ -106,8 +106,7 @@ class RRoiCanvas(OverlayViewer):
 
         # ── 브러시 그리기/지우기(zone_canvas R3-3 포팅) ──────────────────────────
         self._manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]] = []
-        self._erase_strokes: list[list[tuple[float, float, float]]] = []   # erase_mask() 전용 레거시 합집합
-        self._erase_mask_np: np.ndarray | None = None
+        self._erase_strokes: list[list[tuple[float, float, float]]] = []   # 세션 erase_strokes 키 형식 유지용 레거시 목록
         self._stroke_overlay: QImage | None = None
         self._erase_brush_size = 30
         self._current_stroke: list[tuple[float, float, float]] = []
@@ -175,10 +174,6 @@ class RRoiCanvas(OverlayViewer):
         self._rebuild_mask_image()
         self.update()
         self.mask_changed.emit()
-
-    def erase_mask(self) -> np.ndarray | None:
-        """지운 영역만의 bool 마스크(원본 좌표) — zone_canvas.erase_mask()와 동일 getter 패턴."""
-        return self._erase_mask_np
 
     def set_mask_opacity(self, alpha_0_255: int) -> None:
         """검출 마스크 오버레이 투명도 조절(0~255). 세션 동안 값 유지 — 새 마스크를
@@ -338,7 +333,6 @@ class RRoiCanvas(OverlayViewer):
         self._deleted_blob_regions = [tuple(r) for r in state.get("removed_blob_regions", [])]
         self._invalidate_mask_cache()   # undo/세션 로드 — 스트로크 리스트가 통째로
         # 교체되므로 개수만 보는 캐시 휴리스틱을 믿지 않고 안전하게 전체 재계산한다.
-        self._replay_erase_strokes()
         self._rebuild_stroke_overlay()
         self._rebuild_mask_image()
         self._drag_mode = None
@@ -437,29 +431,10 @@ class RRoiCanvas(OverlayViewer):
             "top": snap["top"] + dy, "bottom": snap["bottom"] + dy,
         }
 
-    # ── 브러시 스탬프(zone_canvas._erase_stamp 등 포팅, 블랍 라벨 의존 제거) ─────
-
-    def _erase_mask_shape(self) -> tuple[int, int]:
-        return (self._img_orig_h, self._img_orig_w)
-
-    def _erase_stamp(self, cx: float, cy: float, r: float) -> None:
-        h, w = self._erase_mask_shape()
-        if h <= 0 or w <= 0:
-            return
-        if self._erase_mask_np is None:
-            self._erase_mask_np = np.zeros((h, w), dtype=bool)
-        cxi, cyi, ri = int(cx), int(cy), max(1, int(r))
-        y0, y1 = max(0, cyi - ri), min(h, cyi + ri + 1)
-        x0, x1 = max(0, cxi - ri), min(w, cxi + ri + 1)
-        if x1 <= x0 or y1 <= y0:
-            return
-        ys, xs = np.ogrid[y0:y1, x0:x1]
-        circle = (ys - cyi) ** 2 + (xs - cxi) ** 2 <= ri ** 2
-        self._erase_mask_np[y0:y1, x0:x1][circle] = True
+    # ── 브러시 스탬프(zone_canvas 포팅, 블랍 라벨 의존 제거) ─────
 
     def _erase_paint_at(self, img_pt: QPointF) -> None:
         r = max(1, self._erase_brush_size // 2)
-        self._erase_stamp(img_pt.x(), img_pt.y(), r)
         self._current_stroke.append((img_pt.x(), img_pt.y(), float(r)))
 
     def _erase_paint_stroke(self, img_pt: QPointF) -> None:
@@ -482,17 +457,6 @@ class RRoiCanvas(OverlayViewer):
                 t = i * inv
                 self._erase_paint_at(QPointF(x0 + dx * t, y0 + dy * t))
         self._last_erase_pos = img_pt
-
-    def _replay_erase_strokes(self) -> None:
-        h, w = self._erase_mask_shape()
-        if h <= 0 or w <= 0 or not self._erase_strokes:
-            self._erase_mask_np = None
-            return
-        mask = np.zeros((h, w), dtype=bool)
-        for stroke in self._erase_strokes:
-            for cx, cy, r in stroke:
-                mask |= zone_metrics.disk_mask(cx, cy, r, (h, w))
-        self._erase_mask_np = mask
 
     def _ensure_stroke_overlay(self) -> None:
         if self._pixmap is None:

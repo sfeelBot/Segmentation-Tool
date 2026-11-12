@@ -7481,3 +7481,5 @@ https://claude.ai/artifact/QtHRaDD66quSef2PbMpQPW).
   남는 것은 기존 동작 그대로.
 - 커밋: 이 항목을 포함한 `feat:` 커밋 1개(해시는 리더 보고 참조). push·태그 없음.
 - 2026-11-12 perf 라운드(perf-2026-11-11-design.md) 단계 0: scripts/check_perf_equivalence.py 신설(구 함수 복사본 고정, 366케이스 통과). 진행중
+- 2026-11-12 perf 단계 1 커밋 5c86f0a (D1·D13): 동일성 통과. 부분 벤치 4000 e30 — R undo_brush 2163→105, delete_blob 2043→83, image_switch_list_warm 4087→211, brush_commit 153→62 / Zone brush_commit 5548→345, undo_brush 5907→342, delete_blob 7201→376, image_switch_list_warm 6049→558 ms
+- 2026-11-12 perf 단계 2 (D2): app/scripts/tests grep 결과 _erase_mask_np/erase_mask()/_erase_stamp/_replay_erase_strokes와 Zone _stroke_overlay 계열은 정의·자기 호출 외 읽는 곳 없음(벤치 hook 이름·테스트 docstring만) → 삭제. R _stroke_overlay 유지. pytest 211 passed + 2 failed(test_zone_step_indicator, test_zone_edit_toolbar 배치 groupbox — HEAD 0704bd6에서도 동일 실패, 기존 환경 이슈)

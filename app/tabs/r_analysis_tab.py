@@ -748,7 +748,7 @@ class RAnalysisTab(QWidget):
             self._canvas.set_pixmap(pixmap)
             self._canvas.set_state({
                 "roi": tuple(roi) if roi else None,
-                "erase_strokes": [],   # ponytail: erase_mask() getter 전용 레거시 필드 — 현재
+                "erase_strokes": [],   # ponytail: 레거시 필드(읽는 곳 없음, perf D2) — 현재
                                         # 화면 렌더링/면적 계산엔 쓰이지 않아 세션에 저장하지
                                         # 않는다(필요해지면 manual_strokes처럼 영속화 추가).
                 "manual_strokes": data.get("manual_strokes", []),
