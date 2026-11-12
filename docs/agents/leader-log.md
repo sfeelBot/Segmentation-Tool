@@ -2003,3 +2003,6 @@ BUG-053/054/055/056 전부 PASS, 수정 전 코드(`6e76404`, `be095d9`)에서�
   37/37, 수정 전 25/37, G1/G2/G5·pytest 기준선 동일, BUG-065 Closed, 신규 P3 BUG-068/069).
 - 리더 마무리: CHANGELOG "타겟 클래스 유지" 문구 정정(BUG-069), decisions-needed(BUG-065 삭제, BUG-069
   추가), roadmap, tag `zone-v1.19.1`. push 안 함.
+
+- **2026-11-12 추가 — BUG-069 사용자 답변**: "타겟 클래스는 무조건 하나야" → 실사용에서 클래스가 2개 이상인
+  경우가 없어 해당 없음으로 판단, 코드 수정 없이 QA.md Closed(수정 안 함), decisions-needed 삭제, roadmap 갱신.
