@@ -254,9 +254,78 @@ def check_colorize() -> int:
     return cases
 
 
+def check_zone_tab_cache_sequence() -> int:
+    """perf D3/D6/D15: offscreen Zone 탭에서 편집·Undo·class_map 교체·타겟 변경·원 변경을 섞어
+    돌리며 매 단계 캐시 결과를 직접 계산(`apply_edits`, `zone_blob_stats`, `zones_from_circles`)과 비교."""
+    from PyQt6.QtWidgets import QApplication
+    from app.tabs.zone_analysis_tab import ZoneAnalysisTab
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    rng = random.Random(4)
+    nrng = np.random.default_rng(4)
+    tab = ZoneAnalysisTab()
+    canvas = tab._canvas
+    h, w = 90, 120
+
+    def new_result():
+        cm = np.zeros((h, w), np.int64)
+        for _ in range(12):
+            y, x = int(nrng.integers(0, h - 8)), int(nrng.integers(0, w - 8))
+            cm[y:y + int(nrng.integers(2, 9)), x:x + int(nrng.integers(2, 9))] = int(nrng.integers(1, 3))
+        return type("Result", (), {"class_map": cm, "raw_class_map": cm,
+                                   "confidence_map": nrng.random((h, w)).astype(np.float32),
+                                   "overlay_image": QImage(w, h, QImage.Format.Format_RGB888)})()
+
+    def reset_target(cid):
+        tab._target_class_id = cid
+        labels, stats, _ = compute_blob_labels(tab._last_result.class_map == cid)
+        canvas.set_blob_data(labels, stats)
+
+    steps = 0
+    tab._last_result = new_result()
+    reset_target(1)
+    for i in range(120):
+        op = rng.choice(["stroke", "stroke", "delete", "undo", "swap", "target", "circle", "none"])
+        if op == "stroke":
+            canvas._push_undo()
+            canvas._manual_strokes.append((rng.random() < .6, [(rng.uniform(0, w), rng.uniform(0, h), rng.choice([1, 3, 6]))
+                                                              for _ in range(rng.randint(1, 6))]))
+            canvas._edit_rev += 1   # mouseReleaseEvent와 같은 갱신
+        elif op == "delete":
+            canvas._push_undo()
+            canvas._removed_points.append((rng.randrange(w), rng.randrange(h), len(canvas._manual_strokes)))
+            canvas._edit_rev += 1   # _handle_blob_click과 같은 갱신
+        elif op == "undo" and canvas.can_undo():
+            canvas.undo()
+        elif op == "swap":
+            tab._last_result = new_result()
+            reset_target(tab._target_class_id)
+        elif op == "target":
+            reset_target(3 - tab._target_class_id)
+        elif op == "circle":
+            canvas.set_circles([(w / 2, h / 2, r) for r in sorted(rng.sample([10, 20, 30, 45], rng.randint(0, 3)))])
+        target = tab._last_result.class_map == tab._target_class_id
+        exp = zm.apply_edits(target, canvas._manual_strokes, canvas._removed_blob_ids, canvas._removed_points,
+                             canvas._blob_labels)
+        got = tab._ai_and_final_masks()
+        _check(all(np.array_equal(a, b) for a, b in zip(exp, got)), f"zone tab masks step {i} ({op})")
+        circles_raw = canvas.circles_with_ids()
+        exp_zones = zm.zones_from_circles([zm.Circle(*c) for c in circles_raw], (h, w))
+        got_zones = tab._zones_for(circles_raw, (h, w))
+        _check(len(exp_zones) == len(got_zones) and all(
+            a.name == b.name and a.hidden == b.hidden and np.array_equal(a.mask, b.mask)
+            for a, b in zip(exp_zones, got_zones)), f"zone tab zones step {i}")
+        exp_stats = zm.zone_blob_stats(exp_zones, exp[0], exp[1], tab._last_result.confidence_map)
+        _check(tab._zone_blob_stats(got_zones, *got) == exp_stats, f"zone tab blob stats step {i}")
+        _check(np.array_equal(tab._final_labels(got[1]), compute_blob_labels(exp[1])[0]), f"zone tab labels step {i}")
+        steps += 1
+    tab.close()
+    return steps
+
+
 if __name__ == "__main__":
     n1 = check_strokes_and_edits()
     n2 = check_blobs_filter()
     n3 = check_colorize()
-    print(f"cases: strokes/edits {n1}, blobs_filter {n2}, colorize {n3} — fail {_fail}")
+    n4 = check_zone_tab_cache_sequence()
+    print(f"cases: strokes/edits {n1}, blobs_filter {n2}, colorize {n3}, zone tab cache steps {n4} — fail {_fail}")
     sys.exit(1 if _fail else 0)

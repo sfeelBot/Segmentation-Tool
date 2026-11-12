@@ -267,6 +267,12 @@ class ZoneAnalysisTab(QWidget):
         # 늘어남 — OrderedDict로 LRU 흉내(적중 시 move_to_end, 초과 시 가장 오래된
         # 항목 제거), 상한은 적당히 넉넉한 고정값.
         self._target_cache: OrderedDict[Path, tuple[tuple, InferenceResult, np.ndarray, list]] = OrderedDict()
+        # perf D3/D6/D15 1칸 캐시(메인 스레드 전용 — 워커에 넘기지 말 것). 키·무효화 규칙은
+        # docs/specs/perf-2026-11-11-design.md 2.4절. 돌려주는 배열은 읽기 전용.
+        self._masks_cache: tuple | None = None        # (mask_key, class_map 참조, ai, final)
+        self._labels_cache: tuple | None = None       # (mask_key, labels)
+        self._blob_stats_cache: tuple | None = None   # ((mask_key, circles_key), [ZoneBlobStat])
+        self._zones_cache: tuple | None = None        # ((circles_key, (h, w)), [Zone])
         # BUG-040 후속: 원본 디코드(Image.open+convert)+썸네일(thumbnail) 결과를
         # Path 기준으로 캐시 — 신뢰도/threshold와 무관한 "이미지 자체" 캐시라
         # _target_cache(추론 파라미터 의존)와 별개로 둔다. 재추론해도 무효화되지
@@ -1305,7 +1311,50 @@ class ZoneAnalysisTab(QWidget):
         "전체 결과 보기"의 `_compute_zone_rows()`와 같은 함수(zone-v1.18.0)."""
         if self._last_result is None or self._target_class_id is None:
             return None, None
-        return self._canvas.edited_masks(self._last_result.class_map == self._target_class_id)
+        key = self._mask_key()
+        cached = self._masks_cache
+        if cached is not None and cached[0] == key:
+            return cached[2], cached[3]
+        class_map = self._last_result.class_map
+        ai_mask, final_mask = self._canvas.edited_masks(class_map == self._target_class_id)
+        ai_mask.setflags(write=False)
+        final_mask.setflags(write=False)
+        # class_map 참조를 쥐어 id() 재사용으로 키가 우연히 같아지는 것을 막는다.
+        self._masks_cache = (key, class_map, ai_mask, final_mask)
+        return ai_mask, final_mask
+
+    def _mask_key(self) -> tuple:
+        """perf D3 캐시 키 — class_map 객체 교체·타겟 변경·편집 리비전 변경 시 달라진다."""
+        return (id(self._last_result.class_map), self._target_class_id, self._canvas.edit_revision())
+
+    def _final_labels(self, final_mask: np.ndarray) -> np.ndarray:
+        """`compute_blob_labels(final_mask)` 라벨맵, mask_key 1칸 캐시(perf D6)."""
+        key = self._mask_key()
+        if self._labels_cache is None or self._labels_cache[0] != key:
+            labels, _, _ = compute_blob_labels(final_mask)
+            labels.setflags(write=False)
+            self._labels_cache = (key, labels)
+        return self._labels_cache[1]
+
+    def _zone_blob_stats(self, zones: list[Zone], ai_mask: np.ndarray, final_mask: np.ndarray) -> list[ZoneBlobStat]:
+        """`zone_blob_stats()` 호출 자체의 (mask_key, circles_key) 1칸 캐시(perf D6) —
+        결과표와 블랍 조회가 공유한다. zones는 circles_key(+shape)에서 결정적으로 나온다."""
+        key = (self._mask_key(), tuple(self._canvas.circles_with_ids()))
+        if self._blob_stats_cache is None or self._blob_stats_cache[0] != key:
+            stats = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
+            self._blob_stats_cache = (key, stats)
+        return list(self._blob_stats_cache[1])
+
+    def _zones_for(self, circles_raw: list[tuple], shape: tuple[int, int]) -> list[Zone]:
+        """`zones_from_circles()`의 (circles 튜플, shape) 1칸 캐시(perf D15)."""
+        key = (tuple(circles_raw), shape)
+        if self._zones_cache is None or self._zones_cache[0] != key:
+            circles = [Circle(cid, cx, cy, r, name, hidden) for cid, cx, cy, r, name, hidden in circles_raw]
+            zones = zones_from_circles(circles, shape)
+            for z in zones:
+                z.mask.setflags(write=False)
+            self._zones_cache = (key, zones)
+        return list(self._zones_cache[1])
 
     def _current_target_mask(self) -> np.ndarray | None:
         return self._ai_and_final_masks()[1]
@@ -1378,9 +1427,8 @@ class ZoneAnalysisTab(QWidget):
         circles_raw = self._canvas.circles_with_ids()   # 반지름 오름차순 (id, cx, cy, r, name, hidden)
         if not circles_raw or self._last_result is None or self._target_class_id is None:
             return None
-        circles = [Circle(cid, cx, cy, r, name, hidden) for cid, cx, cy, r, name, hidden in circles_raw]
         h, w = self._last_result.raw_class_map.shape
-        return zones_from_circles(circles, (h, w))
+        return self._zones_for(circles_raw, (h, w))
 
     def _compute_zone_percentages(self, zones: list[Zone] | None = None) -> list[tuple[str, float]]:
         """(존이름, 퍼센티지) 목록 — 원/추론결과/타겟클래스 중 하나라도 없으면 빈 리스트.
@@ -1407,7 +1455,7 @@ class ZoneAnalysisTab(QWidget):
         ai_mask, final_mask = self._ai_and_final_masks()
         if ai_mask is None:
             return []
-        stats = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
+        stats = self._zone_blob_stats(zones, ai_mask, final_mask)
         return [(self._image_path.name, s) for s in stats]
 
     def _make_zone_row_widget(self, zone_name: str, pct: float, max_px: int, hidden: bool = False) -> QWidget:
@@ -1541,16 +1589,14 @@ class ZoneAnalysisTab(QWidget):
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             return
-        labels, _, _ = compute_blob_labels(final_mask)
+        labels = self._final_labels(final_mask)
         label_id = int(labels[y, x])
         if label_id == 0:
             self._canvas.set_highlight_rect(None)
             self._lbl_selected_blob.setText("")
             return
-        circles = [Circle(cid, cx, cy, r, name, hidden)
-                   for cid, cx, cy, r, name, hidden in self._canvas.circles_with_ids()]
-        zones = zones_from_circles(circles, (h, w))
-        blob_rows = zone_blob_stats(zones, ai_mask, final_mask, self._last_result.confidence_map)
+        zones = self._zones_for(self._canvas.circles_with_ids(), (h, w))
+        blob_rows = self._zone_blob_stats(zones, ai_mask, final_mask)
         blob = next((b for b in blob_rows if b.blob_id == label_id), None)
         if blob is None:
             self._canvas.set_highlight_rect(None)

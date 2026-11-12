@@ -116,6 +116,9 @@ class ZoneCanvas(OverlayViewer):
         # ── 브러시 지우기(R3-3) ──────────────────────────────────────────────
         self._erase_strokes: list[list[tuple[float, float, float]]] = []  # 하위 호환 지우기 합집합
         self._manual_strokes: list[tuple[bool, list[tuple[float, float, float]]]] = []
+        # 편집 상태 리비전(perf D3) — 위 편집 상태(라벨맵·삭제·스트로크)가 바뀌는 곳에서만
+        # +1. 탭이 최종 마스크 캐시 키로 쓴다. private 상태를 직접 바꾸면 이것도 올릴 것.
+        self._edit_rev = 0
         self._erase_brush_size = 30   # 원본 이미지 픽셀 단위 지름
         self._current_stroke: list[tuple[float, float, float]] = []
         self._last_erase_pos: QPointF | None = None
@@ -266,6 +269,7 @@ class ZoneCanvas(OverlayViewer):
         제외/포함되는 조용한 오류가 생긴다(스펙 판단 1)."""
         self._blob_labels = labels
         self._blob_stats = stats
+        self._edit_rev += 1
         self._removed_blob_ids = set()
         self._removed_points = []
         self._erase_strokes = []
@@ -310,6 +314,10 @@ class ZoneCanvas(OverlayViewer):
         래퍼(API 이름/시그니처 불변, `zone_analysis_tab._current_target_mask()`
         호출부 무변경)."""
         return zone_metrics.apply_manual_strokes(mask, self._manual_strokes)
+
+    def edit_revision(self) -> int:
+        """편집 상태가 바뀔 때마다 증가하는 정수 — 같으면 `edited_masks()` 결과도 같다."""
+        return self._edit_rev
 
     def edited_masks(self, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """타겟 마스크에 이 캔버스의 블랍 삭제·브러시 스트로크를 적용한
@@ -409,6 +417,7 @@ class ZoneCanvas(OverlayViewer):
             )
             for cid, cx, cy, r, *rest in state["circles"]
         ]
+        self._edit_rev += 1
         self._removed_blob_ids = set(state["removed_blob_ids"])
         self._removed_points = list(state.get("removed_points", []))
         self._erase_strokes = list(state["erase_strokes"])
@@ -451,6 +460,7 @@ class ZoneCanvas(OverlayViewer):
             return
         self._push_undo()
         self._removed_points.append((x, y, len(self._manual_strokes)))
+        self._edit_rev += 1
         self.update()
         self.blob_deleted.emit()
 
@@ -693,6 +703,7 @@ class ZoneCanvas(OverlayViewer):
                 if self._current_stroke:
                     stroke_entry = (self._mode == "brush_draw", self._current_stroke)
                     self._manual_strokes.append(stroke_entry)
+                    self._edit_rev += 1
                     if self._mode == "brush_erase":
                         self._erase_strokes.append(self._current_stroke)
                 self._current_stroke = []
