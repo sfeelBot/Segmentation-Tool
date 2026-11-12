@@ -540,17 +540,14 @@ def _compute_blobs_and_filter(
         if n_labels <= 1:
             continue
 
-        # per-blob mean/min/max confidence — 라벨별 O(H×W) 부울 인덱싱 대신
-        # bincount/ufunc.at 으로 전체 픽셀을 한 번씩만 훑는다 (blob 개수에 무관하게 O(H×W)).
+        # per-blob mean confidence — 라벨별 O(H×W) 부울 인덱싱 대신 bincount로 전체 픽셀을
+        # 한 번씩만 훑는다. min/max는 채택된 blob만 그 bbox 안에서 구한다(아래) — 전체 픽셀
+        # ufunc.at 산포가 느렸다(zone perf D7, 결과 동일).
         flat_labels = labels.ravel()
         flat_conf   = confidence_map.ravel().astype(np.float64)
         cnt = np.bincount(flat_labels, minlength=n_labels)
         sum_conf = np.bincount(flat_labels, weights=flat_conf, minlength=n_labels)
         mean_per_label = sum_conf / np.maximum(cnt, 1)
-        min_per_label = np.full(n_labels, np.inf)
-        np.minimum.at(min_per_label, flat_labels, flat_conf)
-        max_per_label = np.full(n_labels, -np.inf)
-        np.maximum.at(max_per_label, flat_labels, flat_conf)
 
         reject_labels: list[int] = []
         for lbl in range(1, n_labels):   # 0 = 배경 라벨
@@ -562,14 +559,19 @@ def _compute_blobs_and_filter(
                 continue
 
             cx, cy = centroids[lbl]
+            bx, by = int(stats[lbl, cv2.CC_STAT_LEFT]), int(stats[lbl, cv2.CC_STAT_TOP])
+            bw, bh = int(stats[lbl, cv2.CC_STAT_WIDTH]), int(stats[lbl, cv2.CC_STAT_HEIGHT])
+            blob_conf = confidence_map[by:by + bh, bx:bx + bw][
+                labels[by:by + bh, bx:bx + bw] == lbl
+            ].astype(np.float64)
             blobs.append(BlobStat(
                 blob_id=blob_id,
                 class_id=cid,
                 class_name=name_by_id.get(cid, f"class_{cid}"),
                 pixel_count=pixel_count,
                 mean_confidence=mean_conf,
-                min_confidence=float(min_per_label[lbl]),
-                max_confidence=float(max_per_label[lbl]),
+                min_confidence=float(blob_conf.min()),
+                max_confidence=float(blob_conf.max()),
                 centroid_x=float(cx),
                 centroid_y=float(cy),
                 bbox_x=int(stats[lbl, cv2.CC_STAT_LEFT]),

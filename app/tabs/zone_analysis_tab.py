@@ -140,7 +140,7 @@ class _ZoneCircleLayoutWorker(QThread):
             self.progress.emit(path, "processing", None, done - 1, total)
             try:
                 with Image.open(str(path)) as im:
-                    w, h = im.convert("RGB").size   # PIL lazy decode — .size는 헤더만 읽음
+                    w, h = im.size   # 헤더만 읽음 — convert()는 크기를 안 바꾸면서 전체 디코드했다(perf D14)
                 circles = scale_circles(self._circles_ref, self._ref_size, (w, h))
                 previous = zstate.load_state(path)
                 state = previous or {
